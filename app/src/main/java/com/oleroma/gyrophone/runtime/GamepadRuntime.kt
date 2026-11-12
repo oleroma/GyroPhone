@@ -33,7 +33,7 @@ import com.oleroma.gyrophone.core.model.MappingPresets
 import com.oleroma.gyrophone.core.model.ProfileExport
 import com.oleroma.gyrophone.core.model.MappingPreset
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
-import com.oleroma.gyrophone.core.model.SetValueSave
+import com.oleroma.gyrophone.core.model.SliderOverrides
 import com.oleroma.gyrophone.core.model.YawAxis
 import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import com.oleroma.gyrophone.core.model.Mapping
@@ -776,7 +776,7 @@ class GamepadRuntime(context: Context) {
     private val main = Handler(Looper.getMainLooper())
 
     init {
-        // A Set value sensitivity let go: written into its setting on the main thread, like any edit.
+        // A Toggle sensitivity slider let go: saved as the workspace's slider override on the main thread, like any edit.
         engine.onSetValue = { c -> main.post { saveSetValue(c) } }
     }
     private val gyroControl = Handler(HandlerThread("GyroControl").apply { start() }.looper)
@@ -1255,15 +1255,14 @@ class GamepadRuntime(context: Context) {
     }
 
     /**
-     * Writes a Set value sensitivity into the nearest setting it drives ([SetValueSave]) and saves
-     * it, like [editActiveProfile], but puts it into effect without releasing anything held
-     * ([MappingEngine.updateSettings]): the finger lifted mid-game.
+     * Saves a slider's kept sensitivity as the workspace's slider override ([SliderOverrides.put]),
+     * like [editActiveProfile], but puts it into effect without releasing anything held
+     * ([MappingEngine.updateSettings]): the finger lifted mid-game. No setting changes.
      */
     private fun saveSetValue(c: MappingEngine.SetCommit) {
         val before = _activeProfile.value
         if (c.workspaceIndex != _workspaceIndex.value) return
-        val written = SetValueSave.apply(before, c.workspaceIndex, c.sets, c.mapping, c.value)
-        val changed = GlobalControls.sync(before, WorkspaceDefaults.markOwn(before, written))
+        val changed = SliderOverrides.put(before, c.workspaceIndex, c.mapping, c.value)
         if (changed == before) return
         val set = WorkspaceMappings.store(WorkspaceMappings.settle(before, changed))
         if (set != stored) {
@@ -1274,7 +1273,6 @@ class GamepadRuntime(context: Context) {
         engine.updateSettings(resolved)
         _activeProfile.value = resolved
         // The gyro follows without a reset: aiming goes on.
-        gyroMouse.settings = resolved.workspace(_workspaceIndex.value).gyro
         updateGyro()
     }
 

@@ -976,7 +976,7 @@ internal fun ControlMappingScreen(
                 val base = if (!replace) currentMappings
                 else cardInputs(cardOf(c)).fold(currentMappings) { m, ti -> Bindings.setTargets(m, ti, emptyList()) }
                 val now = Bindings.entries(base, c)
-                val e = Bindings.Entry(ch.target, ch.options, ch.range, ch.setValue, ch.perDp)
+                val e = Bindings.Entry(ch.target, ch.options, ch.range, ch.perDp)
                 if (now.any { it.target == e.target && it.shape == e.shape }) base else Bindings.setEntries(base, c, now + e)
             }
             PresetLevel.CARD -> MappingPresets.place(currentMappings, p.chips, cardSlots(cardOf(card ?: return)), replace)
@@ -1046,9 +1046,7 @@ internal fun ControlMappingScreen(
     /** A chip's range as its text shows it ("10–85 %"), or null. */
     fun chipRangeText(m: List<Mapping>, card: BindableInput, chip: RowItem.Chip): String? {
         val e = Bindings.entry(m, trig(chipInput(card, chip), chip.trigger), chip.target, chip.n) ?: return null
-        // Set value shows as a pin after the range.
-        val set = if (e.setValue != null) " 📌" else ""
-        val r = e.range ?: return if (set.isEmpty()) null else set.trim()
+        val r = e.range ?: return null
         return when (chip.target) {
             is OutputTarget.PadAxis -> "%.0f–%.0f %%".format(r.from * 100, r.to * 100)
             is OutputTarget.GyroSens -> {
@@ -1057,7 +1055,7 @@ internal fun ControlMappingScreen(
             }
             is OutputTarget.TouchSens -> "%.2f–%.2f".format(r.from, r.to)
             else -> null
-        }?.plus(set)
+        }
     }
 
     /** [input]'s row as mapped: each zone's chips of the edited set, divided, then the end divider. */
@@ -2275,7 +2273,7 @@ internal fun ControlMappingScreen(
             options = Bindings.entry(view, ti, chip.target, chip.n)?.options,
             range = chipRange(chip.target, Bindings.entry(view, ti, chip.target, chip.n)?.range, runtime.engine.workspace.gyro),
             value = chipValue(chip.target, zi.sources.first(), Bindings.entry(view, ti, chip.target, chip.n), runtime.engine.workspace.gyro),
-            onApply = { tr, o, w, r, sv, pd ->
+            onApply = { tr, o, w, r, pd ->
                 chipDialog = null
                 val target = (chip.target as? OutputTarget.SetOrientation)?.copy(granular = granular) ?: chip.target
                 val destInput = if (whereInputs.isEmpty()) zi else inputAt(w)
@@ -2285,7 +2283,7 @@ internal fun ControlMappingScreen(
                 val es = Bindings.entries(currentMappings, ti)
                 var k = -1
                 val at = es.indexOfFirst { it.target == chip.target && ++k == chip.n }
-                val now = Bindings.Entry(target, o, r, sv, pd)
+                val now = Bindings.Entry(target, o, r, pd)
                 change(
                     if (dest == ti && at >= 0) Bindings.setEntries(currentMappings, ti, es.toMutableList().apply { set(at, now) })
                     else Bindings.removeEntry(currentMappings, ti, chip.target, chip.n).let { base ->
@@ -3179,7 +3177,7 @@ private fun SplitHandle(landscape: Boolean, onMove: (Float) -> Unit, onEnd: () -
 }
 
 /**
- * The Set value and Per dp of a value chip of [target] on [source] ([ChipValue]), null for any
+ * The Toggle ends and Per dp of a value chip of [target] on [source] ([ChipValue]), null for any
  * other: a pad axis or trigger in % per dp, Gyro sensitivity in RWS per dp when [g]'s game is
  * known (else counts per degree per dp), Touch sensitivity in its own unit.
  */
@@ -3192,13 +3190,13 @@ private fun chipValue(target: OutputTarget, source: InputSource, e: Bindings.Ent
         is OutputTarget.GyroSens -> {
             val c = g.gameCountsPer360
             if (c > 0f) ChipValue(
-                e?.setValue, init, move, e?.perDp, def, 0.1f, 0.001f, { "%.3f RWS".format(it) },
+                init, move, e?.perDp, def, 0.1f, 0.001f, { "%.3f RWS".format(it) },
                 shown = { GameSens.rws(it, c) }, stored = { GameSens.sensOf(it, c) },
-            ) else ChipValue(e?.setValue, init, move, e?.perDp, def, 1f, 0.005f, { "%.3f".format(it) })
+            ) else ChipValue(init, move, e?.perDp, def, 1f, 0.005f, { "%.3f".format(it) })
         }
-        is OutputTarget.TouchSens -> ChipValue(e?.setValue, init, move, e?.perDp, def, 0.1f, 0.001f, { "%.3f".format(it) })
+        is OutputTarget.TouchSens -> ChipValue(init, move, e?.perDp, def, 0.1f, 0.001f, { "%.3f".format(it) })
         else -> ChipValue(
-            e?.setValue, init, move, e?.perDp, def, 5f, 0.05f, { "%.2f %%".format(it) },
+            init, move, e?.perDp, def, 5f, 0.05f, { "%.2f %%".format(it) },
             shown = { it * 100f }, stored = { it / 100f },
         )
     }
@@ -3247,7 +3245,7 @@ private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings
             ChipRange(
                 current, AxisRange(base * 0.8f, base * 1.2f), null, 0f..10f, 0f..MAX_TOUCH_SENS_TYPED, 0.05f, { "%.2f".format(it) },
                 "The touchpad's Move sensitivity at the input's 0 and at full; it changes evenly between them while " +
-                    "the input is active and goes back when it lets go (unless Set value keeps it). Drag one handle past the other to reverse it.",
+                    "the input is active and goes back when it lets go (unless a Toggle keeps it). Drag one handle past the other to reverse it.",
             )
         }
 

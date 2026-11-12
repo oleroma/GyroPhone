@@ -81,6 +81,8 @@ data class Workspace(
     val heldButtons: List<HeldButton> = emptyList(),
     /** The touchpad's finger position inputs' settings ([InputSource.Finger] with id ""), like [TouchControl.fingers]. */
     val padFingers: List<FingerAxisSettings> = emptyList(),
+    /** Sensitivities kept by sliders ([SliderOverride]), over its settings in effect; the newest of each sensitivity only. */
+    val sliders: List<SliderOverride> = emptyList(),
 ) {
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =

@@ -137,9 +137,9 @@ object Bindings {
         val first = mappings.indexOfFirst { belongs(it, input) }
         val kept = mappings.filterNot { belongs(it, input) }
         val ranges = mappings.filter { belongs(it, input) && it.range != null }.associate { it.target to it.range }
-        val sets = mappings.filter { belongs(it, input) && (it.setValue != null || it.perDp != null) }.associate { it.target to it }
+        val sets = mappings.filter { belongs(it, input) && it.perDp != null }.associate { it.target to it }
         val added = input.sources.flatMap { s ->
-            targets.distinct().map { Mapping(s, it, options = options(it), range = ranges[it], setValue = sets[it]?.setValue, perDp = sets[it]?.perDp) }
+            targets.distinct().map { Mapping(s, it, options = options(it), range = ranges[it], perDp = sets[it]?.perDp) }
         }
         val at = if (first < 0) kept.size else first
         return kept.subList(0, at) + added + kept.subList(at, kept.size)
@@ -153,7 +153,6 @@ object Bindings {
         val target: OutputTarget,
         val options: MapOptions?,
         val range: AxisRange? = null,
-        val setValue: SetValue? = null,
         val perDp: Float? = null,
     ) {
         val shape: Pair<How, Int> get() = (options ?: MapOptions()).shape
@@ -161,7 +160,7 @@ object Bindings {
 
     /** [input]'s chips in order, an exact duplicate (same target and How) left out. */
     fun entries(mappings: List<Mapping>, input: BindableInput): List<Entry> =
-        mappings.filter { belongs(it, input) }.map { Entry(it.target, it.options, it.range, it.setValue, it.perDp) }.distinctBy { it.target to it.shape }
+        mappings.filter { belongs(it, input) }.map { Entry(it.target, it.options, it.range, it.perDp) }.distinctBy { it.target to it.shape }
 
     /** The [n]th (from 0) of [input]'s chips of [target]; null = none. */
     fun entry(mappings: List<Mapping>, input: BindableInput, target: OutputTarget, n: Int): Entry? =
@@ -172,7 +171,7 @@ object Bindings {
         val first = mappings.indexOfFirst { belongs(it, input) }
         val kept = mappings.filterNot { belongs(it, input) }
         val list = entries.distinctBy { it.target to it.shape }
-        val added = input.sources.flatMap { s -> list.map { Mapping(s, it.target, options = it.options, range = it.range, setValue = it.setValue, perDp = it.perDp) } }
+        val added = input.sources.flatMap { s -> list.map { Mapping(s, it.target, options = it.options, range = it.range, perDp = it.perDp) } }
         val at = if (first < 0) kept.size else first
         return kept.subList(0, at) + added + kept.subList(at, kept.size)
     }

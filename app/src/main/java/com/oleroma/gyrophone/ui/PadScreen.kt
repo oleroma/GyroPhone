@@ -3280,7 +3280,7 @@ fun PadScreen(
         if (!editing && visuals.swipeLine) SwipeLineOverlay(swipeLines, Modifier.fillMaxSize())
         if (!editing && visuals.moveRulers) MoveRulerOverlay(moveRulers, Modifier.fillMaxSize())
         if (!editing && !covered) {
-            // Set value and Move slides: bars, values and the sliders icon on the buttons (and the touchpad) that have them.
+            // Toggle value chips and Move slides: bars, values and the sliders icon on the buttons (and the touchpad) that have them.
             val valueMarks = remember(ws, w, h, portrait) {
                 val chips = ws.mappings.filter { m ->
                     m.target.valueTarget && m.source.slides && (m.setValue != null || m.source is InputSource.Surface)
@@ -3307,7 +3307,7 @@ fun PadScreen(
         }
         if (!editing && !covered && visuals.positionRuler) {
             // A ruler through the finger on each button whose finger position is mapped (in any layer);
-            // an axis with a Set value chip shows its bar instead (ValueBarsOverlay).
+            // an axis with a Toggle value chip shows its bar instead (ValueBarsOverlay).
             val marks = remember(ws, w, h, portrait) {
                 val setAxes = ws.mappings.filter { it.setValue != null }.mapNotNull { it.source as? InputSource.Finger }.toSet()
                 val axes = ws.mappings.mapNotNull { it.source as? InputSource.Finger }.filter { it.id.isNotEmpty() && it !in setAxes }

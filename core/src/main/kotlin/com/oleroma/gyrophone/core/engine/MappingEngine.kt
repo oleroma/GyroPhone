@@ -13,6 +13,7 @@ import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.AxisRange
 import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.SetValue
+import com.oleroma.gyrophone.core.model.SliderOverrides
 import com.oleroma.gyrophone.core.model.AxisStage
 import com.oleroma.gyrophone.core.model.PhysicalSticks
 import com.oleroma.gyrophone.core.model.StickTuning
@@ -412,8 +413,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /**
      * A value chip's kept value ([Mapping.setValue]): what it sent last, kept once its input let
-     * go until an end ([SetValue]) or, for a sensitivity written into its setting ([committed]),
-     * until the settings come back with it.
+     * go until an end ([SetValue]) or, for a sensitivity saved as a slider override ([committed]),
+     * until the workspace comes back with it.
      */
     private class Kept(var value: Float) {
         /** Its input is still active. */
@@ -434,12 +435,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private val slideBase = HashMap<Mapping, Float>()
 
     /**
-     * A Set value sensitivity chip with no end let go at [value] ([OutputTarget.GyroSens] counts per
-     * degree, [OutputTarget.TouchSens] its sensitivity) on workspace [workspaceIndex] with
-     * [sets] in use (Base first): the app writes it into the nearest setting it drives. Called
-     * under the engine's lock: hand it on, don't edit here.
+     * A Toggle sensitivity chip with no end let go at [value] ([OutputTarget.GyroSens] counts per
+     * degree, [OutputTarget.TouchSens] its sensitivity) on workspace [workspaceIndex]: the app
+     * saves it as the workspace's slider override ([SliderOverrides.put]). Called under the
+     * engine's lock: hand it on, don't edit here.
      */
-    class SetCommit(val mapping: Mapping, val value: Float, val workspaceIndex: Int, val sets: List<Int>)
+    class SetCommit(val mapping: Mapping, val value: Float, val workspaceIndex: Int)
 
     var onSetValue: ((SetCommit) -> Unit)? = null
 
@@ -510,7 +511,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         val k = kept[m]
         if (k == null) {
-            // A Set value sensitivity shows its setting (where it was written) while nothing holds it.
+            // A Toggle sensitivity shows the one in effect (its override, once saved) while nothing holds it.
             val t = m.target
             val r = m.range
             if (r != null && (t is OutputTarget.GyroSens || t is OutputTarget.TouchSens)) {
@@ -522,12 +523,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             return Float.NaN
         }
         if (k.down) {
-            // Just let go: a sensitivity with no end is written into its setting.
+            // Just let go: a sensitivity with no end becomes the workspace's slider override.
             k.down = false; k.liftNs = now; k.armed = false
             val t = m.target
             if (!sv.ends && (t is OutputTarget.GyroSens || t is OutputTarget.TouchSens)) {
                 k.committed = true
-                onSetValue?.invoke(SetCommit(m, k.value, workspaceIndex, setsInUse()))
+                onSetValue?.invoke(SetCommit(m, k.value, workspaceIndex))
             }
         }
         if (!k.committed && timedOut(m, sv, k, now)) {
@@ -552,13 +553,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** The touch group's Set value chips to pad axes: [firingEvents] follows them between snapshots, so a quick tap still sets one. */
     private var keptPadChips: List<Mapping> = emptyList()
-
-    /** The mapping sets in use, Base first, then the layer and the overrides over it. */
-    private fun setsInUse(): List<Int> = buildList {
-        add(MappingSet.BASE)
-        if (layerSet != MappingSet.BASE) add(layerSet)
-        for (o in layerOverrides) if (o != layerSet && o != MappingSet.BASE) add(o)
-    }
 
     /**
      * Ends kept values ([Kept]) whose end came: a timer run out, a tap on a Move chip's button, or
@@ -643,7 +637,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (g.anyGyro) held = g
             if (g.anyTouch) heldTouch = g
         }
-        gyroBase = held?.over(eff.gyro) ?: eff.gyro
+        // Slider overrides lie over everything set, a held button's own included.
+        gyroBase = (held?.over(eff.gyro) ?: eff.gyro).let { if (ws.sliders.isEmpty()) it else SliderOverrides.overGyro(it, ws.sliders) }
         gyroNow = withSens(gyroBase)
         pcHeldGyro = if (heldPhys.isEmpty() || ws.pads.isEmpty()) emptyList() else heldPhys.mapNotNull { b ->
             if (!b.id.startsWith(PhysicalDevice.CONTROLLER.name + ":")) return@mapNotNull null
@@ -652,7 +647,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             // Over the settings in effect with the phone's own held button, if any: the PC's wins while held.
             place to g.over(gyroNow)
         }.distinctBy { it.first }
-        touchBase = heldTouch?.over(eff.touchpad) ?: eff.touchpad
+        touchBase = (heldTouch?.over(eff.touchpad) ?: eff.touchpad).let { if (ws.sliders.isEmpty()) it else SliderOverrides.overTouch(it, ws.sliders) }
         val t = withTouchSens(touchBase)
         if (t != touchpad.settings) touchpad.settings = t
         // Every change of the buttons held or the mappings in use comes through here.
@@ -2138,9 +2133,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** Releases everything and goes back to Base, e.g. when the profile changes or the host disconnects. */
     /**
-     * [p] differs from [profile] only in settings (a Set value written into one, [onSetValue]): its
-     * gyro, touchpad and layer settings and the buttons' own sensitivities go into effect without
-     * letting anything held go. Anything else goes through [profile] as an edit.
+     * [p] differs from [profile] only in the active workspace's slider overrides ([onSetValue]):
+     * they go into effect without letting anything held go. Anything else goes through [profile]
+     * as an edit.
      */
     fun updateSettings(p: Profile) {
         synchronized(lock) {
@@ -2149,11 +2144,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 current = p; applyWorkspace(); return@synchronized
             }
             current = p
-            ws = ws.copy(
-                gyro = loaded.gyro, touchpad = loaded.touchpad, ownSettings = loaded.ownSettings,
-                sets = ws.sets.map { s -> loaded.sets.firstOrNull { it.id == s.id }?.let { s.copy(settings = it.settings) } ?: s },
-                touchControls = ws.touchControls.map { c -> loaded.touchControls.firstOrNull { it.id == c.id }?.let { c.copy(gyro = it.gyro) } ?: c },
-            )
+            ws = ws.copy(sliders = loaded.sliders)
             kept.values.removeIf { it.committed }
             applyLayerSettings()
             refreshSens()

@@ -42,7 +42,7 @@ import kotlin.math.sin
 /**
  * A button (or, [id] "", the workspace touchpad) with value chips that slide or keep a value
  * ([com.oleroma.gyrophone.core.model.SetValue], a Move slide): its rectangle in px (left, top,
- * right, bottom), [round] or not, and whether any chip on it has Set value ([set]: the sliders icon).
+ * right, bottom), [round] or not, and whether any chip on it is a Toggle value chip ([set]: the sliders icon).
  */
 class ValueMark(
     val id: String,
@@ -55,11 +55,11 @@ class ValueMark(
 )
 
 /**
- * Set value on the pad: on each [ValueMark], a sliders icon in its top-left corner when a chip on it
- * has Set value; for each Position chip with Set value, a bar across the button where its value is
+ * Value sliders on the pad: on each [ValueMark], a sliders icon in its top-left corner when a chip on it
+ * is a Toggle value chip; for each Toggle Position chip, a bar across the button where its value is
  * (upright for X, flat for Y, a ring for distance, a needle for angle; the part from 0 lightly
  * filled), clipped by the button's edge; and in its top-right corner one line per chip, "62 · RT
- * 62 %": where the value is in its range (0..100) and what it sends. A chip without Set value shows
+ * 62 %": where the value is in its range (0..100) and what it sends. A chip held (not Toggle) shows
  * only while it is driven. It reads the engine every frame while [active] (a finger is down), else
  * a few times a second, and redraws only when something changed.
  */
@@ -199,7 +199,7 @@ private fun DrawScope.bar(mk: ValueMark, axis: FingerAxis, v: Float, c: Color) {
     }
 }
 
-/** The Set value mark: a small sliders icon (three lines with knobs) with its top-left at [at]. */
+/** The slider (Toggle) mark: a small sliders icon (three lines with knobs) with its top-left at [at]. */
 private fun DrawScope.tuneIcon(at: Offset, c: Color) {
     val s = 14.dp.toPx()
     val stroke = 1.6f.dp.toPx()

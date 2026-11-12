@@ -118,15 +118,22 @@ internal class ChipRange(
     val stored: (Float) -> Float = { it },
 )
 
+/** How Toggle on a value chip ([ChipValue]). */
+private const val VALUE_TOGGLE_HINT = "Keeps the value when you lift your finger, until one of the ends below. A sensitivity " +
+    "with no end stays for good as this workspace's slider override: the settings themselves don't change, and the " +
+    "sensitivity's \"own\" list in Settings shows it (Reset children clears it). The button shows a sliders icon in its top-left corner."
+
+/** How Held on a value chip ([ChipValue]). */
+private const val VALUE_HELD_HINT = "The value counts only while your finger is down, and goes back when you lift it."
+
 /**
- * A value chip's Set value and, on a Move input, its per-dp change ([Mapping.setValue],
- * [Mapping.perDp]) as its dialog shows them: [current] (null = Set value off), [initial] what
- * ticking it starts with; [move]: a Move input's chip (Per dp, and Tap among the ends); the per-dp
- * value stored [perDp] (null = [defaultPerDp]), shown through [shown] and written by [format],
- * its slider up to [max] (shown).
+ * A value chip on a Position or Move input ([Mapping.setValue], [Mapping.perDp]) as its dialog
+ * shows it: How is only Held or Toggle (it keeps the value), [initial] the ends a new Toggle starts
+ * with; [move]: a Move input's chip (Per dp, and Tap among the ends); the per-dp value stored
+ * [perDp] (null = [defaultPerDp]), shown through [shown] and written by [format], its slider up to
+ * [max] (shown).
  */
 internal class ChipValue(
-    val current: SetValue?,
     val initial: SetValue,
     val move: Boolean,
     val perDp: Float?,
@@ -155,7 +162,7 @@ internal fun MappingChipDialog(
     swipe: Boolean,
     analog: Boolean,
     options: MapOptions?,
-    onApply: (Trigger, MapOptions?, Int, AxisRange?, SetValue?, Float?) -> Unit,
+    onApply: (Trigger, MapOptions?, Int, AxisRange?, Float?) -> Unit,
     onRemove: () -> Unit,
     onDismiss: () -> Unit,
     onTargetSettings: (() -> Unit)? = null,
@@ -169,15 +176,9 @@ internal fun MappingChipDialog(
     range: ChipRange? = null,
     /** Saves the chip (as it is mapped now) as a chip preset; null = none. */
     onSavePreset: (() -> Unit)? = null,
-    /** A value chip on a Position or Move input: its Set value, Ends on and Per dp; null = none. */
+    /** A value chip on a Position or Move input: Held or Toggle (keeps the value) and its Per dp; null = none. */
     value: ChipValue? = null,
 ) {
-    var setOn by remember { mutableStateOf(value?.current != null) }
-    val sv0 = value?.current ?: value?.initial ?: SetValue()
-    var svNext by remember { mutableStateOf(sv0.endsOnNextInput) }
-    var svLetGo by remember { mutableStateOf(sv0.endsOnLetGo) }
-    var svAfter by remember { mutableIntStateOf(sv0.endsAfterMs) }
-    var svTap by remember { mutableStateOf(sv0.endsOnTap) }
     var perDp by remember { mutableStateOf(value?.let { it.shown(it.perDp ?: it.defaultPerDp) } ?: 0f) }
     val o0 = options ?: MapOptions()
     val r0 = range?.let { it.current ?: it.initial }
@@ -262,31 +263,6 @@ internal fun MappingChipDialog(
                         )
                         hint("How much the value changes for each dp the finger slides (right or up raises it). A tap changes nothing.")
                     }
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = setOn, onCheckedChange = { setOn = it })
-                        Text("Set value", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                    }
-                    hint(
-                        "Keeps the value when you lift your finger. A sensitivity with no end below is written into the " +
-                            "setting it drives (the button's own, else the layer's, the workspace's or the Defaults'). " +
-                            "The button shows a sliders icon in its top-left corner."
-                    )
-                    if (setOn) {
-                        Text("Ends on", style = MaterialTheme.typography.titleSmall)
-                        checkRow("\"Let go\" mapping (any button mapped to (Let go))", svLetGo) { svLetGo = it }
-                        checkRow("Next input (another key or button pressed)", svNext) { svNext = it }
-                        if (value.move) checkRow("Tap (a tap on this button)", svTap) { svTap = it }
-                        Text(
-                            "Timer: " + if (svAfter == 0) "off" else "%.1f s".format(svAfter / 1000f),
-                            style = MaterialTheme.typography.labelLarge,
-                        )
-                        Slider(
-                            value = svAfter / 1000f,
-                            onValueChange = { svAfter = ((it * 10f).roundToInt() * 100) },
-                            valueRange = 0f..MapOptions.MAX_TOGGLE_MS / 1000f,
-                        )
-                        hint("With an end ticked the value holds until then and goes back after; nothing is saved. With none it stays.")
-                    }
                 }
                 if (wheres.size > 1) {
                     Text(whereTitle ?: "Where", style = MaterialTheme.typography.titleSmall)
@@ -312,16 +288,30 @@ internal fun MappingChipDialog(
                 }
                 // Tap and Release start at a lift: nothing is held, so Held is Once there.
                 // An analog output (a stick, a trigger, mouse motion) follows its input: no Toggle.
-                val hows = How.entries.filter {
+                // A value chip on Position or Move: Held, or Toggle to keep the value.
+                val hows = if (value != null) listOf(How.HELD, How.TOGGLE) else How.entries.filter {
                     (it != How.HELD || t.holds) && (it != How.TOGGLE || !analog || how == How.TOGGLE) && (it != How.REPEAT || !analog || how == How.REPEAT)
                 }
                 val shown = if (how == How.HELD && !t.holds) How.ONCE else how
                 val latch = swipe && t == Trigger.HOLD
                 Text("How", style = MaterialTheme.typography.titleSmall)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    for (x in hows) FilterChip(selected = shown == x, onClick = { how = x }, label = { Text(x.label) })
+                    for (x in hows) FilterChip(selected = shown == x, onClick = {
+                        // A value chip's first Toggle starts with its usual ends (a stick or trigger: Let go).
+                        if (value != null && x == How.TOGGLE && how != How.TOGGLE && !endsOnTap && !endsOnLetGo && !endsOnNext && endsAfter == 0) {
+                            endsOnLetGo = value.initial.endsOnLetGo
+                        }
+                        how = x
+                    }, label = { Text(x.label) })
                 }
-                hint(if (shown == How.TOGGLE && latch) (if (endsOnTap) LATCH_HINT else SWIPE_TOGGLE_HINT) else howHint(shown))
+                hint(
+                    when {
+                        value != null && shown == How.TOGGLE -> VALUE_TOGGLE_HINT
+                        value != null -> VALUE_HELD_HINT
+                        shown == How.TOGGLE && latch -> if (endsOnTap) LATCH_HINT else SWIPE_TOGGLE_HINT
+                        else -> howHint(shown)
+                    }
+                )
                 if (shown == How.REPEAT) {
                     Text("Times", style = MaterialTheme.typography.titleSmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -335,12 +325,14 @@ internal fun MappingChipDialog(
                 }
                 if (shown == How.TOGGLE) {
                     Text("Also ends on", style = MaterialTheme.typography.titleSmall)
-                    checkRow("Tap (touching this " + (if (swipe) "surface" else "button") + " again)", endsOnTap) {
-                        endsOnTap = it
-                    }
+                    // A value chip: a tap on a Position input sets the value, so only Move ends on one; no keystroke to match.
+                    if (value == null || value.move) checkRow(
+                        if (value != null) "Tap (a tap on this button)" else "Tap (touching this " + (if (swipe) "surface" else "button") + " again)",
+                        endsOnTap,
+                    ) { endsOnTap = it }
                     checkRow("\"Let go\" mapping (any button mapped to (Let go))", endsOnLetGo) { endsOnLetGo = it }
                     checkRow("Next input (another key or button pressed and let go, like a sticky Shift)", endsOnNext) { endsOnNext = it }
-                    checkRow("Same keystroke (this key or button pressed by any other mapping)", endsOnSame) { endsOnSame = it }
+                    if (value == null) checkRow("Same keystroke (this key or button pressed by any other mapping)", endsOnSame) { endsOnSame = it }
                     Text(
                         "Timer: " + if (endsAfter == 0) "off" else "%.1f s".format(endsAfter / 1000f),
                         style = MaterialTheme.typography.labelLarge,
@@ -378,19 +370,16 @@ internal fun MappingChipDialog(
                     // At a lift Held and Once are the same short press: kept as Held (no options).
                     how = if (how == How.ONCE && !t.holds) How.HELD else how, cycle = cycle,
                     startDelayMs = start, endDelayMs = end, minHoldMs = minHold,
-                    endsOnTap = toggle && endsOnTap,
+                    endsOnTap = toggle && endsOnTap && (value == null || value.move),
                     endsOnLetGo = toggle && endsOnLetGo,
                     endsAfterMs = if (toggle) endsAfter else 0,
                     endsOnNextInput = toggle && endsOnNext,
-                    endsOnSame = toggle && endsOnSame,
+                    endsOnSame = toggle && endsOnSame && value == null,
                     repeat = if (how == How.REPEAT) repeat else 2,
                 )
                 val r = range?.let { AxisRange(it.stored(rFrom), it.stored(rTo)) }?.takeUnless { it == range.identity }
-                val sv = if (value != null && setOn) SetValue(
-                    endsOnNextInput = svNext, endsOnLetGo = svLetGo, endsAfterMs = svAfter, endsOnTap = value.move && svTap,
-                ) else null
                 val pd = value?.takeIf { it.move }?.let { v -> v.stored(perDp).takeUnless { kotlin.math.abs(it - v.defaultPerDp) < 1e-6f } }
-                onApply(t, o.takeUnless { it.none }, w, r, sv, pd)
+                onApply(t, o.takeUnless { it.none }, w, r, pd)
             }) { Text("Done") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
