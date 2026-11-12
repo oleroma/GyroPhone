@@ -3204,15 +3204,15 @@ private fun chipValue(target: OutputTarget, source: InputSource, e: Bindings.Ent
     }
 }
 
+/** Touch sensitivity typed into a range goes up to this. */
+private const val MAX_TOUCH_SENS_TYPED = 50f
+
 /**
  * The Range of a chip of [target] ([ChipRange]), null for a target that takes none: a game pad
  * axis or trigger in %, Gyro sensitivity in RWS when [g]'s game is known, else counts per
  * degree, its slider up to the Slider cap (App › Gyro).
  */
 @Composable
-/** Touch sensitivity typed into a range goes up to this. */
-private const val MAX_TOUCH_SENS_TYPED = 50f
-
 private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings): ChipRange? {
     val runtime = LocalContext.current.runtime
     val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
