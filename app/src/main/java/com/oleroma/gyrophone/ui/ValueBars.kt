@@ -5,12 +5,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -55,75 +57,142 @@ data class ValueMark(
     /** It has a button frame (the touchpad has none): the bars stay inside it. */
     val framed: Boolean = true,
 )
-
 /**
- * Value sliders on the pad: on each [ValueMark], a sliders icon in its top-left corner when a chip on it
- * is a Toggle value chip; for each Position value chip (Held or Toggle), a bar across the button where its value is
- * (upright for X, flat for Y, a ring for distance, a needle for angle; the part from 0 lightly
- * filled, ticks at its Snap steps), clipped by the button's edge; and in a frame outside the
- * button by its top-right corner ([framePlace]) one line per chip, "62 · RT 62 %": where the value is
- * in its range (0..100) and what it sends (chips sending the same share a line, RWS named when the game is set). A Held chip shows
- * only while it is driven. [bars] false (Touch display switch off): only the icons. It reads the engine every frame while [active] (a finger is down), else
- * a few times a second, and redraws only when something changed.
+ * Value sliders on the pad, read from the engine once for both layers ([ValueFramesBehind] and
+ * [ValueBarsOverlay]): the chips shown on each [ValueMark] with their values, and each mark's lines
+ * ("62 · RT 62 %": where the value is in its range (0..100) and what it sends; chips sending the
+ * same share a line, RWS named when the game is set). The lines sit in the middle of their button,
+ * in place of its label, when they fit there stacked or else on one row ([centered] has those
+ * buttons); otherwise in a frame outside the button by its top-right corner ([framePlace]),
+ * behind the buttons. A Held chip shows only while it is driven. [bars] false (Touch display
+ * switch off): only the sliders icons. It reads the engine every frame while [active] (a finger is
+ * down), else a few times a second, and redraws only when something changed.
  */
+class ValueBars internal constructor(val marks: List<ValueMark>, val bars: Boolean) {
+    internal var frame by mutableLongStateOf(0L)
+    internal val chips = ArrayList<Mapping>()
+    internal val values = FloatArray(2 * MAX_SHOWN)
+    internal val labels = arrayOfNulls<String>(marks.size)
+    internal val laid = arrayOfNulls<TextLayoutResult>(marks.size)
+
+    /** Each mark's lines sit in its middle (stacked or on one row), else outside. */
+    internal val inside = BooleanArray(marks.size)
+
+    /** The buttons whose values sit in their middle: they hide their label meanwhile. */
+    var centered by mutableStateOf(emptySet<String>())
+        internal set
+}
+
+/** The pad's [ValueBars] for [marks], kept reading [engine] while shown. */
 @Composable
-fun ValueBarsOverlay(
-    engine: MappingEngine, marks: List<ValueMark>, color: Color, active: () -> Boolean, bars: Boolean = true, modifier: Modifier = Modifier,
-) {
-    if (marks.isEmpty()) return
-    var frame by remember { mutableLongStateOf(0L) }
+fun rememberValueBars(engine: MappingEngine, marks: List<ValueMark>, active: () -> Boolean, bars: Boolean = true): ValueBars {
+    val vb = remember(marks, bars) { ValueBars(marks, bars) }
+    if (marks.isEmpty()) return vb
     val text = rememberTextMeasurer()
-    val style = TextStyle(color = Color.White, fontSize = 13.sp)
-    // The chips shown, with their input and output, as last read; each mark's label laid out once per change.
-    val chips = remember(marks) { ArrayList<Mapping>() }
-    val values = remember(marks) { FloatArray(2 * MAX_SHOWN) }
-    val labels = remember(marks) { arrayOfNulls<String>(marks.size) }
-    val laid = remember(marks) { arrayOfNulls<TextLayoutResult>(marks.size) }
+    val density = LocalDensity.current
     val isActive by rememberUpdatedState(active)
-    LaunchedEffect(marks) {
+    LaunchedEffect(vb) {
         val readChips = ArrayList<Mapping>()
-        val readValues = FloatArray(values.size)
+        val readValues = FloatArray(vb.values.size)
         val lines = ArrayList<LinePart>()
+        val pad = with(density) { FRAME_PAD_DP.dp.toPx() }
+        val inset = with(density) { FRAME_DP.dp.toPx() }
         var first = true
         while (true) {
             // The first read is at once: a new overlay shows the values from its first frame.
             if (first) first = false else if (isActive()) withFrameMillis { } else delay(IDLE_MS)
             val n = engine.valuesShown(readChips, readValues)
-            var changed = n != chips.size || readChips != chips
-            if (!changed) for (i in 0 until 2 * n) if (readValues[i].toBits() != values[i].toBits()) {
+            var changed = n != vb.chips.size || readChips != vb.chips
+            if (!changed) for (i in 0 until 2 * n) if (readValues[i].toBits() != vb.values[i].toBits()) {
                 changed = true; break
             }
             if (!changed) continue
-            chips.clear(); chips.addAll(readChips)
-            readValues.copyInto(values)
+            vb.chips.clear(); vb.chips.addAll(readChips)
+            readValues.copyInto(vb.values)
             val counts = engine.workspace.gyro.gameCountsPer360
-            for ((k, mk) in marks.withIndex()) {
+            var centered: MutableSet<String>? = null
+            for ((k, mk) in vb.marks.withIndex()) {
                 lines.clear()
-                for (j in chips.indices) {
-                    val m = chips[j]
+                for (j in vb.chips.indices) {
+                    val m = vb.chips[j]
                     if ((MappingProfiles.touchId(m.source) ?: "") != mk.id) continue
                     // Chips at the same place sending the same share one line: "40 · Yaw Pitch 4.50 RWS".
-                    val p = linePart(m, values[2 * j + 1], counts)
+                    val p = linePart(m, vb.values[2 * j + 1], counts)
                     val same = lines.firstOrNull { it.pct == p.pct && it.kind == p.kind && it.value == p.value }
                     if (same == null) lines.add(p) else if (p.names[0] !in same.names) same.names.add(p.names[0])
                 }
-                val label = if (lines.isEmpty()) null else lines.joinToString("\n") { it.text() }
-                if (label != labels[k]) {
-                    labels[k] = label
-                    laid[k] = label?.let { text.measure(it, style) }
+                if (lines.isEmpty()) {
+                    vb.labels[k] = null; vb.laid[k] = null; vb.inside[k] = false
+                    continue
                 }
+                // In the button's middle when it fits there (a round one: in the square inside its circle).
+                val w = mk.right - mk.left
+                val h = mk.bottom - mk.top
+                val room = if (mk.round) 0.7f else 1f
+                val fitW = w * room - 2 * (inset + pad)
+                val fitH = h * room - 2 * (inset + pad)
+                fun fits(l: TextLayoutResult) = l.size.width <= fitW && l.size.height <= fitH
+                val stacked = lines.joinToString("\n") { it.text() }
+                val row = lines.joinToString("   ") { it.text() }
+                var label = stacked
+                var laid = text.measure(stacked, VALUE_STYLE)
+                var mid = mk.framed && vb.bars && fits(laid)
+                if (mk.framed && vb.bars && !mid && lines.size > 1) {
+                    val one = text.measure(row, VALUE_STYLE)
+                    if (fits(one)) { label = row; laid = one; mid = true }
+                }
+                if (label != vb.labels[k] || mid != vb.inside[k]) {
+                    vb.labels[k] = label
+                    vb.laid[k] = laid
+                }
+                vb.inside[k] = mid
+                if (mid) (centered ?: HashSet<String>().also { centered = it }).add(mk.id)
             }
-            frame++
+            val now = centered ?: emptySet()
+            if (now != vb.centered) vb.centered = now
+            vb.frame++
         }
     }
+    return vb
+}
+
+/** The value frames outside their buttons ([ValueBars]): drawn behind the buttons. */
+@Composable
+fun ValueFramesBehind(vb: ValueBars, modifier: Modifier = Modifier) {
+    if (vb.marks.isEmpty() || !vb.bars) return
     Canvas(modifier.graphicsLayer()) {
-        @Suppress("UNUSED_EXPRESSION") frame // redrawn when a value changed
-        for ((k, mk) in marks.withIndex()) {
+        @Suppress("UNUSED_EXPRESSION") vb.frame // redrawn when a value changed
+        for ((k, mk) in vb.marks.withIndex()) {
+            if (!mk.framed || vb.inside[k]) continue
+            val label = vb.laid[k] ?: continue
+            val pad = FRAME_PAD_DP.dp.toPx()
+            val bw = label.size.width + 2 * pad
+            val bh = label.size.height + 2 * pad
+            val (bx, by) = framePlace(mk, bw, bh, size.width, size.height)
+            valueFrame(label, bx, by, bw, bh, pad)
+        }
+    }
+}
+
+/**
+ * The value sliders over the buttons ([ValueBars]): on each mark a sliders icon in its top-left
+ * corner when a chip on it is a Toggle value chip; for each Position value chip (Held or Toggle) a
+ * bar across the button where its value is (upright for X, flat for Y, a ring for distance, a
+ * needle for angle; the part from 0 lightly filled, ticks at its Snap steps), clipped by the
+ * button's edge; the values that fit in the middle of their button; the touchpad's in its
+ * top-right corner.
+ */
+@Composable
+fun ValueBarsOverlay(vb: ValueBars, color: Color, modifier: Modifier = Modifier) {
+    if (vb.marks.isEmpty()) return
+    Canvas(modifier.graphicsLayer()) {
+        @Suppress("UNUSED_EXPRESSION") vb.frame // redrawn when a value changed
+        for ((k, mk) in vb.marks.withIndex()) {
             val w = mk.right - mk.left
             val h = mk.bottom - mk.top
             if (w <= 0f || h <= 0f) continue
             if (mk.set) tuneIcon(Offset(mk.left + 6.dp.toPx(), mk.top + 6.dp.toPx()), color)
-            if (!bars) continue
+            if (!vb.bars) continue
             // The bars, clipped by the button's edge.
             // Inside the button's frame (its 2 dp border; a square's corners rounded by 12 % as the button's).
             val inset = if (mk.framed) FRAME_DP.dp.toPx() else 0f
@@ -137,26 +206,38 @@ fun ValueBarsOverlay(
                 }
             }
             clipPath(clip) {
-                for (j in chips.indices) {
-                    val m = chips[j]
+                for (j in vb.chips.indices) {
+                    val m = vb.chips[j]
                     val src = m.source as? InputSource.Finger ?: continue
                     if (src.id != mk.id) continue
-                    val v = values[2 * j]
+                    val v = vb.values[2 * j]
                     if (v.isNaN()) continue
                     bar(mk, src.axis, v, color, snapTicks(m, src.axis, mk))
                 }
             }
-            val label = laid[k] ?: continue
-            val pad = 6.dp.toPx()
+            val label = vb.laid[k] ?: continue
+            val pad = FRAME_PAD_DP.dp.toPx()
             val bw = label.size.width + 2 * pad
             val bh = label.size.height + 2 * pad
-            val (bx, by) = framePlace(mk, bw, bh, size.width, size.height)
-            drawRoundRect(Color(0xEB141418), Offset(bx, by), Size(bw, bh), CornerRadius(8.dp.toPx()))
-            drawRoundRect(Color(0xFF666666), Offset(bx, by), Size(bw, bh), CornerRadius(8.dp.toPx()), style = Stroke(1.dp.toPx()))
-            drawText(label, topLeft = Offset(bx + pad, by + pad))
+            when {
+                // In place of the button's label.
+                vb.inside[k] -> valueFrame(label, (mk.left + mk.right - bw) / 2, (mk.top + mk.bottom - bh) / 2, bw, bh, pad)
+                !mk.framed -> valueFrame(label, (mk.right - bw - 4.dp.toPx()).coerceAtLeast(0f), mk.top + 4.dp.toPx(), bw, bh, pad)
+            }
         }
     }
 }
+
+/** A value frame: [label] on a dark rounded box [bw] × [bh] at ([bx], [by]). */
+private fun DrawScope.valueFrame(label: TextLayoutResult, bx: Float, by: Float, bw: Float, bh: Float, pad: Float) {
+    drawRoundRect(Color(0xEB141418), Offset(bx, by), Size(bw, bh), CornerRadius(8.dp.toPx()))
+    drawRoundRect(Color(0xFF666666), Offset(bx, by), Size(bw, bh), CornerRadius(8.dp.toPx()), style = Stroke(1.dp.toPx()))
+    drawText(label, topLeft = Offset(bx + pad, by + pad))
+}
+
+/** The values' text, and the padding round it in its frame (dp). */
+private val VALUE_STYLE = TextStyle(color = Color.White, fontSize = 13.sp)
+private const val FRAME_PAD_DP = 6f
 
 /** A button's frame (border) width in dp, as the pad draws it. */
 private const val FRAME_DP = 2f
