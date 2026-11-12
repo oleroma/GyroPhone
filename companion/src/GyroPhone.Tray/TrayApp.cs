@@ -402,6 +402,15 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _refreshing = null;
         }
 
+        // The phone's "Press a key" opened: say once per opening that this PC's keys and buttons count too.
+        if (s.Capturing && !_captureShown)
+        {
+            Balloon("Press a key or button",
+                "Your phone is listening. Press a key, mouse button or controller button on this PC to map it.",
+                ToolTipIcon.Info);
+        }
+        _captureShown = s.Capturing;
+
         if (s.NetworkPublic && !_publicHintShown)
         {
             _publicHintShown = true;

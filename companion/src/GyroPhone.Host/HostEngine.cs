@@ -40,7 +40,9 @@ public sealed record HostSnapshot(
     // "Use PC controller for gyro ratchet": null while the phone's switch is off, "" while no controller is found.
     string? PcController = null,
     // The optional GyroPhone pad driver (driver/) is installed, so the DualSense output can plug.
-    bool DualSenseOk = false)
+    bool DualSenseOk = false,
+    // The phone's "Press a key" is open: this PC's keyboard, mouse and controller are read for it.
+    bool Capturing = false)
 {
     /// <summary>The driver the chosen output needs works: ours for the DualSense, ViGEmBus for the others.</summary>
     public bool OutputDriverOk => OutputMode == OutputMode.DualSense ? DualSenseOk : DriverOk;
@@ -636,6 +638,7 @@ public sealed class HostEngine
             if (!_pcReading) _pcPad.Stop();
             _events.Log("phone stopped listening for a key");
         }
+        _events.StateChanged();
     }
 
     /// <summary>Ends a "Press a key" listen (the session ended, or the phone stopped resending CAPTURE).</summary>
@@ -2041,7 +2044,8 @@ public sealed class HostEngine
             pairingS, prompt, rx, loss, p50, p99, jitter, link, anyDatagram, phones, counters,
             _hostKeyFingerprint, qrS, qrName,
             padGyro ? pcPad.Name ?? "" : null,
-            dualSenseOk);
+            dualSenseOk,
+            _capture.On);
     }
 
     /// <summary>The paired phones for <see cref="Snapshot"/>; null after a change, made again on the next one.</summary>
