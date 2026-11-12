@@ -384,6 +384,8 @@ private fun presetsFor(
     }
     // Roll and pitch move the mouse. A physical control has no gyro of its own here.
     if (!physical) add(MapPreset("Gyro mouse", PresetLevel.BUTTON, toChips(Bindings.gyroMouseMappings(control.id))))
+    // Turning the phone like a wheel steers the left stick.
+    if (!physical) add(MapPreset("Steering wheel", PresetLevel.BUTTON, toChips(Bindings.steeringWheelMappings(control.id))))
 }
 
 /**
