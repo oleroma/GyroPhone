@@ -81,6 +81,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     /// <summary>The port was taken at start-up: gp-bind keeps trying; true once the first 5 s have passed.</summary>
     private volatile bool _bindRetrying, _bindWaitLong;
     private bool _firewallHintShown, _publicHintShown;
+    // The phone's "Press a key" was open at the last refresh (its notification shows once per opening).
+    private bool _captureShown;
     private bool _sessionLocked, _suspended;
     private int _exited;
 
