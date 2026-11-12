@@ -7,8 +7,9 @@ namespace GyroPhone.Host;
 
 /// <summary>
 /// Crash safety for injected input: while anything is held, %LOCALAPPDATA%\GyroPhone\held.json lists
-/// it. Written or deleted only from the watchdog thread when the engine's held-set version changes;
-/// on the next start the listed keys and buttons are released and the file is deleted.
+/// it. Written or deleted by the watchdog's writer thread (at most twice a second) when the engine's
+/// held-set version changes, and once more on exit; on the next start the listed keys and buttons are
+/// released and the file is deleted.
 /// </summary>
 public sealed class HeldKeysMarker
 {
@@ -23,6 +24,13 @@ public sealed class HeldKeysMarker
 
     /// <summary>Writes the held set (or deletes the file when nothing is held) if the version changed.</summary>
     public void Update(int version, ReadOnlySpan<byte> keys, byte mouseButtons)
+    {
+        lock (_lock) UpdateLocked(version, keys, mouseButtons);
+    }
+
+    private readonly object _lock = new();
+
+    private void UpdateLocked(int version, ReadOnlySpan<byte> keys, byte mouseButtons)
     {
         if (version == _writtenVersion) return;
         try
@@ -45,7 +53,7 @@ public sealed class HeldKeysMarker
         }
         catch (IOException)
         {
-            // Retried on the next tick because _writtenVersion is unchanged.
+            // Retried on the next write because _writtenVersion is unchanged.
         }
         catch (UnauthorizedAccessException)
         {

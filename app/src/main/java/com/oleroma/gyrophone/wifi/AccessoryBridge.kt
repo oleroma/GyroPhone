@@ -156,7 +156,8 @@ class AccessoryBridge(context: Context) {
         /** Must match the companion's AoaUsbLink.Manufacturer and Model, and res/xml/accessory_filter.xml. */
         const val MANUFACTURER = "GyroPhone"
         const val MODEL = "GyroPhone Companion"
-        private const val ACTION_PERMISSION = "com.oleroma.gyrophone.USB_ACCESSORY_PERMISSION"
+        /** The USB permission answer; [WifiLink] listens for it to open the cable at once. */
+        const val ACTION_PERMISSION = "com.oleroma.gyrophone.USB_ACCESSORY_PERMISSION"
         private val LOOPBACK: InetAddress = InetAddress.getLoopbackAddress()
 
         fun isOurs(a: UsbAccessory) = a.manufacturer == MANUFACTURER && a.model == MODEL

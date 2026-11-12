@@ -214,7 +214,9 @@ fun WifiLinkSection(stats: LinkStats) = Searchable(
             )
         }
         Text(
-            if (stats.usb) "Over " + (if (stats.usbDirect) "the USB cable" else "USB tethering") + " (Wi-Fi takes over when the cable comes out)"
+            if (stats.hotspot) "Over this phone's hotspot, with the PC joined to it (Wi-Fi takes over when the hotspot goes off)"
+            else if (stats.ethernet) "Over the phone's Ethernet adapter (Wi-Fi takes over when the cable comes out)"
+            else if (stats.usb) "Over " + (if (stats.usbDirect) "the USB cable" else "USB tethering") + " (Wi-Fi takes over when the cable comes out)"
             else "Low-latency Wi-Fi: " + (if (stats.lowLatencyLock == true) "on" else "off") + " (keep GyroPhone on screen)",
             style = MaterialTheme.typography.bodySmall,
         )

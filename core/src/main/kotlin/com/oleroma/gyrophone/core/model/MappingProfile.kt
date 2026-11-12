@@ -63,6 +63,7 @@ object MappingProfiles {
         is InputSource.Gyro -> source.id.ifEmpty { null }
         is InputSource.Tilt -> source.id.ifEmpty { null }
         is InputSource.Shake -> source.id.ifEmpty { null }
+        is InputSource.Finger -> source.id.ifEmpty { null }
         else -> null
     }
 

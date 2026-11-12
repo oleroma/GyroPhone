@@ -8,9 +8,9 @@ using GyroPhone.Protocol;
 namespace GyroPhone.Ui;
 
 /// <summary>
-/// Home: what's wrong (a warning bar per problem, with its fix), then the live stats in four cards
-/// (phone, link, latency with a graph, gamepad with output and pause), and the full status text folded
-/// away under "Details".
+/// Home: what's wrong (a warning bar per problem, with its fix), then three cards (phone, the link's path,
+/// gamepad with output and pause), and the full status text folded away under "Details". Link numbers,
+/// latency and tests are on Performance, measured only while it is open.
 /// </summary>
 internal sealed class HomePage : Page
 {
@@ -19,16 +19,13 @@ internal sealed class HomePage : Page
     private readonly StackPanel _problems = new();
     private string _problemsKey = "\0";
     private readonly Ellipse _phoneDot;
-    private readonly TextBlock _phoneName, _phoneSub, _linkBig, _linkSub, _latBig, _latSub, _padSub, _pcSub;
+    private readonly TextBlock _phoneName, _phoneSub, _linkBig, _linkSub, _padSub, _pcSub;
     private readonly Button _pair;
-    private readonly Sparkline _graph = new() { Margin = new Thickness(0, 10, 0, 0) };
     private readonly Seg<OutputMode> _output;
     private readonly CheckBox _pause;
     private readonly ToggleButton _detailsFold;
     private readonly Border _detailsCard;
     private readonly TextBox _details;
-    private bool _wasConnected;
-    private long _sampledAt;
 
     public override FrameworkElement View => _root;
 
@@ -69,27 +66,11 @@ internal sealed class HomePage : Page
         lb.Children.Add(_linkSub);
         Place(grid, link, 0, 2);
 
-        // Latency
-        var (lat, tb) = Parts.Card("Latency");
-        var latRow = new WrapPanel();
-        _latBig = Parts.Text("", "Big");
-        _latBig.Margin = new Thickness(0, 0, 10, 0);
-        _latSub = Parts.Text("", "Sub");
-        _latSub.VerticalAlignment = VerticalAlignment.Bottom;
-        _latSub.Margin = new Thickness(0, 0, 0, 3);
-        latRow.Children.Add(_latBig);
-        latRow.Children.Add(_latSub);
-        tb.Children.Add(latRow);
-        tb.Children.Add(_graph);
-        var legend = Parts.Text("Last minute: middle (p50) bright, slowest 1% (p99) faint.", "Sub");
-        legend.FontSize = 11.5;
-        tb.Children.Add(legend);
-        Place(grid, lat, 1, 0);
-
         // Gamepad
         var (pad, gb) = Parts.Card("Gamepad");
         _output = new Seg<OutputMode>(app.SetOutputMode, false,
-            ("Xbox 360", OutputMode.Xbox360), ("DualShock 4", OutputMode.DualShock4), ("Off", OutputMode.None));
+            ("Xbox 360", OutputMode.Xbox360), ("DualShock 4", OutputMode.DualShock4), ("DualSense", OutputMode.DualSense),
+            ("Off", OutputMode.None));
         gb.Children.Add(_output.View);
         _padSub = Parts.Text("", "Sub");
         _padSub.Margin = new Thickness(0, 0, 0, 6);
@@ -99,7 +80,7 @@ internal sealed class HomePage : Page
         _pcSub = Parts.Text("", "Sub");
         _pcSub.Margin = new Thickness(0, 6, 0, 0);
         gb.Children.Add(_pcSub);
-        Place(grid, pad, 1, 2);
+        Place(grid, pad, 1, 0);
 
         _root.Children.Add(grid);
 
@@ -153,24 +134,11 @@ internal sealed class HomePage : Page
                 : $"Open GyroPhone on the phone to connect. {pairedText}";
         Parts.Show(_pair, !s.Connected);
 
-        // Link
-        if (s.PhoneLink is { } l && s.Connected)
+        // Link: only which way it goes; its numbers are on Performance.
+        if (s.Connected)
         {
-            bool usb = (l.Flags & LinkInfoFlags.Usb) != 0;
-            _linkBig.Text = usb
-                ? ((l.Flags & LinkInfoFlags.UsbDirect) != 0 ? "USB cable (direct)" : "USB cable (tethering)")
-                : l.Band == 0 ? "Wi‑Fi" : $"Wi‑Fi {l.Band} GHz";
-            var parts = new List<string> { $"{s.RxPerSec:N0}/s received", $"loss {s.LossPermille / 10.0:0.0}%" };
-            if (!usb) parts.Add($"{l.RssiDbm} dBm · {l.LinkMbps:N0} Mbps");
-            parts.Add($"phone sends {l.SendRateHz:N0} Hz");
-            parts.Add($"round trip {l.RttMinUs / 1000.0:0.0} ms");
-            if (!usb) parts.Add((l.Flags & LinkInfoFlags.LowLatencyLockHeld) != 0 ? "low-latency Wi‑Fi on" : "low-latency Wi‑Fi off");
-            _linkSub.Text = string.Join(" · ", parts);
-        }
-        else if (s.Connected)
-        {
-            _linkBig.Text = "Connected";
-            _linkSub.Text = $"{s.RxPerSec:N0}/s received · loss {s.LossPermille / 10.0:0.0}%";
+            _linkBig.Text = _app.LinkPath()?.Text ?? "Connected";
+            _linkSub.Text = "Latency, lost and late packets, and link tests: Performance.";
         }
         else
         {
@@ -178,32 +146,15 @@ internal sealed class HomePage : Page
             _linkSub.Text = v.UsbDirect ? $"USB cable: {v.UsbDirectText}" : "Waiting for the phone on Wi‑Fi.";
         }
 
-        // Latency
-        bool known = s.Connected && s.LatP50Us != HostStatus.Unknown;
-        if (known)
-        {
-            _latBig.Text = $"{s.LatP50Us / 1000.0:0.0} ms";
-            _latSub.Text = $"p50 · p99 {Ms(s.LatP99Us)} · jitter {s.JitterUs / 1000.0:0.00} ms";
-            long now = Environment.TickCount64;
-            if (now - _sampledAt >= 450)
-            {
-                _sampledAt = now;
-                _graph.Add(s.LatP50Us / 1000.0, s.LatP99Us == HostStatus.Unknown ? s.LatP50Us / 1000.0 : s.LatP99Us / 1000.0);
-            }
-        }
-        else
-        {
-            _latBig.Text = "—";
-            _latSub.Text = s.Connected ? "measuring…" : "no phone";
-        }
-        if (s.Connected && !_wasConnected) _graph.Clear();
-        _wasConnected = s.Connected;
-
         // Gamepad
         _output.Set(s.OutputMode);
+        _output.Show(OutputMode.DualSense, s.DualSenseOk || s.OutputMode == OutputMode.DualSense);
         Parts.SetChecked(_pause, s.Paused);
         _padSub.Text = s.OutputMode == OutputMode.None
             ? "No gamepad: the phone sends keyboard and mouse only."
+            : s.OutputMode == OutputMode.DualSense
+                ? !s.DualSenseOk ? "No gamepad: the GyroPhone pad driver isn't installed (driver\\install.cmd), or GyroPhone needs a restart after installing it."
+                : s.PadPlugged ? "Virtual DualSense plugged in · GyroPhone pad driver ok." : "Virtual DualSense plugs in when the phone connects · GyroPhone pad driver ok."
             : !s.DriverOk
                 ? $"No gamepad: {v.PadError ?? "the ViGEmBus driver is missing"}."
                 : s.PadPlugged ? "Virtual pad plugged in · ViGEmBus ok." : "Virtual pad plugs in when the phone connects · ViGEmBus ok.";
@@ -220,8 +171,6 @@ internal sealed class HomePage : Page
             if (t != _details.Text) _details.Text = t;
         }
     }
-
-    private static string Ms(uint us) => us == HostStatus.Unknown ? "–" : $"{us / 1000.0:0.0} ms";
 
     private void ShowProblems(IReadOnlyList<Problem> problems)
     {

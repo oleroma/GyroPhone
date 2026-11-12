@@ -5,6 +5,7 @@ import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.sensor.DirectReportParser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.ByteBuffer
@@ -109,6 +110,42 @@ class GyroAndSensorTest {
         val next = p.parse(buf.array(), 7)
         assertEquals(1, next.size)
         assertEquals(0.6f, next[0].x)
+    }
+
+    @Test fun directChannelParserKnowsTheSlotWrittenNext() {
+        val n = 4
+        val buf = ByteBuffer.allocate(n * DirectReportParser.EVENT_SIZE).order(ByteOrder.LITTLE_ENDIAN)
+        fun put(slot: Int, counter: Int) {
+            val b = slot * DirectReportParser.EVENT_SIZE
+            buf.putInt(b, DirectReportParser.EVENT_SIZE); buf.putInt(b + 4, 7); buf.putInt(b + 8, 4)
+            buf.putInt(b + 12, counter); buf.putLong(b + 16, counter * 1000L)
+        }
+        val p = DirectReportParser(n)
+        assertEquals(-1, p.nextSlot)
+        assertTrue(p.parse(buf.array(), 7).isEmpty())
+        assertEquals(-1, p.nextSlot)
+        put(0, 1); put(1, 2)
+        assertEquals(2, p.parse(buf.array(), 7).size)
+        assertEquals(2, p.nextSlot)
+        assertEquals(2L, p.newestCounter)
+        // Nothing new in the watched slot: the ring need not be read.
+        assertFalse(p.isNew(buf.array(), p.nextSlot))
+        put(2, 3)
+        assertTrue(p.isNew(buf.array(), p.nextSlot))
+        assertEquals(listOf(3L), p.parse(buf.array(), 7).map { it.counter })
+        // Round the ring: slot 3, then slot 0 again.
+        put(3, 4)
+        p.parse(buf.array(), 7)
+        assertEquals(0, p.nextSlot)
+        assertFalse(p.isNew(buf.array(), 0)) // still counter 1
+        put(0, 5)
+        assertTrue(p.isNew(buf.array(), 0))
+        // Only the header is needed to check.
+        val header = ByteArray(buf.capacity())
+        System.arraycopy(buf.array(), 0, header, 0, DirectReportParser.HEADER_SIZE)
+        assertTrue(p.isNew(header, 0))
+        p.reset()
+        assertEquals(-1, p.nextSlot)
     }
 }
 

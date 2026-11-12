@@ -13,12 +13,15 @@ import com.oleroma.gyrophone.core.net.MouseTotals
 import com.oleroma.gyrophone.core.net.OverlayFeed
 import com.oleroma.gyrophone.core.net.PacketType
 import com.oleroma.gyrophone.core.net.PcGyroFeed
+import com.oleroma.gyrophone.core.net.PressStamp
+import com.oleroma.gyrophone.core.net.PressTime
 import com.oleroma.gyrophone.core.net.SendScheduler
 import com.oleroma.gyrophone.core.net.SessionCipher
 import com.oleroma.gyrophone.core.net.StateFrame
 import com.oleroma.gyrophone.core.net.Wire
 import com.oleroma.gyrophone.core.net.WireCodec
 import com.oleroma.gyrophone.core.net.putU64
+import com.oleroma.gyrophone.runtime.WorkHint
 import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -58,8 +61,20 @@ class WifiPump(private val engine: MappingEngine) {
     /** The raw motion for the PC's DualShock 4: MOTION while [MotionFeed.wanted]. */
     @Volatile var motion: MotionFeed? = null
 
+    /** Press and release input times for PRESS_TIME, sent while [pressTimes]. */
+    val pressStamp = PressStamp()
+
+    /** The PC's "Measure buttons" is on (TEST_MODE): a PRESS_TIME follows each STATE with a new press or release. */
+    var pressTimes: Boolean
+        get() = pressStamp.enabled
+        set(v) { pressStamp.enabled = v }
+
     /** The clock offset (host us - phone us, [com.oleroma.gyrophone.core.net.ClockSync]) of this session, or null before a clock sample. */
     @Volatile var clockOffsetUs: Long? = null
+
+    /** The PC runs a Link test (TEST_MODE): STATEs carry fake moving input at the full rate, marked LINK_TEST, instead of the engine's. */
+    @Volatile var linkTest = false
+    private var linkTestTick = 0
 
     /** STATE packets handed to / refused by the socket during the last full second. */
     @Volatile var sentPerSecond = 0
@@ -165,6 +180,7 @@ class WifiPump(private val engine: MappingEngine) {
 
     private fun loop() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
+        val hint = WorkHint.forThisThread()
         while (running) {
             // Inside the rate limit nothing can go out: wait instead of taking a snapshot that
             // would use up a quick tap's edge. Motion keeps accumulating in the engine meanwhile.
@@ -175,6 +191,7 @@ class WifiPump(private val engine: MappingEngine) {
                     continue
                 }
             }
+            val passStart = System.nanoTime()
             // Switch first: switchTo resets the gyro's samples, so the tail below starts from the new session's.
             val t = target
             if (t.session !== cur) {
@@ -199,8 +216,13 @@ class WifiPump(private val engine: MappingEngine) {
             val hz = rateHz
             if (scheduler.rateHz != hz) scheduler.rateHz = hz
 
-            frame.fill(s, totals, engine.gyroActive, hires)
-            frame.gyroExt = hires && gyroSnapshot
+            if (linkTest) {
+                // The engine's input is still drained above but not sent: the PC must never see it mid-test.
+                frame.fillLinkTest(linkTestTick, hires)
+            } else {
+                frame.fill(s, totals, engine.gyroActive, hires)
+                frame.gyroExt = hires && gyroSnapshot
+            }
             val discrete = !frame.discreteEquals(lastSent)
             val dirty = discrete || !frame.totalsEqual(lastSent)
             val kind = scheduler.poll(now, dirty, discrete)
@@ -209,8 +231,10 @@ class WifiPump(private val engine: MappingEngine) {
                 frame.phoneTimeUs = phoneUs().toInt()
                 val stateLen = WireCodec.encodeStatePlain(frame, plain, 0)
                 if (sendSealed(c, WireCodec.stateType(frame), stateLen)) sentCount++ else failedCount++
+                if (discrete && pressStamp.enabled) sendPressTime(c, frame.phoneTimeUs, now)
                 lastSent.copyFrom(frame)
                 scheduler.markSent(now, kind, discrete)
+                if (linkTest) linkTestTick++
             }
             if (now >= nextPingNs) {
                 plain.putU64(0, phoneUs())
@@ -242,12 +266,26 @@ class WifiPump(private val engine: MappingEngine) {
             var wakeAt = minOf(minOf(scheduler.nextDeadline(), nextPingNs), minOf(lastLinkInfoNs + SECOND_NS, engine.touchpadDeadlineNanos()))
             if (ov != null) wakeAt = minOf(wakeAt, nextOverlayNs)
             if (mo != null) wakeAt = minOf(wakeAt, nextMotionNs)
-            val wait = wakeAt - System.nanoTime()
+            val end = System.nanoTime()
+            // The pass is done: how long it took goes to the performance hint.
+            hint?.done(end - passStart, end)
+            val wait = wakeAt - end
             if (wait > 0) LockSupport.parkNanos(wait)
         }
+        hint?.close()
         cur?.let { goodbye(it, exitByeReason) }
         cur = null
         cipher = null
+    }
+
+    /** PRESS_TIME for the STATE sent at phone time [stateUs], when an input edge is waiting. */
+    private fun sendPressTime(c: LiveSession, stateUs: Int, now: Long) {
+        val at = pressStamp.take(now)
+        if (at == 0L) return
+        // The input's time is on the System.nanoTime base; STATE's on elapsed realtime.
+        val eventUs = (at + SystemClock.elapsedRealtimeNanos() - System.nanoTime()) / 1000
+        val n = WireCodec.encodeSealedPlain(PressTime(stateUs, eventUs.toInt()), plain, 0)
+        sendSealed(c, PacketType.PRESS_TIME, n)
     }
 
     /** PAD_GYRO when the switch, the buttons or the toggle epoch changed, else once a second (a lost one comes again). */

@@ -69,7 +69,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
     val wifi = transport == TransportKind.WIFI
 
     val items = listOfNotNull(
-        category(runtime, "pc", "PC connection", if (wifi) "Wi-Fi: pairing, paired and found PCs" else "Bluetooth: pairing and paired PCs", defaultOpen = true) {
+        category(runtime, "pc", "PC", if (wifi) "Wi-Fi: pairing, paired and found PCs" else "Bluetooth: pairing and paired PCs", defaultOpen = true) {
             Searchable("PC connection", "Wi-Fi Bluetooth transport link") {
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     TransportKind.entries.forEachIndexed { i, kind ->
@@ -129,7 +129,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
                 }
             }
         },
-        category(runtime, "gyroPoll", "Gyro poll rate", "How often the app checks the gyro") {
+        category(runtime, "gyroPoll", "Gyro rate", "How often the app checks the gyro") {
             Searchable("Gyro poll rate", "kHz sensor samples delay jitter battery CPU") {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -150,7 +150,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
                 }
             }
         },
-        if (wifi) category(runtime, "pcControllerGyro", "PC controller for gyro ratchet", "Ratchet the gyro from a controller plugged into the PC") {
+        if (wifi) category(runtime, "pcControllerGyro", "PC controller", "Ratchet the gyro from a controller plugged into the PC") {
             Searchable("Use PC controller for gyro ratchet", "controller gamepad plugged PC ratchet toggle gyro Steam Input XInput") {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -185,7 +185,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
         },
     )
     SearchableSettings(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)) {
-        Hint("Long press a category's name to move it.")
+        Hint("Long press a tab to move it.")
         ReorderableSections(runtime, "connection", items)
     }
 }

@@ -2,9 +2,11 @@ package com.oleroma.gyrophone.core.hid
 
 /**
  * When to reconnect the Bluetooth HID host after the link dropped unexpectedly: the last host
- * again after 1, 2, 4 and 8 s, then every 10 s, for about a minute ([DELAYS_MS]). A new connection, a user
- * connect or disconnect and stopping cancel the retries; a link the user ended is never retried.
- * Hosts are named by address. Not thread-safe; the caller serialises the calls.
+ * again after 1, 2 and 4 s ([DELAYS_MS]), then every [STEADY_MS] with no end, so a PC that takes
+ * minutes to reboot or wake is still picked up within seconds (the caller stops when the app is no
+ * longer wanted or the host no longer bonded). A new connection, a user connect or disconnect and
+ * stopping cancel the retries; a link the user ended is never retried. Hosts are named by address.
+ * Not thread-safe; the caller serialises the calls.
  */
 class HostReconnect {
     private var lastHost: String? = null
@@ -23,6 +25,14 @@ class HostReconnect {
         lastHost = address
         userEnded = false
         cancel()
+    }
+
+    /**
+     * The host of an earlier run, tried at start (the stack did not report one): a failed try is
+     * retried like a drop.
+     */
+    fun remembered(address: String) {
+        lastHost = address
     }
 
     /** The user disconnected: the drop that follows is not retried. */
@@ -63,11 +73,7 @@ class HostReconnect {
     }
 
     private fun next(address: String): Long {
-        val delay = DELAYS_MS.getOrNull(attempt)
-        if (delay == null) {
-            cancel()
-            return -1
-        }
+        val delay = DELAYS_MS.getOrNull(attempt) ?: STEADY_MS
         retrying = address
         attempt++
         generation++
@@ -75,7 +81,9 @@ class HostReconnect {
     }
 
     companion object {
-        /** Wait before each attempt, from the drop or the previous failed attempt: about a minute in all. */
-        val DELAYS_MS = longArrayOf(1_000, 2_000, 4_000, 8_000, 10_000, 10_000, 10_000, 10_000)
+        /** Wait before each of the first attempts, from the drop or the previous failed attempt. */
+        val DELAYS_MS = longArrayOf(1_000, 2_000, 4_000)
+        /** Wait before each later attempt, for as long as the drop is retried. */
+        const val STEADY_MS = 5_000L
     }
 }

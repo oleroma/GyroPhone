@@ -13,7 +13,14 @@ public sealed record AuthorizedPhone(string File, PubKeyFile Key);
 /// </summary>
 public sealed class KeyFiles
 {
-    public KeyFiles(string directory) => Directory = directory;
+    public KeyFiles(string directory, int lockedWaitMs = Settings.SettingsStore.DefaultLockedWaitMs)
+    {
+        Directory = directory;
+        LockedWaitMs = lockedWaitMs;
+    }
+
+    /// <summary>How long a host.key another program holds is retried before loading gives up.</summary>
+    public int LockedWaitMs { get; }
 
     public static string DefaultDirectory() => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GyroPhone");
@@ -37,7 +44,7 @@ public sealed class KeyFiles
         {
             try
             {
-                var d = protector.Unprotect(ReadLocked(HostKeyPath));
+                var d = protector.Unprotect(ReadLocked(HostKeyPath, LockedWaitMs));
                 key = P256.FromPrivateScalar(d);
                 CryptographicOperations.ZeroMemory(d);
             }
@@ -74,17 +81,18 @@ public sealed class KeyFiles
     /// Reads a file another program may hold for a moment (a scanner or backup tool at logon). Throws
     /// IOException when it stays locked: a key that is only locked must never be replaced.
     /// </summary>
-    private static byte[] ReadLocked(string path)
+    private static byte[] ReadLocked(string path, int lockedWaitMs)
     {
+        var waited = System.Diagnostics.Stopwatch.StartNew();
         for (int attempt = 1; ; attempt++)
         {
             try
             {
                 return File.ReadAllBytes(path);
             }
-            catch (IOException) when (attempt < 8 && File.Exists(path))
+            catch (IOException) when (waited.ElapsedMilliseconds < lockedWaitMs && File.Exists(path))
             {
-                Thread.Sleep(100 * attempt);
+                Thread.Sleep(Settings.SettingsStore.LockedRetryDelayMs(attempt));
             }
         }
     }

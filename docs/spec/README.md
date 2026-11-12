@@ -32,7 +32,7 @@ The reference phone is a OnePlus 15 (Android 16, no root). The reference PC is O
 |---|---|
 | `core/` | Plain Kotlin, no Android: the data model (profile, workspaces, mappings), the mapping engine, gyro math, HID descriptor and report scheduling, the wire protocol and crypto. Unit tested on the JVM. |
 | `app/` | The Android app: sensors, controller input, Bluetooth HID, the Wi-Fi/USB link, storage, the foreground service and the Compose UI. |
-| `companion/` | The Windows companion in C# (.NET 8): `GyroPhone.Protocol` (wire format, PC gyro math), `GyroPhone.Host` (engine, pairing, sessions, settings), `GyroPhone.Windows` (ViGEm, SendInput, USB, firewall), `GyroPhone.Ui` (WPF windows), `GyroPhone.Tray` (the tray app, overlays, updater, watcher), `GyroPhone.Headless` (console host). |
+| `companion/` | The Windows companion in C# (.NET 8): `GyroPhone.Protocol` (wire format, PC gyro math), `GyroPhone.Host` (engine, pairing, sessions, settings), `GyroPhone.Windows` (ViGEm, SendInput, USB, firewall), `GyroPhone.Ui` (WPF windows), `GyroPhone.Latency` (the latency test's video analyser), `GyroPhone.Tray` (the tray app, overlays, updater, watcher), `GyroPhone.Headless` (console host). |
 | `core/src/test/resources/protocol/v1/` | Golden vectors both sides test against: `wire-v1.json`, `key-v1.json`, `qr-v1.json`, `gyro-math-v1.json`. |
 | `.agents/` | The build, install and merge scripts and the repo's hooks. |
 | `.github/workflows/` | `fallback.yml` (hand-started cloud build) and `cache.yml` (compiles `main` after each push). |
@@ -46,7 +46,7 @@ On the phone:
 3. [Gyro math](phone-gyro-math.md): axes and spaces, sensitivity and real world sensitivity, ratchets and modes, acceleration, inertia, filters.
 4. [Mapping system](phone-mapping.md): inputs, outputs, Where / When / How, layers, touch surfaces, how the engine evaluates and merges.
 5. [Workspaces and inheritance](phone-workspaces.md): the one profile, workspaces, the Defaults, settings and mapping inheritance, storage and migrations.
-6. [Pad UI and edit mode](phone-pad-ui.md): the pad screen, capsules, corners, edit mode, the mapping editor, touch visuals, gyro displays.
+6. [Pad UI and edit mode](phone-pad-ui.md): the pad screen, capsules, ← / → buttons, edit mode, global controls, the mapping editor, touch visuals, gyro displays.
 7. [Settings](phone-settings.md): the Settings page (App and Defaults), the workspace settings page, the Connection page, search and categories.
 8. [Controllers and remapping](phone-controllers.md): attached devices, device presets, the Controller screen, stick and trigger tuning, held-button gyro, PC controller ratchet.
 9. [Volume rocker and black screen](phone-volume-black-screen.md).
@@ -57,11 +57,12 @@ On the PC:
 11. [Virtual devices](pc-virtual-devices.md): the ViGEm pad, SendInput keyboard and mouse, PC gyro mode.
 12. [Overlays](pc-overlays.md): the phone, 3D shape, attitude and bubble overlay windows.
 13. [Install and update](pc-install-update.md): where it lives, self-update, firewall, key swap.
+14. [Latency test](pc-latency-test.md): Measure buttons, and timing the gyro from a slow-motion video.
 
 Shared:
 
-14. [Protocol and pairing](protocol.md): wire v1 byte by byte, code pairing, key pairing, QR pairing, sessions, USB framing.
-15. [Build and release](build-release.md): versions, hooks, PC and cloud builds, publishing.
+15. [Protocol and pairing](protocol.md): wire v1 byte by byte, code pairing, key pairing, QR pairing, sessions, USB framing.
+16. [Build and release](build-release.md): versions, hooks, PC and cloud builds, publishing.
 
 ## Words used here
 
@@ -82,7 +83,6 @@ These came up in design talks and are not in the code. They are listed so nobody
 - Split touch zones and radial menus (Steam Input style).
 - A layers "All" view in the editor.
 - Per-game automatic switching. `Profile.games` and the FOREGROUND packet exist in the model and the wire format, but nothing fills or sends them; game profiles were removed in favour of workspaces.
-- Rumble on the phone. The phone announces the RUMBLE capability and the PC sends RUMBLE, but the phone ignores it.
 - Linux, macOS and Android TV hosts, and an iPhone app.
 - A DualShock-style Bluetooth descriptor with gyro passthrough, and a native Windows Precision Touchpad over Bluetooth.
 - Bluetooth LE HID as a transport.

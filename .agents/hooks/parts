@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Prints the parts this branch changed since it left main, one per line: apk and/or companion.
+# Prints the parts this branch changed since it left main, one per line: apk, companion and/or driver.
 # Usage: parts [<base commit>]; with a base, the parts changed since that commit instead
 # (cache.yml passes the commit main was at before the push).
 # quick-test, build and full-check test, build and check only these parts, so a change to the
 # app doesn't rebuild or reinstall the companion, and the other way around.
 #   apk:       app/, core/ and the Gradle files
 #   companion: companion/, plus the protocol test vectors in core/ that its tests read
+#   driver:    driver/ (the optional GyroPhone pad driver; built on Windows only)
+# Without a base, merges into main made by "agent-merge --unbuilt" (title ending in "(unbuilt)")
+# right before this branch left main count as this branch's changes, so their parts get built now.
 # Docs, media/ and tools/ belong to no part. Any other change (hooks, workflows, ...) prints
-# both, and so does a branch that changed no part, so every build has something to test.
+# all of them, and so does a branch that changed no part, so every build has something to test.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -16,21 +19,28 @@ if [ $# -gt 0 ]; then
 else
   git fetch -q origin main 2>/dev/null || true
   base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
+  # Step back over the unbuilt merges main took in just before this branch left it.
+  while [ -n "$base" ] && git rev-parse -q --verify "$base^2" >/dev/null &&
+    git log -1 --format=%s "$base" | grep -q '(unbuilt)$'; do
+    base="$(git rev-parse "$base^1")"
+  done
 fi
 
-apk=0 companion=0
+apk=0 companion=0 driver=0
 if [ -n "$base" ]; then
   while IFS= read -r f; do
     case "$f" in
       core/src/test/resources/protocol/*) apk=1 companion=1 ;;
       app/* | core/* | gradle/* | gradlew | gradlew.bat | build.gradle.kts | settings.gradle.kts | gradle.properties | keystore/*) apk=1 ;;
       companion/*) companion=1 ;;
+      driver/*) driver=1 ;;
       *.md | media/* | tools/* | .gitignore | .gitattributes) ;;
-      *) apk=1 companion=1 ;;
+      *) apk=1 companion=1 driver=1 ;;
     esac
   done < <(git diff --name-only "$base" HEAD)
 fi
-if [ "$apk$companion" = 00 ]; then apk=1 companion=1; fi
+if [ "$apk$companion$driver" = 000 ]; then apk=1 companion=1 driver=1; fi
 
 if [ "$apk" = 1 ]; then echo apk; fi
 if [ "$companion" = 1 ]; then echo companion; fi
+if [ "$driver" = 1 ]; then echo driver; fi

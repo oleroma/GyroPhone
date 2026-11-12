@@ -158,6 +158,12 @@ internal sealed class Seg<T> where T : notnull
     {
         foreach (var (v, b) in _buttons) if (EqualityComparer<T>.Default.Equals(v, value)) b.IsEnabled = on;
     }
+
+    /// <summary>Shows or hides one option.</summary>
+    public void Show(T value, bool on)
+    {
+        foreach (var (v, b) in _buttons) if (EqualityComparer<T>.Default.Equals(v, value)) Parts.Show(b, on);
+    }
 }
 
 /// <summary>A slider row: name, slider, the value as text. Only moves made by the user call back.</summary>
@@ -170,7 +176,8 @@ internal sealed class SliderRow
 
     public Grid View { get; }
 
-    public SliderRow(string label, double min, double max, double step, Func<double, string> format, Action<double> changed)
+    /// <param name="stacked">The name and value above the slider, for a narrow column.</param>
+    public SliderRow(string label, double min, double max, double step, Func<double, string> format, Action<double> changed, bool stacked = false)
     {
         _format = format;
         _slider = new Slider
@@ -192,6 +199,23 @@ internal sealed class SliderRow
             if (!_setting) changed(Math.Round(e.NewValue / step) * step);
         };
         var g = new Grid { Margin = new Thickness(0, 4, 0, 4) };
+        if (stacked)
+        {
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var top = Parts.Text(label);
+            g.Children.Add(top);
+            Grid.SetColumn(_value, 1);
+            g.Children.Add(_value);
+            Grid.SetRow(_slider, 1);
+            Grid.SetColumnSpan(_slider, 2);
+            _slider.Margin = new Thickness(0, 4, 0, 0);
+            g.Children.Add(_slider);
+            View = g;
+            return;
+        }
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MaxWidth = 260 });
         g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });
@@ -367,4 +391,118 @@ internal sealed class ShortcutBox
     }
 
     private static string KeysText(string keys) => keys.Length > 0 ? keys : "None";
+}
+
+/// <summary>
+/// A pointer's Fire display or Aim display pick: its name, a button showing the picked button that opens a popup
+/// listing None and every button as chips, in two tabs, Keyboard &amp; mouse and Gamepad (opening on the picked
+/// one's). Picking one closes it. As the phone's ButtonPicker.
+/// </summary>
+internal sealed class ButtonPick
+{
+    private static readonly (string Group, (string Label, int Code)[] Choices)[] Groups =
+    [
+        ("Mouse", GyroPhone.Host.LaserFire.MouseChoices),
+        ("Controller", GyroPhone.Host.LaserFire.PadChoices),
+        ("Keyboard", GyroPhone.Host.LaserFire.KeyChoices),
+    ];
+
+    private readonly string _title;
+    private readonly Action<int> _pick;
+    private readonly Button _button;
+    private int _value;
+
+    public FrameworkElement View { get; }
+
+    public ButtonPick(string title, string hint, Action<int> pick)
+    {
+        _title = title;
+        _pick = pick;
+        _button = Parts.Button("None", Open);
+        _button.HorizontalAlignment = HorizontalAlignment.Left;
+        _button.MinWidth = 140;
+        var col = new StackPanel { Margin = new Thickness(0, 4, 0, 4) };
+        col.Children.Add(Parts.Labelled(title, _button));
+        var h = Parts.Text(hint, "Hint");
+        col.Children.Add(h);
+        View = col;
+    }
+
+    /// <summary>The picked button's name: its group and label, or None.</summary>
+    public static string NameOf(int code)
+    {
+        foreach (var (g, list) in Groups)
+            foreach (var (label, c) in list)
+                if (c == code) return $"{g} {label}";
+        return "None";
+    }
+
+    public void Set(int code)
+    {
+        _value = code;
+        _button.Content = NameOf(code);
+    }
+
+    private void Open()
+    {
+        var owner = Window.GetWindow(View);
+        var w = new Window
+        {
+            Title = _title,
+            Owner = owner,
+            Width = 560,
+            Height = 520,
+            ShowInTaskbar = false,
+            ResizeMode = ResizeMode.CanResize,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+        };
+        if (owner != null) w.Icon = owner.Icon;
+        w.SetResourceReference(Window.BackgroundProperty, "BgBrush");
+        w.SetResourceReference(Window.ForegroundProperty, "TextBrush");
+        w.SourceInitialized += (_, _) => Theme.TitleBar(w);
+        // Esc closes it, as a click outside closes the phone's.
+        w.KeyDown += (_, e) => { if (e.Key == Key.Escape) w.Close(); };
+        void Picked(int code)
+        {
+            _pick(code);
+            w.Close();
+        }
+        bool pad = Groups[1].Choices.Any(c => c.Code == _value);
+        var list = new StackPanel();
+        void Fill()
+        {
+            list.Children.Clear();
+            var shown = pad ? new[] { Groups[1] } : new[] { Groups[0], Groups[2] };
+            foreach (var (g, choices) in shown)
+            {
+                var t = Parts.Text(g, "Hint");
+                t.Margin = new Thickness(0, 10, 0, 4);
+                list.Children.Add(t);
+                var seg = new Seg<int>(Picked, true, choices);
+                seg.Set(_value);
+                list.Children.Add(seg.View);
+            }
+        }
+        var tabs = new Seg<bool>(p => { pad = p; Fill(); }, false, ("Keyboard & mouse", false), ("Gamepad", true));
+        tabs.Set(pad);
+        var none = new Seg<int>(Picked, true, ("None", GyroPhone.Host.LaserFire.None));
+        none.Set(_value);
+        none.View.Margin = new Thickness(0, 10, 0, 0);
+        Fill();
+        var top = new StackPanel { Margin = new Thickness(16, 12, 16, 0) };
+        top.Children.Add(tabs.View);
+        top.Children.Add(none.View);
+        var scroll = new ScrollViewer
+        {
+            Content = list,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Margin = new Thickness(16, 0, 16, 12),
+        };
+        var dock = new DockPanel();
+        DockPanel.SetDock(top, Dock.Top);
+        dock.Children.Add(top);
+        dock.Children.Add(scroll);
+        w.Content = dock;
+        w.ShowDialog();
+    }
 }

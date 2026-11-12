@@ -1,16 +1,21 @@
 namespace GyroPhone.Protocol.Mapping;
 
 /// <summary>
-/// The DualShock 4's motion fields: the report timestamp (in 16/3 µs, wrapping), gyro in 1/16 deg/s
-/// and accelerometer in 1/8192 g, in the pad's frame (x right, y out of its face, z toward the player).
+/// The pad's motion fields: the sample's time (<see cref="Clock"/>, in 1/3 µs, wrapping), gyro in
+/// 1/16 deg/s and accelerometer in 1/8192 g, in the pad's frame (x right, y out of its face, z toward
+/// the player). The DualShock 4 and the DualSense share the frame and these units; the DualSense
+/// takes the clock as it is, the DualShock 4 in 16/3 µs (<see cref="Ds4Timestamp"/>).
 /// </summary>
-public readonly record struct Ds4Motion(ushort Timestamp, short Gx, short Gy, short Gz, short Ax, short Ay, short Az)
+public readonly record struct Ds4Motion(uint Clock, short Gx, short Gy, short Gz, short Ax, short Ay, short Az)
 {
+    /// <summary>The DualShock 4's report timestamp: the clock in 16/3 µs, wrapping at 16 bits.</summary>
+    public ushort Ds4Timestamp => (ushort)(Clock >> 4);
+
     /// <summary>Still and flat: no turn, 1 g out of the face.</summary>
     public static readonly Ds4Motion Neutral = new(0, 0, 0, 0, 0, (short)MotionFrame.AccelScale, 0);
 
-    /// <summary>This reading with the gyro at rest (the accelerometer kept), stamped <paramref name="timestamp"/>.</summary>
-    public Ds4Motion Resting(ushort timestamp) => this with { Timestamp = timestamp, Gx = 0, Gy = 0, Gz = 0 };
+    /// <summary>This reading with the gyro at rest (the accelerometer kept), at <paramref name="clock"/>.</summary>
+    public Ds4Motion Resting(uint clock) => this with { Clock = clock, Gx = 0, Gy = 0, Gz = 0 };
 
     public bool Turning => Gx != 0 || Gy != 0 || Gz != 0;
 }
@@ -37,7 +42,7 @@ public static class Ds4Report
         r[6] = (byte)(f.Special & 0x03);
         r[7] = f.Lt;
         r[8] = f.Rt;
-        Le.PutU16(r, 9, m.Timestamp);
+        Le.PutU16(r, 9, m.Ds4Timestamp);
         r[11] = 0xFF;
         Le.PutI16(r, 12, m.Gx);
         Le.PutI16(r, 14, m.Gy);
@@ -59,7 +64,7 @@ public static class Ds4Report
 }
 
 /// <summary>
-/// Turns MOTION packets into the DualShock 4's motion, one reading per new sample, each stamped with
+/// Turns MOTION packets into the pad's motion (DualShock 4 or DualSense), one reading per new sample, each stamped with
 /// its own time so a game adds up the turn exactly. A packet repeats the last few samples: the
 /// newest seq says which are new. Not thread safe (the engine lock).
 /// </summary>
@@ -70,8 +75,7 @@ public sealed class Ds4MotionFeed
 
     private bool _haveSeq;
     private ushort _seq;
-    private uint _stamp;
-    private int _stampRemUs;
+    private uint _clock;
     private long _lastUs = long.MinValue;
 
     /// <summary>The reading the pad shows now.</summary>
@@ -105,7 +109,7 @@ public sealed class Ds4MotionFeed
         for (int i = f.Count - fresh; i < f.Count; i++)
         {
             Advance(f.DtUs[i]);
-            var m = new Ds4Motion((ushort)_stamp,
+            var m = new Ds4Motion(_clock,
                 f.Gyro[i * 3], f.Gyro[i * 3 + 1], f.Gyro[i * 3 + 2],
                 f.Accel[i * 3], f.Accel[i * 3 + 1], f.Accel[i * 3 + 2]);
             into[n++] = m;
@@ -121,7 +125,7 @@ public sealed class Ds4MotionFeed
         long gap = _lastUs == long.MinValue ? 0 : Math.Clamp(nowUs - _lastUs, 0, 1_000_000);
         _lastUs = nowUs;
         Advance((int)gap);
-        Current = Current.Resting((ushort)_stamp);
+        Current = Current.Resting(_clock);
         into[0] = Current;
         return 1;
     }
@@ -134,14 +138,9 @@ public sealed class Ds4MotionFeed
     {
         _haveSeq = false;
         _lastUs = long.MinValue;
-        Current = Ds4Motion.Neutral with { Timestamp = (ushort)_stamp };
+        Current = Ds4Motion.Neutral with { Clock = _clock };
     }
 
-    // The DS4 timestamp counts 16/3 µs.
-    private void Advance(int us)
-    {
-        int t = us * 3 + _stampRemUs;
-        _stamp += (uint)(t / 16);
-        _stampRemUs = t % 16;
-    }
+    // The clock counts 1/3 µs, the DualSense's unit; the DualShock 4's 16/3 µs is every 16th tick.
+    private void Advance(int us) => _clock += (uint)us * 3;
 }
