@@ -317,13 +317,12 @@ private fun DrawScope.framePlace(mk: ValueMark, bw: Float, bh: Float, sw: Float,
 
 /**
  * The ruler ticks of Position chip [m] on [mk] along [axis], as (place 0..1, long) pairs: with a
- * Snap ([Mapping.snap]) one at each step its value lands on (every 2nd, 5th, 10th… when they would
- * sit closer than [MIN_TICK_DP]; every 5th shown one long), else every 10 % (long at 50 %).
+ * Snap one at each of its steps ([MappingEngine.snapSteps], the same the value lands on; every
+ * 2nd, 5th, 10th… when they would sit closer than [MIN_TICK_DP]; every 5th shown one long), else
+ * every 10 % (long at 50 %).
  */
 private fun DrawScope.snapTicks(m: Mapping, axis: FingerAxis, mk: ValueMark): List<Pair<Float, Boolean>> {
-    val step = m.snap?.takeIf { it > 0f }
-    val r = m.range ?: if (m.target is OutputTarget.PadAxis) com.oleroma.gyrophone.core.model.AxisRange(0f, 1f) else null
-    if (step == null || r == null || r.to == r.from) return DEFAULT_TICKS
+    val n = MappingEngine.snapSteps(m) ?: return DEFAULT_TICKS
     val w = mk.right - mk.left
     val h = mk.bottom - mk.top
     val length = when (axis) {
@@ -332,27 +331,18 @@ private fun DrawScope.snapTicks(m: Mapping, axis: FingerAxis, mk: ValueMark): Li
         FingerAxis.DISTANCE -> minOf(w, h) / 2
         FingerAxis.ANGLE -> (minOf(w, h) * PI).toFloat()
     }
-    val span = kotlin.math.abs(r.to - r.from)
-    val spacing = step / span * length
+    val spacing = length / n
     if (spacing <= 0f) return DEFAULT_TICKS
     val min = MIN_TICK_DP.dp.toPx()
-    var n = 1
+    var every = 1
     val thin = intArrayOf(1, 2, 5)
     var k = 0
-    while (spacing * n < min && n < 1_000_000) {
+    while (spacing * every < min && every < n) {
         k++
-        n = thin[k % 3] * pow10(k / 3)
+        every = thin[k % 3] * pow10(k / 3)
     }
-    val lo = minOf(r.from, r.to)
-    val hi = maxOf(r.from, r.to)
-    val first = kotlin.math.ceil(lo / (step * n)).toLong()
-    val last = kotlin.math.floor(hi / (step * n)).toLong()
-    if (last - first > MAX_TICKS) return DEFAULT_TICKS
-    return (first..last).mapNotNull { i ->
-        val p = (i * n * step - r.from) / (r.to - r.from)
-        // The ends are the button's edges: no tick there.
-        if (p <= 0.001f || p >= 0.999f) null else p to (i % 5 == 0L)
-    }
+    // The ends are the button's edges: no tick there.
+    return (1 until n).filter { it % every == 0 }.map { i -> i.toFloat() / n to ((i / every) % 5 == 0) }
 }
 
 private fun pow10(e: Int): Int { var v = 1; repeat(e) { v *= 10 }; return v }
@@ -360,9 +350,8 @@ private fun pow10(e: Int): Int { var v = 1; repeat(e) { v *= 10 }; return v }
 /** Without a Snap: a tick every 10 %, long at 50 %. */
 private val DEFAULT_TICKS = (1..9).map { it / 10f to (it == 5) }
 
-/** Snap ticks closer than this are thinned; past [MAX_TICKS] the plain scale shows. */
+/** Snap ticks closer than this are thinned. */
 private const val MIN_TICK_DP = 6f
-private const val MAX_TICKS = 400L
 
 /**
  * A Position chip's bar on [mk] at its value [v] (0..1) of [axis]: the part from 0 lightly filled,

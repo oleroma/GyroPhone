@@ -279,7 +279,7 @@ internal fun MappingChipDialog(
                         typedRange = 0f..value.snapMax * 10f,
                         typedTitle = "Snap",
                     )
-                    hint("The value goes in steps of this size, and the ruler on the button marks each step. Off: smooth.")
+                    hint("The range is cut into equal steps of about this size, and the value lands on the nearest; the ruler on the button marks each step. Chips on this input with as many steps move together. Off: smooth.")
                 }
                 if (wheres.size > 1) {
                     Text(whereTitle ?: "Where", style = MaterialTheme.typography.titleSmall)

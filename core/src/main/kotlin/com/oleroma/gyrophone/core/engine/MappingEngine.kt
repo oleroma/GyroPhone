@@ -551,15 +551,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     /**
-     * [v] on chip [m]'s Snap ([Mapping.snap]): the nearest whole multiple of it, held to its range
-     * (a pad axis without one: 0..1); [v] as it is with no Snap.
+     * [v] on chip [m]'s Snap ([Mapping.snap]): its range (a pad axis without one: 0..1) cut into a
+     * whole number of equal steps as near the Snap as can be, and [v] on the nearest. Steps count
+     * from the range's start, so chips on one input whose ranges hold the same number of steps
+     * (Yaw 4..8 by 1, Pitch 2..4 by 0.5) move exactly together. [v] as it is with no Snap or range.
      */
     private fun snapped(m: Mapping, v: Float): Float {
-        val step = m.snap?.takeIf { it > 0f } ?: return v
-        val r = m.range ?: if (m.target is OutputTarget.PadAxis) UNIT_RANGE else null
-        val mag = kotlin.math.round(abs(v) / step) * step
-        val held = if (r == null) mag else mag.coerceIn(min(r.from, r.to), max(r.from, r.to))
-        return if (v < 0f) -held else held
+        val n = snapSteps(m) ?: return v
+        val r = m.range ?: UNIT_RANGE
+        val p = ((abs(v) - r.from) / (r.to - r.from)).coerceIn(0f, 1f)
+        val out = r.of(kotlin.math.round(p * n) / n)
+        return if (v < 0f) -out else out
     }
 
     /** Kept value [k] of [m] ends now by its timer or a tap on its Move button. */
@@ -3507,6 +3509,18 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         const val MIN_TOUCH_SENS_CHIP = 0f
         const val MAX_TOUCH_SENS_CHIP = 100f
         private val UNIT_RANGE = AxisRange(0f, 1f)
+
+        /**
+         * How many equal steps chip [m]'s Snap cuts its range into (at least 1); null = no Snap (or
+         * no range to cut). The ruler's ticks and the engine's values both use it.
+         */
+        fun snapSteps(m: Mapping): Int? {
+            val step = m.snap?.takeIf { it > 0f } ?: return null
+            val r = m.range ?: if (m.target is OutputTarget.PadAxis) UNIT_RANGE else return null
+            val span = abs(r.to - r.from)
+            if (span <= 0f) return null
+            return kotlin.math.round(span / step).toInt().coerceIn(1, 10_000)
+        }
 
         /** [pressOrder]'s prefix of a physical key or button ([HeldButton]). */
         private const val PHYS = HeldButton.GYRO_ID
