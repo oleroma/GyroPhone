@@ -61,7 +61,7 @@ enum class MouseMotion(val label: String) {
  */
 @Serializable
 enum class FingerAxis(val label: String, val roundOnly: Boolean = false) {
-    X("Finger X"), Y("Finger Y"), DISTANCE("Finger distance", roundOnly = true), ANGLE("Finger angle", roundOnly = true),
+    X("Position X"), Y("Position Y"), DISTANCE("Position distance", roundOnly = true), ANGLE("Position angle", roundOnly = true),
 }
 
 /**
@@ -511,6 +511,15 @@ sealed interface OutputTarget {
     @SerialName("gyro_sens")
     data class GyroSens(val axis: MotionAxis = MotionAxis.NONE) : OutputTarget
 
+    /**
+     * Touch sensitivity: the touchpad's Move sensitivity ([TouchpadSettings.sensitivity]; [axis]
+     * null = every Move, X / Y = the one-finger Move X / Y) from the source's value, through the
+     * chip's range, like [GyroSens].
+     */
+    @Serializable
+    @SerialName("touch_sens")
+    data class TouchSens(val axis: StickAxis? = null) : OutputTarget
+
     /** Does nothing: in a set used as an override, it stops an input falling through to the set below. */
     @Serializable
     @SerialName("nothing")
@@ -548,14 +557,73 @@ data class Mapping(
     val options: MapOptions? = null,
     /** An analog chip's output range ([AxisRange]); null = the input's value as it is. */
     val range: AxisRange? = null,
+    /**
+     * A Move value chip's change per dp the finger slides, in its output's unit (as [range]);
+     * null = the default ([SetValue.defaultPerDp]).
+     */
+    val perDp: Float? = null,
 ) {
     // The engine looks mappings up in hash maps on every snapshot: the hash of all its parts is
     // worked out once, as it never changes. Equal mappings still have equal hashes.
     @Transient
-    private val hash: Int = java.util.Objects.hash(source, target, set, options, range)
+    private val hash: Int = java.util.Objects.hash(source, target, set, options, range, perDp)
+
+    /**
+     * A value chip on a Position or Move input with How Toggle keeps its value once its input lets
+     * go ([SetValue]), until one of its Toggle ends; null = it does not.
+     */
+    @Transient
+    val setValue: SetValue? = options?.takeIf { it.mode == How.TOGGLE && target.valueTarget && source.slides }?.let {
+        SetValue(it.endsOnNextInput, it.endsOnLetGo, it.endsAfterMs, it.endsOnTap)
+    }
 
     override fun hashCode(): Int = hash
 }
+
+/**
+ * A kept value of a value chip ([Mapping.setValue]: a game pad axis or trigger, Gyro or Touch
+ * sensitivity, on a Position or Move input, with How Toggle): it keeps the value its input gave
+ * it after the finger lifts. With no end ticked, a sensitivity becomes the workspace's slider
+ * override ([SliderOverride], saved); a pad axis stays held. It ends (Toggle's "Also ends on") on [endsOnNextInput] (another key, mouse
+ * or pad button pressed), [endsOnLetGo] (a [OutputTarget.LetGo] firing), [endsAfterMs] (a timer
+ * from the lift; 0 = none) or [endsOnTap] (a tap on its button; Move only, since a tap on a
+ * Position input sets the value). Then a sensitivity goes back to its setting, a pad axis to rest.
+ */
+@Serializable
+data class SetValue(
+    val endsOnNextInput: Boolean = false,
+    val endsOnLetGo: Boolean = false,
+    val endsAfterMs: Int = 0,
+    val endsOnTap: Boolean = false,
+) {
+    /** Some end is ticked: the value is held until then, never saved. */
+    val ends: Boolean get() = endsOnNextInput || endsOnLetGo || endsAfterMs > 0 || endsOnTap
+
+    companion object {
+        /** A value chip to [t] first made a Toggle: sensitivities stay; pad axes end on a Let go. */
+        fun initial(t: OutputTarget): SetValue = SetValue(endsOnLetGo = t is OutputTarget.PadAxis)
+
+        /** A Move slide this long (dp) covers a chip's whole range by default (a stick's: from centre to full, as a floating stick). */
+        const val FULL_SLIDE_DP = 300f
+        const val STICK_FULL_DP = 40f
+
+        /** The default per-dp change of a Move chip to [t] over [range] (its output's unit). */
+        fun defaultPerDp(t: OutputTarget, range: AxisRange?): Float {
+            if (t is OutputTarget.PadAxis && !t.axis.isTrigger) return 1f / STICK_FULL_DP
+            val span = range?.let { kotlin.math.abs(it.to - it.from) } ?: 1f
+            return span / FULL_SLIDE_DP
+        }
+    }
+}
+
+/** A chip's output that takes a value and can keep it (How Toggle on Position or Move): a pad axis or trigger, Gyro or Touch sensitivity. */
+val OutputTarget.valueTarget: Boolean
+    get() = this is OutputTarget.PadAxis || this is OutputTarget.GyroSens || this is OutputTarget.TouchSens
+
+/** A Position or Move input: one a value chip can slide and Set value works on. */
+val InputSource.slides: Boolean
+    get() = this is InputSource.Finger ||
+        (this is InputSource.Surface && (input == SurfaceInput.MOTION_X || input == SurfaceInput.MOTION_Y))
 
 /**
  * How a mapping's output follows its activations ("How" in the editor): HELD for as long as the

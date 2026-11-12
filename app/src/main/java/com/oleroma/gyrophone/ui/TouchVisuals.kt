@@ -9,8 +9,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
@@ -27,20 +25,7 @@ import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.engine.SwipeGuide
 import com.oleroma.gyrophone.core.engine.Touchpad
 import com.oleroma.gyrophone.core.model.Direction
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.oleroma.gyrophone.core.model.Describe
-import com.oleroma.gyrophone.core.model.FingerAxis
-import com.oleroma.gyrophone.core.model.FingerAxisSettings
-import com.oleroma.gyrophone.core.model.GameSens
-import com.oleroma.gyrophone.core.model.OutputTarget
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.serialization.Serializable
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -66,12 +51,10 @@ data class TouchVisuals(
     val liveMappings: Boolean = true,
     val swipeLine: Boolean = true,
     val moveRulers: Boolean = true,
-    /** A ruler through the finger on a button whose finger position is mapped, with the values it sends ([PositionRulerOverlay]). */
+    /** Sliders on buttons: the fill bars of Position value chips and the values chips send ([ValueBarsOverlay]). */
     val positionRuler: Boolean = true,
-    /** The position ruler's colour (ARGB). */
+    /** The sliders' colour (ARGB). */
     val rulerColor: Long = 0xFFFF9800,
-    /** The values show in the button's top-right corner instead of above the finger. */
-    val rulerValueInCorner: Boolean = false,
     /** Outlines just inside the screen's edge that sway as the phone turns. */
     val gyroEdge: Boolean = false,
     /** Moved by tilt against gravity (stays while tilted) instead of by turning (springs back). */
@@ -556,182 +539,5 @@ fun MoveRulerOverlay(rulers: MoveRulers, modifier: Modifier = Modifier) {
     Canvas(modifier.graphicsLayer()) {
         @Suppress("UNUSED_EXPRESSION") frame // redraw each frame
         rulers.draw(this, SystemClock.uptimeMillis(), density)
-    }
-}
-
-/**
- * A button whose finger position is mapped ([com.oleroma.gyrophone.core.model.InputSource.Finger]):
- * [id], its rectangle in px (left, top, right, bottom), [round] or not, and the settings
- * (deadzones) of each finger input it maps ([axes]).
- */
-class FingerMark(
-    val id: String,
-    val left: Float,
-    val top: Float,
-    val right: Float,
-    val bottom: Float,
-    val round: Boolean,
-    val axes: List<FingerAxisSettings>,
-)
-
-/**
- * The position ruler: while a finger is on a [FingerMark] button, a strip through the finger for
- * each finger input it maps (Finger X across, Y up, distance from the centre out through the
- * finger, angle as a ring round it), clear in the input's start deadzone, a gradient to full
- * [color] at its end deadzone; and a label with what each of its finger chips sends now, above the
- * finger or, [inCorner], in the button's top-right corner. It follows the fingers frame by frame
- * only while [active] (a finger is on some button; watched outside composition), redrawing when a
- * finger or a value moved.
- */
-@Composable
-fun PositionRulerOverlay(
-    engine: MappingEngine, marks: List<FingerMark>, color: Color, inCorner: Boolean, active: () -> Boolean, modifier: Modifier = Modifier,
-) {
-    if (marks.isEmpty()) return
-    var frame by remember { mutableLongStateOf(0L) }
-    val text = rememberTextMeasurer()
-    val style = TextStyle(color = Color.White, fontSize = 13.sp)
-    val ids = remember(marks) { marks.map { it.id } }
-    // Each mark's finger (x, y, NaN while none) and label, as last read; the label laid out once per change.
-    val at = remember(marks) { FloatArray(marks.size * 2) { Float.NaN } }
-    val labels = remember(marks) { arrayOfNulls<String>(marks.size) }
-    val laid = remember(marks) { arrayOfNulls<TextLayoutResult>(marks.size) }
-    val isActive by rememberUpdatedState(active)
-    LaunchedEffect(marks) {
-        val now = FloatArray(at.size)
-        val inUse = ArrayList<com.oleroma.gyrophone.core.model.Mapping>()
-        val values = FloatArray(MAX_RULER_VALUES)
-        val lines = ArrayList<String>()
-        snapshotFlow { isActive() }.collectLatest { on ->
-            if (!on) {
-                // No finger on a button: nothing to show (cleared once).
-                if (!at.all { it.isNaN() }) {
-                    at.fill(Float.NaN)
-                    frame++
-                }
-                return@collectLatest
-            }
-            while (true) withFrameMillis {
-                // Every finger and value under one engine lock.
-                engine.fingerRuler(ids, now, inUse, values)
-                var moved = false
-                for (i in now.indices) if (now[i] != at[i] && !(now[i].isNaN() && at[i].isNaN())) moved = true
-                now.copyInto(at)
-                val counts = engine.workspace.gyro.gameCountsPer360
-                for ((k, m) in marks.withIndex()) {
-                    if (at[2 * k].isNaN()) continue
-                    // What each of its finger chips sends now: the label laid out again only when it changed.
-                    lines.clear()
-                    for (j in inUse.indices) {
-                        val mp = inUse[j]
-                        if ((mp.source as com.oleroma.gyrophone.core.model.InputSource.Finger).id != m.id) continue
-                        val v = values[j]
-                        val out = mp.range?.of(v) ?: v
-                        val line = Describe.shortTarget(mp.target) + " " + when (mp.target) {
-                            is OutputTarget.GyroSens -> if (counts > 0f) "%.2f".format(GameSens.rws(out, counts)) else "%.1f".format(out)
-                            else -> "%.0f %%".format(out * 100)
-                        }
-                        if (line !in lines) lines.add(line)
-                    }
-                    val label = if (lines.isEmpty()) null else lines.joinToString("\n")
-                    if (label != labels[k]) {
-                        labels[k] = label
-                        laid[k] = label?.let { text.measure(it, style) }
-                        moved = true
-                    }
-                }
-                if (moved) frame++
-            }
-        }
-    }
-    // Its own layer: following a finger leaves the gyro displays under it alone.
-    Canvas(modifier.graphicsLayer()) {
-        @Suppress("UNUSED_EXPRESSION") frame // redrawn when a finger or a value moved
-        for ((k, m) in marks.withIndex()) {
-            val x = at[2 * k]
-            val y = at[2 * k + 1]
-            if (x.isNaN()) continue
-            val w = m.right - m.left
-            val h = m.bottom - m.top
-            val fx = m.left + x * w
-            val fy = m.bottom - y * h
-            val cx = (m.left + m.right) / 2
-            val cy = (m.top + m.bottom) / 2
-            val r = minOf(w, h) / 2
-            for (a in m.axes) when (a.axis) {
-                FingerAxis.X -> strip(Offset(m.left, fy), Offset(m.right, fy), a, color)
-                FingerAxis.Y -> strip(Offset(fx, m.bottom), Offset(fx, m.top), a, color)
-                FingerAxis.DISTANCE -> if (m.round) {
-                    val d = hypot(fx - cx, fy - cy)
-                    val ux = if (d > 0.5f) (fx - cx) / d else 0f
-                    val uy = if (d > 0.5f) (fy - cy) / d else -1f
-                    strip(Offset(cx, cy), Offset(cx + ux * r, cy + uy * r), a, color)
-                }
-                FingerAxis.ANGLE -> if (m.round) ring(Offset(cx, cy), r + 9.dp.toPx(), a, color)
-            }
-            drawCircle(Color.Black, 6.dp.toPx(), Offset(fx, fy))
-            drawCircle(Color.White, 4.dp.toPx(), Offset(fx, fy))
-            val label = laid[k] ?: continue
-            val pad = 6.dp.toPx()
-            val bw = label.size.width + 2 * pad
-            val bh = label.size.height + 2 * pad
-            val bx: Float
-            val by: Float
-            if (inCorner) {
-                bx = m.right - bw - pad; by = m.top + pad
-            } else {
-                bx = (fx - bw / 2).coerceIn(0f, (size.width - bw).coerceAtLeast(0f))
-                by = (fy - 34.dp.toPx() - bh).coerceAtLeast(0f)
-            }
-            drawRoundRect(Color(0xEB141418), Offset(bx, by), Size(bw, bh), CornerRadius(8.dp.toPx()))
-            drawRoundRect(Color(0xFF666666), Offset(bx, by), Size(bw, bh), CornerRadius(8.dp.toPx()), style = Stroke(1.dp.toPx()))
-            drawText(label, topLeft = Offset(bx + pad, by + pad))
-        }
-    }
-}
-
-/** At most this many finger mappings' values are shown by the position ruler at once. */
-private const val MAX_RULER_VALUES = 32
-
-/** A ruler strip from [from] (input 0) to [to] (input 1): clear before [a]'s start, a gradient to full [c] at its end. */
-private fun DrawScope.strip(from: Offset, to: Offset, a: FingerAxisSettings, c: Color) {
-    val s = a.start.coerceIn(0f, 1f)
-    val e = maxOf(s, a.end.coerceIn(0f, 1f))
-    val brush = Brush.linearGradient(
-        0f to Color.Transparent, s to Color.Transparent, s to c.copy(alpha = c.alpha * 0.08f), e to c, 1f to c,
-        start = from, end = to,
-    )
-    val width = 14.dp.toPx()
-    drawLine(brush, from, to, width, StrokeCap.Round)
-    drawLine(c.copy(alpha = c.alpha * 0.5f), from, to, 1.dp.toPx(), StrokeCap.Round)
-    // Ticks across the strip where the deadzones end.
-    val len = hypot(to.x - from.x, to.y - from.y)
-    if (len <= 0f) return
-    val nx = -(to.y - from.y) / len * width
-    val ny = (to.x - from.x) / len * width
-    for (f in listOf(s, e)) if (f > 0f && f < 1f) {
-        val p = Offset(from.x + (to.x - from.x) * f, from.y + (to.y - from.y) * f)
-        drawLine(c.copy(alpha = c.alpha * 0.7f), Offset(p.x - nx, p.y - ny), Offset(p.x + nx, p.y + ny), 2.dp.toPx())
-    }
-}
-
-/** The angle ruler: a ring of radius [r] round [centre], 0 at the top going clockwise, shaded as [strip]. */
-private fun DrawScope.ring(centre: Offset, r: Float, a: FingerAxisSettings, c: Color) {
-    val s = a.start.coerceIn(0f, 1f)
-    val e = maxOf(s, a.end.coerceIn(0f, 1f))
-    val n = 72
-    val width = 8.dp.toPx()
-    for (i in 0 until n) {
-        val t = (i + 0.5f) / n
-        val k = when {
-            t < s -> 0f
-            t >= e -> 1f
-            else -> 0.08f + 0.92f * (t - s) / (e - s)
-        }
-        if (k <= 0f) continue
-        drawArc(
-            c.copy(alpha = c.alpha * k), -90f + i * 360f / n, 360f / n + 0.6f, false,
-            Offset(centre.x - r, centre.y - r), Size(2 * r, 2 * r), style = Stroke(width),
-        )
     }
 }

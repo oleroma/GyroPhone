@@ -91,11 +91,20 @@ object Describe {
         OutputTarget.NoOutput -> "Nothing (blocks the layer below)"
         is OutputTarget.Off -> "Nothing instead of the inherited " + shortTarget(t.of)
         is OutputTarget.GyroSens -> gyroSens(t)
+        is OutputTarget.TouchSens -> touchSens(t)
     }
 
     /** "Gyro sensitivity" or "Gyro sensitivity, yaw". */
     fun gyroSens(t: OutputTarget.GyroSens): String =
         "Gyro sensitivity" + if (t.axis == MotionAxis.NONE) "" else ", " + t.axis.label.lowercase()
+
+    /** "Touch sensitivity" or "Touch sensitivity, Move X". */
+    fun touchSens(t: OutputTarget.TouchSens): String =
+        "Touch sensitivity" + when (t.axis) {
+            null -> ""
+            StickAxis.X -> ", Move X"
+            StickAxis.Y -> ", Move Y"
+        }
 
     /** The "Layers" picker group: each action with no set yet (set -1, picked next), and Nothing. */
     val layerTargets: List<OutputTarget> = listOf(
@@ -210,6 +219,11 @@ object Describe {
         OutputTarget.NoOutput -> "Nothing"
         is OutputTarget.Off -> "Nothing (" + shortTarget(t.of) + ")"
         is OutputTarget.GyroSens -> "Sens" + if (t.axis == MotionAxis.NONE) "" else " " + t.axis.label.lowercase()
+        is OutputTarget.TouchSens -> "Touch sens" + when (t.axis) {
+            null -> ""
+            StickAxis.X -> " X"
+            StickAxis.Y -> " Y"
+        }
     }
 
     private val keyboardOrder: List<Int> = buildList {
@@ -249,6 +263,7 @@ object Describe {
             MotionAxis.shown.map { OutputTarget.GyroPauseAxis(it) } +
             OutputTarget.GyroToggle + OutputTarget.GyroSens() +
             MotionAxis.shown.map { OutputTarget.GyroSens(it) },
+        "Touch" to listOf(OutputTarget.TouchSens(), OutputTarget.TouchSens(StickAxis.X), OutputTarget.TouchSens(StickAxis.Y)),
         "Phone" to listOf(
             OutputTarget.Haptic(held = false),
             OutputTarget.Haptic(held = true),
@@ -282,12 +297,12 @@ object Describe {
         // Haptics follow any input.
         val allowed: (OutputTarget) -> Boolean = when {
             mouseMotion -> { t -> t is OutputTarget.MouseAxis }
-            swipe -> { t -> t is OutputTarget.MouseAxis || t is OutputTarget.PadAxis || isHaptic(t) }
-            analog -> { t -> t is OutputTarget.PadAxis || t is OutputTarget.GyroSens || isHaptic(t) }
+            swipe -> { t -> t is OutputTarget.MouseAxis || t.valueTarget || isHaptic(t) }
+            analog -> { t -> t.valueTarget || isHaptic(t) }
             else -> { t -> t !is OutputTarget.MouseAxis }
         }
         val groups = targetGroups.map { (name, list) -> name to list.filter(allowed) }.filter { it.second.isNotEmpty() }
-        return if (extra.isEmpty()) groups else listOf("Touchpad" to extra) + groups
+        return if (extra.isEmpty()) groups else listOf("Presets" to extra) + groups
     }
 
     /** How a key target's [mode] reads after its name; nothing for a plain held key. */
