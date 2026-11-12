@@ -457,6 +457,8 @@ class GamepadRuntime(context: Context) {
 
     /** [setOrientation] with [up], the world's up in the screen's frame (right, up, toward the player). */
     private fun applyOrientation(up: FloatArray, granular: Boolean) {
+        // Lying flat, sideways tilt (a steering wheel) takes the way the phone points now as straight.
+        tiltShake.straighten()
         val axis = if (granular) YawAxis.CUSTOM else YawAxis.nearest(up)
         val before = _activeProfile.value
         val index = _workspaceIndex.value
@@ -562,7 +564,14 @@ class GamepadRuntime(context: Context) {
     private val upNow = FloatArray(3)
 
     /** Some gyro display holds its heading to north (and so needs the magnetometer). */
-    private val needsCompass: Boolean get() = (!visualsCovered && gyroFeeds.any { it.display.needsCompass }) || wifi.overlay.compassWanted
+    private val needsCompass: Boolean get() = (!visualsCovered && gyroFeeds.any { it.display.needsCompass }) || wifi.overlay.compassWanted ||
+        (engine.motionMapped && tiltCompassOn())
+
+    /** Sideways tilt may use the compass lying flat: the workspace or one of its layers turns it on. */
+    private fun tiltCompassOn(): Boolean {
+        val ws = _activeProfile.value.workspace(_workspaceIndex.value)
+        return ws.gyro.tiltCompass || ws.sets.any { it.settings?.gyro?.tiltCompass == true }
+    }
 
     /** The gyro axes moving the mouse now ([MappingEngine.gyroAxes]), for the ratchet ring and the edge's tint. */
     @Volatile var gyroLiveAxes = 0
@@ -1102,7 +1111,7 @@ class GamepadRuntime(context: Context) {
     }
 
     private val tiltShake = TiltShake()
-    private var accel: AccelSource? = null
+    @Volatile private var accel: AccelSource? = null
 
     /**
      * Reads the accelerometer while input is on and a tilt or shake mapping is in the workspace or a
@@ -1131,6 +1140,7 @@ class GamepadRuntime(context: Context) {
     private fun onMagnetSample(x: Float, y: Float, z: Float) {
         syncYawAxis()
         // The same axes as the gyro's: right, up and toward the player in the phone's frame.
+        if (engine.motionMapped) tiltShake.north(x, y, z)
         val d = displayMotion(x, y, z)
         if (!visualsCovered) for (f in gyroFeeds) f.north(d.pitch, -d.yaw, -d.roll)
         if (wifi.overlay.compassWanted) wifi.overlay.north(d.pitch, -d.yaw, -d.roll)
@@ -1858,6 +1868,11 @@ class GamepadRuntime(context: Context) {
         }
         val bx = x - biasX; val by = y - biasY; val bz = z - biasZ
         val allowed = inputAllowed && !measuring
+        // Tilt turns with the gyro between accelerometer samples: quick, and steady when the screen is tapped.
+        if (accel != null && engine.motionMapped) {
+            tiltShake.gyro(bx, by, bz, ts)
+            if (inputAllowed) engine.setTilt(tiltShake.x, tiltShake.y)
+        }
         val axes = if (allowed) engine.gyroAxes else 0
         val active = axes != 0
         val v = vis

@@ -462,7 +462,7 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
     }
 }
 
-/** The ⚙ of sideways ([x]) or forward and back tilt at [level]: its range and deadzone, its own or the shared ones. */
+/** The ⚙ of sideways ([x]) or forward and back tilt at [level]: its range and deadzone (and sideways, the compass lying flat), its own or the shared ones. */
 private fun tiltGear(level: WorkspaceLevel, key: String, x: Boolean): @Composable () -> Unit = ui {
     val g = level.ws.gyro
     val what = if (x) "Sideways tilt" else "Forward and back tilt"
@@ -486,6 +486,13 @@ private fun tiltGear(level: WorkspaceLevel, key: String, x: Boolean): @Composabl
             children = level.kids(dzKey),
             hint = "Leaning less than this counts as level. Unset, the shared Tilt deadzone in Settings.",
         ) { v -> level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXDeadzoneDeg = v) else it.gyro.copy(tiltYDeadzoneDeg = v)) } }
+        if (x) {
+            val ck = WorkspaceDefaults.gyroKey("tiltCompass")
+            OverrideSwitch(
+                "Use compass when flat", "Lying flat, sideways tilt (a steering wheel) has no gravity to say where straight is. On, the compass holds straight where the phone went flat; off, the gyro alone carries it, drifting very slowly (Set orientation makes the way it points straight). Laptops, speakers, metal and magnetic cases can bend the compass, so straight may wander.",
+                g.tiltCompass, overridden = level.isOwn(ck), onReset = { level.reset(ck) }, children = level.kids(ck),
+            ) { v -> level.edit { it.copy(gyro = it.gyro.copy(tiltCompass = v)) } }
+        }
     }
 }
 

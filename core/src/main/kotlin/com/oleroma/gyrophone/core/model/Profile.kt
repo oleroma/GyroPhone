@@ -1125,6 +1125,11 @@ data class GyroSettings(
     val tiltYRangeDeg: Float? = null,
     val tiltXDeadzoneDeg: Float? = null,
     val tiltYDeadzoneDeg: Float? = null,
+    /**
+     * Lying flat, the compass holds sideways tilt's straight ([com.oleroma.gyrophone.core.engine.TiltShake]);
+     * off, the gyro alone carries it there. Magnets and metal nearby can bend the compass.
+     */
+    val tiltCompass: Boolean = false,
     /** How hard a jolt (m/s² off gravity) counts as a shake. */
     val shakeStrength: Float = DEFAULT_SHAKE_STRENGTH,
     /**
