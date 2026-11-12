@@ -22,4 +22,36 @@ public sealed class UpdateInfoTests
     [InlineData("0.1.30-2b6f965", null, false)] // exe missing mid-copy
     public void RestartsOnlyForAnotherCiBuild(string? running, string? onDisk, bool expected) =>
         Assert.Equal(expected, UpdateInfo.IsReplaced(running, onDisk));
+
+    [Fact]
+    public void FindsOnlyWaitingDlls()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "gp-update-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            foreach (var name in new[]
+                     {
+                         "OpenCvSharpExtern.dll.new", "opencv_videoio_ffmpeg4130_64.dll.new", "OpenCvSharpExtern.dll",
+                         "GyroPhoneCompanion.exe.new", "GyroPhoneCompanion.exe", "x.dll.new.tmp", "VERSION.txt",
+                     })
+                File.WriteAllText(Path.Combine(dir, name), "");
+            var waiting = UpdateInfo.WaitingDlls(dir);
+            Assert.Equal(
+                new[]
+                {
+                    (Path.Combine(dir, "OpenCvSharpExtern.dll.new"), Path.Combine(dir, "OpenCvSharpExtern.dll")),
+                    (Path.Combine(dir, "opencv_videoio_ffmpeg4130_64.dll.new"), Path.Combine(dir, "opencv_videoio_ffmpeg4130_64.dll")),
+                },
+                waiting);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void NoWaitingDllsInAMissingFolder() =>
+        Assert.Empty(UpdateInfo.WaitingDlls(Path.Combine(Path.GetTempPath(), "gp-missing-" + Guid.NewGuid().ToString("N"))));
 }

@@ -13,10 +13,11 @@ public class WireCodecTests
         Assert.Equal(50, PacketType.Size(PacketType.LinkInfo));
         Assert.Equal(32, PacketType.Size(PacketType.Bye));
         Assert.Equal(52, PacketType.Size(PacketType.Pong));
-        Assert.Equal(50, PacketType.Size(PacketType.HostStatus));
+        Assert.Equal(51, PacketType.Size(PacketType.HostStatus));
         Assert.Equal(32, PacketType.Size(PacketType.Rumble));
         Assert.Equal(94, PacketType.Size(PacketType.Foreground));
         Assert.Equal(32, PacketType.Size(PacketType.HostBye));
+        Assert.Equal(128, PacketType.Size(PacketType.KeyLabels));
         Assert.Equal(-1, PacketType.Size(0x55));
     }
 
@@ -95,5 +96,17 @@ public class WireCodecTests
         var b = new byte[Wire.StatePlain];
         f.Encode(b);
         Assert.Equal(0x80, b[22 + 28]);
+    }
+
+    [Fact]
+    public void KeyLabelsRoundTrip()
+    {
+        var chars = new ushort[KeyLabels.Usages.Length];
+        for (int i = 0; i < chars.Length; i++) chars[i] = (ushort)(0x20 + i * 3);
+        var p = new KeyLabels(0x04100410, chars);
+        var b = new byte[Wire.KeyLabelsPlain];
+        Assert.Equal(Wire.KeyLabelsPlain, WireCodec.EncodeKeyLabels(p, b));
+        Assert.True(p.SameAs(WireCodec.DecodeKeyLabels(b)));
+        Assert.Equal(48, KeyLabels.Usages.Length);
     }
 }

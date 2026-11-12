@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Numerics;
 using GyroPhone.Host.Settings;
@@ -17,16 +18,30 @@ internal interface ICanvas
 {
     void Clear(Color color);
     void FillPolygon(Color color, PointF[] points);
+    /// <summary>Fills quads (each 4 points of <paramref name="quads"/> in turn) as one shape: where they overlap it is filled once.</summary>
+    void FillQuads(Color color, List<PointF> quads);
     void DrawPolygon(Color color, float width, PointF[] points, bool dashed = false);
     void DrawLine(Color color, float width, PointF a, PointF b, bool round = false);
-    /// <summary>An open polyline with round caps and joins.</summary>
-    void DrawLines(Color color, float width, PointF[] points);
+    /// <summary>An open polyline with round joins and round caps, or flat ones with <paramref name="flat"/>.</summary>
+    void DrawLines(Color color, float width, PointF[] points, bool flat = false);
+    /// <summary>
+    /// Each of <paramref name="lines"/> as <see cref="DrawLines"/> (round). The canvas may keep the built
+    /// shapes for this array and build them again only when <paramref name="stamp"/> changes, so the
+    /// arrays must not change while the stamp stays the same.
+    /// </summary>
+    void DrawLinesSet(Color color, float width, PointF[][] lines, long stamp);
     void FillEllipse(Color color, RectangleF r);
     void DrawEllipse(Color color, float width, RectangleF r);
     void FillRectangle(Color color, RectangleF r);
     void DrawRectangle(Color color, float width, RectangleF r, bool dashed = false);
     /// <summary>A disk lit from <paramref name="litAt"/> (colour <paramref name="lit"/>) to <paramref name="body"/> at its rim.</summary>
     void FillBall(RectangleF r, PointF litAt, Color lit, Color body);
+    /// <summary>
+    /// A picture of <paramref name="w"/> × <paramref name="h"/> premultiplied BGRA pixels (rows top down) scaled
+    /// smoothly into <paramref name="dest"/>. The canvas keeps its own copy for each <paramref name="pixels"/> array
+    /// and copies the pixels again only when <paramref name="stamp"/> changes.
+    /// </summary>
+    void DrawPixels(RectangleF dest, int w, int h, int[] pixels, long stamp);
     void PushClip(PointF[] polygon);
     void PushClipEllipse(RectangleF r);
     void PushClipRect(RectangleF r);
@@ -82,6 +97,20 @@ internal sealed class GdiCanvas : ICanvas
         _g.FillPolygon(b, points);
     }
 
+    public void FillQuads(Color color, List<PointF> quads)
+    {
+        if (quads.Count < 4 || color.A == 0) return;
+        using var path = new GraphicsPath(FillMode.Winding);
+        var q = new PointF[4];
+        for (int i = 0; i + 3 < quads.Count; i += 4)
+        {
+            q[0] = quads[i]; q[1] = quads[i + 1]; q[2] = quads[i + 2]; q[3] = quads[i + 3];
+            path.AddPolygon(q);
+        }
+        using var b = new SolidBrush(color);
+        _g.FillPath(b, path);
+    }
+
     public void DrawPolygon(Color color, float width, PointF[] points, bool dashed = false)
     {
         using var p = new Pen(color, width) { LineJoin = LineJoin.Round };
@@ -96,10 +125,16 @@ internal sealed class GdiCanvas : ICanvas
         _g.DrawLine(p, a, b);
     }
 
-    public void DrawLines(Color color, float width, PointF[] points)
+    public void DrawLines(Color color, float width, PointF[] points, bool flat = false)
     {
-        using var p = new Pen(color, width) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+        var cap = flat ? LineCap.Flat : LineCap.Round;
+        using var p = new Pen(color, width) { StartCap = cap, EndCap = cap, LineJoin = LineJoin.Round };
         _g.DrawLines(p, points);
+    }
+
+    public void DrawLinesSet(Color color, float width, PointF[][] lines, long stamp)
+    {
+        foreach (var l in lines) DrawLines(color, width, l);
     }
 
     public void FillEllipse(Color color, RectangleF r)
@@ -133,6 +168,40 @@ internal sealed class GdiCanvas : ICanvas
         path.AddEllipse(r);
         using var brush = new PathGradientBrush(path) { CenterPoint = litAt, CenterColor = lit, SurroundColors = [body] };
         _g.FillPath(brush, path);
+    }
+
+    private sealed class Picture { public Bitmap? Bitmap; public long Stamp = long.MinValue; }
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<int[], Picture> Pictures = new();
+
+    public void DrawPixels(RectangleF dest, int w, int h, int[] pixels, long stamp)
+    {
+        var pic = Pictures.GetOrCreateValue(pixels);
+        if (pic.Bitmap == null || pic.Bitmap.Width != w || pic.Bitmap.Height != h)
+        {
+            pic.Bitmap?.Dispose();
+            pic.Bitmap = new Bitmap(w, h, PixelFormat.Format32bppPArgb);
+            pic.Stamp = long.MinValue;
+        }
+        if (pic.Stamp != stamp)
+        {
+            var data = pic.Bitmap.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
+            try
+            {
+                for (int y = 0; y < h; y++) System.Runtime.InteropServices.Marshal.Copy(pixels, y * w, data.Scan0 + y * data.Stride, w);
+            }
+            finally { pic.Bitmap.UnlockBits(data); }
+            pic.Stamp = stamp;
+        }
+        var mode = _g.InterpolationMode;
+        var offset = _g.PixelOffsetMode;
+        _g.InterpolationMode = InterpolationMode.Bilinear;
+        _g.PixelOffsetMode = PixelOffsetMode.Half;
+        using var attrs = new ImageAttributes();
+        attrs.SetWrapMode(WrapMode.TileFlipXY);
+        _g.DrawImage(pic.Bitmap, [dest.Location, new PointF(dest.Right, dest.Top), new PointF(dest.Left, dest.Bottom)],
+            new RectangleF(0, 0, w, h), GraphicsUnit.Pixel, attrs);
+        _g.InterpolationMode = mode;
+        _g.PixelOffsetMode = offset;
     }
 
     public void PushClip(PointF[] polygon)

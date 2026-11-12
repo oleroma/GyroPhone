@@ -21,16 +21,35 @@ class DirectReportParser(private val eventCount: Int) {
 
     private var lastCounter = 0L
 
-    /** Returns events newer than the previous call, oldest first. */
+    // The ring the last call read and a view of it, and the list handed back: kept, so a poll
+    // that finds nothing new makes no objects.
+    private var wrapped: ByteArray? = null
+    private var bb: ByteBuffer = ByteBuffer.allocate(0)
+    private val fresh = ArrayList<Event>(eventCount)
+
+    /** The slot after the newest event seen, where the HAL writes next; -1 before any. */
+    var nextSlot = -1
+        private set
+
+    /** The newest event's counter seen so far (0 before any). */
+    val newestCounter: Long get() = lastCounter
+
+    /**
+     * Returns events newer than the previous call, oldest first. The list is reused by the next
+     * call, so read it before parsing again.
+     */
     fun parse(buffer: ByteArray, token: Int): List<Event> {
-        val bb = ByteBuffer.wrap(buffer).order(ByteOrder.LITTLE_ENDIAN)
-        val fresh = ArrayList<Event>()
+        val bb = view(buffer)
+        fresh.clear()
+        var newestSlot = -1
+        var newest = lastCounter
         for (i in 0 until eventCount) {
             val base = i * EVENT_SIZE
             if (base + EVENT_SIZE > buffer.size) break
             if (bb.getInt(base) != EVENT_SIZE || bb.getInt(base + 4) != token) continue
             val counter = bb.getInt(base + 12).toLong() and 0xFFFFFFFFL
             if (counter <= lastCounter) continue
+            if (counter > newest) { newest = counter; newestSlot = i }
             fresh += Event(
                 token = token,
                 type = bb.getInt(base + 8),
@@ -41,14 +60,40 @@ class DirectReportParser(private val eventCount: Int) {
                 z = bb.getFloat(base + 32),
             )
         }
-        fresh.sortBy { it.counter }
-        if (fresh.isNotEmpty()) lastCounter = fresh.last().counter
+        if (fresh.size > 1) fresh.sortBy { it.counter }
+        if (fresh.isNotEmpty()) {
+            lastCounter = newest
+            nextSlot = (newestSlot + 1) % eventCount
+        }
         return fresh
     }
 
-    fun reset() { lastCounter = 0L }
+    /**
+     * Whether [slot]'s event in [buffer] (only its first [HEADER_SIZE] bytes need to be there) is
+     * newer than the last parsed: the cheap check before copying the whole ring.
+     */
+    fun isNew(buffer: ByteArray, slot: Int): Boolean {
+        val base = slot * EVENT_SIZE
+        if (slot < 0 || base + HEADER_SIZE > buffer.size) return false
+        val bb = view(buffer)
+        if (bb.getInt(base) != EVENT_SIZE) return false
+        return (bb.getInt(base + 12).toLong() and 0xFFFFFFFFL) > lastCounter
+    }
+
+    private fun view(buffer: ByteArray): ByteBuffer {
+        if (buffer !== wrapped) {
+            bb = ByteBuffer.wrap(buffer).order(ByteOrder.LITTLE_ENDIAN)
+            wrapped = buffer
+        }
+        return bb
+    }
+
+    fun reset() { lastCounter = 0L; nextSlot = -1 }
 
     companion object {
         const val EVENT_SIZE = 104
+
+        /** An event's size, token, type and counter: what [isNew] reads. */
+        const val HEADER_SIZE = 16
     }
 }

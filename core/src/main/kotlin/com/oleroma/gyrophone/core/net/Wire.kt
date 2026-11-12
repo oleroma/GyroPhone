@@ -43,15 +43,29 @@ object Wire {
     const val LINK_INFO_PLAIN = 22
     const val BYE_PLAIN = 4
     const val PONG_PLAIN = 24
-    const val HOST_STATUS_PLAIN = 22
+    const val HOST_STATUS_PLAIN = 23
     const val RUMBLE_PLAIN = 4
+    /** KEY_LABELS: u32 layout id, then a u16 character per [KeyLabels.USAGES] key. */
+    val KEY_LABELS_PLAIN = 4 + 2 * KeyLabels.USAGES.size
     const val FOREGROUND_PLAIN = 66
     /** OVERLAY: the phone's pose, touches and presses for the PC's phone overlay ([OverlayFeed]). */
     const val OVERLAY_PLAIN = 152
     /** OVERLAY_LAYOUT: one piece of the layout the overlay draws on the phone's screen. */
     const val OVERLAY_LAYOUT_PLAIN = 200
-    /** MOTION: the phone's raw gyro and accelerometer samples for the PC's DualShock 4 ([MotionFeed]). */
+    /** MOTION: the phone's raw gyro and accelerometer samples for the PC's DualShock 4 or DualSense ([MotionFeed]). */
     const val MOTION_PLAIN = MotionFeed.SIZE
+    /** PRESS_TIME: u32 STATE time, u32 input event time (both low 32 bits of the phone's elapsed-realtime µs). */
+    const val PRESS_TIME_PLAIN = 8
+    /** TEST_MODE: u8 [TestModeFlags], 3 reserved bytes. */
+    const val TEST_MODE_PLAIN = 4
+    /** CAPTURE: u8 [CaptureFlags], 3 reserved bytes. */
+    const val CAPTURE_PLAIN = 4
+    /** CAPTURED: u8 count, u8 0, then [CAPTURED_MAX] × 4 bytes (kind u8, arg i8, code u16), unused ones zero. */
+    const val CAPTURED_PLAIN = 64
+    const val CAPTURED_MAX = 15
+    /** The phone resends CAPTURE this often while its "Press a key" screen is open; the PC stops after [CAPTURE_TIMEOUT_MS] without one. */
+    const val CAPTURE_RESEND_MS = 1000
+    const val CAPTURE_TIMEOUT_MS = 3000
 
     /** Sealed packet size for a plaintext of [plain] bytes. */
     fun sealedSize(plain: Int): Int = HEADER + plain + GCM_TAG
@@ -141,10 +155,15 @@ object Wire {
         PacketType.PONG -> PONG_PLAIN
         PacketType.HOST_STATUS -> HOST_STATUS_PLAIN
         PacketType.RUMBLE -> RUMBLE_PLAIN
+        PacketType.KEY_LABELS -> KEY_LABELS_PLAIN
         PacketType.FOREGROUND -> FOREGROUND_PLAIN
         PacketType.OVERLAY -> OVERLAY_PLAIN
         PacketType.OVERLAY_LAYOUT -> OVERLAY_LAYOUT_PLAIN
         PacketType.MOTION -> MOTION_PLAIN
+        PacketType.PRESS_TIME -> PRESS_TIME_PLAIN
+        PacketType.TEST_MODE -> TEST_MODE_PLAIN
+        PacketType.CAPTURE -> CAPTURE_PLAIN
+        PacketType.CAPTURED -> CAPTURED_PLAIN
         PacketType.HOST_BYE -> BYE_PLAIN
         else -> -1
     }
@@ -179,13 +198,23 @@ object PacketType {
     const val PAD_GYRO = 0x27
     /** With PAD_GYRO, per PC controller button with gyro settings of its own while held: those settings ([PcGyroFeed.encodeHeld]). */
     const val PAD_GYRO_SET = 0x28
-    /** Sent while WELCOME has [HostFlags.MOTION] and HOST_STATUS says the PC's pad is a plugged DualShock 4: raw motion for its gyro ([MotionFeed]). */
+    /** Sent while WELCOME has [HostFlags.MOTION] and HOST_STATUS says the PC's pad is a plugged DualShock 4 or DualSense: raw motion for its gyro ([MotionFeed]). */
     const val MOTION = 0x29
+    /** Sent while TEST_MODE has [TestModeFlags.PRESS_TIMES], after the STATE that first carries a press or release: when the phone saw that input ([PressTime]). */
+    const val PRESS_TIME = 0x2A
+    /** About once a second while the "Press a key" screen is open, and when it closes ([CaptureListen]): the PC then sends CAPTURED. */
+    const val CAPTURE = 0x2B
     const val BYE = 0x2F
     const val PONG = 0x30
     const val HOST_STATUS = 0x31
     const val RUMBLE = 0x32
     const val FOREGROUND = 0x33
+    /** Once a second with HOST_STATUS: what each character key types on the PC's keyboard layout ([KeyLabels]). */
+    const val KEY_LABELS = 0x34
+    /** With every HOST_STATUS and on change: the PC's latency tests the phone takes part in ([TestModeFlags]). Older phones drop it. */
+    const val TEST_MODE = 0x35
+    /** While CAPTURE is on: what is held on the PC's keyboard, mouse and controller ([PcPresses]), on change and every 200 ms. Older phones drop it. */
+    const val CAPTURED = 0x37
     const val HOST_BYE = 0x3F
     const val ERROR = 0x7F
 
@@ -254,6 +283,11 @@ object OutputMode {
     const val NONE = 0
     const val XBOX360 = 1
     const val DUALSHOCK4 = 2
+    /** The companion's own driver's DualSense (driver/): the DualShock 4's buttons, sticks and motion. */
+    const val DUALSENSE = 3
+
+    /** The pad has a gyro and accelerometer, so it takes MOTION. */
+    fun takesMotion(mode: Int): Boolean = mode == DUALSHOCK4 || mode == DUALSENSE
 }
 
 /** WELCOME hostFlags. */
@@ -267,7 +301,7 @@ object HostFlags {
      * controller plugged into it can ratchet the gyro. Bit 8 (the old share-based gate) is no longer used.
      */
     const val PC_GYRO = 16
-    /** The host takes MOTION: while its pad is a DualShock 4, the phone sends its raw motion for the pad's gyro and accelerometer. */
+    /** The host takes MOTION: while its pad is a DualShock 4 or DualSense, the phone sends its raw motion for the pad's gyro and accelerometer. */
     const val MOTION = 32
 }
 
@@ -276,6 +310,9 @@ object StateFlags {
     const val GYRO_ACTIVE = 1
     const val REPEAT = 2
     const val KEEPALIVE = 4
+
+    /** A Link test packet: fake input the PC counts but never injects. */
+    const val LINK_TEST = 8
 }
 
 /** LINK_INFO flags. */
@@ -295,7 +332,16 @@ object LinkInfoFlags {
     const val DEBUG_SAVE_MASK = 0x70
     const val DEBUG_SAVE_SHIFT = 4
 
+    /** The phone sends over a wired Ethernet adapter (the Wi-Fi fields are then not this link's). */
+    const val ETHERNET = 0x80
+
     fun debugSave(counter: Int): Int = (counter and 7) shl DEBUG_SAVE_SHIFT
+}
+
+/** HOST_STATUS's second flags byte (byte 22). */
+object HostStatusFlags2 {
+    /** "Use the phone over the USB cable" is on in the companion: the phone tries the cable now. */
+    const val USB_DIRECT = 1
 }
 
 /** HOST_STATUS flags. */
@@ -311,6 +357,24 @@ object HostStatusFlags {
     const val OVERLAY_COMPASS = 64
     /** With [OVERLAY]: the PC takes OVERLAY's turn, time and camera degrees as running totals ([OverlayFeed.FLAG_TOTALS]). */
     const val OVERLAY_TOTALS = 128
+}
+
+/** CAPTURE flags. */
+object CaptureFlags {
+    /** The "Press a key" screen is open: the PC reads its keyboard, mouse and controller (read-only, never held back). */
+    const val ON = 1
+}
+
+/** TEST_MODE flags. */
+object TestModeFlags {
+    /** "Measure buttons" is on: the phone sends PRESS_TIME for each press and release. */
+    const val PRESS_TIMES = 1
+
+    /** The PC's latency test window is open: the pad shows the tracking markers. */
+    const val LATENCY_SCREEN = 2
+
+    /** The PC runs a Link test: the phone sends fake moving input at its full rate, marked [StateFlags.LINK_TEST]. */
+    const val LINK_TEST = 4
 }
 
 /** BYE reason (phone). */

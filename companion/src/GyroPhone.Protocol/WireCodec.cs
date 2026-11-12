@@ -359,12 +359,12 @@ public static class WireCodec
         Le.PutU16(b, 16, p.LinkMbps);
         Le.PutU16(b, 18, p.FreqMhz);
         b[20] = p.Flags;
-        b[21] = 0;
+        b[21] = p.Path;
         return Wire.LinkInfoPlain;
     }
 
     public static LinkInfo DecodeLinkInfo(ReadOnlySpan<byte> b) =>
-        new(Le.I64(b, 0), Le.U32(b, 8), Le.U16(b, 12), (sbyte)b[14], b[15], Le.U16(b, 16), Le.U16(b, 18), b[20]);
+        new(Le.I64(b, 0), Le.U32(b, 8), Le.U16(b, 12), (sbyte)b[14], b[15], Le.U16(b, 16), Le.U16(b, 18), b[20], b[21]);
 
     public static int EncodeHostStatus(in HostStatus p, Span<byte> b)
     {
@@ -376,11 +376,12 @@ public static class WireCodec
         Le.PutU32(b, 16, p.JitterUs);
         b[20] = p.OutputMode;
         b[21] = p.Flags;
+        b[22] = p.Flags2;
         return Wire.HostStatusPlain;
     }
 
     public static HostStatus DecodeHostStatus(ReadOnlySpan<byte> b) =>
-        new(Le.U32(b, 0), Le.U16(b, 4), Le.U16(b, 6), Le.U32(b, 8), Le.U32(b, 12), Le.U32(b, 16), b[20], b[21]);
+        new(Le.U32(b, 0), Le.U16(b, 4), Le.U16(b, 6), Le.U32(b, 8), Le.U32(b, 12), Le.U32(b, 16), b[20], b[21], b[22]);
 
     /// <summary>BYE and HOST_BYE: reason then three zero bytes.</summary>
     public static int EncodeReason(byte reason, Span<byte> b)
@@ -394,10 +395,79 @@ public static class WireCodec
     {
         b[0] = p.Large;
         b[1] = p.Small;
-        b[2] = 0;
+        b[2] = p.Pattern;
         b[3] = 0;
         return Wire.RumblePlain;
     }
 
-    public static Rumble DecodeRumble(ReadOnlySpan<byte> b) => new(b[0], b[1]);
+    public static Rumble DecodeRumble(ReadOnlySpan<byte> b) => new(b[0], b[1], b[2]);
+
+    public static int EncodePressTime(in PressTime p, Span<byte> b)
+    {
+        Le.PutU32(b, 0, p.StateTimeUs);
+        Le.PutU32(b, 4, p.EventTimeUs);
+        return Wire.PressTimePlain;
+    }
+
+    public static PressTime DecodePressTime(ReadOnlySpan<byte> b) => new(Le.U32(b, 0), Le.U32(b, 4));
+
+    /// <summary>TEST_MODE: flags then three zero bytes.</summary>
+    public static int EncodeTestMode(byte flags, Span<byte> b)
+    {
+        b[..Wire.TestModePlain].Clear();
+        b[0] = flags;
+        return Wire.TestModePlain;
+    }
+
+    /// <summary>CAPTURE: flags then three zero bytes.</summary>
+    public static int EncodeCapture(byte flags, Span<byte> b)
+    {
+        b[..Wire.CapturePlain].Clear();
+        b[0] = flags;
+        return Wire.CapturePlain;
+    }
+
+    public static byte DecodeCapture(ReadOnlySpan<byte> b) => b[0];
+
+    /// <summary>CAPTURED: the first <see cref="Wire.CapturedMax"/> of <paramref name="held"/>.</summary>
+    public static int EncodeCaptured(ReadOnlySpan<PcPress> held, Span<byte> b)
+    {
+        b[..Wire.CapturedPlain].Clear();
+        int n = Math.Min(held.Length, Wire.CapturedMax);
+        b[0] = (byte)n;
+        for (int i = 0; i < n; i++)
+        {
+            int o = 2 + 4 * i;
+            b[o] = held[i].Kind;
+            b[o + 1] = unchecked((byte)held[i].Arg);
+            Le.PutU16(b, o + 2, held[i].Code);
+        }
+        return Wire.CapturedPlain;
+    }
+
+    /// <summary>The held inputs of a CAPTURED into <paramref name="into"/>; returns how many.</summary>
+    public static int DecodeCaptured(ReadOnlySpan<byte> b, Span<PcPress> into)
+    {
+        int n = Math.Min(Math.Min((int)b[0], Wire.CapturedMax), into.Length);
+        for (int i = 0; i < n; i++)
+        {
+            int o = 2 + 4 * i;
+            into[i] = new PcPress(b[o], Le.U16(b, o + 2), unchecked((sbyte)b[o + 1]));
+        }
+        return n;
+    }
+
+    public static int EncodeKeyLabels(KeyLabels p, Span<byte> b)
+    {
+        Le.PutU32(b, 0, p.Layout);
+        for (int i = 0; i < KeyLabels.Usages.Length; i++) Le.PutU16(b, 4 + 2 * i, i < p.Chars.Length ? p.Chars[i] : (ushort)0);
+        return Wire.KeyLabelsPlain;
+    }
+
+    public static KeyLabels DecodeKeyLabels(ReadOnlySpan<byte> b)
+    {
+        var chars = new ushort[KeyLabels.Usages.Length];
+        for (int i = 0; i < chars.Length; i++) chars[i] = Le.U16(b, 4 + 2 * i);
+        return new KeyLabels(Le.U32(b, 0), chars);
+    }
 }

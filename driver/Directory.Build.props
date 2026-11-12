@@ -1,0 +1,10 @@
+<Project>
+  <!-- The WDK and SDK from NuGet (driver/packages.config), downloaded by .agents/hooks/build. -->
+  <PropertyGroup>
+    <GpPackages Condition="'$(GpPackages)' == ''">$(MSBuildThisFileDirectory)..\build\driver\packages\</GpPackages>
+    <GpWdkVersion>10.0.28000.2526</GpWdkVersion>
+  </PropertyGroup>
+  <Import Project="$(GpPackages)Microsoft.Windows.WDK.x64.$(GpWdkVersion)\build\native\Microsoft.Windows.WDK.x64.props" />
+  <Import Project="$(GpPackages)Microsoft.Windows.SDK.CPP.x64.$(GpWdkVersion)\build\native\Microsoft.Windows.SDK.cpp.x64.props" />
+  <Import Project="$(GpPackages)Microsoft.Windows.SDK.CPP.$(GpWdkVersion)\build\native\Microsoft.Windows.SDK.cpp.props" />
+</Project>

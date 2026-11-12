@@ -33,11 +33,21 @@ import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.Trigger
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
+import com.oleroma.gyrophone.core.model.heldSwipe
 import com.oleroma.gyrophone.core.model.holdDirection
+import com.oleroma.gyrophone.core.model.quickSlot
 import com.oleroma.gyrophone.core.model.swipeDirection
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
+import com.oleroma.gyrophone.core.model.FingerAxis
+import com.oleroma.gyrophone.core.model.FingerAxisSettings
+import com.oleroma.gyrophone.core.model.fingerOf
+import com.oleroma.gyrophone.core.model.withFinger
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 
 /**
  * What the mapping editor's ⚙ and Settings open for a control: [action] gives an action's own
@@ -47,6 +57,8 @@ import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 internal class MappingSettings(
     val action: (BindableInput) -> (@Composable () -> Unit)?,
     val shared: (@Composable () -> Unit)?,
+    /** Fixed above [shared] on its page (it doesn't scroll): the workspace's rename, duplicate, delete. */
+    val sharedTop: (@Composable () -> Unit)? = null,
     /** A touch control's shared settings as categories, for its one settings page; [itemsHeader] goes above them (its Reset all). */
     val items: List<SectionItem> = emptyList(),
     val itemsHeader: (@Composable () -> Unit)? = null,
@@ -56,26 +68,23 @@ internal class MappingSettings(
 private fun ui(content: @Composable () -> Unit): @Composable () -> Unit = content
 
 /**
- * Which gesture timing an action has: a long press its time (a tap too: a longer press is no tap),
- * a double tap its window.
+ * Which gesture timing an action has: the one Tap time, shared by taps (a longer press is no
+ * tap), long presses and double taps (the longest gap between the taps).
  */
-private enum class Timing { LONG_PRESS, DOUBLE_TAP }
+private enum class Timing { LONG_PRESS }
 
 private fun timingOf(input: BindableInput): Timing? = when (val s = input.sources.firstOrNull()) {
     is InputSource.TouchTap, is InputSource.TouchLongPress -> Timing.LONG_PRESS
-    is InputSource.TouchDoubleTap -> Timing.DOUBLE_TAP
+    is InputSource.TouchDoubleTap -> Timing.LONG_PRESS
     // Area and Outside: the button's own times.
     is InputSource.TouchArea -> when (s.on) {
-        Trigger.TAP, Trigger.LONG_PRESS -> Timing.LONG_PRESS
-        Trigger.DOUBLE_TAP -> Timing.DOUBLE_TAP
+        Trigger.TAP, Trigger.LONG_PRESS, Trigger.DOUBLE_TAP -> Timing.LONG_PRESS
         else -> null
     }
     // A swipe's Long hold and Double swipe: the surface's long press and double tap times.
     is InputSource.Surface -> when {
-        s.on == Trigger.LONG_PRESS -> Timing.LONG_PRESS
-        s.on == Trigger.DOUBLE_TAP -> Timing.DOUBLE_TAP
-        s.input == SurfaceInput.TAP || s.input == SurfaceInput.LONG_PRESS -> Timing.LONG_PRESS
-        s.input == SurfaceInput.DOUBLE_TAP -> Timing.DOUBLE_TAP
+        s.on == Trigger.LONG_PRESS || s.on == Trigger.DOUBLE_TAP -> Timing.LONG_PRESS
+        s.input == SurfaceInput.TAP || s.input == SurfaceInput.LONG_PRESS || s.input == SurfaceInput.DOUBLE_TAP -> Timing.LONG_PRESS
         else -> null
     }
     else -> null
@@ -84,21 +93,15 @@ private fun timingOf(input: BindableInput): Timing? = when (val s = input.source
 /** [input] is a swipe direction's Long hold or Double swipe (its timing settings are named for swipes). */
 private fun isSwipeTiming(input: BindableInput): Boolean {
     val s = input.sources.firstOrNull() as? InputSource.Surface ?: return false
-    return s.on != Trigger.HOLD && (s.input.swipeDirection != null || s.input.holdDirection != null)
+    return s.on != Trigger.HOLD && (s.input.quickSlot >= 0 || s.input.heldSwipe)
 }
 
 /** The long press time's name and hint for [input] ([swipe]: a Long hold); [whose]: whose time it is. */
-private fun longLabel(swipe: Boolean) = if (swipe) "Long hold after" else "Long press after"
+private fun longLabel(@Suppress("UNUSED_PARAMETER") swipe: Boolean) = "Tap time"
 
 private fun longHint(swipe: Boolean, whose: String) =
-    if (swipe) "How long a held direction is held before its Long hold fires. It is $whose long press time, shared by its taps and long presses."
+    if (swipe) "A held direction held longer is a Long hold; two quick swipes this close are a Double swipe. It is $whose Tap time."
     else "$LONG_HINT It is $whose."
-
-private fun doubleLabel(swipe: Boolean) = if (swipe) "Double swipe within" else "Double tap within"
-
-private fun doubleHint(swipe: Boolean, whose: String) =
-    if (swipe) "The longest gap between the two quick swipes of a Double swipe. It is $whose double tap window, shared by its double taps."
-    else "The longest gap between the taps. A tap waits this long when a double tap does something else. It is $whose."
 
 /**
  * The ⚙ of a Swipe or Swipe hold [input] of a surface at [level] ([zones]: as mapped), or of a
@@ -113,6 +116,8 @@ private fun directionGear(level: SurfaceLevel, key: String, input: BindableInput
         val m = MoveSlot.of(src.fingers, s == SurfaceInput.MOTION_X)
         return ui { MoveGearSettings(level, key, m, touchpad) }
     }
+    // The one Swipe row: each arrow's own settings, both its held and its quick swipe ones.
+    if (s == SurfaceInput.HOLD_ANY) return ui { SwipeArrowSettings(level, key, zones) }
     s.swipeDirection?.let { d -> return ui { DirectionSettings(level, key, d, hold = false, zones) } }
     s.holdDirection?.let { d -> return ui { DirectionSettings(level, key, d, hold = true, zones) } }
     return null
@@ -123,7 +128,7 @@ internal fun gyroShow(g: GyroSettings): (Float) -> String = { s ->
     g.rwsOf(s)?.let { "%.2f RWS".format(it) } ?: "%.1f".format(s).removeSuffix(".0").removeSuffix(",0")
 }
 
-private const val LONG_HINT = "How long a press is held to be a long press; a shorter one is a tap."
+private const val LONG_HINT = "A shorter press is a tap, a longer one a long press, and a second touch this soon after a lift a double tap."
 
 /**
  * A button's gyro sensitivities in mapping set [set] of [ws] ([TouchControl.gyro]): the ones it
@@ -150,11 +155,12 @@ private class ButtonGyroLevel(
 }
 
 /**
- * The button's settings while held: its gyro Sensitivity and Acceleration (every gyro axis's
- * unless the axis has its own) and the touchpad cursor's sensitivity and acceleration.
+ * The button's gyro while it is held: Sensitivity and Acceleration (every gyro axis's unless the
+ * axis has its own). Its Gyro tab.
  */
 @Composable
 private fun ButtonGyroSensitivity(g: ButtonGyroLevel, key: String) {
+    Hint("While this is held.")
     GyroSensSlider(
         key + "gyro" + g.set, "Gyro sensitivity", g.inUse.sensitivity ?: g.parent.sensitivity, g.parent,
         overridden = g.own.sensitivity != null,
@@ -170,6 +176,12 @@ private fun ButtonGyroSensitivity(g: ButtonGyroLevel, key: String) {
         hint = "While this is held${g.where}: Off aims without acceleration (for example while aiming down sights). " +
             "Unset, the workspace's. $ACCEL_HINT",
     ) { c -> g.edit { it.copy(accel = c) } }
+}
+
+/** The touchpad cursor's sensitivity and acceleration while the button is held. Its Touchpad tab. */
+@Composable
+private fun ButtonTouchpadSpeed(g: ButtonGyroLevel, key: String) {
+    Hint("While this is held.")
     val touchHint = "While this is held${g.where}, the touchpad cursor moves at this speed, for every finger count. Unset, the workspace's."
     val touchOwn = g.own.touchSensitivity != null || g.own.touchScale != null
     val touchReset = { g.edit { it.withTouch(null) } }
@@ -284,13 +296,18 @@ internal fun touchControlSettings(
     val zones = Bindings.holdZoneCounts(ws.mappings, control.id)
     val gyro = if (control.kind == TouchKind.BUTTON) ButtonGyroLevel.of(control, ws, set, update) else null
     // The settings its actions share, as categories: its gyro, a touchpad button's surface, a stick's own.
-    val gyroCategory = gyro?.let { g ->
-        category(runtime, "buttonGyro", "While held", "Gyro sensitivity and acceleration, touchpad speed", prefKey = "button.Gyro") {
-            ButtonGyroSensitivity(g, key)
-        }
+    val heldCategories = gyro?.let { g ->
+        listOf(
+            category(runtime, "buttonGyro", "Gyro", "Gyro sensitivity and acceleration while held", prefKey = "button.Gyro") {
+                ButtonGyroSensitivity(g, key)
+            },
+            category(runtime, "buttonTouchpad", "Touchpad", "Touchpad cursor speed while held", prefKey = "button.Touchpad") {
+                ButtonTouchpadSpeed(g, key)
+            },
+        )
     }
-    val items = listOfNotNull(gyroCategory) + when {
-        surface != null -> surfaceCategories(runtime, surface, key, zones, touchpad = false)
+    val items = heldCategories.orEmpty() + when {
+        surface != null -> listOf(surfaceCategory(runtime, "Swipes", surface, key, zones, touchpad = false))
         control.kind == TouchKind.STICK -> listOf(
             category(runtime, "stick", "Stick", "Deadzone and directions", defaultOpen = true) { StickSettings(control) { c -> update { c } } },
         )
@@ -317,18 +334,11 @@ internal fun touchControlSettings(
                     ) { ms -> update { it.copy(longPressMs = ms) } }
                 }
 
-                timingOf(input) == Timing.DOUBLE_TAP -> ui {
-                    MsOverride(
-                        key + "double", doubleLabel(isSwipeTiming(input)), control.doubleTap(ws),
-                        Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
-                        overridden = control.doubleTapMs != null,
-                        onReset = { update { it.copy(doubleTapMs = null) } },
-                        hint = if (isSwipeTiming(input)) doubleHint(true, "this button's")
-                        else "The longest gap between the taps. A tap waits this long when a double tap does something else.",
-                    ) { ms -> update { it.copy(doubleTapMs = ms) } }
-                }
-
                 src is InputSource.TouchArea && src.kind == TouchAreaKind.ZONE -> ui { AreaOptions(control, update) }
+
+                src is InputSource.Finger -> fingerGear(key, control.fingerOf(src.axis)) { s ->
+                    update { it.copy(fingers = it.fingers.withFinger(s)) }
+                }
 
                 else -> null
             }
@@ -358,6 +368,9 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
                 is InputSource.Gyro -> gyroGear(level, key, src.axis)
                 is InputSource.Tilt -> tiltGear(level, key, src.axis == StickAxis.X)
                 is InputSource.Shake -> shakeGear(level, key)
+                is InputSource.Finger -> fingerGear(key, ws.padFingers.fingerOf(src.axis), level.isOwn(WorkspaceDefaults.PAD_FINGERS)) { s ->
+                    level.edit { it.copy(padFingers = it.padFingers.withFinger(s)) }
+                }
                 else -> null
             } ?: directionGear(surface, key, input, zones, touchpad = true) ?: when (timingOf(input)) {
                 Timing.LONG_PRESS -> ui {
@@ -366,18 +379,9 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
                         Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
                         overridden = level.isOwn(WorkspaceDefaults.LONG_PRESS),
                         onReset = { level.reset(WorkspaceDefaults.LONG_PRESS) },
+                        children = level.kids(WorkspaceDefaults.LONG_PRESS),
                         hint = longHint(isSwipeTiming(input), "the workspace's: every button and key without a time of its own uses it"),
                     ) { ms -> level.edit { it.copy(longPressMs = ms) } }
-                }
-
-                Timing.DOUBLE_TAP -> ui {
-                    MsOverride(
-                        key + "double", doubleLabel(isSwipeTiming(input)), ws.doubleTapMs,
-                        Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
-                        overridden = level.isOwn(WorkspaceDefaults.DOUBLE_TAP),
-                        onReset = { level.reset(WorkspaceDefaults.DOUBLE_TAP) },
-                        hint = doubleHint(isSwipeTiming(input), "the workspace's: every button and key without a window of its own uses it"),
-                    ) { ms -> level.edit { it.copy(doubleTapMs = ms) } }
                 }
 
                 null -> null
@@ -406,6 +410,7 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
         RatchetModeRow(
             axis, g.ownMode(axis) ?: g.mode, level.isOwn(k("Mode")),
             onReset = { level.reset(k("Mode")) },
+            children = level.kids(k("Mode")),
             hint = "Unset, it follows the gyro mode in Settings." + if (g.mode == GyroMode.SENSOR_OFF) " Gyro is off there now." else "",
         ) { m -> level.edit { it.copy(gyro = it.gyro.withMode(axis, m)) } }
         val sensHint = "How fast ${axis.label.lowercase()} turns; scrolling and sticks go faster or slower with it too. " +
@@ -430,12 +435,14 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
             GyroSensSlider(
                 key + "sens" + axis.name, "${axis.label} sensitivity", g.sensitivityOf(axis), g,
                 overridden = sensOwn, onReset = resetSens, hint = sensHint,
+                children = level.kids(k("Sensitivity"), k("Scale")),
             ) { v -> level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, v)) } }
         }
         AccelCurveSetting(
             key + "accel" + axis.name, "${axis.label} acceleration", g.accelOf(axis), g.sensitivityOf(axis), g,
             overridden = level.isOwn(k("Accel")),
             onReset = { level.reset(k("Accel")) },
+            children = level.kids(k("Accel")),
             hint = "Unset, it follows the shared Acceleration in Settings. $ACCEL_HINT",
             perAxis = true,
             axis = axis,
@@ -466,6 +473,7 @@ private fun tiltGear(level: WorkspaceLevel, key: String, x: Boolean): @Composabl
             GyroSettings.MIN_TILT_RANGE_DEG..GyroSettings.MAX_TILT_RANGE_DEG, 1f,
             overridden = level.isOwn(rangeKey),
             onReset = { level.reset(rangeKey) },
+            children = level.kids(rangeKey),
             hint = "How far it leans for a full push. Unset, the shared Tilt range in Settings (%.0f°).".format(g.tiltRangeDeg),
         ) { v -> level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXRangeDeg = v) else it.gyro.copy(tiltYRangeDeg = v)) } }
         val dz = g.tiltDeadzoneOf(x)
@@ -474,6 +482,7 @@ private fun tiltGear(level: WorkspaceLevel, key: String, x: Boolean): @Composabl
             0f..GyroSettings.MAX_TILT_DEADZONE_DEG, 1f,
             overridden = level.isOwn(dzKey),
             onReset = { level.reset(dzKey) },
+            children = level.kids(dzKey),
             hint = "Leaning less than this counts as level. Unset, the shared Tilt deadzone in Settings.",
         ) { v -> level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXDeadzoneDeg = v) else it.gyro.copy(tiltYDeadzoneDeg = v)) } }
     }
@@ -485,7 +494,7 @@ private fun shakeGear(level: WorkspaceLevel, key: String): @Composable () -> Uni
     OverrideSlider(
         key + "shake", "Shake at %.0f m/s²", level.ws.gyro.shakeStrength,
         GyroSettings.MIN_SHAKE_STRENGTH..GyroSettings.MAX_SHAKE_STRENGTH, 1f,
-        overridden = level.isOwn(k), onReset = { level.reset(k) },
+        overridden = level.isOwn(k), onReset = { level.reset(k) }, children = level.kids(k),
         hint = "How hard a jolt counts as a shake: higher needs a harder shake.",
     ) { v -> level.edit { it.copy(gyro = it.gyro.copy(shakeStrength = v)) } }
 }
@@ -498,9 +507,10 @@ private fun RatchetModeRow(
     overridden: Boolean,
     onReset: () -> Unit,
     hint: String,
+    children: ChildInfo? = null,
     onSet: (GyroMode) -> Unit,
 ) {
-    OverrideRow("${axis.label}: a ratchet", overridden, onReset, hint) {
+    OverrideRow("${axis.label}: a ratchet", overridden, onReset, hint, children = children) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             for (m in listOf(GyroMode.ALWAYS, GyroMode.OFF)) {
                 FilterChip(selected = mode == m, onClick = { onSet(m) }, label = { Text(if (m == GyroMode.ALWAYS) "Disables it" else "Enables it") })
@@ -526,8 +536,11 @@ internal fun physicalSettings(
     }
     val key = preset.id + ":" + held?.id
     val items = if (level == null) emptyList() else listOf(
-        category(runtime, "heldGyro", "While held", "Gyro sensitivity and acceleration, touchpad speed", prefKey = "physical.Held", defaultOpen = true) {
+        category(runtime, "heldGyro", "Gyro", "Gyro sensitivity and acceleration while held", prefKey = "physical.Held", defaultOpen = true) {
             ButtonGyroSensitivity(level, key)
+        },
+        category(runtime, "heldTouchpad", "Touchpad", "Touchpad cursor speed while held", prefKey = "physical.HeldTouchpad") {
+            ButtonTouchpadSpeed(level, key)
         },
     )
     return physicalActionSettings(preset, ws, update).let { a ->
@@ -562,24 +575,14 @@ private fun physicalActionSettings(
             stickId != null -> ui { StickTuningSettings(preset, stickId, update) }
             triggerId != null -> ui { TriggerTuningSettings(preset, triggerId, update) }
             else -> when (src?.gesture) {
-                ButtonGesture.TAP, ButtonGesture.LONG_PRESS -> ui {
+                ButtonGesture.TAP, ButtonGesture.LONG_PRESS, ButtonGesture.DOUBLE_TAP -> ui {
                     MsOverride(
-                        key + "long", "Long press after", own?.longPressMs ?: ws.longPressMs,
+                        key + "long", "Tap time", own?.longPressMs ?: ws.longPressMs,
                         Workspace.MIN_LONG_PRESS_MS..Workspace.MAX_LONG_PRESS_MS,
                         overridden = own?.longPressMs != null,
                         onReset = { update { p -> p.withTiming(src.keyCode) { it.copy(longPressMs = null) } } },
                         hint = "$LONG_HINT Kept in the preset. Without a time of its own it uses the workspace's.",
                     ) { ms -> update { p -> p.withTiming(src.keyCode) { it.copy(longPressMs = ms) } } }
-                }
-
-                ButtonGesture.DOUBLE_TAP -> ui {
-                    MsOverride(
-                        key + "double", "Double tap within", own?.doubleTapMs ?: ws.doubleTapMs,
-                        Workspace.MIN_DOUBLE_TAP_MS..Workspace.MAX_DOUBLE_TAP_MS,
-                        overridden = own?.doubleTapMs != null,
-                        onReset = { update { p -> p.withTiming(src.keyCode) { it.copy(doubleTapMs = null) } } },
-                        hint = "Kept in the preset. Without a window of its own it uses the workspace's.",
-                    ) { ms -> update { p -> p.withTiming(src.keyCode) { it.copy(doubleTapMs = ms) } } }
                 }
 
                 else -> null
@@ -692,5 +695,59 @@ private fun AreaOptions(control: TouchControl, update: ((TouchControl) -> TouchC
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/**
+ * The ⚙ of a finger position input ([InputSource.Finger]): Live or Locked, and its deadzones
+ * ([FingerAxisSettings]) as one slider with two handles. [own]: set at this level ([s] differs
+ * from the defaults, for a button).
+ */
+private fun fingerGear(key: String, s: FingerAxisSettings, own: Boolean = !s.none, onSet: (FingerAxisSettings) -> Unit): @Composable () -> Unit = ui {
+    FingerAxisOptions(key, s, own, onSet)
+}
+
+@Composable
+private fun FingerAxisOptions(key: String, s: FingerAxisSettings, own: Boolean, onSet: (FingerAxisSettings) -> Unit) {
+    val along = when (s.axis) {
+        FingerAxis.X -> "from the left edge (0 %) to the right edge (100 %)"
+        FingerAxis.Y -> "from the bottom edge (0 %) to the top edge (100 %)"
+        FingerAxis.DISTANCE -> "from the centre (0 %) to the rim (100 %)"
+        FingerAxis.ANGLE -> "around from the top (0 %), clockwise, back to the top (100 %)"
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OverrideRow(
+            "Value", s.locked, if (s.locked) ({ onSet(s.copy(locked = false)) }) else null,
+            hint = if (s.locked) "Locked: the value is where the finger landed, until it lifts; sliding changes nothing."
+            else "Live: the value follows the finger as it slides.",
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = !s.locked, onClick = { onSet(s.copy(locked = false)) }, label = { Text("Live") })
+                FilterChip(selected = s.locked, onClick = { onSet(s.copy(locked = true)) }, label = { Text("Locked") })
+            }
+        }
+        var a by remember(key, s.axis, s.start) { mutableStateOf(s.start) }
+        var b by remember(key, s.axis, s.end) { mutableStateOf(s.end) }
+        val deadzoned = s.start != 0f || s.end != 1f
+        OverrideRow(
+            "Deadzones %.0f %% – %.0f %%".format(a * 100, b * 100), own && deadzoned,
+            if (deadzoned) ({ onSet(s.copy(start = 0f, end = 1f)) }) else null,
+            hint = "Where on the button the value starts and stops growing, $along. Before the first handle it is 0, " +
+                    "past the second it is full, and it grows evenly between them. Every chip of this input uses it; " +
+                    "each chip's Range then says what 0 and full send. Tap near a handle to type its exact value.",
+        ) {
+            TwoHandleSlider(
+                a * 100f, b * 100f, 0f..100f, 1f,
+                onChange = { x, y -> a = x / 100f; b = y / 100f },
+                onDone = { x, y ->
+                    // The handles in order: the start is the lower one.
+                    val lo = minOf(x, y) / 100f
+                    val hi = maxOf(x, y) / 100f
+                    a = lo; b = hi
+                    onSet(s.copy(start = lo, end = hi))
+                },
+                fromTitle = "Start (%)", toTitle = "End (%)",
+            )
+        }
     }
 }

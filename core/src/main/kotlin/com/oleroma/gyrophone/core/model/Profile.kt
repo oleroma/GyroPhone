@@ -118,7 +118,29 @@ data class TouchControl(
     val display: GyroDisplay? = null,
     /** Edit mode: controls sharing a group id move and size together ([ControlGroups]); null = none. */
     val group: String? = null,
+    /**
+     * Edit mode: controls sharing a size sync id keep their own places but change size together,
+     * by the same amount ([ControlGroups.syncSize]); null = none. Never with a [group].
+     */
+    val sizeSync: String? = null,
+    /** BUTTON: its finger position inputs' own settings ([InputSource.Finger]); an axis not listed has the defaults. */
+    val fingers: List<FingerAxisSettings> = emptyList(),
+    /** Its own opacity in play ([Profile.MIN_CONTROL_OPACITY]..1); null = the workspace's control opacity. */
+    val opacity: Float? = null,
+    /**
+     * Fade when idle: the opacity it fades to ([Profile.MIN_CONTROL_OPACITY].. its opacity) a few
+     * seconds ([FADE_AFTER_MS]) after it was last touched; a touch brings it back. null = never fades.
+     */
+    val fade: Float? = null,
+    /**
+     * In every workspace ([GlobalControls]): the same control (id, place, size, look and mappings)
+     * in each, a change to one made to all.
+     */
+    val global: Boolean = false,
 ) {
+    /** Finger position input [axis]'s settings. */
+    fun fingerOf(axis: FingerAxis): FingerAxisSettings = fingers.fingerOf(axis)
+
     /**
      * Every button is a touch surface: its fingers drive the touch inputs ([InputSource.Surface]
      * with its id) it maps or inherits from the workspace, its one-finger hold being its press.
@@ -142,9 +164,8 @@ data class TouchControl(
     fun longPress(w: Workspace): Int =
         (longPressMs ?: w.longPressMs).coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS)
 
-    /** The double-tap window in effect (ms), its own or [w]'s. */
-    fun doubleTap(w: Workspace): Int =
-        (doubleTapMs ?: w.doubleTapMs).coerceIn(Workspace.MIN_DOUBLE_TAP_MS, Workspace.MAX_DOUBLE_TAP_MS)
+    /** The double-tap window in effect (ms): the one Tap time ([longPress]; [doubleTapMs] is no longer read). */
+    fun doubleTap(w: Workspace): Int = longPress(w)
 
     companion object {
         const val MIN_SIZE = 0.06f
@@ -161,6 +182,12 @@ data class TouchControl(
          */
         const val PORTRAIT_TOP = 0.45f
         const val PORTRAIT_SIZE_SCALE = 0.75f
+
+        /** Fade when idle: how long after its last touch a control fades. */
+        const val FADE_AFTER_MS = 3000L
+
+        /** Fade when idle: the faded opacity a control starts with. */
+        const val DEFAULT_FADE = 0.25f
     }
 }
 
@@ -188,6 +215,39 @@ fun TouchControl.placeSize(inPortrait: Boolean): Float =
  * Touchpad settings a swipe-mode button sets for itself; null fields follow the workspace
  * touchpad ([TouchpadSettings.with]).
  */
+/**
+ * A finger position input's settings ([InputSource.Finger]): [locked] keeps the value from where
+ * the finger landed until it lifts (else it follows the finger). [start] and [end] are its
+ * deadzones, 0..1 of the raw position: the value is 0 up to [start], 1 from [end], a straight line
+ * between.
+ */
+@Serializable
+data class FingerAxisSettings(
+    val axis: FingerAxis,
+    val locked: Boolean = false,
+    val start: Float = 0f,
+    val end: Float = 1f,
+) {
+    /** The value of raw position [raw] (0..1). */
+    fun shape(raw: Float): Float {
+        val a = start.coerceIn(0f, 1f)
+        val b = end.coerceIn(0f, 1f)
+        if (b <= a) return if (raw >= a) 1f else 0f
+        return ((raw - a) / (b - a)).coerceIn(0f, 1f)
+    }
+
+    /** Changes nothing (it need not be kept). */
+    val none: Boolean get() = !locked && start == 0f && end == 1f
+}
+
+/** The settings of [axis] in this list, or the defaults. */
+fun List<FingerAxisSettings>.fingerOf(axis: FingerAxis): FingerAxisSettings =
+    firstOrNull { it.axis == axis } ?: FingerAxisSettings(axis)
+
+/** Copy with [s] in place of its axis's settings (dropped when it changes nothing). */
+fun List<FingerAxisSettings>.withFinger(s: FingerAxisSettings): List<FingerAxisSettings> =
+    filter { it.axis != s.axis } + listOfNotNull(s.takeUnless { it.none })
+
 @Serializable
 data class SurfaceSettings(
     val sensitivity: Float? = null,
@@ -580,6 +640,67 @@ enum class GyroSpace(val label: String) {
     LOCAL("Local"),
     WORLD("World"),
     PLAYER("Player"),
+}
+
+/**
+ * Which screen axis the gyro takes as yaw ([GyroSettings.yawAxis]): the phone's base orientation,
+ * the frame the gyro sees, for every use of the phone's own axes (the gyro mouse in Local space,
+ * the PC controller's gyro and accelerometer, the gyro displays in Local space and the PC overlays).
+ * - [SCREEN_Z]: yaw through the screen (held flat, screen up), pitch across, roll along it.
+ * - [SCREEN_Y]: yaw along the screen's vertical axis (held upright, screen facing you), roll through
+ *   the screen, pitch across it: the frame tilted back 90°.
+ * - [SCREEN_X]: yaw along the screen's horizontal axis (held on its side, right edge up), pitch
+ *   through the screen, roll along its vertical axis: the frame turned 90° about that axis.
+ * - The [flipped] ones: the same axis the other way up (screen down, upside down, left edge up).
+ * - [CUSTOM]: tilted back by [GyroSettings.gripPitch] (0° = Screen Z, 90° = Screen Y), from a
+ *   granular Set orientation.
+ */
+@Serializable
+enum class YawAxis(val label: String, val flipped: Boolean = false) {
+    SCREEN_Z("Screen Z"),
+    SCREEN_Y("Screen Y"),
+    SCREEN_X("Screen X"),
+    SCREEN_Z_FLIPPED("Screen Z flipped", true),
+    SCREEN_Y_FLIPPED("Screen Y flipped", true),
+    SCREEN_X_FLIPPED("Screen X flipped", true),
+    CUSTOM("Custom"),
+    ;
+
+    /** The axis either way up ([SCREEN_Z], [SCREEN_Y] or [SCREEN_X]; [CUSTOM] stays). */
+    val axis: YawAxis get() = when (this) {
+        SCREEN_Z_FLIPPED -> SCREEN_Z
+        SCREEN_Y_FLIPPED -> SCREEN_Y
+        SCREEN_X_FLIPPED -> SCREEN_X
+        else -> this
+    }
+
+    /** [axis] the way up [flip] says. */
+    fun withFlip(flip: Boolean): YawAxis = when (axis) {
+        SCREEN_Z -> if (flip) SCREEN_Z_FLIPPED else SCREEN_Z
+        SCREEN_Y -> if (flip) SCREEN_Y_FLIPPED else SCREEN_Y
+        SCREEN_X -> if (flip) SCREEN_X_FLIPPED else SCREEN_X
+        else -> this
+    }
+
+    companion object {
+        /** The screen axis, either way up, that points most nearly up, from [up] (right, up, toward the player): Set orientation. */
+        fun nearest(up: FloatArray): YawAxis {
+            val x = kotlin.math.abs(up[0]); val y = kotlin.math.abs(up[1]); val z = kotlin.math.abs(up[2])
+            return when {
+                z >= x && z >= y -> SCREEN_Z.withFlip(up[2] < 0f)
+                y >= x -> SCREEN_Y.withFlip(up[1] < 0f)
+                else -> SCREEN_X.withFlip(up[0] < 0f)
+            }
+        }
+
+        /**
+         * A granular Set orientation's tilt back (degrees, -180..180, 0 = flat screen up, 90 =
+         * upright) from [up] (right, up, toward the player): how far the phone leans about the
+         * screen's horizontal axis; leaning sideways is left out.
+         */
+        fun pitchOf(up: FloatArray): Float =
+            Math.toDegrees(kotlin.math.atan2(up[1].toDouble(), up[2].toDouble())).toFloat()
+    }
 }
 
 @Serializable
@@ -1002,6 +1123,10 @@ data class GyroSettings(
     val gameName: String = "",
     /** Which axes yaw, pitch and roll are measured about ([GyroSpace]); the workspace's (and Defaults') only. */
     val gyroSpace: GyroSpace = GyroSpace.LOCAL,
+    /** Which screen axis is yaw ([YawAxis]): the phone's frame for everything gyro; the workspace's (and Defaults') only. */
+    val yawAxis: YawAxis = YawAxis.SCREEN_Z,
+    /** [YawAxis.CUSTOM]'s tilt back (degrees, 0 = Screen Z, 90 = Screen Y), from a granular Set orientation; the workspace's (and Defaults') only. */
+    val gripPitch: Float = 0f,
     /**
      * Inertia: when a ratchet turns a gyro axis off, its mouse and wheel motion glides on and slows
      * down over [glideMs] ([InertiaCurve]); it stops at once when the axis is on again. Sticks never glide.
@@ -1401,6 +1526,17 @@ data class TouchpadSettings(
     fun holdZoneDp(d: Direction, i: Int): Float =
         (holdZone(d, i).lengthDp ?: holdZone(d, 0).lengthDp ?: holdDpOf(d)).coerceIn(MIN_ZONE_DP, MAX_ZONE_DP)
 
+    /** How far held swipe slot [slot] ([holdSlot]; any way: the shared hold distance) travels before it is held (dp). */
+    fun holdDpAt(slot: Int): Float = if (slot in 0..3) holdDpOf(Direction.entries[slot]) else holdDp
+
+    /** Zone [i] of held swipe slot [slot] ([holdZone]; any way: the shared zones). */
+    fun holdZoneAt(slot: Int, i: Int): HoldZone =
+        if (slot in 0..3) holdZone(Direction.entries[slot], i) else holdZones.getOrNull(i) ?: HoldZone()
+
+    /** How long zone [i] of slot [slot] is (dp), as [holdZoneDp]. */
+    fun holdZoneDpAt(slot: Int, i: Int): Float =
+        (holdZoneAt(slot, i).lengthDp ?: holdZoneAt(slot, 0).lengthDp ?: holdDpAt(slot)).coerceIn(MIN_ZONE_DP, MAX_ZONE_DP)
+
     /** The shared pie width of [d]'s swipes ([hold] false) or held directions: its axis's. */
     fun sharedPieDeg(d: Direction, hold: Boolean): Float =
         if (hold) (if (d.x) holdPieX else holdPieY) else if (d.x) swipePieX else swipePieY
@@ -1646,6 +1782,11 @@ data class Profile(
     val cornerOpacity: Float = 0.5f,
     /** Resizing one corner resizes the other too. */
     val cornerSameSize: Boolean = true,
+    /**
+     * The corners became ← / → buttons in every workspace ([NavCorners.toButtons]); [corners] is
+     * then empty and no longer read.
+     */
+    val navButtons: Boolean = false,
     /** What physical devices do, pinned by workspaces ([Workspace.devicePreset]). */
     val devicePresets: List<DevicePreset> = emptyList(),
     /**

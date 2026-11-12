@@ -110,7 +110,7 @@ class MappingOptionsTest {
         val o = MapOptions(cycle = true)
         val e = keyEngine(a(o, A), a(o, B), a(o, C))
         val seen = (1..4).map {
-            e.down(); val k = e.keys(); e.up(); e.keys(); t += 20 * MS; k
+            e.down(); val k = e.keys(); e.up(); e.keys(); t += 100 * MS; k
         }
         assertEquals(listOf(setOf(A), setOf(B), setOf(C), setOf(A)), seen)
     }
@@ -124,7 +124,7 @@ class MappingOptionsTest {
         )
         e.down(); e.up()
         assertEquals(listOf(1), e.layers.overrides)
-        t += 20 * MS
+        t += 100 * MS
         e.down(); e.up()
         assertEquals(emptyList<Int>(), e.layers.overrides)
     }
@@ -174,8 +174,8 @@ class MappingOptionsTest {
     fun onceIsOneShortPress() {
         val e = keyEngine(a(MapOptions(how = How.ONCE)))
         e.down(); assertEquals(setOf(A), e.keys())
-        t += 30 * MS
-        assertEquals(emptySet<Int>(), e.keys()) // still held: the press is over
+        t += 90 * MS
+        assertEquals(emptySet<Int>(), e.keys()) // still held: the press (80 ms) is over
         e.up(); t += 30 * MS
         assertEquals(emptySet<Int>(), e.keys())
     }
@@ -376,7 +376,7 @@ class MappingOptionsTest {
             a(MapOptions(how = How.TOGGLE), usage = C),
             Mapping(InputSource.Key(KEY_B), OutputTarget.LetGo),
         )
-        e.down(); e.keys(); e.up(); t += 50 * MS
+        e.down(); e.keys(); e.up(); t += 100 * MS
         assertEquals(setOf(A, C), e.keys())
         e.setKey(dev, KEY_B, true)
         assertEquals(setOf(C), e.keys()) // only the one set to end on it
@@ -666,12 +666,12 @@ class MappingOptionsTest {
 
     @Test
     fun areaLongPressTakesTheButtonsOwnTime() {
-        val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, longPressMs = 1500)
+        val b = TouchControl("b", TouchKind.BUTTON, "", 0.5f, 0.5f, longPressMs = 900)
         val w = Workspace(id = "w", name = "w", touchControls = listOf(b), mappings = listOf(
             Mapping(Triggers.with(InputSource.TouchArea("b", com.oleroma.gyrophone.core.model.TouchAreaKind.ZONE), Trigger.LONG_PRESS)!!, OutputTarget.Key(A))))
         val e = MappingEngine(single(w)) { t }.apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 10 * MS }
         e.setTouchArea("b", com.oleroma.gyrophone.core.model.TouchAreaKind.ZONE, true)
-        assertTrue(e.hold(1200).none { A in it }) // not at the workspace's time
-        assertTrue(A in e.hold(500).last()) // at the button's
+        assertTrue(e.hold(600).none { A in it }) // not at the workspace's time (300 ms)
+        assertTrue(A in e.hold(400).last()) // at the button's
     }
 }

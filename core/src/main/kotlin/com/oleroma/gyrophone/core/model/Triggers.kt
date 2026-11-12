@@ -66,24 +66,9 @@ object Triggers {
         else -> null
     }
 
-    /** Held direction [d]'s quick swipe. */
-    private fun swipeOf(d: Direction): SurfaceInput = when (d) {
-        Direction.UP -> SurfaceInput.SWIPE_UP
-        Direction.RIGHT -> SurfaceInput.SWIPE_RIGHT
-        Direction.DOWN -> SurfaceInput.SWIPE_DOWN
-        Direction.LEFT -> SurfaceInput.SWIPE_LEFT
-    }
-
-    private fun holdOf(d: Direction): SurfaceInput = when (d) {
-        Direction.UP -> SurfaceInput.HOLD_UP
-        Direction.RIGHT -> SurfaceInput.HOLD_RIGHT
-        Direction.DOWN -> SurfaceInput.HOLD_DOWN
-        Direction.LEFT -> SurfaceInput.HOLD_LEFT
-    }
-
     /** A surface's held direction (any zone): its triggers are the swipe's. */
     private fun isDirection(s: InputSource) =
-        s is InputSource.Surface && s.input.holdDirection != null && s.on == Trigger.HOLD && s.fingers in 1..4
+        s is InputSource.Surface && s.input.heldSwipe && s.on == Trigger.HOLD && s.fingers in 1..4
 
 
     /** Whether [base] (a held source) offers triggers: keys, touch buttons, surface finger counts, swipe directions, Area and Outside. */
@@ -92,7 +77,7 @@ object Triggers {
         // Inside, Outside and a stick's On touch: the same gestures as a button's touch.
         is InputSource.TouchArea -> base.on == Trigger.HOLD
         is InputSource.Surface -> base.on == Trigger.HOLD && base.fingers in 1..4 &&
-            ((base.input == SurfaceInput.HOLD && base.zone == 0) || base.input.holdDirection != null)
+            ((base.input == SurfaceInput.HOLD && base.zone == 0) || base.input.heldSwipe)
 
         else -> false
     }
@@ -133,7 +118,7 @@ object Triggers {
         is InputSource.TouchArea -> s.on
         is InputSource.Surface -> when {
             s.on != Trigger.HOLD -> s.on
-            s.input.swipeDirection != null -> Trigger.TAP
+            s.input.quickSlot >= 0 -> Trigger.TAP
             s.zone == 0 -> ofSurface(s.input) ?: Trigger.HOLD
             else -> Trigger.HOLD
         }
@@ -150,9 +135,9 @@ object Triggers {
         is InputSource.TouchRelease -> InputSource.Touch(s.id)
         is InputSource.TouchArea -> if (s.on == Trigger.HOLD) s else s.copy(on = Trigger.HOLD)
         is InputSource.Surface -> {
-            val d = s.input.swipeDirection
+            val q = s.input.quickSlot
             when {
-                d != null -> s.copy(input = holdOf(d), on = Trigger.HOLD)
+                q >= 0 -> s.copy(input = holdInputOf(q), on = Trigger.HOLD)
                 s.on != Trigger.HOLD -> s.copy(on = Trigger.HOLD)
                 s.zone != 0 || ofSurface(s.input) == null -> s
                 s.id.isNotEmpty() && s.fingers == 1 -> InputSource.Touch(s.id)
@@ -174,10 +159,10 @@ object Triggers {
             is InputSource.Surface -> when {
                 t !in offered(base) && t != Trigger.PRESS -> null
                 isDirection(base) -> {
-                    val d = base.input.holdDirection!!
+                    val q = quickInputOf(base.input.holdSlot)
                     when (t) {
-                        Trigger.TAP -> base.copy(input = swipeOf(d))
-                        Trigger.DOUBLE_TAP -> base.copy(input = swipeOf(d), on = Trigger.DOUBLE_TAP)
+                        Trigger.TAP -> base.copy(input = q)
+                        Trigger.DOUBLE_TAP -> base.copy(input = q, on = Trigger.DOUBLE_TAP)
                         Trigger.LONG_PRESS, Trigger.RELEASE -> base.copy(on = t)
                         else -> null
                     }
@@ -191,16 +176,40 @@ object Triggers {
         }
     }
 
+    /**
+     * [list] with each one-finger Tap-drag mapping as the Touch card's Tap, Double tap Repeat ×2
+     * (a quick second tap: a double click) and Double tap Held (a second touch that stays down or
+     * moves: a drag) of the same target; a cleared one clears the Double tap. Returns [list] itself
+     * when there is none.
+     */
+    fun tapDrags(list: List<Mapping>): List<Mapping> {
+        fun isTapDrag(m: Mapping) = (m.source as? InputSource.Surface)?.input == SurfaceInput.TAP_DRAG
+        if (list.none(::isTapDrag)) return list
+        return list.flatMap { m ->
+            val s = m.source as? InputSource.Surface
+            if (s == null || s.input != SurfaceInput.TAP_DRAG) listOf(m)
+            else {
+                val double = m.copy(source = s.copy(input = SurfaceInput.DOUBLE_TAP), options = null)
+                if (m.target == OutputTarget.NoOutput) listOf(double)
+                else listOf(
+                    m.copy(source = s.copy(input = SurfaceInput.TAP), options = null),
+                    m.copy(source = s.copy(input = SurfaceInput.DOUBLE_TAP), options = MapOptions(how = How.REPEAT, repeat = 2)),
+                    double,
+                )
+            }
+        }.distinctBy { listOf(it.source, it.target, it.set, (it.options ?: MapOptions()).shape) }.let(Inheritance::tidy)
+    }
+
     /** [base]'s sources, one per trigger it offers (only itself when it has none). */
     fun all(base: InputSource): List<InputSource> = offered(base).mapNotNull { with(base, it) }
 
     /**
      * [list] with the Press trigger (no longer offered) turned into On touch + Once, the same
-     * thing, and old key modes as Toggles ([ToggleUpgrade.keyModes]). Returns [list] itself when
-     * there is none.
+     * thing, Tap-drag (no longer offered) into Tap + Double tap of its target ([tapDrags]), and
+     * old key modes as Toggles ([ToggleUpgrade.keyModes]). Returns [list] itself when there is none.
      */
     fun upgrade(list: List<Mapping>): List<Mapping> {
-        val ms = ToggleUpgrade.keyModes(list)
+        val ms = tapDrags(ToggleUpgrade.keyModes(list))
         if (ms.none { of(it.source) == Trigger.PRESS }) return ms
         return ms.map { m ->
             if (of(m.source) != Trigger.PRESS) m

@@ -259,6 +259,11 @@ object WireCodec {
         is Pong -> PacketType.PONG
         is HostStatus -> PacketType.HOST_STATUS
         is Rumble -> PacketType.RUMBLE
+        is KeyLabels -> PacketType.KEY_LABELS
+        is PressTime -> PacketType.PRESS_TIME
+        is TestMode -> PacketType.TEST_MODE
+        is CaptureListen -> PacketType.CAPTURE
+        is PcPresses -> PacketType.CAPTURED
         is Foreground -> PacketType.FOREGROUND
         is HostBye -> PacketType.HOST_BYE
         else -> -1
@@ -282,6 +287,7 @@ object WireCodec {
                 out.putU16(off + 16, p.linkMbps)
                 out.putU16(off + 18, p.freqMhz)
                 out.putU8(off + 20, p.flags)
+                out.putU8(off + 21, p.path)
             }
             is Bye -> out.putU8(off, p.reason)
             is HostBye -> out.putU8(off, p.reason)
@@ -294,8 +300,26 @@ object WireCodec {
                 out.putU32(off + 16, p.jitterUs)
                 out.putU8(off + 20, p.outputMode)
                 out.putU8(off + 21, p.flags)
+                out.putU8(off + 22, p.flags2)
             }
-            is Rumble -> { out.putU8(off, p.large); out.putU8(off + 1, p.small) }
+            is Rumble -> { out.putU8(off, p.large); out.putU8(off + 1, p.small); out.putU8(off + 2, p.pattern) }
+            is PressTime -> { out.putU32(off, p.stateTimeUs); out.putU32(off + 4, p.eventTimeUs) }
+            is TestMode -> out.putU8(off, p.flags)
+            is CaptureListen -> out.putU8(off, p.flags)
+            is PcPresses -> {
+                val n = minOf(p.held.size, Wire.CAPTURED_MAX)
+                out.putU8(off, n)
+                for (i in 0 until n) {
+                    val o = off + 2 + 4 * i
+                    out.putU8(o, p.held[i].kind)
+                    out.putU8(o + 1, p.held[i].arg and 0xFF)
+                    out.putU16(o + 2, p.held[i].code)
+                }
+            }
+            is KeyLabels -> {
+                out.putU32(off, p.layout)
+                for (i in KeyLabels.USAGES.indices) out.putU16(off + 4 + 2 * i, p.chars.getOrElse(i) { 0 })
+            }
             is Foreground -> {
                 // Layout: nameLen u8, reserved u8, exe[64].
                 val bytes = utf8Truncated(p.exe, Wire.FOREGROUND_EXE_MAX)
@@ -321,15 +345,26 @@ object WireCodec {
             PacketType.PONG -> Pong(buf.getU64(off), buf.getU64(off + 8), buf.getU64(off + 16))
             PacketType.LINK_INFO -> LinkInfo(
                 buf.getI64(off), buf.getI32(off + 8), buf.getU16(off + 12), buf.getI8(off + 14), buf.getU8(off + 15),
-                buf.getU16(off + 16), buf.getU16(off + 18), buf.getU8(off + 20),
+                buf.getU16(off + 16), buf.getU16(off + 18), buf.getU8(off + 20), buf.getU8(off + 21),
             )
             PacketType.BYE -> Bye(buf.getU8(off))
             PacketType.HOST_BYE -> HostBye(buf.getU8(off))
             PacketType.HOST_STATUS -> HostStatus(
                 buf.getI32(off), buf.getU16(off + 4), buf.getU16(off + 6), buf.getI32(off + 8), buf.getI32(off + 12),
-                buf.getI32(off + 16), buf.getU8(off + 20), buf.getU8(off + 21),
+                buf.getI32(off + 16), buf.getU8(off + 20), buf.getU8(off + 21), buf.getU8(off + 22),
             )
-            PacketType.RUMBLE -> Rumble(buf.getU8(off), buf.getU8(off + 1))
+            PacketType.RUMBLE -> Rumble(buf.getU8(off), buf.getU8(off + 1), buf.getU8(off + 2))
+            PacketType.PRESS_TIME -> PressTime(buf.getI32(off), buf.getI32(off + 4))
+            PacketType.TEST_MODE -> TestMode(buf.getU8(off))
+            PacketType.CAPTURE -> CaptureListen(buf.getU8(off))
+            PacketType.CAPTURED -> {
+                val n = minOf(buf.getU8(off), Wire.CAPTURED_MAX)
+                PcPresses(List(n) { i ->
+                    val o = off + 2 + 4 * i
+                    PcPress(buf.getU8(o), buf.getU16(o + 2), buf.getI8(o + 1))
+                })
+            }
+            PacketType.KEY_LABELS -> KeyLabels(buf.getI32(off), IntArray(KeyLabels.USAGES.size) { buf.getU16(off + 4 + 2 * it) })
             PacketType.FOREGROUND -> {
                 val n = buf.getU8(off)
                 if (n > Wire.FOREGROUND_EXE_MAX) null else Foreground(String(buf, off + 2, n, Charsets.UTF_8))

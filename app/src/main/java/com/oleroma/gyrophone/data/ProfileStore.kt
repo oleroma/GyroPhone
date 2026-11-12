@@ -5,6 +5,8 @@ import android.util.Log
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.LibraryButton
+import com.oleroma.gyrophone.core.model.MappingPreset
+import com.oleroma.gyrophone.core.model.MappingPresets
 import com.oleroma.gyrophone.core.model.MappingProfile
 import com.oleroma.gyrophone.core.model.MappingProfiles
 import com.oleroma.gyrophone.core.model.Profile
@@ -47,6 +49,29 @@ class ProfileStore(context: Context) {
     }
 
     fun all(): List<Profile> = userProfiles() + BuiltinProfiles.all
+
+    /**
+     * Profile [id] read from its own file alone, without reading every other profile (old ones are
+     * kept on disk for good), or null when that is not certain to give what [userProfiles] would:
+     * the file is missing, unreadable or holds another profile, or a second file for the id
+     * ("<name>-2.json", made when the usual name was taken) exists.
+     */
+    @Synchronized fun readOwnFile(id: String): Profile? {
+        val name = fileName(id)
+        val base = name.removeSuffix(".json")
+        if (dir.list { _, n -> n.startsWith("$base-") && n.endsWith(".json") }.orEmpty().isNotEmpty()) return null
+        val f = File(dir, name)
+        if (!f.isFile) return null
+        val read = ProfileJson.decodeLenient(f.readText()) ?: return null
+        val p = read.profile
+        if (p.id != id || isBuiltin(p)) return null
+        files[id] = f
+        if (read.dropped > 0) {
+            Log.w(TAG, "${f.name}: left out ${read.dropped} mapping(s) this build cannot read")
+            partial += f.path
+        }
+        return p
+    }
 
     /** Files read with mappings left out ([ProfileJson.decodeLenient]): a copy is kept before the first save over one. */
     private val partial = HashSet<String>()
@@ -159,6 +184,19 @@ class ProfileStore(context: Context) {
     @Synchronized fun saveButtonLibrary(buttons: List<LibraryButton>) {
         if (libraryFile.exists() && ButtonLibrary.decode(libraryFile.readText()) == null) return
         replaceFile(libraryFile, ButtonLibrary.encode(buttons))
+    }
+
+    private val presetFile = File(context.filesDir, "mapping_presets.json")
+
+    /** The chip and card presets of the mapping editor (empty if none saved, or unreadable: the file is then left alone). */
+    @Synchronized fun mappingPresets(): List<MappingPreset> =
+        if (!presetFile.exists()) emptyList()
+        else MappingPresets.decode(presetFile.readText()).orEmpty()
+
+    /** Saves the mapping editor's presets; refuses to replace a file that exists but cannot be read. */
+    @Synchronized fun saveMappingPresets(presets: List<MappingPreset>) {
+        if (presetFile.exists() && MappingPresets.decode(presetFile.readText()) == null) return
+        replaceFile(presetFile, MappingPresets.encode(presets))
     }
 
     /** True once each workspace holds its own mappings (moved out of the mapping profiles). */

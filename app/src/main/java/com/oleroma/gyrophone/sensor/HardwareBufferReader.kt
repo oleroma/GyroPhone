@@ -6,8 +6,13 @@ import android.hardware.HardwareBuffer
 class HardwareBufferReader(buffer: HardwareBuffer) : AutoCloseable {
     private var handle = nativeAcquire(buffer).also { require(it != 0L) { "no native buffer" } }
 
-    /** Copies the first [size] bytes into [dst]; false when the buffer could not be locked. */
-    fun read(dst: ByteArray, size: Int): Boolean = handle != 0L && nativeRead(handle, dst, size)
+    /**
+     * Copies the first [size] bytes into [dst]; false when the buffer could not be locked. With
+     * [check] (a byte offset, -1 for none) only when the sensor event there is newer than counter
+     * [after], checked under the same lock.
+     */
+    fun read(dst: ByteArray, size: Int, check: Int = -1, after: Long = 0L): Boolean =
+        handle != 0L && nativeRead(handle, dst, size, check, after)
 
     override fun close() {
         nativeRelease(handle)
@@ -19,7 +24,7 @@ class HardwareBufferReader(buffer: HardwareBuffer) : AutoCloseable {
         val loaded: Boolean = runCatching { System.loadLibrary("gyrobuffer") }.isSuccess
 
         @JvmStatic private external fun nativeAcquire(buffer: HardwareBuffer): Long
-        @JvmStatic private external fun nativeRead(handle: Long, dst: ByteArray, size: Int): Boolean
+        @JvmStatic private external fun nativeRead(handle: Long, dst: ByteArray, size: Int, check: Int, after: Long): Boolean
         @JvmStatic private external fun nativeRelease(handle: Long)
     }
 }

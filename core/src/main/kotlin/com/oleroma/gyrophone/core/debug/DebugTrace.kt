@@ -240,7 +240,7 @@ class DebugTrace(
         private val AXIS_NAMES = arrayOf("LX", "LY", "RX", "RY", "LT", "RT")
         private val MOUSE_BUTTONS = arrayOf("left", "right", "middle", "back", "forward")
 
-        fun keyName(usage: Int): String = HidUsage.names[usage] ?: "0x%02X".format(usage)
+        fun keyName(usage: Int): String = HidUsage.labelOrHex(usage)
 
         fun hatName(hat: Int): String = when (hat) {
             Hat.UP -> "up"; Hat.UP_RIGHT -> "up-right"; Hat.RIGHT -> "right"; Hat.DOWN_RIGHT -> "down-right"

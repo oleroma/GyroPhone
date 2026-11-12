@@ -14,6 +14,42 @@ public static class HidScanCodes
     /// <summary>Scan code for a usage; <see cref="ScanCode.IsMapped"/> is false for unknown usages.</summary>
     public static ScanCode For(int usage) => usage is >= 0 and < 256 ? Table[usage] : default;
 
+    private static readonly Dictionary<(ushort Scan, bool Extended), int> ByScan = BuildByScan();
+    private static readonly Dictionary<ushort, int> ByVk = BuildByVk();
+
+    /// <summary>
+    /// The HID usage of a key a keyboard sent as Set 1 <paramref name="scan"/> (E0-prefixed when
+    /// <paramref name="extended"/>), or by virtual key <paramref name="vk"/> for keys without one (Pause, the media
+    /// keys); 0 when unknown. The reverse of <see cref="For"/>.
+    /// </summary>
+    public static int UsageOf(ushort scan, bool extended, ushort vk)
+    {
+        if (vk != 0 && ByVk.TryGetValue(vk, out int byVk)) return byVk;
+        if (scan != 0 && ByScan.TryGetValue((scan, extended), out int u)) return u;
+        // A few keys come with or without E0 by keyboard (NumLock's 0x45 often without): try the other.
+        if (scan != 0 && ByScan.TryGetValue((scan, !extended), out u)) return u;
+        return 0;
+    }
+
+    private static Dictionary<(ushort, bool), int> BuildByScan()
+    {
+        var d = new Dictionary<(ushort, bool), int>();
+        for (int u = 0; u < 256; u++)
+        {
+            var c = Table[u];
+            if (c.Scan != 0 && c.Vk == 0) d.TryAdd((c.Scan, c.Extended), u);
+        }
+        return d;
+    }
+
+    private static Dictionary<ushort, int> BuildByVk()
+    {
+        var d = new Dictionary<ushort, int>();
+        for (int u = 0; u < 256; u++)
+            if (Table[u].Vk != 0) d.TryAdd(Table[u].Vk, u);
+        return d;
+    }
+
     /// <summary>Modifier usages 0xE0..0xE7.</summary>
     public static bool IsModifier(int usage) => usage is >= 0xE0 and <= 0xE7;
 

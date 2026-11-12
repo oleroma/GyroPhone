@@ -11,8 +11,9 @@ namespace GyroPhone.Windows;
 
 /// <summary>
 /// Virtual pad through the ViGEmBus driver: Xbox 360 (XInput) or DualShock 4 (DirectInput HID).
-/// Reports are built in full and sent with one SubmitReport (AutoSubmitReport off). Called under the
-/// engine lock; rumble feedback arrives on the driver's thread and is only forwarded.
+/// Reports are built in full and sent with one SubmitReport (AutoSubmitReport off). Submit runs under the
+/// engine lock, Plug and Unplug on its pad thread; rumble feedback arrives on the driver's thread and is
+/// only forwarded.
 /// </summary>
 public sealed class ViGEmPadSink : IPadSink, IDisposable
 {

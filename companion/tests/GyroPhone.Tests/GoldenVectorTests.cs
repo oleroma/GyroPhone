@@ -220,7 +220,7 @@ public class GoldenVectorTests
                     break;
                 case "HOST_STATUS":
                     WireCodec.EncodeHostStatus(new HostStatus((uint)f.Long("lastSeq"), (ushort)f.Long("rxPerSec"), (ushort)f.Long("lossPermille"),
-                        (uint)f.Long("latP50Us"), (uint)f.Long("latP99Us"), (uint)f.Long("jitterUs"), (byte)f.Long("outputMode"), (byte)f.Long("flags")), plain);
+                        (uint)f.Long("latP50Us"), (uint)f.Long("latP99Us"), (uint)f.Long("jitterUs"), (byte)f.Long("outputMode"), (byte)f.Long("flags"), (byte)f.Long("flags2")), plain);
                     break;
                 case "RUMBLE":
                     WireCodec.EncodeRumble(new Rumble((byte)f.Long("large"), (byte)f.Long("small")), plain);
@@ -318,7 +318,7 @@ public class GoldenVectorTests
         byte[] Rand(int n) => n == 4 ? (byte[])sidBytes.Clone() : S.Bytes("nH");
         using var h = new Harness(random: Rand, pairDefault: false);
         h.AddPaired(P.Bytes("phoneId"), "OnePlus 15", S.Bytes("pairKey"));
-        var engine = new Host.HostEngine(h.Settings, h.Pad, h.KeyMouse, h.Prompt, new PlainProtector(), h.Clock, h.Events, Rand);
+        var engine = new Host.HostEngine(h.Settings, h.Pad, h.KeyMouse, h.Prompt, new PlainProtector(), h.Clock, h.Events, Rand) { PadWorker = job => job() };
         engine.AttachSender(h.Sender);
         var from = new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 5000).Serialize();
 
@@ -354,7 +354,7 @@ public class GoldenVectorTests
     public void KeyboardUsagesAllMap()
     {
         var usages = Vectors.Root.GetProperty("keyboardUsages").EnumerateArray().Select(e => e.GetInt32()).ToList();
-        Assert.Equal(122, usages.Count);
+        Assert.Equal(123, usages.Count);
         // Pause and the media keys go as virtual keys, everything else as scan codes.
         int[] vkPath = { 0x48, 0x7F, 0x80, 0x81, 0xE8, 0xEA, 0xEB };
         foreach (var u in usages)

@@ -4,7 +4,8 @@ namespace GyroPhone.Tray;
 
 /// <summary>
 /// Shuts down, updates and starts again when a newer build waits next to this exe. The install hook never
-/// touches a running exe: it puts the new build at "&lt;exe&gt;.new". This notices it within a few seconds,
+/// touches a running exe: it puts the new build at "&lt;exe&gt;.new". A folder watcher notices it about 300 ms
+/// after it lands (the 5 s check stays as a fallback for a missed event); then it
 /// stops the watcher, starts the .new file as an <see cref="UpdateFinisher"/> and exits cleanly (release-all,
 /// bye). The finisher copies itself over this exe once it has exited and starts it again, even with a phone
 /// connected (Olex: always restart on update); the phone reconnects by itself. The exe is single-file and
@@ -16,12 +17,17 @@ namespace GyroPhone.Tray;
 internal sealed class CompanionUpdater : IDisposable
 {
     private const int TickMs = 5_000;
+    /// <summary>After the folder watcher sees the .new file, how long to wait for more events (the copy finishing).</summary>
+    private const int SettleMs = 300;
 
     private readonly string _exePath, _newPath, _oldPath;
     private readonly string _version;
     private readonly Action<string> _log;
     private readonly Action _exitForUpdate;
     private readonly System.Windows.Forms.Timer _timer;
+    private readonly System.Windows.Forms.Timer _settle;
+    private FileSystemWatcher? _watcher;
+    private SynchronizationContext? _ui;
     private bool _restarting, _disposed;
     private string? _lastNew = "";
     /// <summary>The .new build (<see cref="UpdateFinisher.StampOf"/>) a failed update came back from: not tried again until reinstalled.</summary>
@@ -42,6 +48,12 @@ internal sealed class CompanionUpdater : IDisposable
         _exitForUpdate = exitForUpdate;
         _timer = new System.Windows.Forms.Timer { Interval = TickMs };
         _timer.Tick += (_, _) => Tick();
+        _settle = new System.Windows.Forms.Timer { Interval = SettleMs };
+        _settle.Tick += (_, _) =>
+        {
+            _settle.Stop();
+            if (!_restarting && !_disposed) Tick();
+        };
         if (updateFailed) _failedStamp = UpdateFinisher.StampOf(_newPath);
     }
 
@@ -55,6 +67,7 @@ internal sealed class CompanionUpdater : IDisposable
         _log($"self-restart on: {_version} watches {_newPath}");
         if (_failedStamp != null) _log($"update to {_failedStamp} failed; not retrying it until it is installed again");
         _timer.Start();
+        WatchFolder();
         // No restart yet: this runs before the message loop, where exiting would leave the process hanging.
         // The first timer tick restarts.
         Tick(restart: false);
@@ -108,6 +121,46 @@ internal sealed class CompanionUpdater : IDisposable
         if (restart) TryRestart();
     }
 
+    /// <summary>
+    /// Watches the exe's folder for the .new file, so an install is noticed at once. The events arrive on
+    /// the thread pool and are posted to the UI thread, where a short settle timer runs the check.
+    /// </summary>
+    private void WatchFolder()
+    {
+        _ui = SynchronizationContext.Current;
+        var dir = Path.GetDirectoryName(_newPath);
+        if (_ui == null || string.IsNullOrEmpty(dir))
+        {
+            _log($"self-restart: folder watch off; checking every {TickMs / 1000} s");
+            return;
+        }
+        try
+        {
+            var w = new FileSystemWatcher(dir, Path.GetFileName(_newPath))
+            {
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                IncludeSubdirectories = false,
+            };
+            w.Created += (_, _) => Kick();
+            w.Changed += (_, _) => Kick();
+            w.Renamed += (_, _) => Kick();
+            w.EnableRaisingEvents = true;
+            _watcher = w;
+        }
+        catch (Exception e) when (e is ArgumentException or IOException or PlatformNotSupportedException)
+        {
+            _log($"self-restart: folder watch off ({e.GetType().Name}); checking every {TickMs / 1000} s");
+        }
+    }
+
+    /// <summary>A folder event (thread pool): run the check on the UI thread once the events settle.</summary>
+    private void Kick() => _ui?.Post(_ =>
+    {
+        if (_disposed) return;
+        _settle.Stop();
+        _settle.Start();
+    }, null);
+
     /// <summary>The version of the waiting .new build, or null when there is none (or it can't be read yet).</summary>
     private string? NewVersion() => UpdateFinisher.VersionOf(_newPath);
 
@@ -126,6 +179,8 @@ internal sealed class CompanionUpdater : IDisposable
     public void Dispose()
     {
         _disposed = true;
+        _watcher?.Dispose();
         _timer.Dispose();
+        _settle.Dispose();
     }
 }

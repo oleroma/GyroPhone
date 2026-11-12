@@ -47,9 +47,9 @@ class MotionFeedTest {
         f.onWantedChange = Runnable { calls++ }
         f.hostTakes = true
         assertFalse(f.wanted)
-        f.padIsDs4 = true
+        f.padTakesMotion = true
         assertTrue(f.wanted)
-        f.padIsDs4 = true
+        f.padTakesMotion = true
         assertEquals(1, calls)
         f.add(1f, 0f, 0f, 0L)
         f.hostTakes = false

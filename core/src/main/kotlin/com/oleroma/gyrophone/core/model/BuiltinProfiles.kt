@@ -101,6 +101,9 @@ object BuiltinProfiles {
             control("view", b, "View", p(0.44f, 0.13f, 0.10f), p(0.38f, 0.54f, 0.13f), sq),
             control("menu", b, "Menu", p(0.56f, 0.13f, 0.10f), p(0.62f, 0.54f, 0.13f), sq),
             control("gyro", b, "Gyro", p(0.66f, 0.47f, 0.13f), p(0.48f, 0.90f, 0.13f)),
+            // Stick clicks, beside their sticks.
+            control("l3", b, "L3", p(0.26f, 0.40f, 0.10f), p(0.10f, 0.56f, 0.11f)),
+            control("r3", b, "R3", p(0.58f, 0.62f, 0.10f), p(0.90f, 0.56f, 0.11f)),
         )
     }
 
@@ -119,6 +122,7 @@ object BuiltinProfiles {
             t("lt", OutputTarget.PadAxis(GamepadAxis.LT)), t("rt", OutputTarget.PadAxis(GamepadAxis.RT)),
             t("view", OutputTarget.Pad(GamepadButton.BACK)), t("menu", OutputTarget.Pad(GamepadButton.START)),
             t("gyro", OutputTarget.GyroPause),
+            t("l3", OutputTarget.Pad(GamepadButton.LS)), t("r3", OutputTarget.Pad(GamepadButton.RS)),
         )
     }
 
@@ -214,6 +218,8 @@ object BuiltinProfiles {
         k("lctrl", "Ctrl", HidUsage.LEFT_CTRL); k("win", "Win", HidUsage.LEFT_GUI); k("lalt", "Alt", HidUsage.LEFT_ALT)
         for (n in 1..SPACE_KEYS) k("space$n", "Space", 0x2C)
         k("ralt", "Alt", HidUsage.RIGHT_ALT); k("rctrl", "Ctrl", HidUsage.RIGHT_CTRL)
+        k("del", "Del", 0x4C); k("home", "Home", 0x4A); k("end", "End", 0x4D)
+        k("pgup", "PgUp", 0x4B); k("pgdn", "PgDn", 0x4E)
         k("up", "↑", 0x52); k("down", "↓", 0x51); k("left", "←", 0x50); k("right", "→", 0x4F)
     }
 
@@ -222,16 +228,19 @@ object BuiltinProfiles {
     private fun gap(width: Float) = Cell(null, width)
     private fun spaces(width: Float) = (1..SPACE_KEYS).map { k("space$it", width) }
 
-    /** Compact keyboard rows, 15 key units wide; arrows as an inverted T at the bottom right. */
+    /**
+     * Compact keyboard rows, 15 key units wide; Home, End, PgUp and PgDn after the F keys, Del right
+     * of ↑, arrows as an inverted T at the bottom right.
+     */
     private val keyboardLandscapeRows: List<List<Cell>> = listOf(
-        listOf(k("esc", 1.5f)) + (1..12).map { k("f$it", 1.125f) },
+        listOf(k("esc", 1f)) + (1..12).map { k("f$it", 0.875f) } + listOf("home", "end", "pgup", "pgdn").map { k(it, 0.875f) },
         ks("grave", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "minus", "equal") + k("bksp", 2f),
         listOf(k("tab", 1.5f)) + ks("q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "lbracket", "rbracket") +
             k("backslash", 1.5f),
         listOf(k("caps", 1.75f)) + ks("a", "s", "d", "f", "g", "h", "j", "k", "l", "semicolon", "quote") +
             k("enter", 2.25f),
         listOf(k("lshift", 2f)) + ks("z", "x", "c", "v", "b", "n", "m", "comma", "period", "slash") +
-            ks("rshift", "up") + gap(1f),
+            ks("rshift", "up", "del"),
         listOf(k("lctrl", 1.25f), k("win", 1.25f), k("lalt", 1.25f)) + spaces(1.25f) +
             listOf(k("ralt", 1.25f), k("rctrl", 1.25f), gap(0.75f)) + ks("left", "down", "right"),
     )
@@ -245,7 +254,7 @@ object BuiltinProfiles {
         ks("caps", "a", "s", "d", "f", "g", "h", "j", "k", "l", "enter"),
         ks("lshift", "z", "x", "c", "v", "b", "n", "m", "comma", "period", "rshift"),
         ks("lctrl", "win", "lalt") + spaces(1f) + ks("ralt", "rctrl", "up"),
-        listOf(gap(8f)) + ks("left", "down", "right"),
+        ks("del", "home", "end", "pgup", "pgdn") + gap(3f) + ks("left", "down", "right"),
     )
 
     /**
@@ -289,19 +298,19 @@ object BuiltinProfiles {
             val usage = byId.getValue(c.id).usage
             fun on(input: SurfaceInput, options: MapOptions? = null) =
                 Mapping(InputSource.Surface(1, input, c.id), OutputTarget.Key(usage), options = options)
-            // The touchpad's double tap and tap-drag (clicks) cleared, so a key types at once.
+            // The touchpad's double tap (clicks) cleared, so a key types at once.
             fun cleared(input: SurfaceInput) = Mapping(InputSource.Surface(1, input, c.id), OutputTarget.NoOutput)
-            if (!HidUsage.isModifier(usage)) listOf(on(SurfaceInput.TAP), cleared(SurfaceInput.DOUBLE_TAP), cleared(SurfaceInput.TAP_DRAG))
+            if (!HidUsage.isModifier(usage)) listOf(on(SurfaceInput.TAP), cleared(SurfaceInput.DOUBLE_TAP))
             else listOf(
                 touch(c.id, OutputTarget.Key(usage)),
                 // Tap: held until the next key (sticky); double tap: held until tapped again.
                 on(SurfaceInput.TAP, MapOptions(how = How.TOGGLE, endsOnNextInput = true)),
-                on(SurfaceInput.DOUBLE_TAP, MapOptions(how = How.TOGGLE)), cleared(SurfaceInput.TAP_DRAG),
+                on(SurfaceInput.DOUBLE_TAP, MapOptions(how = How.TOGGLE)),
             )
         }
     }
 
-    /** A full keyboard (K380 layout) under a touchpad strip; no gyro, no pads. */
+    /** A full keyboard (compact keyboard layout) under a touchpad strip; no gyro, no pads. */
     val keyboardWorkspace = Workspace(
         id = "keyboard",
         name = "Keyboard",
@@ -318,8 +327,12 @@ object BuiltinProfiles {
         w.copy(mappings = Inheritance.fill(w.mappings, Bindings.defaultTouchpadMappings(TouchpadSettings()) + Bindings.gyroMouseMappings()))
     }
 
-    /** An empty workspace: touchpad only, no controls, no pads. */
+    /** An empty workspace: no controls, no pads, no mappings of its own (it follows the Defaults'). */
     fun blankWorkspace(name: String = "Workspace") = Workspace(id = "ws", name = name, gyro = gyro(GyroMode.OFF))
+
+    /** A blank workspace whose touchpad works like a Windows one ("Windows touchpad" preset). */
+    fun touchpadWorkspace(name: String = "Windows touchpad") =
+        blankWorkspace(name).copy(mappings = Bindings.defaultTouchpadMappings(TouchpadSettings()))
 
     /**
      * A new profile with the three preset workspaces, their pad mappings as device presets they
@@ -327,7 +340,7 @@ object BuiltinProfiles {
      */
     fun newProfile(id: String, name: String): Profile {
         val empty = Profile(id = id, name = name, workspaces = emptyList())
-        return WorkspaceMappings.settle(empty, empty.copy(workspaces = presets), null)
+        return WorkspaceMappings.settle(empty, empty.copy(workspaces = presets))
     }
 
     /** The profile a fresh install starts in: Controller, WASD and Keyboard workspaces. */
@@ -354,6 +367,13 @@ object BuiltinProfiles {
         Mapping(InputSource.Key(AndroidKey.BUTTON_R2), OutputTarget.Mouse(MouseButton.LEFT)),
         Mapping(InputSource.Key(AndroidKey.DPAD_UP), OutputTarget.Wheel(1)),
         Mapping(InputSource.Key(AndroidKey.DPAD_DOWN), OutputTarget.Wheel(-1)),
+        Mapping(InputSource.Key(AndroidKey.DPAD_LEFT), OutputTarget.Key(0x1E)), // 1
+        Mapping(InputSource.Key(AndroidKey.DPAD_RIGHT), OutputTarget.Key(0x1F)), // 2
+        Mapping(InputSource.Axis(AndroidAxis.HAT_Y, AxisHalf.NEGATIVE), OutputTarget.Wheel(1)),
+        Mapping(InputSource.Axis(AndroidAxis.HAT_Y, AxisHalf.POSITIVE), OutputTarget.Wheel(-1)),
+        Mapping(InputSource.Axis(AndroidAxis.HAT_X, AxisHalf.NEGATIVE), OutputTarget.Key(0x1E)), // 1
+        Mapping(InputSource.Axis(AndroidAxis.HAT_X, AxisHalf.POSITIVE), OutputTarget.Key(0x1F)), // 2
+        Mapping(InputSource.Key(AndroidKey.BUTTON_THUMBR), OutputTarget.Key(0x19)), // V
     )
 
     val all: List<Profile> = listOf(default)

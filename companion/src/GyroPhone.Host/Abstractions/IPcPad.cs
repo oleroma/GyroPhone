@@ -25,6 +25,12 @@ public interface IPcPad
     bool ReadAxes(Span<float> axes);
 
     /// <summary>
+    /// The latest held buttons (by place) and sticks and triggers (as <see cref="ReadAxes"/>), from a copy the
+    /// reader's own thread publishes: never waits on a lock, so the overlay windows read it every frame. False when no controller is read.
+    /// </summary>
+    bool Peek(out uint held, Span<float> axes);
+
+    /// <summary>
     /// The buttons held by place at host time <paramref name="us"/> (the engine's clock, the one PONG
     /// uses), from a history of the last changes: what the PC gyro ratchets each sample by. 0 when no
     /// controller was read then.
@@ -57,6 +63,13 @@ public sealed class NullPcPad : IPcPad
     }
 
     public uint HeldAt(long us) => 0;
+
+    public bool Peek(out uint held, Span<float> axes)
+    {
+        held = 0;
+        axes.Clear();
+        return false;
+    }
 
     public string? Name => null;
 }

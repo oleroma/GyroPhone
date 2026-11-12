@@ -46,7 +46,7 @@ object GestureActions {
         if (modifiers and (SHIFT or 0x20) != 0) parts.add("Shift")
         if (modifiers and (ALT or 0x40) != 0) parts.add("Alt")
         if (modifiers and (WIN or 0x80) != 0) parts.add("Win")
-        if (key != 0) parts.add(HidUsage.names[key] ?: "0x%02X".format(key))
+        if (key != 0) parts.add(HidUsage.labelOrHex(key))
         return if (parts.isEmpty()) "Nothing" else parts.joinToString("+")
     }
 
