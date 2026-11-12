@@ -274,6 +274,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     @Volatile private var usbEthernet = false
     private var nextUsbCheckMs = 0L
     private var nextUsbProbeMs = 0L
+    /** When the direct cable first showed with no PC answering on it yet (0: not now), across its reopens. */
+    private var cableQuietSinceMs = 0L
+    /** The direct cable got no answer (the companion's cable switch is off): tethering or the hotspot until then. */
+    private var cableSkipUntilMs = 0L
     private var usbSilentSinceMs = 0L
     /** USB failed (the PC went silent there): Wi-Fi until then. */
     private var usbBackoffUntilMs = 0L
@@ -1139,7 +1143,19 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             nextUsbCheckMs = nowMs + USB_CHECK_MS
             // The cable only with a cable to a computer; tethering and the hotspot by interface.
             val wifiIf = binder.interfaceName
-            val t = (if (usbCabled) accessory.poll() else null)
+            // The cable is used only while the PC answers on it: when the companion has it off, the cable
+            // still shows but nobody answers, and tethering or the hotspot must not wait behind it.
+            val cable = if (usbCabled && nowMs >= cableSkipUntilMs) accessory.poll() else null
+            if (cable == null || usbHostAddr != null) cableQuietSinceMs = 0L
+            else if (cableQuietSinceMs == 0L) cableQuietSinceMs = nowMs
+            val quiet = cable != null && !usbActive && cableQuietSinceMs != 0L && nowMs - cableQuietSinceMs >= CABLE_QUIET_MS
+            if (quiet) {
+                Log.i(TAG, "no PC answers on the cable: tethering or the hotspot for now")
+                cableSkipUntilMs = nowMs + USB_BACKOFF_MS
+                cableQuietSinceMs = 0L
+                accessory.close()
+            }
+            val t = cable?.takeIf { !quiet }
                 ?: UsbTether.find(wifiIf, hotspot = wifiIf != null || binder.network == null)
             if (t != usb) {
                 if (usbActive) useWifi()
@@ -1161,14 +1177,16 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             } else usbSilentSinceMs = 0L
             return
         }
-        if (usbProbe == null || usb == null) return
-        if (f == null || !f.isRunning || nowMs < usbBackoffUntilMs) return
+        if (usbProbe == null || usb == null || nowMs < usbBackoffUntilMs) return
+        // Moves a running session there once its PC answered there.
         val host = sessionHostId
         val addr = usbHostAddr
-        if (host != null && host == usbHostId && addr != null) {
+        if (f != null && f.isRunning && host != null && host == usbHostId && addr != null) {
             useUsb(addr)
             return
         }
+        // DISCOVER there with or without a session: with the phone's Wi-Fi off, its default network is
+        // mobile data and the main socket's broadcasts never reach the hotspot or the tether.
         if (nowMs >= nextUsbProbeMs) {
             nextUsbProbeMs = nowMs + USB_PROBE_MS
             val n = WireCodec.encodeDiscover(Discover(Crypto.randomBytes(4).getI32(0), store.phoneId), txBuf)
@@ -1413,6 +1431,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         /** Silent this long over USB: back to Wi-Fi, and USB is not tried again for [USB_BACKOFF_MS]. */
         private const val USB_SILENT_MS = 3000L
         private const val USB_BACKOFF_MS = 30_000L
+        /** The direct cable with no PC answering this long: skipped for [USB_BACKOFF_MS]. */
+        private const val CABLE_QUIET_MS = 3000L
         /** How long the rx thread waits for the pump's goodbye on the USB socket. */
         private const val GOODBYE_WAIT_MS = 50L
         /** The sticky broadcast for a USB cable to a computer (hidden in UsbManager), and its extra. */
