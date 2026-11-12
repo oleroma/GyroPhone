@@ -178,6 +178,8 @@ internal fun MappingChipDialog(
     onSavePreset: (() -> Unit)? = null,
     /** A value chip on a Position or Move input: Held or Toggle (keeps the value) and its Per dp; null = none. */
     value: ChipValue? = null,
+    /** A chip on a Position input: its next touch already ends a Toggle, so there is no Tap end. */
+    position: Boolean = false,
 ) {
     var perDp by remember { mutableStateOf(value?.let { it.shown(it.perDp ?: it.defaultPerDp) } ?: 0f) }
     val o0 = options ?: MapOptions()
@@ -326,7 +328,7 @@ internal fun MappingChipDialog(
                 if (shown == How.TOGGLE) {
                     Text("Also ends on", style = MaterialTheme.typography.titleSmall)
                     // A value chip: a tap on a Position input sets the value, so only Move ends on one; no keystroke to match.
-                    if (value == null || value.move) checkRow(
+                    if (if (value != null) value.move else !position) checkRow(
                         if (value != null) "Tap (a tap on this button)" else "Tap (touching this " + (if (swipe) "surface" else "button") + " again)",
                         endsOnTap,
                     ) { endsOnTap = it }
@@ -343,12 +345,15 @@ internal fun MappingChipDialog(
                         valueRange = 0f..MapOptions.MAX_TOGGLE_MS / 1000f,
                     )
                 }
-                switchRow("Cycle", cycle) { cycle = it }
-                hint("The mappings of this action with Cycle on take turns: each time it fires, the next one.")
-                TextButton(onClick = { advanced = !advanced }, modifier = Modifier.padding(top = 4.dp)) {
-                    Text(if (advanced) "Advanced ▴" else "Advanced ▾")
+                // A value chip sends a value, not presses: no Cycle, delays or hold time.
+                if (value == null) {
+                    switchRow("Cycle", cycle) { cycle = it }
+                    hint("The mappings of this action with Cycle on take turns: each time it fires, the next one.")
+                    TextButton(onClick = { advanced = !advanced }, modifier = Modifier.padding(top = 4.dp)) {
+                        Text(if (advanced) "Advanced ▴" else "Advanced ▾")
+                    }
                 }
-                if (advanced) {
+                if (advanced && value == null) {
                     msSlider("Start delay", start) { start = it }
                     msSlider("Hold time", minHold, MapOptions.DEFAULT_MIN_HOLD_MS) { minHold = it }
                     msSlider("End delay", end) { end = it }
@@ -368,9 +373,10 @@ internal fun MappingChipDialog(
                 val toggle = how == How.TOGGLE
                 val o = MapOptions(
                     // At a lift Held and Once are the same short press: kept as Held (no options).
-                    how = if (how == How.ONCE && !t.holds) How.HELD else how, cycle = cycle,
-                    startDelayMs = start, endDelayMs = end, minHoldMs = minHold,
-                    endsOnTap = toggle && endsOnTap && (value == null || value.move),
+                    how = if (how == How.ONCE && !t.holds) How.HELD else how, cycle = cycle && value == null,
+                    startDelayMs = if (value == null) start else 0, endDelayMs = if (value == null) end else 0,
+                    minHoldMs = if (value == null) minHold else MapOptions.DEFAULT_MIN_HOLD_MS,
+                    endsOnTap = toggle && endsOnTap && (if (value != null) value.move else !position),
                     endsOnLetGo = toggle && endsOnLetGo,
                     endsAfterMs = if (toggle) endsAfter else 0,
                     endsOnNextInput = toggle && endsOnNext,

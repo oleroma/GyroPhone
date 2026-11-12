@@ -2273,6 +2273,7 @@ internal fun ControlMappingScreen(
             options = Bindings.entry(view, ti, chip.target, chip.n)?.options,
             range = chipRange(chip.target, Bindings.entry(view, ti, chip.target, chip.n)?.range, runtime.engine.workspace.gyro),
             value = chipValue(chip.target, zi.sources.first(), Bindings.entry(view, ti, chip.target, chip.n), runtime.engine.workspace.gyro),
+            position = zi.sources.first() is InputSource.Finger,
             onApply = { tr, o, w, r, pd ->
                 chipDialog = null
                 val target = (chip.target as? OutputTarget.SetOrientation)?.copy(granular = granular) ?: chip.target
