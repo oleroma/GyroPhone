@@ -551,7 +551,8 @@ internal sealed class OverlayForm : Form
                     soft: ls.LaserSoftness,
                     aim: aim,
                     fireBrushDeg: Math.Clamp(ls.LaserFireBrush, 1, 20) * 0.6f,
-                    aimBrushDeg: Math.Clamp(ls.LaserAimBrush, 1, 20) * 0.6f);
+                    aimBrushDeg: Math.Clamp(ls.LaserAimBrush, 1, 20) * 0.6f,
+                    clearSnakeOnPress: ls.LaserSnakeClearOnRatchet);
             }
         }
         // A Clear displays mapping on the phone: the paint goes (the first count seen clears nothing).

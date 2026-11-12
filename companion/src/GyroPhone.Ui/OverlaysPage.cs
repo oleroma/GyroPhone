@@ -59,7 +59,7 @@ internal sealed class OverlaysPage : Page
 
     // Look
     private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook;
-    private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserGimbal, _laserDraw, _laserClearOnRatchet;
+    private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserGimbal, _laserDraw, _laserClearOnRatchet, _laserSnakeClearOnRatchet;
     private readonly CheckBox _laserPerspective, _laserSnake, _laserOutline;
     private readonly StackPanel _laserSnakeOptions;
     private readonly SliderRow _laserSnakeLength, _laserSnakeBrush, _laserSnakeTaper, _laserSnakeFade, _laserSnakeGlow, _laserSoftness, _laserGlow, _laserShade, _laserInside, _laserLight, _laserShine;
@@ -485,12 +485,14 @@ internal sealed class OverlaysPage : Page
         _laserSnakeOptions.Children.Add(_laserSnakeFade.View);
         _laserSnakeGlow = new SliderRow("Snake glow", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserSnakeGlow = (float)v));
         _laserSnakeOptions.Children.Add(_laserSnakeGlow.View);
+        _laserSnakeClearOnRatchet = Parts.Toggle("Clear on ratchet", () => Change(o => o.LaserSnakeClearOnRatchet = !o.LaserSnakeClearOnRatchet), "A ratchet press clears the Snake.");
+        _laserSnakeOptions.Children.Add(_laserSnakeClearOnRatchet);
         _laserSnakeOptions.Children.Add(Parts.Text("Snake brush: how wide its head is. Taper: how much it thins toward its tail (0 keeps it the same width). Tail fade: how see-through it gets toward its tail (0 none). Snake glow: a soft glow round it (0 none). Shots and aiming keep their own brushes.", "Hint"));
         dwb.Children.Add(_laserSnakeOptions);
         _laserDrawOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
         _laserBrush = new SliderRow("Brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserBrush = (int)v));
         _laserDrawOptions.Children.Add(_laserBrush.View);
-        _laserClearOnRatchet = Parts.Toggle("Clear on ratchet", () => Change(o => o.LaserClearOnRatchet = !o.LaserClearOnRatchet), "A ratchet press clears the drawing.");
+        _laserClearOnRatchet = Parts.Toggle("Clear on ratchet", () => Change(o => o.LaserClearOnRatchet = !o.LaserClearOnRatchet), "A ratchet press clears the paint (the Snake has its own).");
         _laserDrawOptions.Children.Add(_laserClearOnRatchet);
         _laserDrawOptions.Children.Add(Parts.Text("The paint uncovers the sphere's own colours where it lands (the Moving colours, laid on the sphere as a normal map: right pink, left teal, up light green, down purple), or with Colour by the way it moved, the colour of each sweep's direction. Shots take the Fire colours and aiming the Aim colours, each with its own brush and glow (Fire display, Aim display). Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping on the phone (Other targets) clears every pointer at once.", "Hint"));
         dwb.Children.Add(_laserDrawOptions);
@@ -1027,6 +1029,7 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_laserFireOnly, paints && (fires || aims));
         Parts.SetChecked(_laserFireOnly, o.LaserFireOnly);
         Parts.SetChecked(_laserClearOnRatchet, o.LaserClearOnRatchet);
+        Parts.SetChecked(_laserSnakeClearOnRatchet, o.LaserSnakeClearOnRatchet);
         Parts.SetChecked(_dots, o.FingerDots);
         Parts.SetChecked(_trails, o.FingerTrails);
         _handles.Set(o.Handles);

@@ -205,7 +205,7 @@ public sealed class LaserTrace
     /// <summary>
     /// The beam now points at (x, y, z) (any length) at <paramref name="nowMs"/>. While a ratchet is
     /// <paramref name="held"/> it doesn't paint (the pose eases back then, which isn't aiming); with
-    /// <paramref name="clearOnPress"/> pressing one clears the strokes. With <paramref name="draw"/> it
+    /// <paramref name="clearOnPress"/> pressing one clears the paint, with <paramref name="clearSnakeOnPress"/> the Snake. With <paramref name="draw"/> it
     /// paints; turning Draw off clears the strokes. While <paramref name="fire"/> (the overlay's Fire display output is
     /// held) it paints in the Fire colours, <paramref name="fireBrushDeg"/> wide; else while <paramref name="aim"/> (its Aim
     /// display output) in the Aim colours, <paramref name="aimBrushDeg"/> wide (both default <paramref name="brushDeg"/>);
@@ -215,13 +215,18 @@ public sealed class LaserTrace
     /// </summary>
     public void Add(float x, float y, float z, long nowMs, bool draw, bool held, bool clearOnPress = false, bool fire = false, bool fireOnly = false,
         bool smooth = true, float lineSmoothing = 0f, float brushDeg = 0f, float snakeDeg = 0f, uint[]? wayColors = null,
-        int mapWidth = LaserPaint.DefaultWidth, float soft = 0.5f, bool aim = false, float? fireBrushDeg = null, float? aimBrushDeg = null)
+        int mapWidth = LaserPaint.DefaultWidth, float soft = 0.5f, bool aim = false, float? fireBrushDeg = null, float? aimBrushDeg = null,
+        bool clearSnakeOnPress = false)
     {
-        bool pressed = clearOnPress && held && !_wasHeld;
+        bool pressed = held && !_wasHeld;
         _wasHeld = held;
         bool snake = snakeDeg > 0f;
         if (!draw && _paintUsed) ClearPaint(); // Draw off wipes the paint (a snake goes on)
-        if ((!(draw || snake) || pressed) && (Strokes.Count > 0 || _paintUsed)) Clear();
+        if (!(draw || snake) && (Strokes.Count > 0 || _paintUsed)) Clear();
+        // A ratchet press: the paint and the Snake each as set.
+        // (Without Snake the strokes aren't shown: they go with the paint.)
+        if (pressed && clearOnPress && (_paintUsed || !snake && Strokes.Count > 0)) { ClearPaint(); if (!snake) ClearStrokes(); }
+        if (pressed && clearSnakeOnPress && snake && Strokes.Count > 0) ClearStrokes();
         float l = MathF.Sqrt(x * x + y * y + z * z);
         if (l > 1e-6f && float.IsFinite(l)) Follow(x / l, y / l, z / l, nowMs, smooth);
         if (!(draw || snake) || l < 1e-6f || held || !float.IsFinite(l) || (fireOnly && !fire && !aim))
@@ -492,7 +497,15 @@ public sealed class LaserTrace
         }
     }
 
-    /// <summary>Clears the strokes.</summary>
+    /// <summary>Clears the strokes (the Snake; the paint stays).</summary>
+    private void ClearStrokes()
+    {
+        Strokes.Clear();
+        _strokeGap = true;
+        Version++;
+    }
+
+    /// <summary>Clears the strokes and the paint.</summary>
     public void Clear()
     {
         Strokes.Clear();

@@ -326,8 +326,10 @@ public sealed class OverlaySettings
     public float LaserSnakeGlow { get; set; }
     /// <summary>Draw mode: the paint map's detail, 0 low (512 texels round), 1 normal (1024), 2 high (2048).</summary>
     public int LaserPaintDetail { get; set; } = 1;
-    /// <summary>Draw mode: a ratchet press clears the drawing.</summary>
+    /// <summary>Draw mode: a ratchet press clears the paint.</summary>
     public bool LaserClearOnRatchet { get; set; }
+    /// <summary>Snake: a ratchet press clears the Snake.</summary>
+    public bool LaserSnakeClearOnRatchet { get; set; }
     /// <summary>
     /// Laser pointer Draw mode: while this output is held (LaserFire numbers, default the left mouse button), from the
     /// phone or, with "Use PC controller for gyro ratchet", the PC's controller, it paints in the Fire colours; with

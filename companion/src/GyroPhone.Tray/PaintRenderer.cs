@@ -30,6 +30,9 @@ internal static class PaintRenderer
         public long NearStamp, FarStamp;
         public float[] Cov = [], GlowCov = [];
         public int[] CovCol = [], GlowCol = [];
+        // The Snake's pieces this drawing, oldest first (drawn newest first, see Snake).
+        public Piece[] Pieces = new Piece[256];
+        public int PieceCount;
     }
 
     private static readonly ConditionalWeakTable<LaserTrace, State> States = new();
@@ -100,6 +103,13 @@ internal static class PaintRenderer
     }
 
     private static int Pack(float r, float g, float b, float a) => PaintPicture.Pack(r, g, b, a);
+
+    /// <summary>One piece of the Snake: from (Ax, Ay) to (Bx, By), Half pixels each side, colour Col at opacity Op.</summary>
+    private struct Piece
+    {
+        public float Ax, Ay, Bx, By, Half, Op;
+        public int Col;
+    }
 
     /// <summary>
     /// Snake: the line along the newest stretch of the strokes, its near or far pieces, LaserSnakeBrush wide at its head
@@ -172,6 +182,7 @@ internal static class PaintRenderer
             float spec = s.LaserShine * MathF.Pow(Math.Max(nx * hv.X + ny * hv.Y + nz * hv.Z, 0f), 24f);
             return Pack(Math.Min(cr * kk + spec, 1f), Math.Min(cg * kk + spec, 1f), Math.Min(cb * kk + spec, 1f), 1f);
         }
+        st.PieceCount = 0;
         bool any = false, hasPrev = false, prevFront = false;
         float bx0 = 0, by0 = 0;
         for (int i = 1; i < n; i++)
@@ -218,13 +229,22 @@ internal static class PaintRenderer
                     int col = ColourAt(p, v, kind, way, byWay);
                     float tail = Math.Clamp(tailA + (tailB - tailA) * f, 0f, 1f);
                     float half = headPx * (1f - taper * (1f - tail)) * k / 2f;
-                    Capsule(st, size, bx0, by0, bx, by, half, col, 1f - fade * (1f - tail), glow);
+                    if (st.PieceCount == st.Pieces.Length) Array.Resize(ref st.Pieces, st.Pieces.Length * 2);
+                    st.Pieces[st.PieceCount++] = new Piece { Ax = bx0, Ay = by0, Bx = bx, By = by, Half = half, Col = col, Op = 1f - fade * (1f - tail) };
                     any = true;
                 }
                 bx0 = bx; by0 = by; prevFront = isFront;
             }
         }
         if (!any) return;
+        // Each pixel keeps its strongest cover, the oldest piece's colour where pieces tie. Drawn newest first (the
+        // strongest, as the tail fades), so an older piece can skip the pixels a newer one already covers more than it
+        // ever could; ties go to the later drawn, older piece: the same picture as drawing oldest first.
+        for (int i = st.PieceCount - 1; i >= 0; i--)
+        {
+            ref var c = ref st.Pieces[i];
+            Capsule(st, size, c.Ax, c.Ay, c.Bx, c.By, c.Half, c.Col, c.Op, glow);
+        }
         // The glow, then the line, over the paint at the colours' opacity.
         if (glow > 0f) Over(buf, st.GlowCov, st.GlowCol, alpha);
         Over(buf, st.Cov, st.CovCol, alpha);
@@ -251,34 +271,82 @@ internal static class PaintRenderer
 
     /// <summary>
     /// The round-ended piece from (ax, ay) to (bx, by), <paramref name="half"/> pixels each side, at opacity
-    /// <paramref name="op"/>: each pixel keeps its strongest cover and that one's colour; with <paramref name="glow"/>
-    /// its glow (wider, fainter copies) likewise.
+    /// <paramref name="op"/>: each pixel keeps its strongest cover and that one's colour (this piece's when it ties: the
+    /// pieces are drawn newest first); with <paramref name="glow"/> its glow (wider, fainter copies) likewise. Only the
+    /// pixels within its reach on each row are looked at, and those it can't make stronger are skipped.
     /// </summary>
     private static void Capsule(State st, int size, float ax, float ay, float bx, float by, float half, int col, float op, float glow)
     {
         var cov = st.Cov;
         var covCol = st.CovCol;
+        var glowCov = st.GlowCov;
+        // The most this piece can give a pixel: its opacity, and its glow's at the middle (as worked out below).
+        float glowMost = 0f;
+        if (glow > 0f)
+        {
+            float clearMost = 1f;
+            foreach (var (_, share) in GlowSteps) clearMost *= 1f - share * glow * 1f;
+            glowMost = (1f - clearMost) * op;
+        }
         float reach = (glow > 0f ? half * GlowSteps[0].Wide : half) + 1f;
         int x0 = Math.Max(0, (int)MathF.Floor(Math.Min(ax, bx) - reach)), x1 = Math.Min(size - 1, (int)MathF.Ceiling(Math.Max(ax, bx) + reach));
         int y0 = Math.Max(0, (int)MathF.Floor(Math.Min(ay, by) - reach)), y1 = Math.Min(size - 1, (int)MathF.Ceiling(Math.Max(ay, by) + reach));
         float dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+        // Pixels whose middle is further than this from the piece take nothing from it.
+        float far = reach + 0.5f, far2 = far * far;
         for (int y = y0; y <= y1; y++)
         {
-            for (int x = x0; x <= x1; x++)
+            // The row's pixels within reach: where its middle line crosses the piece's rounded strip (each end's
+            // disc and the band between them), a pixel wider each side.
+            float cy = y + 0.5f;
+            float lo = float.MaxValue, hi = float.MinValue;
+            void Disc(float ox, float oy)
             {
+                float h2 = far2 - (cy - oy) * (cy - oy);
+                if (h2 < 0f) return;
+                float h = MathF.Sqrt(h2);
+                lo = Math.Min(lo, ox - h); hi = Math.Max(hi, ox + h);
+            }
+            Disc(ax, ay);
+            Disc(bx, by);
+            if (l2 >= 1e-6f)
+            {
+                // The band between the ends: across the line within far (|cross| ≤ far · len), along it 0 .. 1.
+                float len = MathF.Sqrt(l2), ry = cy - ay;
+                float s0 = float.MinValue, s1 = float.MaxValue;
+                void Keep(float k, float c, float min, float max)
+                {
+                    // min ≤ k · (x − ax) + c ≤ max
+                    if (MathF.Abs(k) < 1e-9f) { if (c < min || c > max) (s0, s1) = (1f, 0f); return; }
+                    float u = ax + (min - c) / k, v = ax + (max - c) / k;
+                    s0 = Math.Max(s0, Math.Min(u, v)); s1 = Math.Min(s1, Math.Max(u, v));
+                }
+                Keep(dy, -ry * dx, -far * len, far * len);
+                Keep(dx, ry * dy, 0f, l2);
+                if (s0 <= s1) { lo = Math.Min(lo, s0); hi = Math.Max(hi, s1); }
+            }
+            if (lo > hi) continue;
+            int rx0 = Math.Max(x0, (int)MathF.Floor(lo - 0.5f) - 1), rx1 = Math.Min(x1, (int)MathF.Ceiling(hi - 0.5f) + 1);
+            for (int x = rx0; x <= rx1; x++)
+            {
+                int k = y * size + x;
+                bool line = op >= cov[k], halo = glow > 0f && glowMost >= glowCov[k];
+                if (!line && !halo) continue;
                 float px = x + 0.5f - ax, py = y + 0.5f - ay;
                 float t = l2 < 1e-6f ? 0f : Math.Clamp((px * dx + py * dy) / l2, 0f, 1f);
                 float ex = px - dx * t, ey = py - dy * t;
                 float d = MathF.Sqrt(ex * ex + ey * ey);
-                int k = y * size + x;
-                float a = Math.Clamp(half - d + 0.5f, 0f, 1f) * op;
-                if (a > cov[k]) { cov[k] = a; covCol[k] = col; }
-                if (glow > 0f)
+                if (line)
+                {
+                    float a = Math.Clamp(half - d + 0.5f, 0f, 1f) * op;
+                    if (a > 0f && a >= cov[k]) { cov[k] = a; covCol[k] = col; }
+                }
+                if (halo)
                 {
                     float clear = 1f;
                     foreach (var (wide, share) in GlowSteps) clear *= 1f - share * glow * Math.Clamp(half * wide - d + 0.5f, 0f, 1f);
                     float g = (1f - clear) * op;
-                    if (g > st.GlowCov[k]) { st.GlowCov[k] = g; st.GlowCol[k] = col; }
+                    if (g > 0f && g >= glowCov[k]) { glowCov[k] = g; st.GlowCol[k] = col; }
                 }
             }
         }
