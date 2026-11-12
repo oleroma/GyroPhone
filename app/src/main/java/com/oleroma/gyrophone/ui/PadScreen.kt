@@ -100,6 +100,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
@@ -226,10 +227,14 @@ private const val TOUCHPAD_SELECTION = "\u0000touchpad"
 private const val EDIT_LONG_PRESS_MS = 450L
 
 /**
- * Edit mode: on overlapping controls a second tap this soon after the first (from its lift), near it,
- * is a double tap: it opens the control that was selected before the first tap (which cycled).
+ * Edit mode, overlapping controls only: a tap waits this long (from its lift) for a second one near it.
+ * None comes: the tap selects the next control there. One comes: no selecting; lifted, it opens the
+ * selected control's editor, held, its popup.
  */
 private const val EDIT_DOUBLE_TAP_MS = 250L
+
+/** Edit mode: how long the "Double tap to open editor" hint shows after a tap on overlapping controls. */
+private const val OVERLAP_HINT_MS = 1500L
 
 /** Edit mode: an Add chip held still this long is picked up (lit, with a tick) and then drags out any way. */
 private const val ADD_PICK_UP_MS = 200L
@@ -428,8 +433,8 @@ internal object TouchStream {
  * Controls have separate landscape and portrait placements; the pad box's shape picks one.
  * Edit mode works on the current workspace in a draft profile. Its menu floats and can be dragged
  * out of the way or resized; its ⚙ saves and opens the workspace's settings page. Tap a control to select it
- * as the tap lifts, tap it again to open its mapping editor (taps on overlapping controls cycle through them,
- * a double tap there opens the selected one); long-press it for its full-screen
+ * as the tap lifts, tap it again to open its mapping editor (on overlapping controls a tap waits for a double
+ * tap: alone it cycles through them, a double tap opens the selected one, held, its popup); long-press it for its full-screen
  * mapping screen, whose Settings opens the control's settings (a corner: a menu next to it). A drag anywhere moves the selected control
  * (with none selected, the one under the finger); a pinch or the size slider resizes it. The menu's 🔒 stops
  * drags and pinches from moving or resizing what was there when edit mode opened (what is added
@@ -473,6 +478,8 @@ fun PadScreen(
 
     /** Something being dragged out of the edit menu: its label, where the finger is (window), and whether it is out on the pad. */
     var dropping by remember { mutableStateOf<Triple<String, Offset, Boolean>?>(null) }
+    // Edit mode: where a tap on overlapping controls was (and when), for the "Double tap to open editor" hint.
+    var overlapHint by remember { mutableStateOf<Pair<Offset, Long>?>(null) }
     val isFullscreen by rememberUpdatedState(fullscreen)
     val setFullscreen by rememberUpdatedState(onFullscreen)
 
@@ -1082,23 +1089,43 @@ fun PadScreen(
         val touchModifier = if (editing) {
             Modifier.pointerInput("edit", w, h) {
                 val slop = viewConfiguration.touchSlop
-                // The last tap that cycled overlapping controls: when it lifted, where, and what was selected before it.
-                var cycledAt = Long.MIN_VALUE
-                var cycledPos = Offset.Zero
-                var cycledFrom: String? = null
+                // A tap on overlapping controls waiting for a second one: what it does if none comes,
+                // when it lifted and where.
+                var pendingTap: (() -> Unit)? = null
+                var pendingAt = 0L
+                var pendingPos = Offset.Zero
                 awaitPointerEventScope {
                     while (true) {
-                        var event = awaitPointerEvent()
+                        val waiting = pendingTap
+                        var event = if (waiting == null) awaitPointerEvent() else {
+                            withTimeoutOrNull(max(1L, pendingAt + EDIT_DOUBLE_TAP_MS - SystemClock.uptimeMillis())) {
+                                awaitPointerEvent()
+                            }
+                        }
+                        if (event == null) {
+                            // No second tap came: the first one selects.
+                            pendingTap = null
+                            waiting?.invoke()
+                            continue
+                        }
                         val first = event.changes.firstOrNull { it.pressed && !it.previousPressed }
                         if (first == null) {
                             event.changes.forEach { it.consume() }
                             continue
                         }
+                        val downPos = first.position
+                        val pointer = first.id
+                        // A second tap near a waiting one makes a double tap (the first one selects nothing);
+                        // a press anywhere else lets the waiting tap select first.
+                        val secondTap = waiting != null && first.uptimeMillis - pendingAt <= EDIT_DOUBLE_TAP_MS &&
+                            (downPos - pendingPos).getDistance() <= 4f * slop
+                        if (waiting != null) {
+                            pendingTap = null
+                            if (!secondTap) waiting()
+                        }
                         val d0 = draft
                         val corners = d0?.shownCorners ?: emptyList()
                         val controls = d0?.workspace(editIndex)?.touchControls ?: emptyList()
-                        val downPos = first.position
-                        val pointer = first.id
                         var mode: EditGesture
                         var target: String? = null
                         var grab = Offset.Zero
@@ -1420,24 +1447,21 @@ fun PadScreen(
 
                             selecting -> if (mode == EditGesture.EMPTY) picked = emptySet()
 
-                            // Overlapping controls (not a corner): a tap selects the next one under the finger
-                                // (after the selected one, else the front one); a double tap opens the one that was
-                                // selected before its first tap.
-                            mode == EditGesture.PRESS && cornerHit == null && under.size >= 2 -> {
-                                val d = draft
-                                val again = cycledFrom != null && pressedAt - cycledAt <= EDIT_DOUBLE_TAP_MS &&
-                                    (downPos - cycledPos).getDistance() <= 4f * slop && under.any { it.id == cycledFrom }
-                                if (again && d != null) {
-                                    selected = cycledFrom
-                                    menu = if (findControl(cycledFrom)?.kind == TouchKind.DISPLAY) EditMenu.CONTEXT else EditMenu.MAPPING
-                                    cycledFrom = null
-                                } else {
-                                    val next = if (selectedUnder >= 0) under[(selectedUnder + 1) % under.size] else under.first()
-                                    cycledFrom = if (selectedUnder >= 0) selected else next.id
-                                    cycledAt = lastAt
-                                    cycledPos = downPos
-                                    selected = next.id
+                            // Overlapping controls (not a corner): the second tap of a double tap opens the
+                            // selected one under the finger (else the front one); a single tap waits for a second,
+                            // then selects the next one under the finger (after the selected one, else the front
+                            // one) and shows how to open it. (A double tap held: its popup, as any long press.)
+                            mode == EditGesture.PRESS && cornerHit == null && under.size >= 2 -> if (secondTap && c != null) {
+                                selected = c.id
+                                menu = if (c.kind == TouchKind.DISPLAY) EditMenu.CONTEXT else EditMenu.MAPPING
+                            } else {
+                                pendingAt = lastAt
+                                pendingPos = downPos
+                                pendingTap = {
+                                    val at = under.indexOfFirst { it.id == selected }
+                                    selected = (if (at >= 0) under[(at + 1) % under.size] else under.first()).id
                                     menu = EditMenu.NONE
+                                    overlapHint = downPos to SystemClock.uptimeMillis()
                                 }
                             }
 
@@ -2896,6 +2920,32 @@ fun PadScreen(
                         }
                     }
                 }
+            }
+
+            // A tap on overlapping controls: a short hint above the finger on how to open the selected one.
+            overlapHint?.let { hint ->
+                LaunchedEffect(hint) {
+                    delay(OVERLAP_HINT_MS)
+                    if (overlapHint == hint) overlapHint = null
+                }
+                val p = hint.first
+                Text(
+                    "Double tap to open editor",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .layout { m, cs ->
+                            val pl = m.measure(cs.copy(minWidth = 0, minHeight = 0))
+                            val gap = 56.dp.roundToPx()
+                            val x = (p.x.roundToInt() - pl.width / 2).coerceIn(0, max(0, w.roundToInt() - pl.width))
+                            val y = (p.y.roundToInt() - gap - pl.height).let { if (it < 0) p.y.roundToInt() + gap else it }
+                            layout(pl.width, pl.height) { pl.place(x, y) }
+                        }
+                        .background(Color.Black.copy(alpha = 0.8f), RoundedCornerShape(50))
+                        .border(1.dp, SELECTED_COLOR, RoundedCornerShape(50))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                )
             }
 
             // What is being dragged out of the edit menu, under the finger until it is dropped.
