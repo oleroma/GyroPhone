@@ -28,7 +28,7 @@ class WorkspaceMappingsTest {
     private fun touch(id: String, t: OutputTarget, set: Int = 0) = Mapping(InputSource.Touch(id), t, set)
     private fun key(code: Int, t: OutputTarget) = Mapping(InputSource.Key(code), t)
     private fun button(id: String, label: String = id) = TouchControl(id, TouchKind.BUTTON, label, 0.5f, 0.5f)
-    private fun Workspace.controls() = mappings.filterNot { it.source.isTouchpad }
+    private fun Workspace.controls() = mappings.filterNot { it.source.isTouchpad || it.target is OutputTarget.Off }
 
     private val ws1 = Workspace(
         "ws1", "Main", listOf(button("btn1", "Jump"), button("btn2", "Fire")),
@@ -62,7 +62,7 @@ class WorkspaceMappingsTest {
         assertEquals(1, m.profiles.size)
         val before = WorkspaceMappings.resolve(WorkspaceMappings.fromProfiles(m.set, m.profiles))
         val after = before.updateWorkspace(0) { w -> w.copy(mappings = listOf(touch("btn1", x))) }
-        val settled = WorkspaceMappings.resolve(WorkspaceMappings.store(WorkspaceMappings.settle(before, after, null)))
+        val settled = WorkspaceMappings.resolve(WorkspaceMappings.store(WorkspaceMappings.settle(before, after)))
         assertEquals(listOf(touch("btn1", x)), settled.workspaces[0].controls())
         // The other workspace is untouched.
         assertEquals(before.workspaces[1], settled.workspaces[1])
@@ -87,21 +87,23 @@ class WorkspaceMappingsTest {
         assertTrue(removed.workspaces.all { it.devicePreset == null })
     }
 
-    @Test fun aBlankNewWorkspaceStartsWithTheCurrentOnesTouchpadAndNoPreset() {
+    @Test fun aBlankNewWorkspaceStartsBlankWithNoPreset() {
         val before = live()
         val (after, _) = WorkspaceEdits.add(before, Workspace("", "New"))
-        val settled = WorkspaceMappings.resolve(WorkspaceMappings.settle(before, after, before.workspaces[1]))
+        val settled = WorkspaceMappings.resolve(WorkspaceMappings.settle(before, after))
         val fresh = settled.workspaces.last()
         assertEquals(null, fresh.devicePreset)
         assertTrue(fresh.pads.isEmpty())
         assertTrue(fresh.controls().isEmpty())
+        assertTrue(fresh.mappings.isEmpty())
+        assertTrue(fresh.sets.isEmpty())
     }
 
     @Test fun aBuiltinWorkspaceBringsItsPadMappingsAsAPresetItUses() {
         val before = live()
         val builtin = com.oleroma.gyrophone.core.model.BuiltinProfiles.wasdWorkspace
         val (after, _) = WorkspaceEdits.add(before, builtin)
-        val settled = WorkspaceMappings.resolve(WorkspaceMappings.store(WorkspaceMappings.settle(before, after, before.workspaces[0])))
+        val settled = WorkspaceMappings.resolve(WorkspaceMappings.store(WorkspaceMappings.settle(before, after)))
         val added = settled.workspaces.last()
         val preset = settled.devicePresets.single()
         assertEquals(preset.id, added.devicePreset)
@@ -112,10 +114,10 @@ class WorkspaceMappingsTest {
     @Test fun duplicateCopiesMappingsThatThenChangeOnTheirOwn() {
         val before = live()
         val (dup, at) = WorkspaceEdits.duplicate(before, 0)
-        val withCopy = WorkspaceMappings.resolve(WorkspaceMappings.settle(before, dup, before.workspaces[0]))
+        val withCopy = WorkspaceMappings.resolve(WorkspaceMappings.settle(before, dup))
         assertEquals(before.workspaces[0].controls(), withCopy.workspaces[at].controls())
         val edited = withCopy.updateWorkspace(at) { it.copy(mappings = listOf(touch("btn1", x))) }
-        val settled = WorkspaceMappings.settle(withCopy, edited, null)
+        val settled = WorkspaceMappings.settle(withCopy, edited)
         assertEquals(before.workspaces[0].controls(), settled.workspaces[0].controls())
     }
 

@@ -1,5 +1,10 @@
 package com.oleroma.gyrophone.ui
 
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -26,38 +31,25 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.Profile
+import com.oleroma.gyrophone.core.model.ProfileExport
 import com.oleroma.gyrophone.core.model.isWorkspaceInput
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.runtime.ScreenOrientation
 import kotlin.math.roundToInt
 
-/**
- * The Settings page (from the pad's Settings capsule): the App tab, options of the whole app with
- * the corners, and the Defaults tab, what every workspace uses unless it sets its own (its
- * settings page, ⚙ in edit mode). The search box above the tabs searches both.
- */
+/** The App page (the pad's App capsule, a gear): options of the whole app. */
 @Composable
 fun AppSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
-    var tab by rememberSaveable { mutableIntStateOf(0) }
-    SearchableSettings(
-        modifier,
-        header = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("App") })
-                FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("Defaults") })
-            }
-        },
-    ) { searching ->
-        if (searching) {
-            // Both tabs at once, each under its name.
-            val app = remember { SearchHits() }
-            val defaults = remember { SearchHits() }
-            SearchGroupLabel("App", app)
-            CountHits(app) { AppTab(runtime) }
-            SearchGroupLabel("Defaults", defaults)
-            CountHits(defaults) { DefaultsTab(runtime) }
-        } else if (tab == 0) AppTab(runtime) else DefaultsTab(runtime)
-    }
+    SearchableSettings(modifier) { AppTab(runtime) }
+}
+
+/**
+ * The Defaults page (the pad's Defaults capsule, sliders): what every workspace uses unless it sets
+ * its own (its settings page, the sliders in edit mode).
+ */
+@Composable
+fun DefaultsSettingsScreen(runtime: GamepadRuntime, modifier: Modifier) {
+    SearchableSettings(modifier) { DefaultsTab(runtime) }
 }
 
 /**
@@ -70,7 +62,7 @@ private fun DefaultsTab(runtime: GamepadRuntime) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Hint(
             "Every workspace uses these, except where it sets its own (its settings): those show highlighted " +
-                    "there, with ↺ to follow these again. Long press a category to move it.",
+                    "there, with ↺ to follow these again. Long press a tab to move it.",
         )
         var mapping by remember { mutableStateOf(false) }
         NotSearching {
@@ -85,7 +77,8 @@ private fun DefaultsTab(runtime: GamepadRuntime) {
                 OutlinedButton(onClick = { mapping = true }) { Text("Mappings") }
             }
         }
-        val level = defaultsLevel(runtime, profile)
+        // Kept while the profile is: its own keys and children are worked out once, not per recomposition.
+        val level = remember(profile) { defaultsLevel(runtime, profile) }
         WorkspaceSettings(runtime, level, profile.id + "/defaults")
         if (mapping) NoSearch {
             ControlMappingScreen(
@@ -113,20 +106,54 @@ private fun AppTab(runtime: GamepadRuntime) {
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
     val orientation by runtime.screenOrientation.collectAsStateWithLifecycle()
     val padOnly by runtime.padOnlyInput.collectAsStateWithLifecycle()
+    val padOnlyHardware by runtime.padOnlyHardware.collectAsStateWithLifecycle()
     val startFullscreen by runtime.startFullscreen.collectAsStateWithLifecycle()
     val keepScreenOn by runtime.keepScreenOn.collectAsStateWithLifecycle()
-    val autoHide by runtime.cornerAutoHide.collectAsStateWithLifecycle()
+    val gameRumble by runtime.gameRumble.collectAsStateWithLifecycle()
     val blackIdle by runtime.blackScreenIdle.collectAsStateWithLifecycle()
     val blackSeconds by runtime.blackScreenSeconds.collectAsStateWithLifecycle()
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     val visuals by runtime.touchVisuals.collectAsStateWithLifecycle()
+    // Export and import of everything ("Backup"); a workspace alone is exported from its settings.
+    val export = rememberExportFile { note(context, it) }
+    var importing by remember { mutableStateOf<ProfileExport.Read?>(null) }
+    val importFile = rememberImportFile(
+        onRead = { r ->
+            if (r.kind == ProfileExport.EVERYTHING) importing = r
+            else note(context, "This file holds one workspace: add it with + in the workspace row")
+        },
+        onError = { note(context, it) },
+    )
+    importing?.let { r ->
+        AlertDialog(
+            onDismissRequest = { importing = null },
+            title = { Text("Replace everything?") },
+            text = {
+                Text(
+                    "Every workspace, the Defaults and the device presets are replaced by the file's " +
+                        "(${r.profile.workspaces.size} workspaces). What you have now is kept as a backup file in the app. " +
+                        "Button and mapping presets from the file are added beside yours.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    importing = null
+                    runtime.importEverything(r)
+                    note(context, "Imported" + if (r.dropped > 0) " (${r.dropped} mappings this version can't use left out)" else "")
+                }) { Text("Replace", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { importing = null }) { Text("Cancel") } },
+        )
+    }
     val debugOn by runtime.debug.enabled.collectAsStateWithLifecycle()
     val tight by runtime.gyroTightening.collectAsStateWithLifecycle()
     val smooth by runtime.gyroSmoothing.collectAsStateWithLifecycle()
+    val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
+    val capCounts by runtime.sensCapCounts.collectAsStateWithLifecycle()
     val version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?" }
 
     val items = listOf(
-        category(runtime, "pad", "Pad", "Fullscreen, screen on, black screen, screen rotation, when input is sent", defaultOpen = true) {
+        category(runtime, "pad", "Screen", "Fullscreen, screen on, black screen, screen rotation, when input is sent", defaultOpen = true) {
             SwitchRow(
                 "Start in fullscreen", startFullscreen,
                 hint = "The pad opens in fullscreen when the app starts. Press ← and → together, or Back, to leave it.",
@@ -181,28 +208,21 @@ private fun AppTab(runtime: GamepadRuntime) {
                 hint = if (padOnly) "Controller, keyboard and gyro reach the PC only on the pad, outside its pages and edit mode. The connection stays up."
                 else "Controller, keyboard and gyro reach the PC from anywhere, also with the app in the background.",
             ) { runtime.setPadOnlyInput(it) }
-        },
-        category(runtime, "corners", "Corners", "The ← / → corners: hiding, opacity, wrap around") {
-            SwitchRow(
-                "Hide the ← / → corners after a few seconds", autoHide,
-                hint = "Tap the screen 4 times quickly to show them again. Hidden corners still work. Off: they are always shown.",
-            ) { runtime.setCornerAutoHide(it) }
-            var cornerOpacity by remember(profile.id) { mutableStateOf(profile.cornerOpacity) }
-            Searchable("Corner opacity", "transparency") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Opacity %.0f%%".format(cornerOpacity * 100), Modifier.padding(end = 8.dp))
-                    Slider(
-                        value = cornerOpacity,
-                        onValueChange = { cornerOpacity = it },
-                        valueRange = Profile.MIN_CONTROL_OPACITY..1f,
-                        onValueChangeFinished = { runtime.editActiveProfile { it.copy(cornerOpacity = cornerOpacity) } },
-                    )
-                }
+            if (padOnly) {
+                SwitchRow(
+                    "Hardware devices too", padOnlyHardware,
+                    hint = if (padOnlyHardware) "Controllers, keyboards and the volume buttons also reach the PC only on the pad."
+                    else "Controllers, keyboards and the volume buttons reach the PC with the pad closed too, while GP is on screen " +
+                        "(Android gives an app in the background no buttons). A keyboard still types into GP's boxes.",
+                ) { runtime.setPadOnlyHardware(it) }
             }
-            SwitchRow("Wrap around (→ on the last workspace goes to the first)", profile.wrapWorkspaces) { on ->
+        },
+        // Kept under its old id, so its place in the list stays.
+        category(runtime, "corners", "Workspace switching", "Previous / next workspace: wrap around") {
+            SwitchRow("Wrap around (Next workspace on the last one goes to the first)", profile.wrapWorkspaces) { on ->
                 runtime.editActiveProfile { it.copy(wrapWorkspaces = on) }
             }
-            Hint("Size and position of the corners: Edit layout, then tap or drag a corner.")
+            Hint("The ← / → buttons are ordinary buttons of every workspace (Make global): move, resize, map or delete them in Edit layout. Add them back from Add preset ★ → Workspace arrows.")
         },
         category(runtime, "touchDisplay", "Touch display", "Touches, trails, live mappings, swipe lines, Move rulers") {
             SwitchRow("Show touches", visuals.showTouches) { runtime.setTouchVisuals(visuals.copy(showTouches = it)) }
@@ -249,8 +269,43 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "the swipe line. The ticks slide as the axis moves, stay dim while a Move is held back, and keep " +
                         "sliding while inertia glides after the lift.",
             ) { runtime.setTouchVisuals(visuals.copy(moveRulers = it)) }
+            SwitchRow(
+                "Show the position ruler on buttons", visuals.positionRuler,
+                hint = "A finger on a button that maps its Finger X, Y, distance or angle shows a ruler through the finger for each: " +
+                        "clear in the start deadzone, then a gradient to full colour at the end deadzone. A label shows what each " +
+                        "of those mappings sends now.",
+            ) { runtime.setTouchVisuals(visuals.copy(positionRuler = it)) }
+            if (visuals.positionRuler) {
+                var picking by remember { mutableStateOf(false) }
+                Searchable("Position ruler colour", "colour color ruler") {
+                    Row(
+                        Modifier.fillMaxWidth().clickable { picking = true }.padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Position ruler colour", Modifier.weight(1f))
+                        Swatch(Color(visuals.rulerColor.toInt()))
+                        if (visuals.rulerColor != TouchVisuals().rulerColor) {
+                            TextButton(onClick = { runtime.setTouchVisuals(visuals.copy(rulerColor = TouchVisuals().rulerColor)) }) { Text("Reset") }
+                        }
+                    }
+                }
+                if (picking) ColorPickerDialog(
+                    "Position ruler colour", Color(visuals.rulerColor.toInt()),
+                    onPick = { c -> runtime.setTouchVisuals(visuals.copy(rulerColor = c.toArgb().toLong() and 0xFFFFFFFFL)); picking = false },
+                    onDismiss = { picking = false },
+                )
+                Searchable("Position ruler values", "value label corner finger") {
+                    Column {
+                        Text("Values show")
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            SelectChip("Above the finger", !visuals.rulerValueInCorner) { runtime.setTouchVisuals(visuals.copy(rulerValueInCorner = false)) }
+                            SelectChip("In the button's corner", visuals.rulerValueInCorner) { runtime.setTouchVisuals(visuals.copy(rulerValueInCorner = true)) }
+                        }
+                    }
+                }
+            }
         },
-        category(runtime, "gyro", "Gyro", "Jitter cutoff and smoothing, for every workspace") {
+        category(runtime, "gyro", "Gyro", "Jitter cutoff, smoothing and the sensitivity slider cap, for every workspace") {
             // Both default to off: raw gyro. One setting for the whole app, also what the PC uses when it runs the gyro.
             OverrideSlider(
                 "appGyroTight", if (tight < 0.05f) "Jitter cutoff off" else "Jitter cutoff %.1f°/s", tight, 0f..5f, 0.1f,
@@ -262,11 +317,24 @@ private fun AppTab(runtime: GamepadRuntime) {
                 overridden = false, onReset = null,
                 hint = "Turns slower than this are averaged over a few samples, which steadies slow aim. Every workspace uses it.",
             ) { v -> runtime.setGyroSmoothing(v) }
+            OverrideSlider(
+                "appSensCapRws", "Slider cap %.1f RWS", capRws,
+                GamepadRuntime.MIN_SENS_CAP_RWS..GamepadRuntime.MAX_SENS_CAP_RWS, 0.5f,
+                overridden = false, onReset = null,
+                hint = "The top of every gyro sensitivity slider (and Gyro sensitivity ranges) in workspaces that know their " +
+                        "game, so the values you use fill the slider. Tap a slider to type a value above it.",
+            ) { v -> runtime.setSensCapRws(v) }
+            OverrideSlider(
+                "appSensCapCounts", "Slider cap %.0f counts/°", capCounts,
+                GamepadRuntime.MIN_SENS_CAP_COUNTS..GamepadRuntime.MAX_SENS_CAP_COUNTS, 1f,
+                overridden = false, onReset = null,
+                hint = "The same in workspaces without a game set, where sensitivity is in mouse counts per degree.",
+            ) { v -> runtime.setSensCapCounts(v) }
         },
         category(runtime, "gyroDisplay", "Gyro display", "The parallax edge; other gyro displays are placed in edit mode") {
-            GyroVisualsSettings(visuals) { runtime.setTouchVisuals(it) }
+            GyroVisualsSettings(visuals, runtime::restStillnessDps) { runtime.setTouchVisuals(it) }
         },
-        category(runtime, "controllers", "Controllers on phone", "Gamepads attached to the phone") {
+        category(runtime, "controllers", "Controllers", "Gamepads attached to the phone") {
             Searchable("Controllers on phone", "gamepad attached", *controllers.map { it.name }.toTypedArray()) {
                 Column {
                     if (controllers.isEmpty()) Text("None. Attach any gamepad.")
@@ -276,6 +344,15 @@ private fun AppTab(runtime: GamepadRuntime) {
                 }
             }
         },
+        category(runtime, "vibration", "Vibration", "Game rumble from the PC") {
+            SwitchRow(
+                "Vibrate with game rumble", gameRumble,
+                hint = "When a game rumbles the PC's virtual controller (Xbox 360 or DualShock 4 output), the phone vibrates " +
+                        "with it, as strong as the stronger motor. Keyboard and mouse output has no rumble. The phone's motor is " +
+                        "weaker than a controller's, and long rumble costs battery. The buzz when a Performance test record " +
+                        "ends on the PC plays either way.",
+            ) { runtime.setGameRumble(it) }
+        },
         category(runtime, "debugging", "Debugging", "The debug panel and recordings") {
             SwitchRow(
                 "Debug tools", debugOn,
@@ -284,6 +361,25 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "Record saves the last 30 seconds (the PC saves its side too over Wi-Fi or USB). " +
                         "Off: nothing is logged.",
             ) { runtime.debug.setEnabled(it) }
+        },
+        category(runtime, "backup", "Backup", "Export or import everything as a file") {
+            Searchable(
+                "Export or import everything", "backup file export import share move to another phone restore",
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "One file with every workspace, the Defaults, device presets, the button library and your mapping presets. " +
+                            "To share one workspace, use Export in its settings.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { export(ProfileExport.fileName("GPEverything"), runtime.exportEverything()) }) {
+                            Text("Export everything")
+                        }
+                        OutlinedButton(onClick = importFile) { Text("Import everything…") }
+                    }
+                }
+            }
         },
         category(runtime, "about", "About", "Version and gyro sensor") {
             Searchable("About", "version GyroPhone gyro rate sensor Hz", gyro.source) {
@@ -299,7 +395,7 @@ private fun AppTab(runtime: GamepadRuntime) {
         },
     )
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Hint("Long press a category's name to move it.")
+        Hint("Long press a tab to move it.")
         ReorderableSections(runtime, "app", items)
     }
 }

@@ -1,6 +1,8 @@
 package com.oleroma.gyrophone.runtime
 
 import android.content.Context
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Process
@@ -115,6 +117,77 @@ class PhoneHaptics(context: Context, private val connected: () -> Boolean) : Hap
         }
     }
 
+    // Game rumble and the notice buzz, from the PC (RUMBLE). Touched by the haptics thread only.
+    private var rumbleLevel = 0
+    private var buzzUntil = 0L
+    private var lastBuzz = -BUZZ_GAP_MS
+    private val renewRumble = Runnable { issueRumble() }
+
+    /**
+     * The game's rumble on the PC's virtual controller: the stronger motor sets the strength, held
+     * until the next call (0 stops it). A haptic mapping's hold or tick plays over it.
+     */
+    fun rumble(large: Int, small: Int) {
+        val level = maxOf(large, small).coerceIn(0, 255)
+        worker.post {
+            log?.let { l -> if (level != rumbleLevel) l("game rumble $large/$small") }
+            rumbleLevel = level
+            worker.removeCallbacks(renewRumble)
+            if (level == 0) {
+                if (holding == null && SystemClock.uptimeMillis() >= buzzUntil) vibrator.cancel()
+            } else {
+                issueRumble()
+            }
+        }
+    }
+
+    /** Android's double beep at the notification volume, then the tone player is let go. */
+    private fun beep() {
+        try {
+            val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
+            tone.startTone(ToneGenerator.TONE_PROP_BEEP2, BEEP_MS.toInt())
+            worker.postDelayed({ tone.release() }, BEEP_MS + 200)
+        } catch (e: RuntimeException) {
+            log?.invoke("notice beep failed: ${e.message}") // no audio device for tones
+        }
+    }
+
+    /**
+     * Two short strong buzzes and two beeps (a Performance record started or ended on the PC). Repeats
+     * within a second are one. The beeps play at the notification volume, so silent mode silences them.
+     */
+    fun buzz() {
+        worker.post {
+            val now = SystemClock.uptimeMillis()
+            if (now - lastBuzz < BUZZ_GAP_MS) return@post
+            lastBuzz = now
+            log?.invoke("notice buzz")
+            val amplitude = if (amplitudeControl) 255 else VibrationEffect.DEFAULT_AMPLITUDE
+            val timings = longArrayOf(0, BUZZ_ON_MS, BUZZ_OFF_MS, BUZZ_ON_MS)
+            val amplitudes = intArrayOf(0, amplitude, 0, amplitude)
+            vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1), hardwareAttrs)
+            buzzUntil = now + timings.sum()
+            beep()
+            if (rumbleLevel > 0) {
+                worker.removeCallbacks(renewRumble)
+                worker.postAtTime(renewRumble, buzzUntil)
+            }
+        }
+    }
+
+    /** Keeps the game's rumble going with short one-shots, so it stops by itself if the link goes. */
+    private fun issueRumble() {
+        if (rumbleLevel == 0) return
+        if (!connected()) { rumbleLevel = 0; return }
+        val now = SystemClock.uptimeMillis()
+        val busy = holding != null || (tickPending && now < resumeAt) || now < buzzUntil
+        if (!busy) {
+            val amplitude = if (amplitudeControl) rumbleLevel.coerceIn(1, 255) else VibrationEffect.DEFAULT_AMPLITUDE
+            vibrator.vibrate(VibrationEffect.createOneShot(HOLD_MS, amplitude), hardwareAttrs)
+        }
+        worker.postDelayed(renewRumble, RENEW_MS)
+    }
+
     /** Plays [feel] once whether or not a PC is connected: a tick, or a short hold for [held]. */
     fun preview(feel: HapticFeel, held: Boolean) {
         worker.post {
@@ -155,6 +228,10 @@ class PhoneHaptics(context: Context, private val connected: () -> Boolean) : Hap
         const val HOLD_MS = 300L
         const val RENEW_MS = 150L
         const val PREVIEW_HOLD_MS = 400L
+        const val BUZZ_ON_MS = 90L
+        const val BUZZ_OFF_MS = 110L
+        const val BUZZ_GAP_MS = 1000L
+        const val BEEP_MS = 400L
         const val AMPLITUDE_STEP = 12
         const val SYSTEM_HOLD_STRENGTH = 160
         /** About how long a predefined click lasts. */

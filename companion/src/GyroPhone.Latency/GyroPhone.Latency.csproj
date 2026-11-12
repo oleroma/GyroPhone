@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The latency test's video analyser: tracks the phone's markers and the test window's bar in a
+       slow-motion video and finds how far one trails the other. Cross-platform; the native OpenCV
+       library comes with the app (runtime.win in the tray app) or the tests (linux-x64). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>GyroPhone.Latency</RootNamespace>
+    <AssemblyName>GyroPhone.Latency</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="OpenCvSharp4" Version="4.13.0.20260627" />
+  </ItemGroup>
+</Project>

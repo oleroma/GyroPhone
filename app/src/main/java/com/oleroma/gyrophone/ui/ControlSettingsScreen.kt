@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,11 +20,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -40,7 +39,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.model.BindableInput
@@ -51,6 +49,7 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.StickZones
+import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchLayer
@@ -66,9 +65,9 @@ import kotlin.math.sqrt
 
 /**
  * The one settings page of a touch control (Settings in its mapping editor, or Configure in edit
- * mode), as categories: the button itself (duplicate, save to library, delete), its look, layers,
- * then the settings its actions share ([shared], from [touchControlSettings]: gyro, a touchpad
- * button's surface, a stick's). [onEditMappings] opens the mapping editor. Edits go through the callbacks.
+ * mode). Duplicate, Save as preset (Add preset) and Delete sit fixed on top (beside the title in landscape,
+ * under it in portrait); then categories: its look, layers, then the settings its actions share
+ * ([shared], from [touchControlSettings]: gyro, a touchpad button's surface, a stick's). [onEditMappings] opens the mapping editor. Edits go through the callbacks.
  */
 @Composable
 internal fun ControlSettingsScreen(
@@ -95,28 +94,32 @@ internal fun ControlSettingsScreen(
                 " · " + control.id + " · settings",
         onClose = onClose,
         actions = { OutlinedButton(onClick = onEditMappings) { Text("Mappings") } },
-    ) {
-        val kindName = if (control.kind == TouchKind.STICK) "Stick" else "Button"
-        val items = listOfNotNull(
-            category(runtime, "button", kindName, "Duplicate, save to library, delete", defaultOpen = true, prefKey = "control.Button") {
-                Searchable(kindName, "duplicate copy save to library delete remove") {
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = onDuplicate) { Text("Duplicate") }
-                        if (control.kind != TouchKind.FULLSCREEN) {
-                            val saved = savedTo != null && library.any { it.id == savedTo }
-                            OutlinedButton(enabled = !saved, onClick = {
-                                val b = ButtonLibrary.save(workspace, control, library.map { it.id })
-                                runtime.addToLibrary(b)
-                                savedTo = b.id
-                            }) { Text(if (saved) "In library" else "Save to library") }
-                        }
-                        OutlinedButton(onClick = { confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-                    }
+        top = {
+            // The button's own actions stay fixed above its settings, like a workspace's.
+            val compact = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(contentPadding = compact, onClick = onDuplicate) { Text("Duplicate") }
+                if (control.kind != TouchKind.FULLSCREEN) {
+                    val saved = savedTo != null && library.any { it.id == savedTo }
+                    OutlinedButton(contentPadding = compact, enabled = !saved, onClick = {
+                        val b = ButtonLibrary.save(workspace, control, library.map { it.id })
+                        runtime.addToLibrary(b)
+                        savedTo = b.id
+                    }) { Text(if (saved) "Saved as preset" else "Save as preset") }
                 }
-                Hint("Duplicate copies its look and mappings. The library keeps it for any workspace: add it from the edit panel.")
-            },
-            category(runtime, "look", "Look", "Label, shape, layer, size", defaultOpen = true, prefKey = "control.Look") {
-                LookSettings(control, inPortrait, onControlChange, onSize)
+                TextButton(contentPadding = compact, onClick = { confirmDelete = true }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+    ) {
+        val items = listOfNotNull(
+            category(runtime, "look", "Look", "Label, shape, layer, size, opacity, fade", defaultOpen = true, prefKey = "control.Look") {
+                LookSettings(control, inPortrait, onControlChange, onSize, workspace.controlOpacity)
             },
             if (workspace.sets.isNotEmpty()) category(runtime, "layers", "Layers", "What it does when the layer changes while held", prefKey = "control.Layers") {
                 SwitchSetting(
@@ -146,25 +149,17 @@ internal fun ControlSettingsScreen(
     }
 }
 
-/** Label, shape and size of a control. */
+/** Shape and size of a control (its label is edited in the mapping editor's title). */
 @Composable
 internal fun LookSettings(
     control: TouchControl,
     inPortrait: Boolean,
     onControlChange: (TouchControl) -> Unit,
     onSize: (Float) -> Unit,
+    workspaceOpacity: Float = 0.5f,
 ) {
     val current by rememberUpdatedState(control)
-    Searchable("Label", "name text shows the mapping") {
-        OutlinedTextField(
-            value = control.label,
-            onValueChange = { onControlChange(current.copy(label = it)) },
-            label = { Text("Label") },
-            placeholder = { Text("Shows the mapping") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
+    // The label is edited in the mapping editor's title (LabelField).
     Searchable("Shape", "Circle Square") { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Shape", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(52.dp))
         SelectChip(
@@ -195,6 +190,28 @@ internal fun LookSettings(
         "Also works when a finger lands on a control in front of it, so both fire.",
         control.sharesTouches,
     ) { onControlChange(current.copy(sharesTouches = it)) }
+    // Its own opacity (else the workspace's), and Fade when idle: never fully transparent.
+    if (control.kind != TouchKind.DISPLAY) {
+        SwitchSetting(
+            "Own opacity",
+            "Off: the workspace's control opacity (" + (workspaceOpacity * 100).roundToInt() + "%).",
+            control.opacity != null,
+        ) { on -> onControlChange(current.copy(opacity = if (on) workspaceOpacity else null)) }
+        control.opacity?.let { o ->
+            OpacitySlider("Opacity", o) { onControlChange(current.copy(opacity = it, fade = current.fade?.coerceAtMost(it))) }
+        }
+        SwitchSetting(
+            "Fade when idle",
+            "A few seconds after its last touch it fades, never fully: it stays visible. A touch brings it back at once.",
+            control.fade != null,
+        ) { on ->
+            val full = current.opacity ?: workspaceOpacity
+            onControlChange(current.copy(fade = if (on) TouchControl.DEFAULT_FADE.coerceAtMost(full) else null))
+        }
+        control.fade?.let { f ->
+            OpacitySlider("Faded opacity", f, max = control.opacity ?: workspaceOpacity) { onControlChange(current.copy(fade = it)) }
+        }
+    }
     val size = control.placeSize(inPortrait)
     if (control.kind == TouchKind.BUTTON && control.shape == TouchShape.SQUARE) {
         // Width and height apart: each slider keeps the other side as it is.
@@ -281,6 +298,20 @@ internal fun SizeSlider(title: String, value: Float, onChange: (Float) -> Unit) 
         Slider(
             value = sqrt(((value - TouchControl.MIN_SIZE) / span).coerceIn(0f, 1f)),
             onValueChange = { t -> onChange(TouchControl.MIN_SIZE + span * t * t) },
+        )
+    }
+}
+
+/** An opacity from [Profile.MIN_CONTROL_OPACITY] (never fully transparent) to [max]. */
+@Composable
+private fun OpacitySlider(title: String, value: Float, max: Float = 1f, onChange: (Float) -> Unit) = Searchable(title, "transparency fade") {
+    val top = max.coerceAtLeast(Profile.MIN_CONTROL_OPACITY + 0.01f)
+    Column {
+        Text(title + " " + (value * 100).roundToInt() + "%", style = MaterialTheme.typography.labelLarge)
+        Slider(
+            value = value.coerceIn(Profile.MIN_CONTROL_OPACITY, top),
+            onValueChange = onChange,
+            valueRange = Profile.MIN_CONTROL_OPACITY..top,
         )
     }
 }

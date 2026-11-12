@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using GyroPhone.Host.Update;
 using GyroPhone.Windows;
 
 namespace GyroPhone.Tray;
@@ -9,7 +10,8 @@ namespace GyroPhone.Tray;
 /// <see cref="CompanionUpdater"/>. Started from the new build waiting at "&lt;exe&gt;.new" by the instance it
 /// replaces. Waits for that instance (and a watcher told to stop) to exit, copies itself over the exe, then
 /// starts the companion and/or the watcher from the exe's usual path. The finisher only copies its own file,
-/// so nothing it reads is ever moved under it. If the copy fails, it starts the old build again with
+/// so nothing it reads is ever moved under it; then it moves in OpenCV's DLLs that wait beside the exe as
+/// "&lt;dll&gt;.new" (<see cref="UpdateInfo.WaitingDlls"/>), which the old instance may have held. If the copy fails, it starts the old build again with
 /// <see cref="FailedArg"/>, which then doesn't retry this .new until it is installed again.
 /// </summary>
 internal static class UpdateFinisher
@@ -17,11 +19,13 @@ internal static class UpdateFinisher
     public const string Arg = "--finish-update";
     public const string TrayArg = "--tray";
     public const string FailedArg = "--update-failed";
-    public const string NewSuffix = ".new";
+    public const string NewSuffix = UpdateInfo.NewSuffix;
     private const string MutexName = @"Local\GyroPhoneUpdate";
     private const int ExitWaitMs = 30_000;
     private const int CopyTries = 40;
     private const int CopyRetryMs = 500;
+    // The waiting DLLs are optional (latency test only), so they hold up the restart for at most 5 s each.
+    private const int DllMoveTries = 10;
 
     /// <summary>The product version of a waiting build, or null when there is none (or it can't be read yet).</summary>
     public static string? VersionOf(string path)
@@ -105,6 +109,8 @@ internal static class UpdateFinisher
             log.Write(copied
                 ? $"update: {Application.ProductVersion} copied to {exe}"
                 : $"update: couldn't replace {exe}; starting the old build again");
+            // Only with the new exe in place: the old build keeps the DLLs it came with.
+            if (copied) MoveWaitingDlls(Path.GetDirectoryName(exe) ?? "", log);
             if (tray)
             {
                 Start(exe, copied ? $"{Program.RestartedArg} {Program.UpdatedArg}" : $"{Program.RestartedArg} {FailedArg}", log);
@@ -161,6 +167,36 @@ internal static class UpdateFinisher
         }
         log.Write($"update: copy failed: {last?.GetType().Name} {last?.Message}");
         return false;
+    }
+
+    /// <summary>
+    /// Puts each waiting "&lt;dll&gt;.new" in place of its DLL by renaming it (no copy of the big file on the
+    /// restart path), retrying for a few seconds while an exiting instance still holds it. One that can't be
+    /// moved stays waiting (logged): only the latency test uses these DLLs, and the next update tries again.
+    /// </summary>
+    private static void MoveWaitingDlls(string dir, FileLog log)
+    {
+        foreach (var (waiting, target) in UpdateInfo.WaitingDlls(dir))
+        {
+            Exception? last = null;
+            for (int t = 0; t < DllMoveTries; t++)
+            {
+                try
+                {
+                    File.Move(waiting, target, overwrite: true);
+                    last = null;
+                    break;
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    last = e;
+                    Thread.Sleep(CopyRetryMs);
+                }
+            }
+            log.Write(last == null
+                ? $"update: {Path.GetFileName(target)} updated"
+                : $"update: couldn't update {Path.GetFileName(target)}: {last.GetType().Name} {last.Message}");
+        }
     }
 
     private static void Start(string exe, string args, FileLog log)

@@ -23,4 +23,22 @@ public static partial class UpdateInfo
     public static bool IsReplaced(string? running, string? onDisk) =>
         BuildNumber(running) != null && BuildNumber(onDisk) != null
         && !string.Equals(running, onDisk, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The ending of a file that waits to replace the one of the same name without it.</summary>
+    public const string NewSuffix = ".new";
+
+    /// <summary>
+    /// The DLLs that wait next to the exe in <paramref name="dir"/> as "&lt;dll&gt;.new" (OpenCV's, which ship
+    /// beside the single-file exe), each with the file it replaces, by name. The install hook puts them there
+    /// instead of over a DLL a running companion may hold; the update finisher moves them in once it exited.
+    /// </summary>
+    public static IReadOnlyList<(string Waiting, string Target)> WaitingDlls(string dir)
+    {
+        if (!Directory.Exists(dir)) return [];
+        return Directory.EnumerateFiles(dir, "*.dll" + NewSuffix)
+            .Where(f => f.EndsWith(".dll" + NewSuffix, StringComparison.OrdinalIgnoreCase))
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .Select(f => (f, f[..^NewSuffix.Length]))
+            .ToList();
+    }
 }

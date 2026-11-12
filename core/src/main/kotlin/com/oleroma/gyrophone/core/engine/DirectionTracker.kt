@@ -2,7 +2,9 @@ package com.oleroma.gyrophone.core.engine
 
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.HoldMode
+import com.oleroma.gyrophone.core.model.ANY_SLOT
 import com.oleroma.gyrophone.core.model.HoldZone
+import com.oleroma.gyrophone.core.model.SWIPE_SLOTS
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.ZoneKeep
 import com.oleroma.gyrophone.core.model.inPie
@@ -23,6 +25,11 @@ import kotlin.math.sqrt
  * finger has headed elsewhere for the Turn after travel on end. Held directions follow
  * [TouchpadSettings.holdMode]. Each held direction is split into length zones
  * ([TouchpadSettings.holdZone]): [zones] says which of a direction's zones are held now.
+ *
+ * Held directions are slots ([com.oleroma.gyrophone.core.model.holdSlot]): the four directions by
+ * [Direction.ordinal], then [ANY_SLOT], held while the finger's straight-line distance from where
+ * the motion started passes the shared hold distance, whatever the hold mode and pies (its zones
+ * are the shared ones, by that distance); [zones] says which of its zones are held, [held] leaves it out.
  */
 internal class DirectionTracker {
     /** The directions held now. */
@@ -33,26 +40,29 @@ internal class DirectionTracker {
      * How many length zones each direction has ([Direction.ordinal]; at least 1): the caller
      * sets it from what is mapped. With [TouchpadSettings.dragStart] there is only the first.
      */
-    val zoneCount = IntArray(4) { 1 }
+    val zoneCount = IntArray(SWIPE_SLOTS) { 1 }
 
     /**
      * Per direction ([Direction.ordinal]): the zones mapped only to fire as the finger lifts in
      * them (a mask of 1 shl zone; the caller sets it). Nothing holds them: they are not held,
      * kept or latched, and fire through [zoneAt] at the lift.
      */
-    val releaseOnly = IntArray(4)
+    val releaseOnly = IntArray(SWIPE_SLOTS)
 
     /** Per direction: the zone the finger is in now (FROM_START) or got to (DIRECTION_CHANGE), -1 = none. */
-    private val at = IntArray(4) { -1 }
+    private val at = IntArray(SWIPE_SLOTS) { -1 }
 
     /** Per direction: the zones held now, a mask of 1 shl zone. */
-    private val zoneMask = IntArray(4)
+    private val zoneMask = IntArray(SWIPE_SLOTS)
+
+    /** Per direction: how far the finger is along it now (dp, from the start; DIRECTION_CHANGE: its travel), for [progress]. */
+    private val alongNow = FloatArray(SWIPE_SLOTS)
 
     /** Per direction: DIRECTION_CHANGE travel since it was held (dp). */
     private val travel = FloatArray(4)
 
     /** Per direction: zones reached this motion that stay held until the lift ([ZoneKeep.UNTIL_LIFT]). */
-    private val untilLift = IntArray(4)
+    private val untilLift = IntArray(SWIPE_SLOTS)
 
     /** The swipe pies the recent travel points into (0 = none yet, or a gap between pies); with Lock heading, the locked ones. */
     var current = 0
@@ -98,7 +108,11 @@ internal class DirectionTracker {
     private var offY = 0f
     private var pressed = 0
     private var carry = 0
-    private val carryZones = IntArray(4)
+    private val carryZones = IntArray(SWIPE_SLOTS)
+
+    // Any way: the whole travel since the motion started (dp), never re-anchored.
+    private var anyX = 0f
+    private var anyY = 0f
 
     /**
      * A motion starts; [latched] directions are held from a latch, with their zones
@@ -110,20 +124,36 @@ internal class DirectionTracker {
         totX = 0f; totY = 0f
         lockedX = false; lockedY = false; lockOffX = 0f; lockOffY = 0f
         offX = 0f; offY = 0f; pressed = 0
+        anyX = 0f; anyY = 0f
         current = 0; holdCurrent = 0; holdSince = 0f
-        held = latched
+        held = latched and DIR_BITS
         carry = latched
-        for (i in 0 until 4) {
-            val z = if (latched and (1 shl i) != 0) latchedZones?.get(i) ?: 1 else 0
+        for (i in 0 until SWIPE_SLOTS) {
+            val z = if (latched and (1 shl i) != 0) latchedZones?.getOrNull(i) ?: 1 else 0
             carryZones[i] = z; zoneMask[i] = z
-            at[i] = -1; travel[i] = 0f; untilLift[i] = 0
+            at[i] = -1; untilLift[i] = 0; alongNow[i] = 0f
+            if (i < 4) travel[i] = 0f
         }
     }
 
-    /** The zones of [d] held now, a mask of 1 shl zone (bit 0 = the first zone). */
+    /**
+     * How far through zone [z] of [d] the finger is now, 0 at its start to 1 at its end (and past
+     * it): what an axis chip of that zone outputs.
+     */
+    fun progress(slot: Int, z: Int, s: TouchpadSettings): Float {
+        var edge = activate(s.holdDpAt(slot))
+        for (i in 0 until z) edge += s.holdZoneDpAt(slot, i)
+        return ((alongNow[slot] - edge) / s.holdZoneDpAt(slot, z)).coerceIn(0f, 1f)
+    }
+
+    fun progress(d: Direction, z: Int, s: TouchpadSettings): Float = progress(d.ordinal, z, s)
+
+    /** The zones of slot [slot] held now, a mask of 1 shl zone (bit 0 = the first zone). */
+    fun zones(slot: Int): Int = zoneMask[slot]
     fun zones(d: Direction): Int = zoneMask[d.ordinal]
 
-    /** The zone of [d] the finger is in now (FROM_START) or got to (DIRECTION_CHANGE), or -1. */
+    /** The zone of slot [slot] the finger is in now (FROM_START) or got to (DIRECTION_CHANGE), or -1. */
+    fun zoneAt(slot: Int): Int = at[slot]
     fun zoneAt(d: Direction): Int = at[d.ordinal]
 
     /** One step of travel ([dx], [dy] dp); returns the directions whose swipe fires now. */
@@ -166,6 +196,7 @@ internal class DirectionTracker {
 
         if (s.holdMode == HoldMode.FROM_START) fromStart(dx, dy, s)
         else directionChange(len, s)
+        anyWay(dx, dy, s)
 
         // Each direction of the pies fires once its own swipe distance is travelled along it.
         var ready = 0
@@ -334,7 +365,8 @@ internal class DirectionTracker {
                 Direction.LEFT -> -offX
             }
             val i = d.ordinal
-            at[i] = if (s.inPie(offX, offY, d, hold = true)) zoneOf(along, d, s) else -1
+            alongNow[i] = along
+            at[i] = if (s.inPie(offX, offY, d, hold = true)) zoneOf(along, i, s) else -1
             if (at[i] >= 0) mask = mask or (1 shl i)
         }
         // Dragged: letting go re-centres the start point on the finger, so the opposite
@@ -344,11 +376,11 @@ internal class DirectionTracker {
         }
         pressed = mask
         if (mask != 0) carry = 0
-        held = if (carry != 0) carry else mask
+        held = if (carry != 0) carry and DIR_BITS else mask
         for (d in Direction.entries) {
             val i = d.ordinal
-            reach(d, at[i], s)
-            zoneMask[i] = (if (carry != 0) carryZones[i] else heldZones(d, at[i], s)) or untilLift[i]
+            reach(i, at[i], s)
+            zoneMask[i] = (if (carry != 0) carryZones[i] else heldZones(i, at[i], s)) or untilLift[i]
         }
     }
 
@@ -359,8 +391,8 @@ internal class DirectionTracker {
     private fun directionChange(len: Float, s: TouchpadSettings) {
         // The directions of the hold pies that went their own hold distance.
         val ready = passed(holdCurrent, holdSince) { s.holdDpOf(it) }
-        if (ready != 0 && ready != held) {
-            held = ready
+        if (ready != 0 && ready != (held and DIR_BITS)) {
+            held = ready or (held and DIR_BITS.inv())
             for (i in 0 until 4) {
                 travel[i] = if (held and (1 shl i) != 0) holdSince else 0f
                 at[i] = -1
@@ -371,32 +403,56 @@ internal class DirectionTracker {
         for (d in Direction.entries) {
             val i = d.ordinal
             if (held and (1 shl i) == 0) {
-                at[i] = -1; zoneMask[i] = untilLift[i]; continue
+                at[i] = -1; zoneMask[i] = untilLift[i]; alongNow[i] = 0f; continue
             }
-            val z = zoneOf(travel[i], d, s)
+            alongNow[i] = travel[i]
+            val z = zoneOf(travel[i], i, s)
             // A latched direction keeps its zones until this motion reaches one.
             if (z > at[i]) {
                 at[i] = z
-                reach(d, z, s)
-                zoneMask[i] = heldZones(d, z, s) or untilLift[i]
+                reach(i, z, s)
+                zoneMask[i] = heldZones(i, z, s) or untilLift[i]
             }
         }
     }
 
-    /** The zone of [d] travel [along] (dp, from the start) is in, or -1 before the hold distance. */
-    private fun zoneOf(along: Float, d: Direction, s: TouchpadSettings): Int {
-        var edge = activate(s.holdDpOf(d))
+    /**
+     * Any way ([ANY_SLOT]): held while the straight-line distance from where the motion started
+     * passes the shared hold distance, its zone by that distance. A latched one stays held until
+     * this motion reaches it.
+     */
+    private fun anyWay(dx: Float, dy: Float, s: TouchpadSettings) {
+        anyX += dx; anyY += dy
+        val i = ANY_SLOT
+        val along = sqrt(anyX * anyX + anyY * anyY)
+        alongNow[i] = along
+        at[i] = zoneOf(along, i, s)
+        val b = 1 shl i
+        if (at[i] >= 0) {
+            carry = carry and b.inv()
+            reach(i, at[i], s)
+            zoneMask[i] = heldZones(i, at[i], s) or untilLift[i]
+        } else if (carry and b != 0) {
+            zoneMask[i] = carryZones[i]
+        } else {
+            zoneMask[i] = untilLift[i]
+        }
+    }
+
+    /** The zone of slot [d] travel [along] (dp, from the start) is in, or -1 before the hold distance. */
+    private fun zoneOf(along: Float, d: Int, s: TouchpadSettings): Int {
+        var edge = activate(s.holdDpAt(d))
         if (along < edge) return -1
         val last = count(d, s) - 1
         for (i in 0 until last) {
-            edge += s.holdZoneDp(d, i)
+            edge += s.holdZoneDpAt(d, i)
             if (along < edge) return i
         }
         return last
     }
 
-    /** The zones of [d] held with the finger in zone [z]: it unless it fires on release, and the kept ones before it. */
-    private fun heldZones(d: Direction, z: Int, s: TouchpadSettings): Int {
+    /** The zones of slot [d] held with the finger in zone [z]: it unless it fires on release, and the kept ones before it. */
+    private fun heldZones(d: Int, z: Int, s: TouchpadSettings): Int {
         if (z < 0) return 0
         var m = 0
         for (i in 0..z) {
@@ -406,26 +462,26 @@ internal class DirectionTracker {
         return m
     }
 
-    /** The finger got to zone [z] of [d]: it and the zones before it that stay until the lift are held from now on. */
-    private fun reach(d: Direction, z: Int, s: TouchpadSettings) {
+    /** The finger got to zone [z] of slot [d]: it and the zones before it that stay until the lift are held from now on. */
+    private fun reach(d: Int, z: Int, s: TouchpadSettings) {
         for (i in 0..z) {
-            if (!lifts(d, i) && zone(d, i, s).keep == ZoneKeep.UNTIL_LIFT) untilLift[d.ordinal] = untilLift[d.ordinal] or (1 shl i)
+            if (!lifts(d, i) && zone(d, i, s).keep == ZoneKeep.UNTIL_LIFT) untilLift[d] = untilLift[d] or (1 shl i)
         }
     }
 
-    /** Zone [i] of [d] only fires as the finger lifts in it ([releaseOnly]). */
-    private fun lifts(d: Direction, i: Int) = releaseOnly[d.ordinal] and (1 shl i) != 0
+    /** Zone [i] of slot [d] only fires as the finger lifts in it ([releaseOnly]). */
+    private fun lifts(d: Int, i: Int) = releaseOnly[d] and (1 shl i) != 0
 
     /**
-     * Zone [i] of [d]. A single zone keeps its Held setting (Always or Only in zone); with Drag
+     * Zone [i] of slot [d]. A single zone keeps its Held setting (Always or Only in zone); with Drag
      * start point it is a plain held direction, whatever its settings say.
      */
-    private fun zone(d: Direction, i: Int, s: TouchpadSettings): HoldZone =
-        if (s.dragStart && s.holdMode == HoldMode.FROM_START) PLAIN else s.holdZone(d, i)
+    private fun zone(d: Int, i: Int, s: TouchpadSettings): HoldZone =
+        if (s.dragStart && s.holdMode == HoldMode.FROM_START) PLAIN else s.holdZoneAt(d, i)
 
-    private fun count(d: Direction, s: TouchpadSettings): Int =
+    private fun count(d: Int, s: TouchpadSettings): Int =
         if (s.dragStart && s.holdMode == HoldMode.FROM_START) 1
-        else zoneCount[d.ordinal].coerceIn(1, TouchpadSettings.MAX_HOLD_ZONES)
+        else zoneCount[d].coerceIn(1, TouchpadSettings.MAX_HOLD_ZONES)
 
     private fun activate(dp: Float) = dp.coerceIn(TouchpadSettings.MIN_ACTIVATE_DP, TouchpadSettings.MAX_ACTIVATE_DP)
 
@@ -437,5 +493,6 @@ internal class DirectionTracker {
         val PLAIN = HoldZone()
         val X_BITS = (1 shl Direction.RIGHT.ordinal) or (1 shl Direction.LEFT.ordinal)
         val Y_BITS = (1 shl Direction.UP.ordinal) or (1 shl Direction.DOWN.ordinal)
+        const val DIR_BITS = 0xF
     }
 }

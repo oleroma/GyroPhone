@@ -1,6 +1,7 @@
 package com.oleroma.gyrophone.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -11,7 +12,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -22,7 +22,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import com.oleroma.gyrophone.core.model.ChildOverride
 import com.oleroma.gyrophone.core.model.DirField
 import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.HoldZone
@@ -55,7 +59,18 @@ internal class SurfaceLevel(
     val setZones: (List<HoldZone>, List<List<HoldZone>>?) -> Unit,
     val isMoveOwn: (MoveSlot, MoveField) -> Boolean,
     val resetMove: (MoveSlot, MoveField) -> Unit,
+    /** The children below this level that set any of these keys themselves ([ChildLine]); null = none, or a level without children. */
+    val childrenOf: (List<String>) -> ChildInfo? = { null },
 ) {
+    /** The children setting [f] themselves. */
+    fun kids(f: SurfaceField): ChildInfo? = childrenOf(listOf(WorkspaceDefaults.touchpadKey(f)))
+
+    /** The children setting direction [d]'s [f] themselves. */
+    fun kids(d: Direction, f: DirField): ChildInfo? = childrenOf(listOf(WorkspaceDefaults.dirKey(d, f)))
+
+    /** The children setting Move [m]'s [fields] themselves. */
+    fun kids(m: MoveSlot, vararg fields: MoveField): ChildInfo? = childrenOf(fields.map { WorkspaceDefaults.moveKey(m, it) })
+
     val anyOwn: Boolean
         get() = SurfaceField.entries.any(isOwn) || Direction.entries.any(::anyDirOwn) ||
             MoveSlot.entries.any { m -> MoveField.of(m).any { isMoveOwn(m, it) } }
@@ -104,6 +119,7 @@ internal fun workspaceSurfaceLevel(level: WorkspaceLevel) = SurfaceLevel(
     setZones = { a, b -> level.edit { it.copy(touchpad = it.touchpad.copy(holdZones = a, dirHoldZones = b)) } },
     isMoveOwn = { m, f -> level.isOwn(WorkspaceDefaults.moveKey(m, f)) },
     resetMove = { m, f -> level.reset(WorkspaceDefaults.moveKey(m, f)) },
+    childrenOf = { level.kids(it) },
 )
 
 /**
@@ -117,6 +133,7 @@ internal fun OverrideRow(
     onReset: (() -> Unit)?,
     hint: String? = null,
     trailing: (@Composable () -> Unit)? = null,
+    children: ChildInfo? = null,
     content: @Composable ColumnScope.() -> Unit = {},
 ) = Searchable(title, hint) {
     val colors = MaterialTheme.colorScheme
@@ -143,6 +160,7 @@ internal fun OverrideRow(
             trailing?.invoke()
         }
         content()
+        if (children != null) ChildLine(children)
         if (hint != null) {
             Text(
                 hint,
@@ -170,10 +188,12 @@ internal fun OverrideSlider(
     onReset: (() -> Unit)?,
     hint: String? = null,
     onLive: ((Float?) -> Unit)? = null,
+    children: ChildInfo? = null,
+    typedRange: ClosedFloatingPointRange<Float>? = null,
     onDone: (Float) -> Unit,
 ) {
     var v by remember(key, value) { mutableStateOf(value) }
-    OverrideRow(format.format(v), overridden, onReset, hint) {
+    OverrideRow(format.format(v), overridden, onReset, hint, children = children) {
         Slider(
             value = v,
             onValueChange = {
@@ -185,6 +205,8 @@ internal fun OverrideSlider(
                 onDone(v)
                 onLive?.invoke(null)
             },
+            typedRange = typedRange,
+            typedTitle = format.format(v),
         )
     }
 }
@@ -198,8 +220,9 @@ internal fun OverrideSwitch(
     overridden: Boolean,
     onReset: (() -> Unit)?,
     enabled: Boolean = true,
+    children: ChildInfo? = null,
     onChange: (Boolean) -> Unit,
-) = OverrideRow(title, overridden, onReset, hint, trailing = {
+) = OverrideRow(title, overridden, onReset, hint, children = children, trailing = {
     Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
 })
 
@@ -213,10 +236,11 @@ internal fun MsOverride(
     overridden: Boolean,
     onReset: (() -> Unit)?,
     hint: String? = null,
+    children: ChildInfo? = null,
     onSet: (Int) -> Unit,
 ) = OverrideSlider(
     key, "$title %.0f ms", ms.toFloat(), range.first.toFloat()..range.last.toFloat(), 10f,
-    overridden, onReset, hint,
+    overridden, onReset, hint, children = children,
 ) { onSet(it.roundToInt()) }
 
 /** "Reset all to …": every setting of a level back to its parent's, once confirmed. */
@@ -238,3 +262,67 @@ internal fun ConfirmResetAll(text: String, onDismiss: () -> Unit, onConfirm: () 
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
+
+/**
+ * The children below a level (workspaces, layers, buttons) that set a setting themselves, so the
+ * level's value doesn't reach them, and [reset] to make them follow it again.
+ */
+internal class ChildInfo(val children: List<ChildOverride>, val reset: () -> Unit)
+
+/**
+ * Under a setting: how many children set it themselves, with their names and values ("3 own:
+ * Apex 2.6 · Apex › Sniper 0.8 · …"), the first [SHOWN] until "+N more" is tapped, and a
+ * Reset children button that, once confirmed, makes them all follow this level again.
+ */
+@Composable
+internal fun ChildLine(info: ChildInfo) {
+    val kids = info.children
+    if (kids.isEmpty()) return
+    var open by remember { mutableStateOf(false) }
+    var asking by remember { mutableStateOf(false) }
+    val colors = MaterialTheme.colorScheme
+    val long = kids.size > SHOWN
+    val shown = if (open || !long) kids else kids.take(SHOWN)
+    Row(Modifier.padding(bottom = 4.dp), verticalAlignment = Alignment.Top) {
+        Text(
+            buildAnnotatedString {
+                append("${kids.size} own: ")
+                shown.forEachIndexed { i, c ->
+                    if (i > 0) append(" · ")
+                    append(c.name)
+                    c.value?.let { v -> withStyle(SpanStyle(color = colors.onSurfaceVariant)) { append(" $v") } }
+                }
+                if (long) withStyle(SpanStyle(color = colors.onSurfaceVariant)) {
+                    append(if (open) "  ▴ less" else " · +${kids.size - SHOWN} more ▾")
+                }
+            },
+            Modifier
+                .weight(1f)
+                .padding(top = 6.dp)
+                .then(if (long) Modifier.clickable { open = !open } else Modifier),
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.tertiary,
+        )
+        TextButton(onClick = { asking = true }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+            Text("Reset children", style = MaterialTheme.typography.labelMedium, color = colors.tertiary)
+        }
+    }
+    if (asking) {
+        AlertDialog(
+            onDismissRequest = { asking = false },
+            title = { Text("Reset children?") },
+            text = {
+                Text(
+                    kids.joinToString(", ") { it.name } +
+                        (if (kids.size == 1) " stops setting its own value and follows" else " stop setting their own values and follow") +
+                        " this one again.",
+                )
+            },
+            confirmButton = { TextButton(onClick = { asking = false; info.reset() }) { Text("Reset children") } },
+            dismissButton = { TextButton(onClick = { asking = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+/** How many children [ChildLine] lists before "+N more". */
+private const val SHOWN = 3

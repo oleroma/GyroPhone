@@ -74,6 +74,48 @@ class TiltShakeTest {
         assertTrue(t.update(25f, g[1], 0f, 900 * MS))
     }
 
+    @Test fun smoothingGoesByTimeNotBySample() {
+        // The same 40 ms after a 30° turn reads the same at 50 Hz and at 200 Hz.
+        fun after(stepMs: Long): Float {
+            val t = TiltShake().apply { displayRotation = 0 }
+            var g = upright(0.0)
+            t.update(g[0], g[1], g[2], 0)
+            g = upright(30.0)
+            var ts = 0L
+            while (ts < 40 * MS) { ts += stepMs * MS; t.update(g[0], g[1], g[2], ts) }
+            return t.x
+        }
+        assertEquals(after(20), after(5), 0.01f)
+    }
+
+    @Test fun tiltFollowsWithinAFewTensOfMilliseconds() {
+        // 200 Hz: after one time constant most of a full turn has come through, and it settles in 0.2 s.
+        val t = TiltShake().apply { displayRotation = 0 }
+        var g = upright(0.0)
+        t.update(g[0], g[1], g[2], 0)
+        g = upright(30.0)
+        var ts = 0L
+        while (ts < 35 * MS) { ts += 5 * MS; t.update(g[0], g[1], g[2], ts) }
+        assertTrue("x ${t.x}", t.x > 0.55f)
+        while (ts < 200 * MS) { ts += 5 * MS; t.update(g[0], g[1], g[2], ts) }
+        assertEquals(1f, t.x, 0.02f)
+    }
+
+    @Test fun aShakeNeedsTheSameJoltAtAnyRate() {
+        // Today's 50 Hz filter saw 80% of a jump from gravity: 17 m/s² is under 14 after it, 18.5 over.
+        for (stepMs in longArrayOf(20, 5)) {
+            val t = TiltShake().apply { displayRotation = 0 }
+            val g = upright(0.0)
+            var ts = 0L
+            repeat(20) { t.update(g[0], g[1], g[2], ts); ts += stepMs * MS }
+            assertFalse(t.update(17f, g[1], 0f, ts))
+            ts += stepMs * MS
+            // Back at rest well after the first jump, a bigger one.
+            repeat(200) { t.update(g[0], g[1], g[2], ts); ts += stepMs * MS }
+            assertTrue(t.update(18.5f, g[1], 0f, ts))
+        }
+    }
+
     @Test fun mappedTiltAndShake() {
         var now = 0L
         val ws = Workspace(

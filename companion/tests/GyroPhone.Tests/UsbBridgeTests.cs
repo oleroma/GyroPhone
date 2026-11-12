@@ -145,6 +145,22 @@ public sealed class UsbBridgeTests : IDisposable
         Assert.False(_bridge.Alive);
     }
 
+    [Fact]
+    public void StartHookRunsOnBothCableThreads()
+    {
+        var names = new System.Collections.Concurrent.ConcurrentBag<string?>();
+        using var started = new CountdownEvent(2);
+        var pipe = new FakePipe();
+        using var bridge = new UsbBridge(pipe, _server.LocalPort, onThreadStart: () =>
+        {
+            names.Add(Thread.CurrentThread.Name);
+            started.Signal();
+        });
+        bridge.Start();
+        Assert.True(started.Wait(5000));
+        Assert.Equal(["gp-usb-rx", "gp-usb-tx"], names.OrderBy(n => n));
+    }
+
     public void Dispose()
     {
         _bridge.Dispose();

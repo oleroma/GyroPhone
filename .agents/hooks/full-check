@@ -8,5 +8,5 @@ cd "$(dirname "$0")/../.."
 if [ $# -gt 0 ]; then parts="$*"; else parts="$(bash .agents/hooks/parts)"; fi
 
 if grep -qw apk <<<"$parts"; then
-  ./gradlew :app:lintDebug
+  ./gradlew :app:lintRelease
 fi

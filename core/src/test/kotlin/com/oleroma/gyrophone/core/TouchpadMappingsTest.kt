@@ -108,7 +108,7 @@ class TouchpadMappingsTest {
     fun longPressOfStillFingers() {
         val p = pad(m(1, SurfaceInput.LONG_PRESS, OutputTarget.Key(Q)), m(1, SurfaceInput.TAP, OutputTarget.Key(D)))
         p.down(1, 100f, 100f, t)
-        assertTrue(p.run(380).none { it shr 8 == Q })
+        assertTrue(p.run(280).none { it shr 8 == Q }) // the Tap time is 300 ms
         assertTrue(p.run(100).any { it shr 8 == Q })
         assertTrue(p.run(200).last() shr 8 == Q) // held
         p.up(1, t)

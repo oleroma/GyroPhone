@@ -10,6 +10,7 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.YawAxis
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.min
@@ -18,7 +19,7 @@ import kotlin.math.sign
 import kotlin.math.sqrt
 
 /**
- * Gyro-to-mouse conversion. Converts the sensor's angular
+ * Gyro-to-mouse conversion (Alpakka / JoyShockMapper style). Converts the sensor's angular
  * velocity into yaw / pitch / roll for the way the screen is turned ([displayRotation]), routes each where the gyro
  * mappings say, optionally applies soft tightening and tiered smoothing at low speeds (both off
  * by default: raw gyro), scales to mouse counts and keeps the sub-count remainder so slow motion
@@ -31,6 +32,12 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
 
     /** Screen rotation in degrees (0/90/180/270): how the phone is held. */
     @Volatile var displayRotation: Int = 90
+
+    /** Which screen axis is yaw ([YawAxis]): [motion] turns the screen's frame by it. */
+    @Volatile var yawAxis: YawAxis = YawAxis.SCREEN_Z
+
+    /** [YawAxis.CUSTOM]'s tilt back in degrees ([com.oleroma.gyrophone.core.model.GyroSettings.gripPitch]). */
+    @Volatile var gripPitch: Float = 0f
 
     data class Counts(val dx: Int, val dy: Int)
 
@@ -52,7 +59,10 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
      * counter-clockwise looking down the axis. Each orientation names which device axis points
      * up / right / toward the player.
      */
-    fun motion(gx: Float, gy: Float, gz: Float): Motion = motion(gx, gy, gz, resolvedOrientation())
+    fun motion(gx: Float, gy: Float, gz: Float): Motion = withYawAxis(screenMotion(gx, gy, gz), yawAxis, gripPitch)
+
+    /** As [motion], about the screen's own axes whatever [yawAxis] says. */
+    fun screenMotion(gx: Float, gy: Float, gz: Float): Motion = motion(gx, gy, gz, resolvedOrientation())
 
     private fun motion(gx: Float, gy: Float, gz: Float, resolved: Resolved): Motion {
         val x = gx * RAD_TO_DEG; val y = gy * RAD_TO_DEG; val z = gz * RAD_TO_DEG
@@ -62,6 +72,45 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
             Resolved.PORTRAIT -> Motion(yaw = -y, pitch = x, roll = -z)
             Resolved.PORTRAIT_UPSIDE_DOWN -> Motion(yaw = y, pitch = -x, roll = -z)
         }
+    }
+
+    /**
+     * Motion [m] about the screen's axes in the frame [axis] makes ([YawAxis]), a plain rotation
+     * of the phone's frame (right, up, toward the player = pitch, -yaw, -roll):
+     * - Screen Y, tilted back 90°: right stays, up becomes away from the player (-toward), toward
+     *   becomes the screen's up. Stored roll (shown yaw) is then the turn about the screen's vertical.
+     * - Screen X, turned 90° about the vertical: right becomes away from the player, toward becomes
+     *   the screen's right. Stored roll (shown yaw) is then the turn about the screen's horizontal.
+     */
+    fun withYawAxis(m: Motion, axis: YawAxis, pitchDeg: Float = 0f): Motion = when (axis) {
+        YawAxis.SCREEN_Z -> m
+        YawAxis.SCREEN_Y -> Motion(yaw = -m.roll, pitch = m.pitch, roll = m.yaw)
+        YawAxis.SCREEN_X -> Motion(yaw = m.yaw, pitch = m.roll, roll = -m.pitch)
+        // The other way up: turned 180° more about the across axis (Z, Y) or the vertical one (X).
+        YawAxis.SCREEN_Z_FLIPPED -> Motion(yaw = -m.yaw, pitch = m.pitch, roll = -m.roll)
+        YawAxis.SCREEN_Y_FLIPPED -> Motion(yaw = m.roll, pitch = m.pitch, roll = -m.yaw)
+        YawAxis.SCREEN_X_FLIPPED -> Motion(yaw = m.yaw, pitch = -m.roll, roll = m.pitch)
+        YawAxis.CUSTOM -> tiltedBack(m, pitchDeg)
+    }
+
+    /**
+     * [m] in the frame tilted back by [deg] about the screen's across axis: right stays, toward
+     * becomes (0, sin, cos) and up (0, cos, -sin) in the screen's frame (90° = [YawAxis.SCREEN_Y]).
+     */
+    private fun tiltedBack(m: Motion, deg: Float): Motion {
+        val a = Math.toRadians(deg.toDouble())
+        val s = kotlin.math.sin(a).toFloat(); val c = kotlin.math.cos(a).toFloat()
+        val wu = -m.yaw; val wt = -m.roll
+        return Motion(yaw = -(c * wu - s * wt), pitch = m.pitch, roll = -(s * wu + c * wt))
+    }
+
+    /**
+     * The world's [up] (right, up, toward the player, the screen's frame) in the base orientation
+     * [axis] (and [pitchDeg]) makes, as [motion] turns a sample: for a display's level after Set orientation.
+     */
+    fun upInFrame(up: FloatArray, axis: YawAxis, pitchDeg: Float): FloatArray {
+        val m = withYawAxis(Motion(yaw = -up[1], pitch = up[0], roll = -up[2]), axis, pitchDeg)
+        return floatArrayOf(m.pitch, -m.yaw, -m.roll)
     }
 
     /**
@@ -89,7 +138,7 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
             }
 
             GyroSpace.PLAYER -> {
-                // Player space: shown yaw (stored as roll) from the turns about the
+                // JoyShockMapper's player space: shown yaw (stored as roll) from the turns about the
                 // screen's vertical axis and through the screen, by how gravity lies in their plane,
                 // eased (×1.41) but never faster than both together. Pitch and roll stay the phone's.
                 val world = -(wu * uy + wt * uz)
@@ -134,8 +183,13 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
         gx: Float, gy: Float, gz: Float, dtSeconds: Float, routes: List<Mapping>, axes: Int = MappingEngine.ALL_GYRO,
         space: GyroSpace = GyroSpace.LOCAL, up: FloatArray? = null,
     ): GyroMath.Routed {
-        val s = settings
         val m = inSpace(motion(gx, gy, gz, resolvedOrientation()), space, up)
+        return route(m, dtSeconds, routes, axes)
+    }
+
+    /** As [route], for a sample already turned and measured in its space ([motion], [inSpace]). */
+    fun route(m: Motion, dtSeconds: Float, routes: List<Mapping>, axes: Int = MappingEngine.ALL_GYRO): GyroMath.Routed {
+        val s = settings
         return math.step(m.yaw, m.pitch, m.roll, dtSeconds, config(s, routes), axes,
             tightening ?: s.tighteningThreshold, smoothing ?: s.smoothingThreshold)
     }
@@ -163,7 +217,7 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
         /** World space: the right axis this close to vertical has no flat direction to pitch about. */
         private const val FLAT_MIN = 0.1f
 
-        /** Player space's yaw easing (relax factor). */
+        /** Player space's yaw easing (JoyShockMapper's relax factor). */
         private const val PLAYER_RELAX = 1.41f
 
         const val GLIDE_MIN_DEG_PER_S = GyroMath.GLIDE_MIN_DEG_PER_S

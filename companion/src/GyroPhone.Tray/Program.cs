@@ -31,6 +31,19 @@ internal static class Program
     /// <summary>Passed when restarting into a newer build, which then says it was updated.</summary>
     public const string UpdatedArg = "--updated";
 
+    /// <summary>Passed by the watcher when a known phone appeared.</summary>
+    public const string WokenArg = "--woken";
+
+    /// <summary>
+    /// How long a locked settings.json or host.key is waited for before giving up. Longer when the watcher or
+    /// an update started the companion: then it starts right after login or a copy, when scanners and
+    /// backup tools hold files longest, and nobody is at the PC to start it again.
+    /// </summary>
+    public static int LockedFileWaitMs { get; private set; } = SettingsStore.DefaultLockedWaitMs;
+
+    /// <summary>How long a restarted copy waits for the old one to close (the same as an update's wait).</summary>
+    private static readonly TimeSpan RestartWait = TimeSpan.FromSeconds(30);
+
     public static bool JustUpdated { get; private set; }
 
     /// <summary>Started again on the old build because an update couldn't replace the exe.</summary>
@@ -67,7 +80,7 @@ internal static class Program
         {
             try
             {
-                owned = mutex.WaitOne(TimeSpan.FromSeconds(10));
+                owned = mutex.WaitOne(RestartWait);
             }
             catch (AbandonedMutexException)
             {
@@ -76,12 +89,16 @@ internal static class Program
         }
         if (!owned)
         {
-            ShowAlreadyRunning();
+            if (args.Contains(RestartedArg))
+                MessageBox.Show("The previous GyroPhone Companion is still closing. Start it again in a moment.",
+                    AppName, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            else ShowAlreadyRunning();
             return 0;
         }
 
         JustUpdated = args.Contains(UpdatedArg);
         UpdateFailed = args.Contains(UpdateFinisher.FailedArg);
+        if (JustUpdated || UpdateFailed || args.Contains(WokenArg)) LockedFileWaitMs = SettingsStore.LongLockedWaitMs;
         GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
         try
         {

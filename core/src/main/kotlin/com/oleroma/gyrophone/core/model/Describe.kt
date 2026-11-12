@@ -51,12 +51,13 @@ object Describe {
         } + if (s.id.isEmpty()) "" else " on ${s.id}"
 
         is InputSource.Shake -> "Shake" + if (s.id.isEmpty()) "" else " on ${s.id}"
+        is InputSource.Finger -> s.axis.label + if (s.id.isEmpty()) " on the touchpad" else " on ${s.id}"
     }
 
     fun target(t: OutputTarget): String = when (t) {
         is OutputTarget.Pad -> "Gamepad ${t.button.label}"
         is OutputTarget.PadAxis -> "Gamepad ${t.axis}" + if (t.scale < 0) " (inverted)" else ""
-        is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage)) + keyMode(t.mode)
+        is OutputTarget.Key -> "Key " + HidUsage.labelOrHex(t.usage) + keyMode(t.mode)
         is OutputTarget.Mouse -> "Mouse ${t.button.name.lowercase()}"
         is OutputTarget.Wheel -> if (t.step > 0) "Wheel up" else "Wheel down"
         is OutputTarget.MouseAxis -> t.motion.label + if (t.scale < 0) ", reversed" else ""
@@ -81,8 +82,20 @@ object Describe {
         OutputTarget.LayerBack -> "Layer back (to the layers before the last change)"
         OutputTarget.LetGo -> "(Let go): ends the toggles set to end on it"
         OutputTarget.BlackScreen -> "Black screen (the phone's screen goes black until tapped)"
+        OutputTarget.PreviousWorkspace -> "Previous workspace (the pad shows the one before)"
+        OutputTarget.NextWorkspace -> "Next workspace (the pad shows the one after)"
+        OutputTarget.Fullscreen -> "Fullscreen (the buttons at the top of the pad hide, or come back)"
+        is OutputTarget.SetOrientation -> "Set orientation" + (if (t.granular) ", granular" else "") +
+            " (the way you hold the phone now becomes the base for the gyro, the displays and the PC overlays)"
+        OutputTarget.ClearDisplays -> "Clear displays (pointers on the pad and the PC lose their paint and trail)"
         OutputTarget.NoOutput -> "Nothing (blocks the layer below)"
+        is OutputTarget.Off -> "Nothing instead of the inherited " + shortTarget(t.of)
+        is OutputTarget.GyroSens -> gyroSens(t)
     }
+
+    /** "Gyro sensitivity" or "Gyro sensitivity, yaw". */
+    fun gyroSens(t: OutputTarget.GyroSens): String =
+        "Gyro sensitivity" + if (t.axis == MotionAxis.NONE) "" else ", " + t.axis.label.lowercase()
 
     /** The "Layers" picker group: each action with no set yet (set -1, picked next), and Nothing. */
     val layerTargets: List<OutputTarget> = listOf(
@@ -91,8 +104,14 @@ object Describe {
         OutputTarget.LayerBack, OutputTarget.NoOutput,
     )
 
-    /** The "Other" picker group: (Let go) and Black screen. */
-    val otherTargets: List<OutputTarget> = listOf(OutputTarget.LetGo, OutputTarget.BlackScreen)
+    /**
+     * The "Other" picker group: (Let go), Black screen, Set orientation, Clear displays, Previous
+     * / Next workspace and Fullscreen.
+     */
+    val otherTargets: List<OutputTarget> = listOf(
+        OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.SetOrientation(), OutputTarget.ClearDisplays,
+        OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen,
+    )
 
     /** "Layer set", "Layer hold", "Override layer set" or "Override layer hold". */
     fun layer(t: OutputTarget.Layer): String = when {
@@ -146,7 +165,7 @@ object Describe {
             GamepadAxis.RT -> "RT"
         } + if (t.scale < 0) " inv" else ""
 
-        is OutputTarget.Key -> "Key " + (HidUsage.names[t.usage] ?: "0x%02X".format(t.usage)) + keyMode(t.mode)
+        is OutputTarget.Key -> "Key " + HidUsage.labelOrHex(t.usage) + keyMode(t.mode)
         is OutputTarget.Mouse -> when (t.button) {
             MouseButton.LEFT -> "Mouse L"
             MouseButton.RIGHT -> "Mouse R"
@@ -182,8 +201,15 @@ object Describe {
         OutputTarget.LayerBack -> "Layer back"
         OutputTarget.LetGo -> "(Let go)"
         OutputTarget.BlackScreen -> "Black screen"
+        OutputTarget.PreviousWorkspace -> "← Workspace"
+        OutputTarget.NextWorkspace -> "Workspace →"
+        OutputTarget.Fullscreen -> "Fullscreen"
+        is OutputTarget.SetOrientation -> if (t.granular) "Set orientation (granular)" else "Set orientation"
+        OutputTarget.ClearDisplays -> "Clear displays"
 
         OutputTarget.NoOutput -> "Nothing"
+        is OutputTarget.Off -> "Nothing (" + shortTarget(t.of) + ")"
+        is OutputTarget.GyroSens -> "Sens" + if (t.axis == MotionAxis.NONE) "" else " " + t.axis.label.lowercase()
     }
 
     private val keyboardOrder: List<Int> = buildList {
@@ -221,7 +247,8 @@ object Describe {
         },
         "Gyro" to listOf(OutputTarget.GyroPause) +
             MotionAxis.shown.map { OutputTarget.GyroPauseAxis(it) } +
-            OutputTarget.GyroToggle,
+            OutputTarget.GyroToggle + OutputTarget.GyroSens() +
+            MotionAxis.shown.map { OutputTarget.GyroSens(it) },
         "Phone" to listOf(
             OutputTarget.Haptic(held = false),
             OutputTarget.Haptic(held = true),
@@ -256,7 +283,7 @@ object Describe {
         val allowed: (OutputTarget) -> Boolean = when {
             mouseMotion -> { t -> t is OutputTarget.MouseAxis }
             swipe -> { t -> t is OutputTarget.MouseAxis || t is OutputTarget.PadAxis || isHaptic(t) }
-            analog -> { t -> t is OutputTarget.PadAxis || isHaptic(t) }
+            analog -> { t -> t is OutputTarget.PadAxis || t is OutputTarget.GyroSens || isHaptic(t) }
             else -> { t -> t !is OutputTarget.MouseAxis }
         }
         val groups = targetGroups.map { (name, list) -> name to list.filter(allowed) }.filter { it.second.isNotEmpty() }
