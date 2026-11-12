@@ -309,8 +309,8 @@
   },
   {
    "name": "HOST_STATUS",
-   "len": 50,
-   "hex": "4750013144332211020000009b293877d9393981cc48ac9b9e233d7926b43d98bb392197590c3088469c4ce8fd49c92ad6f9",
+   "len": 51,
+   "hex": "4750013144332211020000009b293877d9393981cc48ac9b9e233d7926b43d98bb397aa331bc4b10f65efcf4855aecee187d36",
    "fields": {
     "lastSeq": 6,
     "rxPerSec": 998,
@@ -320,6 +320,7 @@
     "jitterUs": 350,
     "outputMode": 1,
     "flags": 3,
+    "flags2": 1,
     "flagsMeaning": "VIGEM_OK|PAD_PLUGGED"
    },
    "dir": "H2P",
@@ -327,7 +328,7 @@
    "sessionId": 287454020,
    "seq": 2,
    "nonce": "020000004433221102000000",
-   "plaintext": "06000000e603040008070000681000005e0100000103"
+   "plaintext": "06000000e603040008070000681000005e010000010301"
   },
   {
    "name": "RUMBLE",

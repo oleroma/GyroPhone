@@ -62,7 +62,7 @@ public static class LinkPath
 
 public readonly record struct HostStatus(
     uint LastSeq, ushort RxPerSec, ushort LossPermille, uint LatP50Us, uint LatP99Us,
-    uint JitterUs, byte OutputMode, byte Flags)
+    uint JitterUs, byte OutputMode, byte Flags, byte Flags2 = 0)
 {
     public const uint Unknown = 0xFFFFFFFF;
 }

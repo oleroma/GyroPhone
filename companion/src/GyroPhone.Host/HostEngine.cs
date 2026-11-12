@@ -1580,6 +1580,8 @@ public sealed class HostEngine
             if (on == _settings.UsbDirect) return;
             _settings.UsbDirect = on;
             _settingsDirty = true;
+            // Tell the phone at once (HOST_STATUS UsbDirect): turned on, it tries the cable now.
+            if (_sessions.Active is { } a) SendStatus(a, _clock.NowUs);
         }
     }
 
@@ -2498,7 +2500,8 @@ public sealed class HostEngine
         if (_overlayOn && OverlayCompassLocked()) flags |= HostStatusFlags.OverlayCompass;
         Span<byte> p = stackalloc byte[Wire.HostStatusPlain];
         WireCodec.EncodeHostStatus(new HostStatus(s.HighestRxSeq, _stats.RxPerSec, _stats.LossPermille,
-            _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs, (byte)_settings.OutputMode, flags), p);
+            _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs, (byte)_settings.OutputMode, flags,
+            _settings.UsbDirect ? HostStatusFlags2.UsbDirect : (byte)0), p);
         // TEST_MODE first, so HOST_STATUS stays the newest status the phone holds. While no test
         // runs it goes only with the few statuses after one ended (a lost "off" comes again).
         if (TestModeFlagsNow() != 0 || _testModeOffRepeats > 0)

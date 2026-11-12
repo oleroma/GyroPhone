@@ -17,7 +17,7 @@ class WireCodecTest {
         assertEquals(50, Wire.sizeOf(PacketType.LINK_INFO))
         assertEquals(32, Wire.sizeOf(PacketType.BYE))
         assertEquals(52, Wire.sizeOf(PacketType.PONG))
-        assertEquals(50, Wire.sizeOf(PacketType.HOST_STATUS))
+        assertEquals(51, Wire.sizeOf(PacketType.HOST_STATUS))
         assertEquals(32, Wire.sizeOf(PacketType.RUMBLE))
         assertEquals(94, Wire.sizeOf(PacketType.FOREGROUND))
         assertEquals(32, Wire.sizeOf(PacketType.HOST_BYE))

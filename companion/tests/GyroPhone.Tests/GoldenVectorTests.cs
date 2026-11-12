@@ -220,7 +220,7 @@ public class GoldenVectorTests
                     break;
                 case "HOST_STATUS":
                     WireCodec.EncodeHostStatus(new HostStatus((uint)f.Long("lastSeq"), (ushort)f.Long("rxPerSec"), (ushort)f.Long("lossPermille"),
-                        (uint)f.Long("latP50Us"), (uint)f.Long("latP99Us"), (uint)f.Long("jitterUs"), (byte)f.Long("outputMode"), (byte)f.Long("flags")), plain);
+                        (uint)f.Long("latP50Us"), (uint)f.Long("latP99Us"), (uint)f.Long("jitterUs"), (byte)f.Long("outputMode"), (byte)f.Long("flags"), (byte)f.Long("flags2")), plain);
                     break;
                 case "RUMBLE":
                     WireCodec.EncodeRumble(new Rumble((byte)f.Long("large"), (byte)f.Long("small")), plain);

@@ -37,7 +37,7 @@ Sealed plaintext sizes:
 | PING | 0x21 | P→H | 8 | t1 u64: phone send time (µs) |
 | PONG | 0x30 | H→P | 24 | t1 (echoed), t2 host receive, t3 host send, u64 each: the phone works out the clock offset and round trip |
 | LINK_INFO | 0x22 | P→H | 22 | clock offset i64, rttMin u32, rate u16, rssi i8, band, link Mbps u16, MHz u16, flags, path u8 (UNKNOWN 0 from older phones, WIFI 1 the phone's Wi-Fi client, HOTSPOT 2 the phone's own hotspot, USB_TETHER 3, USB_DIRECT 4, ETHERNET 5) |
-| HOST_STATUS | 0x31 | H→P | 22 | lastSeq, rx/s, loss ‰, latency p50, p99, jitter, output mode, flags |
+| HOST_STATUS | 0x31 | H→P | 23 | lastSeq, rx/s, loss ‰, latency p50, p99, jitter, output mode, flags, flags2 (USB_DIRECT 1: "Use the phone over the USB cable" is on) |
 | PAD_GYRO | 0x27 | P→H | 4 + 2 × buttons | ratchet/toggle buttons by pad place, toggle epoch |
 | PAD_GYRO_SET | 0x28 | P→H | 183 | u8 place, u8 0, a 181-byte gyro config block |
 | OVERLAY | 0x24 | P→H | 152 | pose input: raw motion, ratchet, non-gyro mouse, touches, presses (`OverlayFeed`) |

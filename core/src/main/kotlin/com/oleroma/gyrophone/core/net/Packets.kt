@@ -104,6 +104,8 @@ data class HostStatus(
     val jitterUs: Int,
     val outputMode: Int,
     val flags: Int,
+    /** [HostStatusFlags2]. */
+    val flags2: Int = 0,
 ) : WirePacket
 
 /**

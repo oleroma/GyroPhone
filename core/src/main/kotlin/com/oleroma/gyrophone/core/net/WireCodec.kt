@@ -300,6 +300,7 @@ object WireCodec {
                 out.putU32(off + 16, p.jitterUs)
                 out.putU8(off + 20, p.outputMode)
                 out.putU8(off + 21, p.flags)
+                out.putU8(off + 22, p.flags2)
             }
             is Rumble -> { out.putU8(off, p.large); out.putU8(off + 1, p.small); out.putU8(off + 2, p.pattern) }
             is PressTime -> { out.putU32(off, p.stateTimeUs); out.putU32(off + 4, p.eventTimeUs) }
@@ -350,7 +351,7 @@ object WireCodec {
             PacketType.HOST_BYE -> HostBye(buf.getU8(off))
             PacketType.HOST_STATUS -> HostStatus(
                 buf.getI32(off), buf.getU16(off + 4), buf.getU16(off + 6), buf.getI32(off + 8), buf.getI32(off + 12),
-                buf.getI32(off + 16), buf.getU8(off + 20), buf.getU8(off + 21),
+                buf.getI32(off + 16), buf.getU8(off + 20), buf.getU8(off + 21), buf.getU8(off + 22),
             )
             PacketType.RUMBLE -> Rumble(buf.getU8(off), buf.getU8(off + 1), buf.getU8(off + 2))
             PacketType.PRESS_TIME -> PressTime(buf.getI32(off), buf.getI32(off + 4))

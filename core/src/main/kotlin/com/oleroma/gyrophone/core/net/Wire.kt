@@ -43,7 +43,7 @@ object Wire {
     const val LINK_INFO_PLAIN = 22
     const val BYE_PLAIN = 4
     const val PONG_PLAIN = 24
-    const val HOST_STATUS_PLAIN = 22
+    const val HOST_STATUS_PLAIN = 23
     const val RUMBLE_PLAIN = 4
     /** KEY_LABELS: u32 layout id, then a u16 character per [KeyLabels.USAGES] key. */
     val KEY_LABELS_PLAIN = 4 + 2 * KeyLabels.USAGES.size
@@ -336,6 +336,12 @@ object LinkInfoFlags {
     const val ETHERNET = 0x80
 
     fun debugSave(counter: Int): Int = (counter and 7) shl DEBUG_SAVE_SHIFT
+}
+
+/** HOST_STATUS's second flags byte (byte 22). */
+object HostStatusFlags2 {
+    /** "Use the phone over the USB cable" is on in the companion: the phone tries the cable now. */
+    const val USB_DIRECT = 1
 }
 
 /** HOST_STATUS flags. */

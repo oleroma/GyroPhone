@@ -376,11 +376,12 @@ public static class WireCodec
         Le.PutU32(b, 16, p.JitterUs);
         b[20] = p.OutputMode;
         b[21] = p.Flags;
+        b[22] = p.Flags2;
         return Wire.HostStatusPlain;
     }
 
     public static HostStatus DecodeHostStatus(ReadOnlySpan<byte> b) =>
-        new(Le.U32(b, 0), Le.U16(b, 4), Le.U16(b, 6), Le.U32(b, 8), Le.U32(b, 12), Le.U32(b, 16), b[20], b[21]);
+        new(Le.U32(b, 0), Le.U16(b, 4), Le.U16(b, 6), Le.U32(b, 8), Le.U32(b, 12), Le.U32(b, 16), b[20], b[21], b[22]);
 
     /// <summary>BYE and HOST_BYE: reason then three zero bytes.</summary>
     public static int EncodeReason(byte reason, Span<byte> b)

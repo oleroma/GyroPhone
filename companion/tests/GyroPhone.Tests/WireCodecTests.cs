@@ -13,7 +13,7 @@ public class WireCodecTests
         Assert.Equal(50, PacketType.Size(PacketType.LinkInfo));
         Assert.Equal(32, PacketType.Size(PacketType.Bye));
         Assert.Equal(52, PacketType.Size(PacketType.Pong));
-        Assert.Equal(50, PacketType.Size(PacketType.HostStatus));
+        Assert.Equal(51, PacketType.Size(PacketType.HostStatus));
         Assert.Equal(32, PacketType.Size(PacketType.Rumble));
         Assert.Equal(94, PacketType.Size(PacketType.Foreground));
         Assert.Equal(32, PacketType.Size(PacketType.HostBye));
