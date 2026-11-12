@@ -44,7 +44,7 @@ import kotlin.math.sin
  * ([com.oleroma.gyrophone.core.model.SetValue], a Move slide): its rectangle in px (left, top,
  * right, bottom), [round] or not, and whether any chip on it is a Toggle value chip ([set]: the sliders icon).
  */
-class ValueMark(
+data class ValueMark(
     val id: String,
     val left: Float,
     val top: Float,
@@ -83,8 +83,10 @@ fun ValueBarsOverlay(
         val readChips = ArrayList<Mapping>()
         val readValues = FloatArray(values.size)
         val lines = ArrayList<String>()
+        var first = true
         while (true) {
-            if (isActive()) withFrameMillis { } else delay(IDLE_MS)
+            // The first read is at once: a new overlay shows the values from its first frame.
+            if (first) first = false else if (isActive()) withFrameMillis { } else delay(IDLE_MS)
             val n = engine.valuesShown(readChips, readValues)
             var changed = n != chips.size || readChips != chips
             if (!changed) for (i in 0 until 2 * n) if (readValues[i].toBits() != values[i].toBits()) {

@@ -3281,7 +3281,9 @@ fun PadScreen(
         if (!editing && visuals.moveRulers) MoveRulerOverlay(moveRulers, Modifier.fillMaxSize())
         if (!editing && !covered) {
             // Sliders (value chips on Position and Move): bars, values and, with a Toggle, the sliders icon on the buttons (and the touchpad).
-            val valueMarks = remember(ws, w, h, portrait) {
+            // Only the buttons and mappings decide the marks: a workspace edit that changes neither (a
+            // slider's saved value) keeps the overlay as it is.
+            val valueMarks = remember(ws.touchControls, ws.mappings, w, h, portrait) {
                 val chips = ws.mappings.filter { m -> m.target.valueTarget && m.source.slides }
                 val ids = chips.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
                 val setIds = chips.filter { it.setValue != null }.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
