@@ -166,27 +166,47 @@ private fun valueLine(m: Mapping, out: Float, counts: Float): String {
     return "%.0f".format(pct.coerceIn(0f, 1f) * 100) + " · " + Describe.shortTarget(m.target) + " " + sends
 }
 
-/** A Position chip's bar on [mk] at its value [v] (0..1) of [axis]: the part from 0 lightly filled, a line at the value. */
+/**
+ * A Position chip's bar on [mk] at its value [v] (0..1) of [axis]: the part from 0 lightly filled,
+ * a scale of ticks every 10 % (longer at 50 %; rings for distance, notches round the rim for
+ * angle, longest at the top), and a line at the value.
+ */
 private fun DrawScope.bar(mk: ValueMark, axis: FingerAxis, v: Float, c: Color) {
     val w = mk.right - mk.left
     val h = mk.bottom - mk.top
     val fill = c.copy(alpha = c.alpha * 0.18f)
     val line = 3.dp.toPx()
+    // The scale, as the Move ruler's ticks: white, every 10 %, longer at 50 %.
+    val tick = Color.White.copy(alpha = 0.75f)
+    val stroke = TICK_STROKE_DP.dp.toPx()
+    val minor = MINOR_DP.dp.toPx()
+    val major = MAJOR_DP.dp.toPx()
+    fun len(i: Int) = if (i == 5) major else minor
     when (axis) {
         FingerAxis.X -> {
             val x = mk.left + v * w
             drawRect(fill, Offset(mk.left, mk.top), Size(x - mk.left, h))
+            for (i in 1..9) {
+                val tx = mk.left + i * w / 10f
+                drawLine(tick, Offset(tx, mk.bottom), Offset(tx, mk.bottom - len(i)), stroke, StrokeCap.Round)
+            }
             drawLine(c, Offset(x, mk.top), Offset(x, mk.bottom), line)
         }
         FingerAxis.Y -> {
             val y = mk.bottom - v * h
             drawRect(fill, Offset(mk.left, y), Size(w, mk.bottom - y))
+            for (i in 1..9) {
+                val ty = mk.bottom - i * h / 10f
+                drawLine(tick, Offset(mk.left, ty), Offset(mk.left + len(i), ty), stroke, StrokeCap.Round)
+            }
             drawLine(c, Offset(mk.left, y), Offset(mk.right, y), line)
         }
         FingerAxis.DISTANCE -> {
             val centre = Offset((mk.left + mk.right) / 2, (mk.top + mk.bottom) / 2)
-            val r = minOf(w, h) / 2 * v
+            val full = minOf(w, h) / 2
+            val r = full * v
             drawCircle(fill, r, centre)
+            for (i in 1..9) drawCircle(tick.copy(alpha = if (i == 5) 0.5f else 0.22f), full * i / 10f, centre, style = Stroke(stroke))
             drawCircle(c, r, centre, style = Stroke(line))
         }
         FingerAxis.ANGLE -> {
@@ -194,11 +214,24 @@ private fun DrawScope.bar(mk: ValueMark, axis: FingerAxis, v: Float, c: Color) {
             val r = minOf(w, h) / 2
             val sweep = v * 360f
             drawArc(fill, -90f, sweep, true, Offset(centre.x - r, centre.y - r), Size(2 * r, 2 * r))
+            for (i in 0..9) {
+                val ta = (i * 2 * PI / 10 - PI / 2).toFloat()
+                val l = len(if (i == 0) 5 else i)
+                drawLine(
+                    tick, Offset(centre.x + cos(ta) * r, centre.y + sin(ta) * r),
+                    Offset(centre.x + cos(ta) * (r - l), centre.y + sin(ta) * (r - l)), stroke, StrokeCap.Round,
+                )
+            }
             val a = (v * 2 * PI - PI / 2).toFloat()
             drawLine(c, centre, Offset(centre.x + cos(a) * r, centre.y + sin(a) * r), line, StrokeCap.Round)
         }
     }
 }
+
+/** The scale's ticks, as the Move ruler's (dp). */
+private const val MINOR_DP = 8f
+private const val MAJOR_DP = 16f
+private const val TICK_STROKE_DP = 2f
 
 /** The slider (Toggle) mark: a small sliders icon (three lines with knobs) with its top-left at [at]. */
 private fun DrawScope.tuneIcon(at: Offset, c: Color) {
