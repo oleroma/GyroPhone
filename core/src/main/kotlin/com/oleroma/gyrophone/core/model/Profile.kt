@@ -1307,10 +1307,6 @@ data class GyroSettings(
             MotionAxis.NONE -> null
         }
 
-        /** Factors (× parent) a slider offers. */
-        const val MIN_SCALE = 0.1f
-        const val MAX_SCALE = 4f
-
         /** The property of axis [a]'s own acceleration ([WorkspaceDefaults.gyroKey]). */
         fun accelProp(a: MotionAxis): String? = when (a) {
             MotionAxis.YAW -> "yawAccel"

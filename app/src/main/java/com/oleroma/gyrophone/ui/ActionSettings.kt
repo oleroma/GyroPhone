@@ -189,7 +189,7 @@ private fun ButtonTouchpadSpeed(g: ButtonGyroLevel, key: String) {
     ScaledSens(
         key + "touchScale" + g.set, "Touchpad sensitivity", g.inUse.touchScale, touchBase, { "%.1f".format(it) },
         overridden = touchOwn, onReset = touchReset,
-        hint = "$touchHint With × Parent each finger count's own speed is scaled.",
+        hint = "$touchHint With Scale parent each finger count's own speed is scaled.",
         onMode = { scaled ->
             val now = g.inUse.touchScale?.let { it * touchBase } ?: touchBase
             g.edit { if (scaled) it.withTouchScale(1f) else it.withTouch(now) }

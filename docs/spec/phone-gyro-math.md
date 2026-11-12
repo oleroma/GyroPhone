@@ -39,7 +39,7 @@ A gyro axis can go to **mouse move X/Y**, **scroll** or **scroll sideways** (`Ou
 
 Gyro **sensitivity** is mouse counts per degree the phone turns. Default 16. Every level can set it ([Workspaces](phone-workspaces.md)): one shared value plus each axis's own.
 
-- An axis's own value is either **exact** or a **factor × Parent** (0.1 to 4 on the slider, 0.01 to 10 typed). A factor multiplies the nearest exact value above it and replaces any factor above (factors never stack).
+- An axis's own value is either **exact** or, with the **Scale parent** switch on, a **factor** of the parent's (a slider from 0 to 1, step 0.05; 0 turns it off). A factor multiplies the nearest exact value above it and replaces any factor above (factors never stack).
 - A level that sets its own shared sensitivity hides the axis values above it.
 - A held button's own sensitivities (per layer) apply while it is the last pressed of the held buttons that have their own, whatever it maps (precision aim). The chain for one axis: the button's axis value → the button's shared value → the workspace's axis value (layer, then Base) → the workspace's shared value → the Defaults.
 
