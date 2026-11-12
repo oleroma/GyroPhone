@@ -68,7 +68,7 @@ enum class FingerAxis(val label: String, val roundOnly: Boolean = false) {
  * A chip's output range ([Mapping.range]): its input's value 0..1 (its size, for a -1..1 axis)
  * goes from [from] to [to] in a straight line while the input is active; [from] > [to] reverses
  * it. In the output's own unit: 0..1 of a pad axis or trigger, counts per degree for
- * [OutputTarget.GyroSens].
+ * [OutputTarget.GyroSens], ms for [OutputTarget.TapTime].
  */
 @Serializable
 data class AxisRange(val from: Float, val to: Float) {
@@ -520,6 +520,15 @@ sealed interface OutputTarget {
     @SerialName("touch_sens")
     data class TouchSens(val axis: StickAxis? = null) : OutputTarget
 
+    /**
+     * Tap time ([Workspace.longPressMs], ms) from the source's value, through the chip's range, like
+     * [GyroSens]: the one the workspace's touch buttons, touchpad and keys follow (those with their
+     * own Tap time keep it). It is read as each tap is judged, so it changes the taps to come.
+     */
+    @Serializable
+    @SerialName("tap_time")
+    data object TapTime : OutputTarget
+
     /** Does nothing: in a set used as an override, it stops an input falling through to the set below. */
     @Serializable
     @SerialName("nothing")
@@ -616,9 +625,17 @@ data class SetValue(
     }
 }
 
-/** A chip's output that takes a value and can keep it (How Toggle on Position or Move): a pad axis or trigger, Gyro or Touch sensitivity. */
+/** A chip's output that takes a value and can keep it (How Toggle on Position or Move): a pad axis or trigger, or a [settingTarget]. */
 val OutputTarget.valueTarget: Boolean
-    get() = this is OutputTarget.PadAxis || this is OutputTarget.GyroSens || this is OutputTarget.TouchSens
+    get() = this is OutputTarget.PadAxis || settingTarget
+
+/**
+ * A chip's output that drives a workspace setting (Gyro or Touch sensitivity, Tap time): its value
+ * lies over the setting while it is active, and a Toggle one with no end is kept as the
+ * workspace's slider override ([SliderOverride]).
+ */
+val OutputTarget.settingTarget: Boolean
+    get() = this is OutputTarget.GyroSens || this is OutputTarget.TouchSens || this is OutputTarget.TapTime
 
 /** A Position or Move input: one a value chip can slide and Set value works on. */
 val InputSource.slides: Boolean

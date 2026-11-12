@@ -92,6 +92,7 @@ object Describe {
         is OutputTarget.Off -> "Nothing instead of the inherited " + shortTarget(t.of)
         is OutputTarget.GyroSens -> gyroSens(t)
         is OutputTarget.TouchSens -> touchSens(t)
+        OutputTarget.TapTime -> "Tap time (how long a tap may last, and the gap of a double tap)"
     }
 
     /** "Gyro sensitivity" or "Gyro sensitivity, yaw". */
@@ -224,6 +225,7 @@ object Describe {
             StickAxis.X -> " X"
             StickAxis.Y -> " Y"
         }
+        OutputTarget.TapTime -> "Tap time"
     }
 
     private val keyboardOrder: List<Int> = buildList {
@@ -263,7 +265,7 @@ object Describe {
             MotionAxis.shown.map { OutputTarget.GyroPauseAxis(it) } +
             OutputTarget.GyroToggle + OutputTarget.GyroSens() +
             MotionAxis.shown.map { OutputTarget.GyroSens(it) },
-        "Touch" to listOf(OutputTarget.TouchSens(), OutputTarget.TouchSens(StickAxis.X), OutputTarget.TouchSens(StickAxis.Y)),
+        "Touch" to listOf(OutputTarget.TouchSens(), OutputTarget.TouchSens(StickAxis.X), OutputTarget.TouchSens(StickAxis.Y), OutputTarget.TapTime),
         "Phone" to listOf(
             OutputTarget.Haptic(held = false),
             OutputTarget.Haptic(held = true),

@@ -3,9 +3,9 @@ package com.oleroma.gyrophone.core.model
 import kotlinx.serialization.Serializable
 
 /**
- * A slider's kept sensitivity ([Workspace.sliders]): a Toggle value chip ([Mapping.setValue]) to
- * Gyro or Touch sensitivity [target] with no end let go at [value] (Gyro counts per degree, Touch
- * its sensitivity), on button [by] ("" = the touchpad). It lies over the workspace's settings in
+ * A slider's kept setting ([Workspace.sliders]): a Toggle value chip ([Mapping.setValue]) to
+ * Gyro or Touch sensitivity or Tap time [target] with no end let go at [value] (Gyro counts per
+ * degree, Touch its sensitivity, Tap time ms), on button [by] ("" = the touchpad). It lies over the workspace's settings in
  * effect, a held button's included, until a newer one of the same sensitivity replaces it or it
  * is reset; the settings themselves never change.
  */
@@ -29,6 +29,7 @@ object SliderOverrides {
             StickAxis.X -> WorkspaceDefaults.moveKey(MoveSlot.X1, MoveField.SENSITIVITY)
             StickAxis.Y -> WorkspaceDefaults.moveKey(MoveSlot.Y1, MoveField.SENSITIVITY)
         }
+        OutputTarget.TapTime -> WorkspaceDefaults.LONG_PRESS
         else -> null
     }
 
@@ -36,6 +37,7 @@ object SliderOverrides {
     fun replaces(new: OutputTarget, old: OutputTarget): Boolean = when (new) {
         is OutputTarget.GyroSens -> old is OutputTarget.GyroSens && (new.axis == MotionAxis.NONE || new.axis == old.axis)
         is OutputTarget.TouchSens -> old is OutputTarget.TouchSens && (new.axis == null || new.axis == old.axis)
+        OutputTarget.TapTime -> old == OutputTarget.TapTime
         else -> false
     }
 
@@ -86,6 +88,13 @@ object SliderOverrides {
         }
         return r
     }
+
+    /** The Tap time (ms) of the Tap time override of [list], or null if it has none. */
+    fun tapTime(list: List<SliderOverride>): Int? =
+        list.lastOrNull { it.target == OutputTarget.TapTime }?.value?.let { tapMs(it) }
+
+    /** Tap time [v] (ms) as the workspace takes it: whole, within its limits. */
+    fun tapMs(v: Float): Int = kotlin.math.round(v).toInt().coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS)
 
     /** Who set override [o] of [w], for the children lists: "Aim slider", "Touchpad slider". */
     fun name(w: Workspace, o: SliderOverride): String {
