@@ -56,6 +56,8 @@ data class ValueMark(
     val set: Boolean,
     /** It has a button frame (the touchpad has none): the bars stay inside it. */
     val framed: Boolean = true,
+    /** Each Position axis's Snap steps ([com.oleroma.gyrophone.core.model.FingerAxisSettings.steps]); none = smooth. */
+    val steps: Map<FingerAxis, Int> = emptyMap(),
 )
 /**
  * Value sliders on the pad, read from the engine once for both layers ([ValueFramesBehind] and
@@ -206,13 +208,16 @@ fun ValueBarsOverlay(vb: ValueBars, color: Color, modifier: Modifier = Modifier)
                 }
             }
             clipPath(clip) {
-                for (j in vb.chips.indices) {
-                    val m = vb.chips[j]
-                    val src = m.source as? InputSource.Finger ?: continue
-                    if (src.id != mk.id) continue
-                    val v = vb.values[2 * j]
-                    if (v.isNaN()) continue
-                    bar(mk, src.axis, v, color, snapTicks(m, src.axis, mk))
+                // One bar per axis: the chips on one Position share it (the first one driven shows where it is).
+                for (axis in FingerAxis.entries) {
+                    for (j in vb.chips.indices) {
+                        val src = vb.chips[j].source as? InputSource.Finger ?: continue
+                        if (src.id != mk.id || src.axis != axis) continue
+                        val v = vb.values[2 * j]
+                        if (v.isNaN()) continue
+                        bar(mk, axis, v, color, snapTicks(mk.steps[axis], axis, mk))
+                        break
+                    }
                 }
             }
             val label = vb.laid[k] ?: continue
@@ -316,13 +321,12 @@ private fun DrawScope.framePlace(mk: ValueMark, bw: Float, bh: Float, sw: Float,
 }
 
 /**
- * The ruler ticks of Position chip [m] on [mk] along [axis], as (place 0..1, long) pairs: with a
- * Snap one at each of its steps ([MappingEngine.snapSteps], the same the value lands on; every
- * 2nd, 5th, 10th… when they would sit closer than [MIN_TICK_DP]; every 5th shown one long), else
- * every 10 % (long at 50 %).
+ * The ruler ticks of a Position on [mk] along [axis], as (place 0..1, long) pairs: with its Snap
+ * ([n] steps, the ones its value lands on) one at each step (every 2nd, 5th, 10th… when they would
+ * sit closer than [MIN_TICK_DP]; every 5th shown one long), else every 10 % (long at 50 %).
  */
-private fun DrawScope.snapTicks(m: Mapping, axis: FingerAxis, mk: ValueMark): List<Pair<Float, Boolean>> {
-    val n = MappingEngine.snapSteps(m) ?: return DEFAULT_TICKS
+private fun DrawScope.snapTicks(n: Int?, axis: FingerAxis, mk: ValueMark): List<Pair<Float, Boolean>> {
+    if (n == null) return DEFAULT_TICKS
     val w = mk.right - mk.left
     val h = mk.bottom - mk.top
     val length = when (axis) {

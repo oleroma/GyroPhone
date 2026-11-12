@@ -976,7 +976,7 @@ internal fun ControlMappingScreen(
                 val base = if (!replace) currentMappings
                 else cardInputs(cardOf(c)).fold(currentMappings) { m, ti -> Bindings.setTargets(m, ti, emptyList()) }
                 val now = Bindings.entries(base, c)
-                val e = Bindings.Entry(ch.target, ch.options, ch.range, ch.perDp, ch.snap)
+                val e = Bindings.Entry(ch.target, ch.options, ch.range, ch.perDp)
                 if (now.any { it.target == e.target && it.shape == e.shape }) base else Bindings.setEntries(base, c, now + e)
             }
             PresetLevel.CARD -> MappingPresets.place(currentMappings, p.chips, cardSlots(cardOf(card ?: return)), replace)
@@ -1199,7 +1199,7 @@ internal fun ControlMappingScreen(
                     val had = if (c.n < 0) null else Bindings.entry(m, trig(chipInput(card, c), c.trigger), c.target, c.n)
                     Bindings.Entry(
                         c.target, if (c.n < 0) carry?.takeIf { it.first == c.target }?.second else chipOptions(m, card, c),
-                        had?.range, had?.perDp, had?.snap,
+                        had?.range, had?.perDp,
                     )
                 })
             }
@@ -2275,7 +2275,7 @@ internal fun ControlMappingScreen(
             range = chipRange(chip.target, Bindings.entry(view, ti, chip.target, chip.n)?.range, runtime.engine.workspace.gyro),
             value = chipValue(chip.target, zi.sources.first(), Bindings.entry(view, ti, chip.target, chip.n), runtime.engine.workspace.gyro),
             position = zi.sources.first() is InputSource.Finger,
-            onApply = { tr, o, w, r, pd, sn ->
+            onApply = { tr, o, w, r, pd ->
                 chipDialog = null
                 val target = (chip.target as? OutputTarget.SetOrientation)?.copy(granular = granular) ?: chip.target
                 val destInput = if (whereInputs.isEmpty()) zi else inputAt(w)
@@ -2285,7 +2285,7 @@ internal fun ControlMappingScreen(
                 val es = Bindings.entries(currentMappings, ti)
                 var k = -1
                 val at = es.indexOfFirst { it.target == chip.target && ++k == chip.n }
-                val now = Bindings.Entry(target, o, r, pd, sn)
+                val now = Bindings.Entry(target, o, r, pd)
                 change(
                     if (dest == ti && at >= 0) Bindings.setEntries(currentMappings, ti, es.toMutableList().apply { set(at, now) })
                     else Bindings.removeEntry(currentMappings, ti, chip.target, chip.n).let { base ->
@@ -3179,9 +3179,9 @@ private fun SplitHandle(landscape: Boolean, onMove: (Float) -> Unit, onEnd: () -
 }
 
 /**
- * The Toggle ends, Per dp and Snap of a value chip of [target] on [source] ([ChipValue]), null for any
+ * The Toggle ends and Per dp of a value chip of [target] on [source] ([ChipValue]), null for any
  * other: a pad axis or trigger in % per dp, Gyro sensitivity in RWS per dp when [g]'s game is
- * known (else counts per degree per dp), Touch sensitivity in its own unit; Snap in the same unit.
+ * known (else counts per degree per dp), Touch sensitivity in its own unit.
  */
 private fun chipValue(target: OutputTarget, source: InputSource, e: Bindings.Entry?, g: GyroSettings): ChipValue? {
     if (!target.valueTarget || !source.slides) return null
@@ -3194,20 +3194,12 @@ private fun chipValue(target: OutputTarget, source: InputSource, e: Bindings.Ent
             if (c > 0f) ChipValue(
                 init, move, e?.perDp, def, 0.1f, 0.001f, { "%.3f RWS".format(it) },
                 shown = { GameSens.rws(it, c) }, stored = { GameSens.sensOf(it, c) },
-                snap = e?.snap, snapMax = 1f, snapStep = 0.05f, snapFormat = { "%.2f RWS".format(it) },
-            ) else ChipValue(
-                init, move, e?.perDp, def, 1f, 0.005f, { "%.3f".format(it) },
-                snap = e?.snap, snapMax = 10f, snapStep = 0.5f, snapFormat = { "%.1f".format(it) },
-            )
+            ) else ChipValue(init, move, e?.perDp, def, 1f, 0.005f, { "%.3f".format(it) })
         }
-        is OutputTarget.TouchSens -> ChipValue(
-            init, move, e?.perDp, def, 0.1f, 0.001f, { "%.3f".format(it) },
-            snap = e?.snap, snapMax = 1f, snapStep = 0.05f, snapFormat = { "%.2f".format(it) },
-        )
+        is OutputTarget.TouchSens -> ChipValue(init, move, e?.perDp, def, 0.1f, 0.001f, { "%.3f".format(it) })
         else -> ChipValue(
             init, move, e?.perDp, def, 5f, 0.05f, { "%.2f %%".format(it) },
             shown = { it * 100f }, stored = { it / 100f },
-            snap = e?.snap, snapMax = 25f, snapStep = 1f, snapFormat = { "%.0f %%".format(it) },
         )
     }
 }

@@ -130,6 +130,7 @@ import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.ControlGroups
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.FingerAxis
+import com.oleroma.gyrophone.core.model.FingerAxisSettings
 import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.GyroMode
@@ -1979,12 +1980,14 @@ fun PadScreen(
         val valueBars = if (editing || covered) null else {
             // Only the buttons and mappings decide the marks: a workspace edit that changes neither (a
             // slider's saved value) keeps the overlay as it is.
-            val valueMarks = remember(ws.touchControls, ws.mappings, w, h, portrait) {
+            val valueMarks = remember(ws.touchControls, ws.mappings, ws.padFingers, w, h, portrait) {
+                fun steps(fingers: List<FingerAxisSettings>) =
+                    FingerAxis.entries.mapNotNull { a -> fingers.fingerOf(a).steps?.let { a to it } }.toMap()
                 val chips = ws.mappings.filter { m -> m.target.valueTarget && m.source.slides }
                 val ids = chips.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
                 val setIds = chips.filter { it.setValue != null }.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
                 buildList {
-                    if ("" in ids) add(ValueMark("", 0f, 0f, w, h, round = false, set = "" in setIds, framed = false))
+                    if ("" in ids) add(ValueMark("", 0f, 0f, w, h, round = false, set = "" in setIds, framed = false, steps = steps(ws.padFingers)))
                     for (c in ws.touchControls) {
                         if (c.id !in ids) continue
                         val cx = c.placeX(portrait) * w
@@ -1992,7 +1995,7 @@ fun PadScreen(
                         val hw = c.placeSize(portrait) * minOf(w, h) / 2f
                         val round = c.shape == TouchShape.CIRCLE
                         val hh = if (round) hw else hw * c.heightRatio
-                        add(ValueMark(c.id, cx - hw, cy - hh, cx + hw, cy + hh, round, c.id in setIds))
+                        add(ValueMark(c.id, cx - hw, cy - hh, cx + hw, cy + hh, round, c.id in setIds, steps = steps(c.fingers)))
                     }
                 }
             }
