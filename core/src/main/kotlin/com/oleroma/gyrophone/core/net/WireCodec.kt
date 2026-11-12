@@ -262,6 +262,8 @@ object WireCodec {
         is KeyLabels -> PacketType.KEY_LABELS
         is PressTime -> PacketType.PRESS_TIME
         is TestMode -> PacketType.TEST_MODE
+        is CaptureListen -> PacketType.CAPTURE
+        is PcPresses -> PacketType.CAPTURED
         is Foreground -> PacketType.FOREGROUND
         is HostBye -> PacketType.HOST_BYE
         else -> -1
@@ -302,6 +304,17 @@ object WireCodec {
             is Rumble -> { out.putU8(off, p.large); out.putU8(off + 1, p.small); out.putU8(off + 2, p.pattern) }
             is PressTime -> { out.putU32(off, p.stateTimeUs); out.putU32(off + 4, p.eventTimeUs) }
             is TestMode -> out.putU8(off, p.flags)
+            is CaptureListen -> out.putU8(off, p.flags)
+            is PcPresses -> {
+                val n = minOf(p.held.size, Wire.CAPTURED_MAX)
+                out.putU8(off, n)
+                for (i in 0 until n) {
+                    val o = off + 2 + 4 * i
+                    out.putU8(o, p.held[i].kind)
+                    out.putU8(o + 1, p.held[i].arg and 0xFF)
+                    out.putU16(o + 2, p.held[i].code)
+                }
+            }
             is KeyLabels -> {
                 out.putU32(off, p.layout)
                 for (i in KeyLabels.USAGES.indices) out.putU16(off + 4 + 2 * i, p.chars.getOrElse(i) { 0 })
@@ -342,6 +355,14 @@ object WireCodec {
             PacketType.RUMBLE -> Rumble(buf.getU8(off), buf.getU8(off + 1), buf.getU8(off + 2))
             PacketType.PRESS_TIME -> PressTime(buf.getI32(off), buf.getI32(off + 4))
             PacketType.TEST_MODE -> TestMode(buf.getU8(off))
+            PacketType.CAPTURE -> CaptureListen(buf.getU8(off))
+            PacketType.CAPTURED -> {
+                val n = minOf(buf.getU8(off), Wire.CAPTURED_MAX)
+                PcPresses(List(n) { i ->
+                    val o = off + 2 + 4 * i
+                    PcPress(buf.getU8(o), buf.getU16(o + 2), buf.getI8(o + 1))
+                })
+            }
             PacketType.KEY_LABELS -> KeyLabels(buf.getI32(off), IntArray(KeyLabels.USAGES.size) { buf.getU16(off + 4 + 2 * it) })
             PacketType.FOREGROUND -> {
                 val n = buf.getU8(off)

@@ -71,6 +71,17 @@ public readonly record struct HostStatus(
 public readonly record struct PressTime(uint StateTimeUs, uint EventTimeUs);
 
 /// <summary>
+/// One input held on the PC while the phone listens (CAPTURED): a key by HID usage, a mouse button (0 left, 1 right,
+/// 2 middle, 3 back, 4 forward), a wheel notch (code 0, <see cref="Arg"/> +1 up / -1 down), a controller button by its
+/// XInput bit, or a controller axis pushed past half way (code 0..5: left x, y, right x, y, left, right trigger; y down;
+/// <see cref="Arg"/> the way, +1 or -1).
+/// </summary>
+public readonly record struct PcPress(byte Kind, ushort Code, sbyte Arg = 0)
+{
+    public const byte Key = 1, Mouse = 2, Wheel = 3, PadButton = 4, PadAxis = 5;
+}
+
+/// <summary>
 /// Host → phone vibration. <see cref="Pattern"/> <see cref="RumblePattern.Motors"/>: the game's rumble,
 /// motor levels held until the next RUMBLE. <see cref="RumblePattern.Buzz"/>: a fixed notice buzz.
 /// </summary>

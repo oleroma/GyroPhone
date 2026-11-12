@@ -119,6 +119,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             Recorder = new InputRecorder(_inputLog.Write),
         };
         _engine.SetPcPad(new XInputPcPad(_log.Write, _clock));
+        _engine.SetKeyMouseListener(new RawInputListener(_log.Write));
         _perf = new PerfMonitor(new FrameWatch(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
             Path.Combine(_log.Directory, "perf"), _log.Write);
         _engine.Recorder!.Timeline = _perf.Link;

@@ -35,6 +35,8 @@ public static class PacketType
     public const byte Motion = 0x29;
     /// <summary>Phone to host while TEST_MODE has <see cref="TestModeFlags.PressTimes"/>: when the phone saw the input behind a press or release (<see cref="PressTime"/>).</summary>
     public const byte PressTime = 0x2A;
+    /// <summary>Phone to host, about once a second while the phone's "Press a key" screen is open (and when it closes): <see cref="CaptureFlags"/>.</summary>
+    public const byte Capture = 0x2B;
     public const byte Bye = 0x2F;
     public const byte Pong = 0x30;
     public const byte HostStatus = 0x31;
@@ -46,6 +48,8 @@ public static class PacketType
     public const byte TestMode = 0x35;
     /// <summary>Host to phone, every <see cref="Wire.KeepAwakeMs"/> during a session over Wi-Fi: keeps the PC's Wi-Fi out of power save. The phone drops it.</summary>
     public const byte KeepAwake = 0x36;
+    /// <summary>Host to phone while CAPTURE is on: what is held on the PC's keyboard, mouse and controller (<see cref="PcPress"/>).</summary>
+    public const byte Captured = 0x37;
     public const byte HostBye = 0x3F;
     /// <summary>Unsealed, from a program on this PC (loopback only): start or stop a Link test (tools/link-test.sh).</summary>
     public const byte LinkTestCtl = 0x7E;
@@ -98,6 +102,8 @@ public static class PacketType
         OverlayLayout => Wire.OverlayLayoutPlain,
         PressTime => Wire.PressTimePlain,
         TestMode => Wire.TestModePlain,
+        Capture => Wire.CapturePlain,
+        Captured => Wire.CapturedPlain,
         HostBye => Wire.ByePlain,
         _ => -1,
     };

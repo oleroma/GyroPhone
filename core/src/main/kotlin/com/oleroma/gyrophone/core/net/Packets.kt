@@ -116,6 +116,28 @@ data class PressTime(val stateTimeUs: Int, val eventTimeUs: Int) : WirePacket
 /** The PC's latency tests the phone takes part in ([TestModeFlags]). */
 data class TestMode(val flags: Int) : WirePacket
 
+/** The phone's "Press a key" screen is open or closed ([CaptureFlags]). */
+data class CaptureListen(val flags: Int) : WirePacket
+
+/**
+ * One input held on the PC while the phone listens (CAPTURED): a [KEY] by HID usage, a [MOUSE]
+ * button (0 left, 1 right, 2 middle, 3 back, 4 forward), a [WHEEL] notch (code 0, [arg] +1 up,
+ * -1 down), a [PAD_BUTTON] by its XInput bit, or a [PAD_AXIS] pushed past half way (code 0..5:
+ * left x, y, right x, y, left, right trigger; y down; [arg] the way, +1 or -1).
+ */
+data class PcPress(val kind: Int, val code: Int, val arg: Int = 0) {
+    companion object {
+        const val KEY = 1
+        const val MOUSE = 2
+        const val WHEEL = 3
+        const val PAD_BUTTON = 4
+        const val PAD_AXIS = 5
+    }
+}
+
+/** What is held on the PC now (CAPTURED), at most [Wire.CAPTURED_MAX]. */
+data class PcPresses(val held: List<PcPress>) : WirePacket
+
 /**
  * PC → phone vibration. [pattern] [Pattern.MOTORS]: the game's rumble, [large] and [small] motor
  * levels (0..255) held until the next RUMBLE. [Pattern.BUZZ]: a fixed notice buzz (a Performance

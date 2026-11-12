@@ -135,6 +135,10 @@ public sealed class HostEngine
     // "Use PC controller for gyro ratchet": the phone's controller gyro buttons, the controller plugged into
     // this PC, the gate that reads it, and the gyro run here on the phone's raw samples (STATE_GYRO).
     private IPcPad _pcPad = NullPcPad.Instance;
+    // "Press a key" on the phone: the PC's keyboard and mouse, read (never held back) only while the phone listens.
+    private IKeyMouseListener _keyListener = NullKeyMouseListener.Instance;
+    private readonly PressCapture _capture = new();
+    private readonly byte[] _capturedPlain = new byte[Wire.CapturedPlain];
     private readonly PadGyroConfig _padGyro = new();
     private readonly GyroGate _gate = new();
     private readonly PcGyro _pcGyro = new();
@@ -571,6 +575,9 @@ public sealed class HostEngine
             case PacketType.Motion:
                 OnMotion(plain, nowUs);
                 break;
+            case PacketType.Capture:
+                if (_capture.OnCapture(WireCodec.DecodeCapture(plain), nowUs)) CaptureChanged();
+                break;
             case PacketType.PressTime:
                 if (MeasuringButtons)
                     _press.OnPressTime(WireCodec.DecodePressTime(plain), nowUs, ClockOffsetUs, _stats.LastLinkInfo != null);
@@ -610,8 +617,45 @@ public sealed class HostEngine
     {
         if (!_pcReading) return;
         _pcReading = false;
-        _pcPad.Stop();
+        if (!_capture.On) _pcPad.Stop();
         _events.Log("PC controller for gyro ratchet: off");
+    }
+
+    /// <summary>The phone's "Press a key" screen opened or closed: the PC's keyboard, mouse and controller are read only meanwhile.</summary>
+    private void CaptureChanged()
+    {
+        if (_capture.On)
+        {
+            _keyListener.Start();
+            _pcPad.Start(() => _pad.XInputSlot);
+            _events.Log("phone listens for a key: reading the PC's keyboard, mouse and controller");
+        }
+        else
+        {
+            _keyListener.Stop();
+            if (!_pcReading) _pcPad.Stop();
+            _events.Log("phone stopped listening for a key");
+        }
+    }
+
+    /// <summary>Ends a "Press a key" listen (the session ended, or the phone stopped resending CAPTURE).</summary>
+    private void StopCapture()
+    {
+        if (!_capture.On) return;
+        _capture.Stop();
+        CaptureChanged();
+    }
+
+    /// <summary>Uses <paramref name="listener"/> to read this PC's keyboard and mouse for "Press a key" (Windows: raw input).</summary>
+    public void SetKeyMouseListener(IKeyMouseListener listener)
+    {
+        using (Lock(ByUi))
+        {
+            bool on = _capture.On;
+            if (on) _keyListener.Stop();
+            _keyListener = listener;
+            if (on) _keyListener.Start();
+        }
     }
 
     private void ReadPcPad()
@@ -667,9 +711,12 @@ public sealed class HostEngine
         using (Lock(ByUi))
         {
             bool reading = _pcReading;
+            bool capturing = _capture.On;
             StopPcPad();
+            _pcPad.Stop();
             Volatile.Write(ref _pcPad, pad);
             if (reading) StartPcPad();
+            if (capturing) _pcPad.Start(() => _pad.XInputSlot);
         }
     }
 
@@ -817,6 +864,7 @@ public sealed class HostEngine
                 _levelPresses = -1;
                 _overlayRxUs = long.MinValue;
                 _overlayRest.Clear(_clock.NowUs);
+                StopCapture();
                 StopPcPad();
                 _padGyro.Enabled = false;
                 _gate.Reset();
@@ -1160,6 +1208,15 @@ public sealed class HostEngine
 
             SendPendingRumble(nowUs);
             a = _sessions.Active;
+            if (_capture.On)
+            {
+                if (a == null || _capture.Expired(nowUs)) StopCapture();
+                else
+                {
+                    int n = _capture.Tick(_keyListener, _pcPad, nowUs, _capturedPlain);
+                    if (n > 0) a.SendSealed(PacketType.Captured, _capturedPlain.AsSpan(0, n), _sender);
+                }
+            }
             if (a != null && nowUs - _lastStatusUs >= StatusIntervalUs)
             {
                 _stats.Roll();
@@ -2090,6 +2147,7 @@ public sealed class HostEngine
             RememberEnded(a.SessionId); // in-flight packets cross the HOST_BYE
         }
         _sessions.DropActive();
+        StopCapture();
         StopPcPad();
         _padGyro.Enabled = false;
         _gate.Reset();
