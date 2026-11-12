@@ -56,16 +56,16 @@ class ValueMark(
 
 /**
  * Value sliders on the pad: on each [ValueMark], a sliders icon in its top-left corner when a chip on it
- * is a Toggle value chip; for each Toggle Position chip, a bar across the button where its value is
+ * is a Toggle value chip; for each Position value chip (Held or Toggle), a bar across the button where its value is
  * (upright for X, flat for Y, a ring for distance, a needle for angle; the part from 0 lightly
  * filled), clipped by the button's edge; and in its top-right corner one line per chip, "62 · RT
- * 62 %": where the value is in its range (0..100) and what it sends. A chip held (not Toggle) shows
- * only while it is driven. It reads the engine every frame while [active] (a finger is down), else
+ * 62 %": where the value is in its range (0..100) and what it sends. A Held chip shows
+ * only while it is driven. [bars] false (Touch display switch off): only the icons. It reads the engine every frame while [active] (a finger is down), else
  * a few times a second, and redraws only when something changed.
  */
 @Composable
 fun ValueBarsOverlay(
-    engine: MappingEngine, marks: List<ValueMark>, color: Color, active: () -> Boolean, modifier: Modifier = Modifier,
+    engine: MappingEngine, marks: List<ValueMark>, color: Color, active: () -> Boolean, bars: Boolean = true, modifier: Modifier = Modifier,
 ) {
     if (marks.isEmpty()) return
     var frame by remember { mutableLongStateOf(0L) }
@@ -115,6 +115,8 @@ fun ValueBarsOverlay(
             val w = mk.right - mk.left
             val h = mk.bottom - mk.top
             if (w <= 0f || h <= 0f) continue
+            if (mk.set) tuneIcon(Offset(mk.left + 6.dp.toPx(), mk.top + 6.dp.toPx()), color)
+            if (!bars) continue
             // The bars, clipped by the button's edge.
             val clip = Path().apply {
                 if (mk.round) addOval(androidx.compose.ui.geometry.Rect(mk.left, mk.top, mk.right, mk.bottom))
@@ -124,13 +126,12 @@ fun ValueBarsOverlay(
                 for (j in chips.indices) {
                     val m = chips[j]
                     val src = m.source as? InputSource.Finger ?: continue
-                    if (src.id != mk.id || m.setValue == null) continue
+                    if (src.id != mk.id) continue
                     val v = values[2 * j]
                     if (v.isNaN()) continue
                     bar(mk, src.axis, v, color)
                 }
             }
-            if (mk.set) tuneIcon(Offset(mk.left + 6.dp.toPx(), mk.top + 6.dp.toPx()), color)
             val label = laid[k] ?: continue
             val pad = 6.dp.toPx()
             val bw = label.size.width + 2 * pad

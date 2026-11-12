@@ -22,7 +22,7 @@ Every settings page (`ui/SettingsLayout.kt`) has a low **search** field on top (
 | | Screen rotation: Auto, Landscape, Portrait, Forced portrait, Forced landscape (top left / top right) | Auto |
 | | Send input only while the pad is open; under it Hardware devices too (controllers, keyboards, volume buttons) | on; off |
 | Workspace switching | Wrap around (Next workspace on the last one goes to the first) | off |
-| Touch display | Show touches, Trail behind fingers (length, fade), Fade out after lift, Show live mappings on buttons, swipe line, Move rulers | see [Pad UI](phone-pad-ui.md) |
+| Touch display | Show touches, Trail behind fingers (length, fade), Fade out after lift, Show live mappings on buttons, swipe line, Move rulers, sliders on buttons (and their colour) | see [Pad UI](phone-pad-ui.md) |
 | Gyro | Jitter cutoff (0–5 °/s), Smoothing below (0–10 °/s); **Slider cap**: the top of every gyro sensitivity slider and Gyro sensitivity range, in RWS for workspaces that know their game (1–50) and in counts per degree for the others (4–250) | both off; 10 RWS, 64 counts/° |
 | Gyro display | Parallax edge (Turn / Tilt); **Fade when phone rests**: the gyro displays on the pad (the kinds with a Level) fade while the phone lies within Flat within (10°) of the tilt each was last leveled at, turning slower than Still below (0.5 °/s, live speed shown), with no finger, key or controller stick in use, for Quiet for (3 s); they fade to Fade to (30 %) over Fade over (0.5 s) and come back at once. Same rules as the PC's overlays ([PC overlays](pc-overlays.md)); never in edit mode (`RestDetector`, `TouchVisuals.restFade`, `GyroDisplay.levelUp`) | parallax off; fade on |
 | Controllers | The attached game pads | — |

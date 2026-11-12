@@ -14,6 +14,7 @@ import com.oleroma.gyrophone.core.model.AxisRange
 import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.SetValue
 import com.oleroma.gyrophone.core.model.SliderOverrides
+import com.oleroma.gyrophone.core.model.valueTarget
 import com.oleroma.gyrophone.core.model.AxisStage
 import com.oleroma.gyrophone.core.model.PhysicalSticks
 import com.oleroma.gyrophone.core.model.StickTuning
@@ -452,8 +453,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         return t is OutputTarget.GyroSens || t is OutputTarget.TouchSens || (t is OutputTarget.PadAxis && t.axis.isTrigger)
     }
 
-    /** Chip [m]'s value goes through [chipValue]: it slides, or keeps its value (Set value). */
-    private fun valueChip(m: Mapping): Boolean = m.setValue != null || slideChip(m)
+    /**
+     * Chip [m]'s value goes through [chipValue]: it slides, keeps its value (Toggle), or is a value
+     * chip on a Position input (shown on its button, [valuesShown], Held or Toggle alike).
+     */
+    private fun valueChip(m: Mapping): Boolean =
+        m.setValue != null || slideChip(m) || (m.source is InputSource.Finger && m.target.valueTarget)
 
     /** What sensitivity chip [m] starts a nudge from with no kept value: the setting in effect now. */
     private fun settingOf(m: Mapping): Float = when (val t = m.target) {
@@ -491,7 +496,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val per = m.perDp ?: SetValue.defaultPerDp(m.target, m.range)
                 live = (base + d * per * if (r.to >= r.from) 1f else -1f).coerceIn(lo, hi)
             }
-        } else {
+        } else if (dev != null || touchBlocked.isEmpty() || m !in touchBlocked) {
             val raw = axisOf(m, value(src, dev))
             if (activeOf(src, dev, raw)) live = if (m.range == null) raw else ranged(m, dev, raw)
         }
@@ -1721,35 +1726,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     /**
-     * The position ruler's frame, under one lock: where the finger on each of [ids] is now (0..1
-     * from its bottom-left) into [at] (x, y per id; NaN where none is), and the finger mappings in
-     * use on those fingers into [inUse] (cleared first), with the value of each one's input now
-     * (as [fingerValueNow]) into [values], as many as it holds. False when no finger is on any.
-     */
-    fun fingerRuler(ids: List<String>, at: FloatArray, inUse: MutableList<Mapping>, values: FloatArray): Boolean = synchronized(lock) {
-        var any = false
-        for (i in ids.indices) {
-            val f = fingers[ids[i]]
-            at[2 * i] = f?.x ?: Float.NaN
-            at[2 * i + 1] = f?.y ?: Float.NaN
-            if (f != null) any = true
-        }
-        inUse.clear()
-        if (any) {
-            for (mp in touchMappings) {
-                if (inUse.size >= values.size) break
-                val src = mp.source as? InputSource.Finger ?: continue
-                if (!fingers.containsKey(src.id) || src.id !in ids) continue
-                values[inUse.size] = fingerValue(src)
-                inUse.add(mp)
-            }
-        }
-        any
-    }
-
-    /**
-     * The pad's value chips' frame, under one lock: each touch value chip in use that slides or keeps
-     * a value ([Mapping.setValue], a Move slide) and sends something now into [inUse] (cleared
+     * The pad's value chips' frame, under one lock: each touch value chip in use that slides, keeps
+     * a value ([Mapping.setValue]) or is on a Position input and sends something now into [inUse] (cleared
      * first), with its input (a Position's 0..1 where it was set, else NaN) and output (through its
      * range) into [values] at 2 × its index, as many as [values] holds. Returns how many.
      */

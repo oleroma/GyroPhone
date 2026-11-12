@@ -270,19 +270,19 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "sliding while inertia glides after the lift.",
             ) { runtime.setTouchVisuals(visuals.copy(moveRulers = it)) }
             SwitchRow(
-                "Show the position ruler on buttons", visuals.positionRuler,
-                hint = "A finger on a button that maps its Position X, Y, distance or angle shows a ruler through the finger for each: " +
-                        "clear in the start deadzone, then a gradient to full colour at the end deadzone. A label shows what each " +
-                        "of those mappings sends now.",
+                "Show sliders on buttons", visuals.positionRuler,
+                hint = "A button whose Position X, Y, distance or angle drives a stick, trigger or sensitivity fills up to its value " +
+                        "(across for X, up for Y, a ring for distance, a sweep for angle), and its top-right corner shows what it sends " +
+                        "(\"62 · RT 62 %\"). A Held one shows while your finger is on it; a Toggle one always. Move sliders show only the values.",
             ) { runtime.setTouchVisuals(visuals.copy(positionRuler = it)) }
             if (visuals.positionRuler) {
                 var picking by remember { mutableStateOf(false) }
-                Searchable("Position ruler colour", "colour color ruler") {
+                Searchable("Slider colour", "colour color slider ruler") {
                     Row(
                         Modifier.fillMaxWidth().clickable { picking = true }.padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Position ruler colour", Modifier.weight(1f))
+                        Text("Slider colour", Modifier.weight(1f))
                         Swatch(Color(visuals.rulerColor.toInt()))
                         if (visuals.rulerColor != TouchVisuals().rulerColor) {
                             TextButton(onClick = { runtime.setTouchVisuals(visuals.copy(rulerColor = TouchVisuals().rulerColor)) }) { Text("Reset") }
@@ -290,19 +290,10 @@ private fun AppTab(runtime: GamepadRuntime) {
                     }
                 }
                 if (picking) ColorPickerDialog(
-                    "Position ruler colour", Color(visuals.rulerColor.toInt()),
+                    "Slider colour", Color(visuals.rulerColor.toInt()),
                     onPick = { c -> runtime.setTouchVisuals(visuals.copy(rulerColor = c.toArgb().toLong() and 0xFFFFFFFFL)); picking = false },
                     onDismiss = { picking = false },
                 )
-                Searchable("Position ruler values", "value label corner finger") {
-                    Column {
-                        Text("Values show")
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            SelectChip("Above the finger", !visuals.rulerValueInCorner) { runtime.setTouchVisuals(visuals.copy(rulerValueInCorner = false)) }
-                            SelectChip("In the button's corner", visuals.rulerValueInCorner) { runtime.setTouchVisuals(visuals.copy(rulerValueInCorner = true)) }
-                        }
-                    }
-                }
             }
         },
         category(runtime, "gyro", "Gyro", "Jitter cutoff, smoothing and the sensitivity slider cap, for every workspace") {

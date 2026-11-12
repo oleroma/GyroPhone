@@ -3280,11 +3280,9 @@ fun PadScreen(
         if (!editing && visuals.swipeLine) SwipeLineOverlay(swipeLines, Modifier.fillMaxSize())
         if (!editing && visuals.moveRulers) MoveRulerOverlay(moveRulers, Modifier.fillMaxSize())
         if (!editing && !covered) {
-            // Toggle value chips and Move slides: bars, values and the sliders icon on the buttons (and the touchpad) that have them.
+            // Sliders (value chips on Position and Move): bars, values and, with a Toggle, the sliders icon on the buttons (and the touchpad).
             val valueMarks = remember(ws, w, h, portrait) {
-                val chips = ws.mappings.filter { m ->
-                    m.target.valueTarget && m.source.slides && (m.setValue != null || m.source is InputSource.Surface)
-                }
+                val chips = ws.mappings.filter { m -> m.target.valueTarget && m.source.slides }
                 val ids = chips.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
                 val setIds = chips.filter { it.setValue != null }.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
                 buildList {
@@ -3302,30 +3300,8 @@ fun PadScreen(
             }
             val padMarked = valueMarks.any { it.id.isEmpty() }
             ValueBarsOverlay(
-                runtime.engine, valueMarks, Color(visuals.rulerColor.toInt()), { padMarked || fingersOnButtons > 0 }, Modifier.fillMaxSize(),
-            )
-        }
-        if (!editing && !covered && visuals.positionRuler) {
-            // A ruler through the finger on each button whose finger position is mapped (in any layer);
-            // an axis with a Toggle value chip shows its bar instead (ValueBarsOverlay).
-            val marks = remember(ws, w, h, portrait) {
-                val setAxes = ws.mappings.filter { it.setValue != null }.mapNotNull { it.source as? InputSource.Finger }.toSet()
-                val axes = ws.mappings.mapNotNull { it.source as? InputSource.Finger }.filter { it.id.isNotEmpty() && it !in setAxes }
-                ws.touchControls.filter { c -> c.kind == TouchKind.BUTTON && axes.any { it.id == c.id } }.map { c ->
-                    val cx = c.placeX(portrait) * w
-                    val cy = c.placeY(portrait) * h
-                    val hw = c.placeSize(portrait) * minOf(w, h) / 2f
-                    val round = c.shape == TouchShape.CIRCLE
-                    val hh = if (round) hw else hw * c.heightRatio
-                    FingerMark(
-                        c.id, cx - hw, cy - hh, cx + hw, cy + hh, round,
-                        FingerAxis.entries.filter { a -> (round || !a.roundOnly) && axes.any { it.id == c.id && it.axis == a } }
-                            .map { a -> c.fingers.fingerOf(a) },
-                    )
-                }.filter { it.axes.isNotEmpty() }
-            }
-            PositionRulerOverlay(
-                runtime.engine, marks, Color(visuals.rulerColor.toInt()), visuals.rulerValueInCorner, { fingersOnButtons > 0 }, Modifier.fillMaxSize(),
+                runtime.engine, valueMarks, Color(visuals.rulerColor.toInt()), { padMarked || fingersOnButtons > 0 },
+                bars = visuals.positionRuler, modifier = Modifier.fillMaxSize(),
             )
         }
     }
