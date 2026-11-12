@@ -1196,9 +1196,10 @@ internal fun ControlMappingScreen(
                 val here = chips.filter { it.trigger == tr && it.where == w }
                 // Moved here from another zone or Where: the options it had there.
                 out = Bindings.setEntries(out, ti, here.map { c ->
+                    val had = if (c.n < 0) null else Bindings.entry(m, trig(chipInput(card, c), c.trigger), c.target, c.n)
                     Bindings.Entry(
                         c.target, if (c.n < 0) carry?.takeIf { it.first == c.target }?.second else chipOptions(m, card, c),
-                        if (c.n < 0) null else Bindings.entry(m, trig(chipInput(card, c), c.trigger), c.target, c.n)?.range,
+                        had?.range, had?.perDp,
                     )
                 })
             }

@@ -130,6 +130,7 @@ import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.ControlGroups
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.FingerAxis
+import com.oleroma.gyrophone.core.model.FingerAxisSettings
 import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.GyroMode
@@ -1975,6 +1976,32 @@ fun PadScreen(
                 modifier = Modifier.align(Alignment.TopCenter).padding(16.dp),
             )
         }
+        // The pad's value sliders, read once for the frames behind the buttons and the bars over them.
+        val valueBars = if (editing || covered) null else {
+            // Only the buttons and mappings decide the marks: a workspace edit that changes neither (a
+            // slider's saved value) keeps the overlay as it is.
+            val valueMarks = remember(ws.touchControls, ws.mappings, ws.padFingers, w, h, portrait) {
+                fun steps(fingers: List<FingerAxisSettings>) =
+                    FingerAxis.entries.mapNotNull { a -> fingers.fingerOf(a).steps?.let { a to it } }.toMap()
+                val chips = ws.mappings.filter { m -> m.target.valueTarget && m.source.slides }
+                val ids = chips.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
+                val setIds = chips.filter { it.setValue != null }.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
+                buildList {
+                    if ("" in ids) add(ValueMark("", 0f, 0f, w, h, round = false, set = "" in setIds, framed = false, steps = steps(ws.padFingers)))
+                    for (c in ws.touchControls) {
+                        if (c.id !in ids) continue
+                        val cx = c.placeX(portrait) * w
+                        val cy = c.placeY(portrait) * h
+                        val hw = c.placeSize(portrait) * minOf(w, h) / 2f
+                        val round = c.shape == TouchShape.CIRCLE
+                        val hh = if (round) hw else hw * c.heightRatio
+                        add(ValueMark(c.id, cx - hw, cy - hh, cx + hw, cy + hh, round, c.id in setIds, steps = steps(c.fingers)))
+                    }
+                }
+            }
+            val padMarked = valueMarks.any { it.id.isEmpty() }
+            rememberValueBars(runtime.engine, valueMarks, { padMarked || fingersOnButtons > 0 }, bars = visuals.positionRuler)
+        }
         Box(Modifier.fillMaxSize().then(touchModifier)) {
             if (editing && snap) {
                 Canvas(Modifier.fillMaxSize()) {
@@ -2047,6 +2074,7 @@ fun PadScreen(
                     }
                 }
             }
+            valueBars?.let { ValueFramesBehind(it, Modifier.fillMaxSize()) }
             // Back first, so the front one (as touches see them) is drawn on top.
             // Gyro displays are drawn elsewhere. No return inside key {}: D8 can't take a composable inline return.
             for (c in hitOrder(ws.touchControls, portrait).asReversed().filter { it.kind != TouchKind.DISPLAY }) key(c.id) {
@@ -2062,7 +2090,8 @@ fun PadScreen(
                     selectedTint = if (isSelected) litColor(c.id) else null,
                     pressed = { c.id in pressedIds || c.id in heldSticks },
                     latched = { c.id in latchedIds },
-                    liveLabel = { liveLabels[c.id] },
+                    // Values sitting in the button's middle take its label's place.
+                    liveLabel = { if (valueBars != null && c.id in valueBars.centered) "" else liveLabels[c.id] },
                     widthDp = with(density) { (r * 2).toDp() },
                     heightDp = with(density) { (rh * 2).toDp() },
                     knob = { stickPos[c.id] ?: Offset.Zero },
@@ -3280,31 +3309,9 @@ fun PadScreen(
         if (!editing && visuals.swipeLine) SwipeLineOverlay(swipeLines, Modifier.fillMaxSize())
         if (!editing && visuals.moveRulers) MoveRulerOverlay(moveRulers, Modifier.fillMaxSize())
         if (!editing && !covered) {
-            // Sliders (value chips on Position and Move): bars, values and, with a Toggle, the sliders icon on the buttons (and the touchpad).
-            // Only the buttons and mappings decide the marks: a workspace edit that changes neither (a
-            // slider's saved value) keeps the overlay as it is.
-            val valueMarks = remember(ws.touchControls, ws.mappings, w, h, portrait) {
-                val chips = ws.mappings.filter { m -> m.target.valueTarget && m.source.slides }
-                val ids = chips.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
-                val setIds = chips.filter { it.setValue != null }.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
-                buildList {
-                    if ("" in ids) add(ValueMark("", 0f, 0f, w, h, round = false, set = "" in setIds, framed = false))
-                    for (c in ws.touchControls) {
-                        if (c.id !in ids) continue
-                        val cx = c.placeX(portrait) * w
-                        val cy = c.placeY(portrait) * h
-                        val hw = c.placeSize(portrait) * minOf(w, h) / 2f
-                        val round = c.shape == TouchShape.CIRCLE
-                        val hh = if (round) hw else hw * c.heightRatio
-                        add(ValueMark(c.id, cx - hw, cy - hh, cx + hw, cy + hh, round, c.id in setIds))
-                    }
-                }
-            }
-            val padMarked = valueMarks.any { it.id.isEmpty() }
-            ValueBarsOverlay(
-                runtime.engine, valueMarks, Color(visuals.rulerColor.toInt()), { padMarked || fingersOnButtons > 0 },
-                bars = visuals.positionRuler, modifier = Modifier.fillMaxSize(),
-            )
+            // Sliders (value chips on Position and Move): bars, the values in their buttons and, with a
+            // Toggle, the sliders icon on the buttons (and the touchpad). The values outside a button are behind the buttons.
+            valueBars?.let { ValueBarsOverlay(it, Color(visuals.rulerColor.toInt()), Modifier.fillMaxSize()) }
         }
     }
 }

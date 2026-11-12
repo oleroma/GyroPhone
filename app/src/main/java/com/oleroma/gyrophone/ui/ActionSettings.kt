@@ -48,6 +48,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlin.math.roundToInt
 
 /**
  * What the mapping editor's ⚙ and Settings open for a control: [action] gives an action's own
@@ -189,7 +190,7 @@ private fun ButtonTouchpadSpeed(g: ButtonGyroLevel, key: String) {
     ScaledSens(
         key + "touchScale" + g.set, "Touchpad sensitivity", g.inUse.touchScale, touchBase, { "%.1f".format(it) },
         overridden = touchOwn, onReset = touchReset,
-        hint = "$touchHint With × Parent each finger count's own speed is scaled.",
+        hint = "$touchHint With Scale parent each finger count's own speed is scaled.",
         onMode = { scaled ->
             val now = g.inUse.touchScale?.let { it * touchBase } ?: touchBase
             g.edit { if (scaled) it.withTouchScale(1f) else it.withTouch(now) }
@@ -749,5 +750,25 @@ private fun FingerAxisOptions(key: String, s: FingerAxisSettings, own: Boolean, 
                 fromTitle = "Start (%)", toTitle = "End (%)",
             )
         }
+        var sn by remember(key, s.axis, s.snap) { mutableStateOf(s.snap * 100f) }
+        OverrideRow(
+            if (sn <= 0f) "Snap off" else "Snap %.0f %%".format(sn), own && s.snap > 0f,
+            if (s.snap > 0f) ({ onSet(s.copy(snap = 0f)) }) else null,
+            hint = "The value goes in steps of this share of the travel (25 %: 0, 25, 50, 75, 100 %; a share that doesn't " +
+                    "divide 100 evenly takes the nearest even split). Every chip of this input lands on the same step of " +
+                    "its own Range, so they move together, and the ruler on the button marks each step. Off: smooth.",
+        ) {
+            Slider(
+                value = sn.coerceIn(0f, MAX_SNAP_PCT),
+                onValueChange = { sn = it.roundToInt().toFloat() },
+                valueRange = 0f..MAX_SNAP_PCT,
+                onValueChangeFinished = { onSet(s.copy(snap = sn / 100f)) },
+                typedRange = 0f..100f,
+                typedTitle = "Snap (%)",
+            )
+        }
     }
 }
+
+/** The Snap slider's top (%): a larger step is typed. */
+private const val MAX_SNAP_PCT = 50f

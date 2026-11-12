@@ -139,7 +139,7 @@ The gyro is mapped like everything else: in the Motion tab, map **yaw / pitch / 
 
 **Acceleration curve editor**: tap the graph to add a point (up to 6), drag a point to move it, long-press a point to remove it. Its live line shows how fast you are turning now.
 
-**Tuning** (workspace settings › Gyro): **Sensitivity** in mouse counts per degree (16 by default; per axis, exact or "× Parent"); **Game**: pick the game and enter your in-game sensitivity, and the slider shows real-world sensitivity (degrees the camera turns per degree the phone turns; **Measure** helps if your game isn't listed); **Acceleration** curves; **Inertia** (keep gliding after a ratchet); **Gyro space** Local, World or Player (JoyShockMapper's player space). **Calibrate** removes drift: lay the phone still for 2 seconds. Alpakka/JoyShockMapper-style jitter cutoff and smoothing are in Settings › App › Gyro, off by default (raw gyro).
+**Tuning** (workspace settings › Gyro): **Sensitivity** in mouse counts per degree (16 by default; per axis, exact, or a 0 to 1 share of the parent's with "Scale parent"); **Game**: pick the game and enter your in-game sensitivity, and the slider shows real-world sensitivity (degrees the camera turns per degree the phone turns; **Measure** helps if your game isn't listed); **Acceleration** curves; **Inertia** (keep gliding after a ratchet); **Gyro space** Local, World or Player (JoyShockMapper's player space). **Calibrate** removes drift: lay the phone still for 2 seconds. Alpakka/JoyShockMapper-style jitter cutoff and smoothing are in Settings › App › Gyro, off by default (raw gyro).
 
 **Gyro poll rate** (Connection page, 1/2/4 kHz, default 4 kHz) is how often the app reads the sensor.
 

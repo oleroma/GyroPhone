@@ -227,17 +227,30 @@ data class FingerAxisSettings(
     val locked: Boolean = false,
     val start: Float = 0f,
     val end: Float = 1f,
+    /**
+     * Snap: the value goes in steps of this share of its travel (0.25: 0, 25, 50, 75, 100 %), so
+     * every chip on the input lands on the same step of its own range; 0 = smooth.
+     */
+    val snap: Float = 0f,
 ) {
-    /** The value of raw position [raw] (0..1). */
+    /** How many equal steps [snap] cuts the travel into (the nearest whole number); null = smooth. */
+    val steps: Int? get() = if (snap > 0f) kotlin.math.round(1f / snap).toInt().coerceIn(1, MAX_STEPS) else null
+
+    /** The value of raw position [raw] (0..1), on its nearest step with a [snap]. */
     fun shape(raw: Float): Float {
         val a = start.coerceIn(0f, 1f)
         val b = end.coerceIn(0f, 1f)
-        if (b <= a) return if (raw >= a) 1f else 0f
-        return ((raw - a) / (b - a)).coerceIn(0f, 1f)
+        val v = if (b <= a) (if (raw >= a) 1f else 0f) else ((raw - a) / (b - a)).coerceIn(0f, 1f)
+        val n = steps ?: return v
+        return kotlin.math.round(v * n) / n
     }
 
     /** Changes nothing (it need not be kept). */
-    val none: Boolean get() = !locked && start == 0f && end == 1f
+    val none: Boolean get() = !locked && start == 0f && end == 1f && snap == 0f
+
+    companion object {
+        const val MAX_STEPS = 100
+    }
 }
 
 /** The settings of [axis] in this list, or the defaults. */
@@ -1306,10 +1319,6 @@ data class GyroSettings(
             MotionAxis.ROLL -> "rollScale"
             MotionAxis.NONE -> null
         }
-
-        /** Factors (× parent) a slider offers. */
-        const val MIN_SCALE = 0.1f
-        const val MAX_SCALE = 4f
 
         /** The property of axis [a]'s own acceleration ([WorkspaceDefaults.gyroKey]). */
         fun accelProp(a: MotionAxis): String? = when (a) {

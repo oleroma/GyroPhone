@@ -30,7 +30,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Sensitivities set as a factor of the parent's (× Parent) instead of an exact value. */
+/** Sensitivities set as a factor of the parent's (Scale parent) instead of an exact value. */
 class ScaledSensTest {
     private val yaw = MotionAxis.YAW
     private fun g(p: String) = WorkspaceDefaults.gyroKey(p)
