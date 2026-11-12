@@ -210,9 +210,9 @@ private fun linePart(m: Mapping, out: Float, counts: Float): LinePart {
 
 /**
  * Where a value frame [bw] × [bh] goes by button [mk] on a [sw] × [sh] screen: outside the button by
- * its top-right corner. A wide (or square) button has it above, from that corner rightwards (below
- * near the top edge; along the button's right edge near the screen's right edge); a tall one beside
- * it, at its top (to the left near the right edge). Always kept on screen.
+ * its top-right corner, never sticking out past the corner. A wide (or square) button has it above,
+ * lined up with its right edge (below near the top edge); a tall one beside it on the right, lined
+ * up with its top (on the left near the screen's right edge). Always kept on screen.
  */
 private fun DrawScope.framePlace(mk: ValueMark, bw: Float, bh: Float, sw: Float, sh: Float): Pair<Float, Float> {
     val gap = 4.dp.toPx()
@@ -225,8 +225,7 @@ private fun DrawScope.framePlace(mk: ValueMark, bw: Float, bh: Float, sw: Float,
     if (w >= h) {
         y = mk.top - gap - bh
         if (y < 0f) y = mk.bottom + gap
-        x = mk.right
-        if (x + bw > sw) x = mk.right - bw
+        x = mk.right - bw
     } else {
         x = mk.right + gap
         if (x + bw > sw) x = mk.left - gap - bw
