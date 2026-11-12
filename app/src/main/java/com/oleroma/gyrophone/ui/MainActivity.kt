@@ -92,6 +92,8 @@ class MainActivity : ComponentActivity() {
         controllerInput = ControllerInput(this, runtime)
         runtime.closeApp = closeThis
         runtime.capturedPointer = controllerInput::onCapturedPointerEvent
+        runtime.forwardKey = controllerInput::onKeyEvent
+        runtime.forwardMotion = controllerInput::onGenericMotionEvent
 
         // Wi-Fi needs no runtime permission; Bluetooth HID needs BLUETOOTH_CONNECT first.
         // onResume starts the service once it may run.

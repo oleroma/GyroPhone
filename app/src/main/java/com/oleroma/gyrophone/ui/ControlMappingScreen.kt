@@ -772,6 +772,16 @@ internal fun ControlMappingScreen(
         )
     }
 
+    /** Adds [ts] (pressed together, "Press a key") to [input] in one step, in their order. */
+    fun assignAll(input: BindableInput, ts: List<OutputTarget>) {
+        val ok = ts.filter { allows(allowedTargets(input), it) }
+        if (ok.isEmpty()) return
+        if (ok.size == 1) return assign(input, ok[0])
+        ok.forEach(::addRecent)
+        val next = ok.fold(currentMappings) { m, t -> Bindings.addTarget(m, input, t) }
+        change(next, "Mapped " + ok.joinToString(" + ") { Describe.shortTarget(it) } + " to " + actionTitle(currentControl, input))
+    }
+
     /** Adds [t] to [input]; a layer action is set up first (a buzz is added as it is, its chip opens its settings). */
     fun pick(input: BindableInput, t: OutputTarget) {
         when {
@@ -1718,7 +1728,7 @@ internal fun ControlMappingScreen(
                 ) {
                     FilterChip(
                         selected = false,
-                        enabled = selected != null && allows(selectedAllowed, OutputTarget.Key(0x04)),
+                        enabled = selected != null,
                         onClick = { capturing = true },
                         label = { Text("⌨ Press a key") },
                     )
@@ -2357,9 +2367,10 @@ internal fun ControlMappingScreen(
             Surface(shape = RoundedCornerShape(20.dp), color = colors.surface, tonalElevation = 6.dp) {
                 KeyCapturePanel(
                     runtime = runtime,
-                    onKey = { t ->
+                    accepts = { t -> selected?.let { allows(allowedTargets(it), t) } == true },
+                    onKeys = { ts ->
                         capturing = false
-                        selected?.let { assign(it, t) }
+                        selected?.let { assignAll(it, ts) }
                     },
                     onCancel = { capturing = false },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 240.dp).padding(16.dp),

@@ -802,16 +802,59 @@ class GamepadRuntime(context: Context) {
     @Volatile private var gyroSamples = 0L
     private val rateWindow = GyroRateWindow()
 
-    /** When set, the next controller input is captured for the mapping editor instead of sent. */
+    /**
+     * When set, the next press on a controller, keyboard or mouse attached to the phone goes here
+     * (which kind of device, and the input) instead of the engine: "Press a button" in the device
+     * presets, which opens that control's editor. Main thread.
+     */
     @Volatile
-    var learnListener: ((InputSource) -> Unit)? = null
+    var learnListener: ((com.oleroma.gyrophone.core.model.PhysicalDevice, InputSource) -> Unit)? = null
 
-    /** When set, the next key-down of a physical keyboard or pad is delivered here as its raw Android keycode and swallowed. */
+    /**
+     * "Press a key" in the mapping editor: while set, every press and release on a device attached
+     * to the phone, or on the PC's keyboard, mouse and controllers (the PC reads them only
+     * meanwhile, never holding them back), goes here instead of the engine: the input (unique per
+     * device), what it maps to ([com.oleroma.gyrophone.core.model.PressTargets], null: nothing), and
+     * whether it went down. Main thread.
+     */
+    var pressListener: ((id: String, target: OutputTarget?, down: Boolean) -> Unit)? = null
+        set(v) {
+            field = v
+            wifi.pressCapture = v != null
+            if (v == null) pcHeld.clear()
+        }
+
+    /** What the PC said is held while [pressListener] listens, by id. */
+    private val pcHeld = HashMap<String, OutputTarget?>()
+
+    /** A CAPTURED from the PC (the link's thread): its presses and releases to [pressListener]. */
+    private fun onPcPresses(held: List<com.oleroma.gyrophone.core.net.PcPress>) = main.post {
+        val listen = pressListener ?: return@post
+        val now = held.associate { "pc:${it.kind}:${it.code}:${it.arg}" to com.oleroma.gyrophone.core.model.PressTargets.ofPc(it) }
+        for (id in pcHeld.keys.filter { it !in now }) {
+            pcHeld.remove(id)
+            listen(id, null, false)
+        }
+        for ((id, t) in now) {
+            if (pcHeld.containsKey(id)) continue
+            pcHeld[id] = t
+            listen(id, t, true)
+        }
+    }
+
+    /**
+     * Keys and motion events of a window other than the activity's (a dialog the editor shows), so
+     * they reach the controller input as the activity's do; MainActivity sets them.
+     */
     @Volatile
-    var keyLearnListener: ((androidKeyCode: Int) -> Unit)? = null
+    var forwardKey: ((android.view.KeyEvent) -> Boolean)? = null
+
+    @Volatile
+    var forwardMotion: ((android.view.MotionEvent) -> Boolean)? = null
 
     init {
         engine.hapticSink = haptics
+        wifi.onPcPresses = ::onPcPresses
         // Inside the engine lock: only bump the counter the pad watches.
         engine.onBlackScreen = Runnable { _blackScreenRequests.update { it + 1 } }
         engine.onPadAction = { t ->

@@ -37,6 +37,8 @@ import com.oleroma.gyrophone.core.net.OutputMode
 import com.oleroma.gyrophone.core.net.OverlayFeed
 import com.oleroma.gyrophone.core.net.PressStamp
 import com.oleroma.gyrophone.core.net.TestMode
+import com.oleroma.gyrophone.core.net.PcPress
+import com.oleroma.gyrophone.core.net.PcPresses
 import com.oleroma.gyrophone.core.net.TestModeFlags
 import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.PacketType
@@ -130,6 +132,21 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** Press and release input times for "Measure buttons" (PRESS_TIME); the input code notes each edge. */
     val pressStamp: PressStamp get() = pump.pressStamp
+
+    /**
+     * "Press a key" listens: the PC is told (CAPTURE every second, and off when it ends), reads its
+     * keyboard, mouse and controllers meanwhile, and sends what is held ([onPcPresses]).
+     */
+    var pressCapture: Boolean
+        get() = pump.capturing
+        set(v) {
+            if (pump.capturing == v) return
+            pump.capturing = v
+            pump.wake.run()
+        }
+
+    /** What is held on the PC while [pressCapture] (CAPTURED); empty when the session ends. Called on the link's thread. */
+    @Volatile var onPcPresses: ((List<PcPress>) -> Unit)? = null
 
     private val _latencyScreen = MutableStateFlow(false)
     /** The PC's latency test window is open (TEST_MODE): the pad shows the tracking markers. */
@@ -1071,7 +1088,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 clockOffsetUs = 0L
                 rttMinUs = -1L
                 // A replacement is the same PC: its overlay stays on until its next HOST_STATUS says otherwise.
-                if (s == null) { hostStatus = null; testMode = 0 }
+                if (s == null) { hostStatus = null; testMode = 0; onPcPresses?.invoke(emptyList()) }
                 // Until the first HOST_STATUS, WELCOME's output mode says whether the pad takes motion.
                 else if (hostStatus == null) motion.padTakesMotion = OutputMode.takesMotion(s.outputMode)
                 welcomeHostFlags = s?.hostFlags
@@ -1089,6 +1106,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 is HostStatus -> hostStatus = p
                 is KeyLabels -> onKeyLabels(p)
                 is TestMode -> testMode = p.flags
+                is PcPresses -> onPcPresses?.invoke(p.held)
                 is Rumble -> onRumble?.invoke(p)
                 else -> Unit // ANNOUNCE was handled already
             }

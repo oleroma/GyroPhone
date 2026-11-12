@@ -1,5 +1,12 @@
 package com.oleroma.gyrophone.ui
 
+import com.oleroma.gyrophone.core.model.BindableInput
+import com.oleroma.gyrophone.core.model.InputSource
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.ui.window.Dialog
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -95,6 +102,8 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
     var mapSet by remember { mutableIntStateOf(MappingSet.BASE) }
     val board = remember(device, preset?.id) { ControlBoard() }
     var undo by remember { mutableStateOf<Pair<String, DevicePreset>?>(null) }
+    // "Press a button": waiting for a press on an attached device, to open that control's editor.
+    var learning by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
 
     /** The current workspace uses preset [id] from now on (null: none, its devices do nothing). */
@@ -217,6 +226,7 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
                 },
                 onPick = { deviceName = it.name },
             )
+            if (preset != null) TextButton(onClick = { learning = true }) { Text("⌨ Press a button") }
             Spacer(Modifier.weight(1f))
             Text(
                 "Tap: what it does · Hold: edit · Hold and drag: swap",
@@ -227,6 +237,18 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
                 modifier = Modifier.padding(start = 12.dp),
             )
         }
+    }
+
+    if (learning) {
+        PressButtonDialog(
+            runtime,
+            onPressed = { kind, element ->
+                learning = false
+                deviceName = kind.name
+                editing = element
+            },
+            onDismiss = { learning = false },
+        )
     }
 
     val e = editing
@@ -570,3 +592,72 @@ private fun PhoneView(board: ControlBoard) {
 }
 
 private val MIN_KEY: Dp = 34.dp
+
+/**
+ * "Press a button": waits for a press on a controller, keyboard or mouse attached to the phone,
+ * then [onPressed] gets the view it is on and its control, to open that control's editor. A press
+ * no view shows says so and waits for the next.
+ */
+@Composable
+private fun PressButtonDialog(
+    runtime: GamepadRuntime,
+    onPressed: (PhysicalDevice, Element) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var message by remember { mutableStateOf<String?>(null) }
+    var arm by remember { mutableIntStateOf(0) }
+    val latest by rememberUpdatedState(onPressed)
+    Dialog(onDismissRequest = onDismiss) {
+        ListenInThisWindow(runtime)
+        DisposableEffect(arm) {
+            val listener: (PhysicalDevice, InputSource) -> Unit = { kind, source ->
+                val element = pressedElement(kind, source)
+                if (element != null) latest(kind, element)
+                else {
+                    message = "That one isn't on the " + kind.label.lowercase() + " view. Press another."
+                    arm++
+                }
+            }
+            runtime.learnListener = listener
+            onDispose { if (runtime.learnListener === listener) runtime.learnListener = null }
+        }
+        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 6.dp) {
+            Column(
+                Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("Press a button…", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    message ?: "On a controller, keyboard or mouse attached to the phone. Its editor opens.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (message != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                OutlinedButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        }
+    }
+}
+
+/** The control of [device]'s view that [source] is one of the inputs of; null when none. */
+private fun pressedElement(device: PhysicalDevice, source: InputSource): Element? {
+    fun same(a: InputSource, b: InputSource): Boolean = when {
+        a is InputSource.Axis && b is InputSource.Axis -> a.axis == b.axis
+        a is InputSource.Key && b is InputSource.Key -> a.keyCode == b.keyCode
+        a is InputSource.KeyGesture && b is InputSource.Key -> a.keyCode == b.keyCode
+        else -> false
+    }
+    fun has(inputs: List<BindableInput>) = inputs.any { i -> i.sources.any { same(it, source) } }
+    return when (device) {
+        PhysicalDevice.CONTROLLER -> PhysicalLayouts.controllerHandles.controls.firstOrNull { has(it.inputs) }
+            ?.let { Element(it.id, it.label, it.kind == PhysicalKind.STICK, it.inputs) }
+        PhysicalDevice.KEYBOARD -> {
+            val code = (source as? InputSource.Key)?.keyCode
+            PhysicalLayouts.keyboardRows.flatten().firstOrNull { it.code != null && it.code == code }
+                ?.let { k -> Element("key${k.code}", k.label, false, PhysicalLayouts.buttonInputs(listOf(k.code!!))) }
+        }
+        PhysicalDevice.MOUSE -> PhysicalLayouts.mouseControls.firstOrNull { has(it.inputs) }?.let { Element(it.id, it.label, false, it.inputs) }
+        PhysicalDevice.PHONE -> null
+    }
+}

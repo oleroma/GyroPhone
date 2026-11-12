@@ -12,7 +12,12 @@ import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownLayouts
+import com.oleroma.gyrophone.core.model.MouseButton
+import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.PhysicalDevice
 import com.oleroma.gyrophone.core.model.PhysicalSticks
+import com.oleroma.gyrophone.core.model.PressTargets
+import kotlin.math.abs
 import com.oleroma.gyrophone.runtime.AttachedController
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 
@@ -45,6 +50,8 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         val flat = FloatArray(AndroidAxis.polled.size)
         /** The right stick is on Z / RZ rather than RX / RY, for the PC overlay ([overlayAxes]). */
         var zStick = false
+        /** "Press a key": each [AndroidAxis.polled] axis pushed past half way, -1 / 0 / 1. */
+        val pushed = IntArray(AndroidAxis.polled.size)
 
         fun readRanges(device: InputDevice, source: Int) {
             val polled = AndroidAxis.polled
@@ -108,12 +115,23 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             device.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC && !isPad(device)
         ) return true
         val pressed = event.action == KeyEvent.ACTION_DOWN
-        runtime.keyLearnListener?.let { learn ->
-            if (pressed) { runtime.keyLearnListener = null; learn(event.keyCode) }
+        runtime.pressListener?.let { listen ->
+            val target = PressTargets.ofPhoneKey(event.keyCode, isPad(device), mouse = isMouse(device))
+            listen("phone:${device.id}:key:${event.keyCode}", target, pressed)
             return true
         }
         runtime.learnListener?.let { learn ->
-            if (pressed) { runtime.learnListener = null; learn(InputSource.Key(event.keyCode)) }
+            if (pressed) {
+                runtime.learnListener = null
+                val kind = kindOf(device)
+                // A mouse's back and forward buttons come as keys while the pointer isn't captured.
+                val code = if (kind == PhysicalDevice.MOUSE) when (event.keyCode) {
+                    AndroidKey.BACK -> AndroidKey.MOUSE_BACK
+                    PressTargets.KEYCODE_FORWARD -> AndroidKey.MOUSE_FORWARD
+                    else -> event.keyCode
+                } else event.keyCode
+                learn(kind, InputSource.Key(code))
+            }
             return true
         }
         // Unmapped pad buttons must do nothing, not fall back to BACK / focus navigation.
@@ -142,7 +160,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
      */
     private fun onRocker(event: KeyEvent): Boolean {
         val pressed = event.action == KeyEvent.ACTION_DOWN
-        if (!runtime.hardwareAllowed || runtime.learnListener != null || runtime.keyLearnListener != null) {
+        if (!runtime.hardwareAllowed || runtime.learnListener != null || runtime.pressListener != null) {
             // A press taken while the pad was open still gets its release.
             if (!pressed) runtime.engine.setKey(PHONE_PAD, event.keyCode, false)
             return false
@@ -154,6 +172,9 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
     }
 
     fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.isFromSource(InputDevice.SOURCE_MOUSE) && (runtime.pressListener != null || runtime.learnListener != null)) {
+            return onListenMouse(event)
+        }
         if (event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK) return false
         if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
             // Focus left the window (shade, dialog, split screen): the stick's return to rest goes
@@ -167,9 +188,12 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         val src = sources.get(event.deviceId) ?: source(event.device ?: return false)
         if (src.rangesFor != event.source) src.readRanges(event.device ?: return false, event.source)
         val learn = runtime.learnListener
-        if (learn !== src.learnFor) {
-            src.learnFor = learn
+        val listen = runtime.pressListener
+        val listening: Any? = learn ?: listen
+        if (listening !== src.learnFor) {
+            src.learnFor = listening
             src.last.copyInto(src.rest)
+            src.pushed.fill(0)
         }
         val polled = AndroidAxis.polled
         var n = 0
@@ -181,6 +205,19 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             if (flat.isNaN()) continue
             val v = AndroidAxis.deadzone(axis, event.getAxisValue(axis), flat)
             src.last[i] = v
+            if (listen != null && learn == null) {
+                if (!src.seen) { src.rest[i] = v; continue }
+                // Past half way from where it rested: a press of that way (a trigger resting at -1 counts from there).
+                val moved = v - src.rest[i]
+                val way = if (abs(moved) <= PRESS_TRAVEL) 0 else if (moved > 0) 1 else -1
+                val was = src.pushed[i]
+                if (way != was) {
+                    src.pushed[i] = way
+                    if (was != 0) listen("phone:${event.deviceId}:axis:$axis:$was", null, false)
+                    if (way != 0) listen("phone:${event.deviceId}:axis:$axis:$way", PressTargets.ofPhoneAxis(axis, way > 0, src.zStick), true)
+                }
+                continue
+            }
             if (learn != null) {
                 if (!src.seen) { src.rest[i] = v; continue }
                 if (learned == null) {
@@ -197,14 +234,73 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             if (learned != null) {
                 runtime.learnListener = null
                 src.learnFor = null
-                learn(InputSource.Axis(learnedAxis, learned))
+                learn(PhysicalDevice.CONTROLLER, InputSource.Axis(learnedAxis, learned))
             }
             return true
         }
+        if (listen != null) return true
         // Hardware held back with the pad closed: nothing is sent ([last] still follows the device for learning).
         if (runtime.hardwareAllowed) runtime.engine.setAxes(src.pad, axisIds, axisValues, n)
         return true
     }
+
+    /**
+     * A mouse's buttons and wheel while "Press a key" or "Press a button" listens (the pointer isn't
+     * captured then): to [GamepadRuntime.pressListener] as the mouse's, or to the learn listener as
+     * the mouse's keys. Movement is left alone. Returns true if consumed.
+     */
+    private fun onListenMouse(event: MotionEvent): Boolean {
+        val listen = runtime.pressListener
+        val learn = runtime.learnListener
+        when (event.actionMasked) {
+            MotionEvent.ACTION_BUTTON_PRESS, MotionEvent.ACTION_BUTTON_RELEASE -> {
+                val (button, key) = when (event.actionButton) {
+                    MotionEvent.BUTTON_PRIMARY -> MouseButton.LEFT to AndroidKey.MOUSE_LEFT
+                    MotionEvent.BUTTON_SECONDARY -> MouseButton.RIGHT to AndroidKey.MOUSE_RIGHT
+                    MotionEvent.BUTTON_TERTIARY -> MouseButton.MIDDLE to AndroidKey.MOUSE_MIDDLE
+                    MotionEvent.BUTTON_BACK -> MouseButton.BACK to AndroidKey.MOUSE_BACK
+                    MotionEvent.BUTTON_FORWARD -> MouseButton.FORWARD to AndroidKey.MOUSE_FORWARD
+                    else -> return false
+                }
+                val down = event.actionMasked == MotionEvent.ACTION_BUTTON_PRESS
+                if (listen != null) {
+                    listen("phone:${event.deviceId}:mouse:${button.bit}", OutputTarget.Mouse(button), down)
+                } else if (learn != null && down) {
+                    runtime.learnListener = null
+                    learn(PhysicalDevice.MOUSE, InputSource.Key(key))
+                }
+                return true
+            }
+            MotionEvent.ACTION_SCROLL -> {
+                val v = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+                if (v == 0f) return false
+                val up = v > 0f
+                if (listen != null) {
+                    // A notch is a press and a release at once.
+                    val id = "phone:${event.deviceId}:wheel:$up"
+                    listen(id, PressTargets.ofWheel(up), true)
+                    listen(id, null, false)
+                } else if (learn != null) {
+                    runtime.learnListener = null
+                    learn(PhysicalDevice.MOUSE, InputSource.Key(if (up) AndroidKey.MOUSE_WHEEL_UP else AndroidKey.MOUSE_WHEEL_DOWN))
+                }
+                return true
+            }
+        }
+        return false
+    }
+
+    /** Which of the device presets' views [d] belongs in: a mouse, a full keyboard, or a controller. */
+    private fun kindOf(d: InputDevice): PhysicalDevice = when {
+        isMouse(d) -> PhysicalDevice.MOUSE
+        d.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC && d.sources and InputDevice.SOURCE_GAMEPAD != InputDevice.SOURCE_GAMEPAD ->
+            PhysicalDevice.KEYBOARD
+        else -> PhysicalDevice.CONTROLLER
+    }
+
+    /** A mouse (not a game pad that also says it is one, nor a keyboard with a touchpad). */
+    private fun isMouse(d: InputDevice): Boolean =
+        d.supportsSource(InputDevice.SOURCE_MOUSE) && !isPad(d) && d.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC
 
     /**
      * Sends [v] (the [AndroidAxis.polled] axes) to the PC's phone overlay, for its handles; [zStick]:
@@ -345,6 +441,9 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         PadDevice(MOUSE_ID_BASE + device.id, device.vendorId, device.productId, device.name, mouse = true)
 
     companion object {
+        /** "Press a key": how far from rest a stick or trigger is a press of that way. */
+        private const val PRESS_TRAVEL = 0.5f
+
         /** Added to a device's id for its mouse part, so a keyboard with a touchpad keeps its keys apart. */
         private const val MOUSE_ID_BASE = 1 shl 28
 
