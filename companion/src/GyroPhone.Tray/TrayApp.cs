@@ -81,6 +81,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     /// <summary>The port was taken at start-up: gp-bind keeps trying; true once the first 5 s have passed.</summary>
     private volatile bool _bindRetrying, _bindWaitLong;
     private bool _firewallHintShown, _publicHintShown;
+    // The phone's "Press a key" was open at the last refresh (its notification shows once per opening).
+    private bool _captureShown;
     private bool _sessionLocked, _suspended;
     private int _exited;
 
@@ -119,6 +121,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             Recorder = new InputRecorder(_inputLog.Write),
         };
         _engine.SetPcPad(new XInputPcPad(_log.Write, _clock));
+        _engine.SetKeyMouseListener(new RawInputListener(_log.Write));
         _perf = new PerfMonitor(new FrameWatch(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
             Path.Combine(_log.Directory, "perf"), _log.Write);
         _engine.Recorder!.Timeline = _perf.Link;
@@ -401,6 +404,15 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _refreshing = null;
         }
 
+        // The phone's "Press a key" opened: say once per opening that this PC's keys and buttons count too.
+        if (s.Capturing && !_captureShown && _engine.Settings.PressKeyNotice)
+        {
+            Balloon("Press a key or button",
+                "Your phone is listening. Press a key, mouse button or controller button on this PC to map it.",
+                ToolTipIcon.Info);
+        }
+        _captureShown = s.Capturing;
+
         if (s.NetworkPublic && !_publicHintShown)
         {
             _publicHintShown = true;
@@ -483,7 +495,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _engine.Settings.MeasureButtons,
             _engine.PressLatencyNow(),
             _engine.Settings.InputLog,
-            _engine.Settings.CatchUpMs);
+            _engine.Settings.CatchUpMs,
+            _engine.Settings.PressKeyNotice,
+            _engine.Settings.PressKeyListen);
     }
 
     public void SetLatencyScreen(bool on) => _engine.SetLatencyScreen(on);
@@ -497,6 +511,18 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     public void ToggleInputLog()
     {
         _engine.SetInputLog(!_engine.Settings.InputLog);
+        Refresh();
+    }
+
+    public void TogglePressKeyListen()
+    {
+        _engine.SetPressKeyListen(!_engine.Settings.PressKeyListen);
+        Refresh();
+    }
+
+    public void TogglePressKeyNotice()
+    {
+        _engine.SetPressKeyNotice(!_engine.Settings.PressKeyNotice);
         Refresh();
     }
 

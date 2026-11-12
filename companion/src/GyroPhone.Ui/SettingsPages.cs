@@ -254,7 +254,7 @@ internal sealed class ConnectionPage : Page
 internal sealed class AppPage : Page
 {
     private readonly StackPanel _root = new();
-    private readonly CheckBox _autoStart, _watcher, _inputLog;
+    private readonly CheckBox _autoStart, _watcher, _inputLog, _pressListen, _pressNotice;
     private readonly Seg<TrayClickAction> _trayClick;
     private readonly Seg<int> _catchUp;
     private readonly TextBlock _log, _version;
@@ -282,6 +282,16 @@ internal sealed class AppPage : Page
         tb.Children.Add(_trayClick.View);
         tb.Children.Add(Parts.Text("Right-click the icon for the quick menu: pause, output, overlays.", "Hint"));
         _root.Children.Add(tray);
+
+        var (press, pb) = Parts.Card("Press a key");
+        _pressListen = Parts.Toggle("Use this PC's keys for Press a key", app.TogglePressKeyListen,
+            "While \"Press a key\" is open on the phone, this PC's keyboard, mouse and controller count too. Only read: every press still reaches Windows and games. Off: only what is attached to the phone counts.");
+        pb.Children.Add(_pressListen);
+        pb.Children.Add(Parts.Divider());
+        _pressNotice = Parts.Toggle("Notify when the phone listens for a key", app.TogglePressKeyNotice,
+            "When \"Press a key\" opens on the phone, a notification says you can press a key, mouse button or controller button on this PC too.");
+        pb.Children.Add(_pressNotice);
+        _root.Children.Add(press);
 
         var (input, ib) = Parts.Card("Mouse");
         ib.Children.Add(Parts.Text("Catch-up time"));
@@ -315,6 +325,9 @@ internal sealed class AppPage : Page
         Parts.SetChecked(_autoStart, v.AutoStart);
         Parts.SetChecked(_watcher, v.Watcher);
         Parts.SetChecked(_inputLog, v.InputLog);
+        Parts.SetChecked(_pressListen, v.PressKeyListen);
+        Parts.SetChecked(_pressNotice, v.PressKeyNotice);
+        _pressNotice.IsEnabled = v.PressKeyListen;
         _trayClick.Set(v.TrayClick);
         _catchUp.Set(v.CatchUpMs);
         _log.Text = $"Log: {v.LogPath}";

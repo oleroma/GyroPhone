@@ -62,13 +62,24 @@ public static class LinkPath
 
 public readonly record struct HostStatus(
     uint LastSeq, ushort RxPerSec, ushort LossPermille, uint LatP50Us, uint LatP99Us,
-    uint JitterUs, byte OutputMode, byte Flags)
+    uint JitterUs, byte OutputMode, byte Flags, byte Flags2 = 0)
 {
     public const uint Unknown = 0xFFFFFFFF;
 }
 
 /// <summary>When the phone saw the input behind a press or release, and the time of the STATE that first carries it (both the low 32 bits of the phone's µs clock, as STATE's time).</summary>
 public readonly record struct PressTime(uint StateTimeUs, uint EventTimeUs);
+
+/// <summary>
+/// One input held on the PC while the phone listens (CAPTURED): a key by HID usage, a mouse button (0 left, 1 right,
+/// 2 middle, 3 back, 4 forward), a wheel notch (code 0, <see cref="Arg"/> +1 up / -1 down), a controller button by its
+/// XInput bit, or a controller axis pushed past half way (code 0..5: left x, y, right x, y, left, right trigger; y down;
+/// <see cref="Arg"/> the way, +1 or -1).
+/// </summary>
+public readonly record struct PcPress(byte Kind, ushort Code, sbyte Arg = 0)
+{
+    public const byte Key = 1, Mouse = 2, Wheel = 3, PadButton = 4, PadAxis = 5;
+}
 
 /// <summary>
 /// Host → phone vibration. <see cref="Pattern"/> <see cref="RumblePattern.Motors"/>: the game's rumble,

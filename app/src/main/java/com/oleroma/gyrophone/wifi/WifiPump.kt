@@ -15,6 +15,8 @@ import com.oleroma.gyrophone.core.net.PacketType
 import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.PressStamp
 import com.oleroma.gyrophone.core.net.PressTime
+import com.oleroma.gyrophone.core.net.CaptureListen
+import com.oleroma.gyrophone.core.net.CaptureFlags
 import com.oleroma.gyrophone.core.net.SendScheduler
 import com.oleroma.gyrophone.core.net.SessionCipher
 import com.oleroma.gyrophone.core.net.StateFrame
@@ -57,6 +59,12 @@ class WifiPump(private val engine: MappingEngine) {
 
     /** "Use PC controller for gyro ratchet": STATE_GYRO and PAD_GYRO for a PC that takes them. */
     @Volatile var pcGyro: PcGyroFeed? = null
+
+    /** "Press a key" listens: CAPTURE on every second while it does, then off a few times. */
+    @Volatile var capturing = false
+    private var captureSentOn = false
+    private var captureNs = 0L
+    private var captureOffLeft = 0
 
     /** The raw motion for the PC's DualShock 4: MOTION while [MotionFeed.wanted]. */
     @Volatile var motion: MotionFeed? = null
@@ -257,6 +265,7 @@ class WifiPump(private val engine: MappingEngine) {
                 sendSealed(c, PacketType.MOTION, mo.encode(plain, 0))
             }
             pcGyro?.let { if (it.hostTakes) sendPadGyro(c, it, now) }
+            sendCapture(c, now)
             val ov = overlay?.takeIf { it.wanted }
             if (ov == null) layoutSentVersion = -1
             if (ov != null && now >= nextOverlayNs) {
@@ -266,6 +275,8 @@ class WifiPump(private val engine: MappingEngine) {
             var wakeAt = minOf(minOf(scheduler.nextDeadline(), nextPingNs), minOf(lastLinkInfoNs + SECOND_NS, engine.touchpadDeadlineNanos()))
             if (ov != null) wakeAt = minOf(wakeAt, nextOverlayNs)
             if (mo != null) wakeAt = minOf(wakeAt, nextMotionNs)
+            if (capturing) wakeAt = minOf(wakeAt, captureNs + Wire.CAPTURE_RESEND_MS * 1_000_000L)
+            else if (captureOffLeft > 0) wakeAt = minOf(wakeAt, captureNs + CAPTURE_OFF_GAP_NS)
             val end = System.nanoTime()
             // The pass is done: how long it took goes to the performance hint.
             hint?.done(end - passStart, end)
@@ -286,6 +297,26 @@ class WifiPump(private val engine: MappingEngine) {
         val eventUs = (at + SystemClock.elapsedRealtimeNanos() - System.nanoTime()) / 1000
         val n = WireCodec.encodeSealedPlain(PressTime(stateUs, eventUs.toInt()), plain, 0)
         sendSealed(c, PacketType.PRESS_TIME, n)
+    }
+
+    /** CAPTURE on at once and every second while [capturing]; once it stops, off three times, [CAPTURE_OFF_GAP_NS] apart. */
+    private fun sendCapture(c: LiveSession, now: Long) {
+        val on = capturing
+        when {
+            on -> {
+                if (captureSentOn && now - captureNs < Wire.CAPTURE_RESEND_MS * 1_000_000L) return
+                captureSentOn = true
+                captureOffLeft = 3
+            }
+            captureOffLeft > 0 -> {
+                if (!captureSentOn && now - captureNs < CAPTURE_OFF_GAP_NS) return
+                captureSentOn = false
+                captureOffLeft--
+            }
+            else -> return
+        }
+        captureNs = now
+        sendSealed(c, PacketType.CAPTURE, WireCodec.encodeSealedPlain(CaptureListen(if (on) CaptureFlags.ON else 0), plain, 0))
     }
 
     /** PAD_GYRO when the switch, the buttons or the toggle epoch changed, else once a second (a lost one comes again). */
@@ -329,6 +360,7 @@ class WifiPump(private val engine: MappingEngine) {
             it.reset()
         }
         padGyroSent = null; padGyroSentEpoch = -1; padGyroHeldSent = null
+        captureSentOn = false; captureOffLeft = 0
         motion?.let {
             it.hostTakes = session != null && session.hostFlags and HostFlags.MOTION != 0
             it.reset()
@@ -401,6 +433,8 @@ class WifiPump(private val engine: MappingEngine) {
     companion object {
         const val NO_BYE = -1
         private const val SECOND_NS = 1_000_000_000L
+        /** The gap between the CAPTUREs that say "off" (three, so one lost doesn't keep the PC listening for 3 s). */
+        private const val CAPTURE_OFF_GAP_NS = 100_000_000L
         private const val IDLE_PARK_NS = Wire.KEEPALIVE_MS * 1_000_000L
         private const val BYE_COUNT = 3
         private const val BYE_SPACING_NS = 5_000_000L

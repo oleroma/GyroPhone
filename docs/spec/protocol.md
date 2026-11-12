@@ -37,7 +37,7 @@ Sealed plaintext sizes:
 | PING | 0x21 | P→H | 8 | t1 u64: phone send time (µs) |
 | PONG | 0x30 | H→P | 24 | t1 (echoed), t2 host receive, t3 host send, u64 each: the phone works out the clock offset and round trip |
 | LINK_INFO | 0x22 | P→H | 22 | clock offset i64, rttMin u32, rate u16, rssi i8, band, link Mbps u16, MHz u16, flags, path u8 (UNKNOWN 0 from older phones, WIFI 1 the phone's Wi-Fi client, HOTSPOT 2 the phone's own hotspot, USB_TETHER 3, USB_DIRECT 4, ETHERNET 5) |
-| HOST_STATUS | 0x31 | H→P | 22 | lastSeq, rx/s, loss ‰, latency p50, p99, jitter, output mode, flags |
+| HOST_STATUS | 0x31 | H→P | 23 | lastSeq, rx/s, loss ‰, latency p50, p99, jitter, output mode, flags, flags2 (USB_DIRECT 1: "Use the phone over the USB cable" is on) |
 | PAD_GYRO | 0x27 | P→H | 4 + 2 × buttons | ratchet/toggle buttons by pad place, toggle epoch |
 | PAD_GYRO_SET | 0x28 | P→H | 183 | u8 place, u8 0, a 181-byte gyro config block |
 | OVERLAY | 0x24 | P→H | 152 | pose input: raw motion, ratchet, non-gyro mouse, touches, presses (`OverlayFeed`) |
@@ -49,6 +49,8 @@ Sealed plaintext sizes:
 | PRESS_TIME | 0x2A | P→H | 8 | STATE time u32, input event time u32 (both the phone's µs clock, low 32 bits): sent while TEST_MODE has PRESS_TIMES, after the STATE that first carries a new press or release ([Latency test](pc-latency-test.md#measure-buttons)) |
 | TEST_MODE | 0x35 | H→P | 4 | u8 flags: PRESS_TIMES 1 ("Measure buttons"), LATENCY_SCREEN 2 (the latency test window is open: the pad shows its markers), LINK_TEST 4 (a Link test runs: the phone sends fake moving input marked LINK_TEST); 3 reserved. Sent on change, with every HOST_STATUS while a flag is set, and with the 3 after one ends. Older phones drop it |
 | KEEP_AWAKE | 0x36 | H→P | 4 | zeros. Sent every 10 ms during a session over Wi-Fi (not USB, Ethernet or loopback) so the PC's Wi-Fi never dozes in power save, which would batch the phone's packets at the 100 ms beacon. The phone drops it unopened (it has no size there), as older phones do |
+| CAPTURE | 0x2B | P→H | 4 | u8 flags: ON 1. Sent at once and every second while the mapping editor's "Press a key" listens, then off three times 100 ms apart; the PC stops listening 3 s after the last ON, or when the session ends |
+| CAPTURED | 0x37 | H→P | 64 | u8 count (≤ 15), u8 0, then 15 × (kind u8, arg i8, code u16): what is held on the PC while it listens: KEY 1 (HID usage), MOUSE 2 (0 left, 1 right, 2 middle, 3 back, 4 forward), WHEEL 3 (arg +1 up / -1 down), PAD_BUTTON 4 (XInput bit), PAD_AXIS 5 (code 0..5 left x, y, right x, y, left, right trigger, y down; arg the way, past half way). On change and every 200 ms; a press stays listed 150 ms after it was last seen, so a tap between two 50 ms ticks or one lost packet still arrives. Older phones drop it |
 | BYE | 0x2F | P→H | 4 | reason: USER, TRANSPORT_SWITCH, SHUTDOWN, REKEY |
 | HOST_BYE | 0x3F | H→P | 4 | reason: EXIT, FORGOTTEN, REPLACED |
 

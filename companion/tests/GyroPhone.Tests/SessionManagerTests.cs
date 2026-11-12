@@ -29,6 +29,23 @@ public class SessionManagerTests
     }
 
     [Fact]
+    public void StatusSaysWhetherTheCableIsOnAndTellsAtOnceWhenItChanges()
+    {
+        using var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        // On by default. Each change goes out at once, not with the next second's status.
+        h.Sender.Clear();
+        h.Engine.SetUsbDirect(false);
+        Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out var off));
+        Assert.Equal(0, WireCodec.DecodeHostStatus(off).Flags2);
+        h.Sender.Clear();
+        h.Engine.SetUsbDirect(true);
+        Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out var on));
+        Assert.Equal(HostStatusFlags2.UsbDirect, WireCodec.DecodeHostStatus(on).Flags2);
+    }
+
+    [Fact]
     public void ReplayedHelloDoesNotDisturbActiveSession()
     {
         var h = new Harness();

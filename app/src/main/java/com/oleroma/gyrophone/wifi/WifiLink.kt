@@ -25,6 +25,7 @@ import com.oleroma.gyrophone.core.net.HostStatus
 import com.oleroma.gyrophone.core.net.LinkPath
 import com.oleroma.gyrophone.core.net.Rumble
 import com.oleroma.gyrophone.core.net.HostStatusFlags
+import com.oleroma.gyrophone.core.net.HostStatusFlags2
 import com.oleroma.gyrophone.core.net.KeyLabels
 import com.oleroma.gyrophone.core.net.KeyPairing
 import com.oleroma.gyrophone.core.net.KeyStatus
@@ -37,6 +38,8 @@ import com.oleroma.gyrophone.core.net.OutputMode
 import com.oleroma.gyrophone.core.net.OverlayFeed
 import com.oleroma.gyrophone.core.net.PressStamp
 import com.oleroma.gyrophone.core.net.TestMode
+import com.oleroma.gyrophone.core.net.PcPress
+import com.oleroma.gyrophone.core.net.PcPresses
 import com.oleroma.gyrophone.core.net.TestModeFlags
 import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.PacketType
@@ -130,6 +133,21 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** Press and release input times for "Measure buttons" (PRESS_TIME); the input code notes each edge. */
     val pressStamp: PressStamp get() = pump.pressStamp
+
+    /**
+     * "Press a key" listens: the PC is told (CAPTURE every second, and off when it ends), reads its
+     * keyboard, mouse and controllers meanwhile, and sends what is held ([onPcPresses]).
+     */
+    var pressCapture: Boolean
+        get() = pump.capturing
+        set(v) {
+            if (pump.capturing == v) return
+            pump.capturing = v
+            pump.wake.run()
+        }
+
+    /** What is held on the PC while [pressCapture] (CAPTURED); empty when the session ends. Called on the link's thread. */
+    @Volatile var onPcPresses: ((List<PcPress>) -> Unit)? = null
 
     private val _latencyScreen = MutableStateFlow(false)
     /** The PC's latency test window is open (TEST_MODE): the pad shows the tracking markers. */
@@ -245,7 +263,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             val cabled = intent.getBooleanExtra(EXTRA_USB_CONNECTED, true)
             if (cabled != usbCabled) {
                 usbCabled = cabled
-                post { nextUsbCheckMs = 0L } // look at once
+                post { retryCable() } // look at once, and a new plug-in tries the cable again
             }
         }
     }
@@ -257,6 +275,16 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     @Volatile private var usbEthernet = false
     private var nextUsbCheckMs = 0L
     private var nextUsbProbeMs = 0L
+    /** When the direct cable first showed with no PC answering on it yet (0: not now), across its reopens. */
+    private var cableQuietSinceMs = 0L
+    /**
+     * The direct cable got no answer (the companion's cable switch is off): left alone, tethering or the hotspot
+     * used instead, until it is tried again ([retryCable]): plugged in again, the accessory attached again, the
+     * PC's HOST_STATUS saying its cable switch is on, or the user connecting. Never on a timer.
+     */
+    private var cableRefused = false
+    /** The PC's last HOST_STATUS had [HostStatusFlags2.USB_DIRECT]. */
+    private var pcCableOn = false
     private var usbSilentSinceMs = 0L
     /** USB failed (the PC went silent there): Wi-Fi until then. */
     private var usbBackoffUntilMs = 0L
@@ -445,7 +473,14 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     }
 
     /** Runs a USB check now instead of at the next once-a-second one (the accessory was just attached or allowed). */
-    fun checkUsbNow() = post { nextUsbCheckMs = 0L }
+    fun checkUsbNow() = post { retryCable() }
+
+    /** Tries the direct cable again (once), and looks at USB now. Rx thread. */
+    private fun retryCable() {
+        cableRefused = false
+        cableQuietSinceMs = 0L
+        nextUsbCheckMs = 0L
+    }
 
     override fun stats(): LinkStats {
         val info = if (usbActive) WifiRadioInfo() else binder.info
@@ -475,7 +510,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     // ---- UI commands (run on the rx thread) ----
 
     /** Connects to a paired PC (HELLO to its last address, DISCOVER fallback). */
-    fun connect(hostIdHex: String) = post { connectTo(hostIdHex) }
+    fun connect(hostIdHex: String) = post {
+        retryCable()
+        connectTo(hostIdHex)
+    }
 
     /** Ends the current session (neutral STATE + BYE) and goes back to discovery. */
     fun disconnect() = post {
@@ -485,6 +523,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** Connects to a PC by key file pairing (both sides know each other's key). */
     fun connectByKey(hostIdHex: String) = post {
+        retryCable()
         keyUserStopped.remove(hostIdHex)
         connectKeyTo(hostIdHex)
     }
@@ -1071,7 +1110,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 clockOffsetUs = 0L
                 rttMinUs = -1L
                 // A replacement is the same PC: its overlay stays on until its next HOST_STATUS says otherwise.
-                if (s == null) { hostStatus = null; testMode = 0 }
+                if (s == null) { hostStatus = null; testMode = 0; onPcPresses?.invoke(emptyList()) }
                 // Until the first HOST_STATUS, WELCOME's output mode says whether the pad takes motion.
                 else if (hostStatus == null) motion.padTakesMotion = OutputMode.takesMotion(s.outputMode)
                 welcomeHostFlags = s?.hostFlags
@@ -1086,9 +1125,16 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             is PhoneSessionFlow.Out.HostAddress -> sessionHostId?.let { store.updateAddress(it, o.addr) }
             is PhoneSessionFlow.Out.Received -> when (val p = o.packet) {
                 is Pong -> onPong(p)
-                is HostStatus -> hostStatus = p
+                is HostStatus -> {
+                    hostStatus = p
+                    // The companion's cable switch turned on: try the cable now.
+                    val on = p.flags2 and HostStatusFlags2.USB_DIRECT != 0
+                    if (on && !pcCableOn && cableRefused) retryCable()
+                    pcCableOn = on
+                }
                 is KeyLabels -> onKeyLabels(p)
                 is TestMode -> testMode = p.flags
+                is PcPresses -> onPcPresses?.invoke(p.held)
                 is Rumble -> onRumble?.invoke(p)
                 else -> Unit // ANNOUNCE was handled already
             }
@@ -1121,7 +1167,19 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             nextUsbCheckMs = nowMs + USB_CHECK_MS
             // The cable only with a cable to a computer; tethering and the hotspot by interface.
             val wifiIf = binder.interfaceName
-            val t = (if (usbCabled) accessory.poll() else null)
+            // The cable is used only while the PC answers on it: when the companion has it off, the cable
+            // still shows but nobody answers, and tethering or the hotspot must not wait behind it.
+            val cable = if (usbCabled && !cableRefused) accessory.poll() else null
+            if (cable == null || usbHostAddr != null) cableQuietSinceMs = 0L
+            else if (cableQuietSinceMs == 0L) cableQuietSinceMs = nowMs
+            val quiet = cable != null && !usbActive && cableQuietSinceMs != 0L && nowMs - cableQuietSinceMs >= CABLE_QUIET_MS
+            if (quiet) {
+                Log.i(TAG, "no PC answers on the cable: left alone until it is plugged in again or the PC turns it on")
+                cableRefused = true
+                cableQuietSinceMs = 0L
+                accessory.close()
+            }
+            val t = cable?.takeIf { !quiet }
                 ?: UsbTether.find(wifiIf, hotspot = wifiIf != null || binder.network == null)
             if (t != usb) {
                 if (usbActive) useWifi()
@@ -1143,14 +1201,16 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             } else usbSilentSinceMs = 0L
             return
         }
-        if (usbProbe == null || usb == null) return
-        if (f == null || !f.isRunning || nowMs < usbBackoffUntilMs) return
+        if (usbProbe == null || usb == null || nowMs < usbBackoffUntilMs) return
+        // Moves a running session there once its PC answered there.
         val host = sessionHostId
         val addr = usbHostAddr
-        if (host != null && host == usbHostId && addr != null) {
+        if (f != null && f.isRunning && host != null && host == usbHostId && addr != null) {
             useUsb(addr)
             return
         }
+        // DISCOVER there with or without a session: with the phone's Wi-Fi off, its default network is
+        // mobile data and the main socket's broadcasts never reach the hotspot or the tether.
         if (nowMs >= nextUsbProbeMs) {
             nextUsbProbeMs = nowMs + USB_PROBE_MS
             val n = WireCodec.encodeDiscover(Discover(Crypto.randomBytes(4).getI32(0), store.phoneId), txBuf)
@@ -1395,6 +1455,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         /** Silent this long over USB: back to Wi-Fi, and USB is not tried again for [USB_BACKOFF_MS]. */
         private const val USB_SILENT_MS = 3000L
         private const val USB_BACKOFF_MS = 30_000L
+        /** The direct cable with no PC answering this long: left alone ([cableRefused]). */
+        private const val CABLE_QUIET_MS = 3000L
         /** How long the rx thread waits for the pump's goodbye on the USB socket. */
         private const val GOODBYE_WAIT_MS = 50L
         /** The sticky broadcast for a USB cable to a computer (hidden in UsbManager), and its extra. */

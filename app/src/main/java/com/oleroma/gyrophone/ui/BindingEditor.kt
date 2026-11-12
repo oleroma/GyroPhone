@@ -3,7 +3,6 @@ package com.oleroma.gyrophone.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -36,29 +35,22 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.oleroma.gyrophone.core.hid.AndroidKeyToHid
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
@@ -211,8 +203,8 @@ private sealed interface PickerEntry {
 }
 
 /**
- * Grouped target picker dialog with a search field, a section list per group, and "Press a key on
- * a keyboard" capture (uses runtime.keyLearnListener + AndroidKeyToHid). analog=true -> only analog
+ * Grouped target picker dialog with a search field, a section list per group, and "Press a key"
+ * capture ([KeyCapturePanel]). analog=true -> only analog
  * targets; swipe=true -> analog and mouse motion targets. Picking calls [onPick] and then [onDismiss]; [current] targets are shown as mapped.
  * A haptic target is added as it is; pressing its chip ([editing]) opens [HapticTargetDialog] to set its feel (and step).
  */
@@ -284,9 +276,14 @@ fun TargetPickerDialog(
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                 }
                 if (capturing) {
+                    val offered = remember(groups) { groups.flatMapTo(HashSet()) { it.second } }
                     KeyCapturePanel(
                         runtime = runtime,
-                        onKey = pick,
+                        accepts = { t -> t in offered || Describe.isHaptic(t) || (t is OutputTarget.Key && offered.any { it is OutputTarget.Key }) },
+                        onKeys = { ts ->
+                            ts.forEach(onPick)
+                            onDismiss()
+                        },
                         onCancel = { capturing = false },
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                     )
@@ -295,7 +292,7 @@ fun TargetPickerDialog(
                         entries = entries,
                         query = query,
                         onQuery = { query = it },
-                        showCapture = !analog,
+                        showCapture = true,
                         onCapture = { capturing = true },
                         current = current.toSet(),
                         onPick = pick,
@@ -612,7 +609,7 @@ private fun PickerBody(
                     OutlinedButton(
                         onClick = onCapture,
                         modifier = Modifier.fillMaxWidth().padding(end = 8.dp)
-                    ) { Text("Press a key on a keyboard") }
+                    ) { Text("Press a key") }
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) { grid() }
             }
@@ -644,7 +641,7 @@ private fun PickerBody(
                     ) {
                         search(Modifier.weight(1f))
                         if (showCapture) {
-                            OutlinedButton(onClick = onCapture) { Text("Press a key on a keyboard") }
+                            OutlinedButton(onClick = onCapture) { Text("Press a key") }
                         }
                         Spacer(Modifier.width(4.dp))
                     }
@@ -686,69 +683,6 @@ private fun TargetCell(target: OutputTarget, mapped: Boolean, onClick: () -> Uni
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-        }
-    }
-}
-
-/**
- * Waits for one key of a physical keyboard. Keys reach either the activity (ControllerInput ->
- * runtime.keyLearnListener) or, while this dialog has window focus, the focused box below, which
- * forwards them to the same listener.
- */
-@Composable
-internal fun KeyCapturePanel(
-    runtime: GamepadRuntime,
-    onKey: (OutputTarget) -> Unit,
-    onCancel: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var message by remember { mutableStateOf<String?>(null) }
-    var arm by remember { mutableIntStateOf(0) }
-    val latestOnKey by rememberUpdatedState(onKey)
-    val focus = remember { FocusRequester() }
-
-    DisposableEffect(arm) {
-        val listener: (Int) -> Unit = { code ->
-            val usage = AndroidKeyToHid.usage(code)
-            if (usage != null) {
-                latestOnKey(OutputTarget.Key(usage))
-            } else {
-                message = "That key (code $code) has no keyboard equivalent. Press a key on a keyboard."
-                arm++
-            }
-        }
-        runtime.keyLearnListener = listener
-        onDispose { if (runtime.keyLearnListener === listener) runtime.keyLearnListener = null }
-    }
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
-
-    Box(
-        modifier
-            .focusRequester(focus)
-            .focusable()
-            .onPreviewKeyEvent { e ->
-                val native = e.nativeKeyEvent
-                val learn = runtime.keyLearnListener
-                if (learn == null || native.device?.isVirtual != false) {
-                    false
-                } else {
-                    if (native.action == android.view.KeyEvent.ACTION_DOWN && native.repeatCount == 0) {
-                        runtime.keyLearnListener = null
-                        learn(native.keyCode)
-                    }
-                    true
-                }
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Press a key on an attached keyboard…", style = MaterialTheme.typography.titleLarge)
-            Text(
-                message ?: "USB or Bluetooth keyboard. The key is mapped as the PC key with the same name.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (message != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedButton(onClick = onCancel) { Text("Back to list") }
         }
     }
 }

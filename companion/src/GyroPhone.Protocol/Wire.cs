@@ -47,7 +47,7 @@ public static class Wire
     public const int LinkInfoPlain = 22;
     public const int ByePlain = 4;
     public const int PongPlain = 24;
-    public const int HostStatusPlain = 22;
+    public const int HostStatusPlain = 23;
     public const int RumblePlain = 4;
     /// <summary>KEY_LABELS: u32 layout id, then a u16 character per <see cref="KeyLabels.Usages"/> key.</summary>
     public static readonly int KeyLabelsPlain = 4 + 2 * KeyLabels.Usages.Length;
@@ -62,6 +62,13 @@ public static class Wire
     public const int PressTimePlain = 8;
     /// <summary>TEST_MODE: u8 <see cref="TestModeFlags"/>, 3 reserved bytes.</summary>
     public const int TestModePlain = 4;
+    /// <summary>CAPTURE: u8 <see cref="CaptureFlags"/>, 3 reserved bytes.</summary>
+    public const int CapturePlain = 4;
+    /// <summary>CAPTURED: u8 count, u8 0, then <see cref="CapturedMax"/> × 4 bytes (kind u8, arg i8, code u16), unused ones zero.</summary>
+    public const int CapturedPlain = 64;
+    public const int CapturedMax = 15;
+    /// <summary>The PC stops listening this long after the last CAPTURE that was on (the phone resends it every second).</summary>
+    public const int CaptureTimeoutMs = 3000;
 
     public static readonly int[] RatesHz = [250, 500, 1000];
     public const int DefaultRateHz = 1000;
@@ -247,6 +254,13 @@ public static class LinkInfoFlags
 
 /// <summary>HOST_STATUS flags.</summary>
 /// <summary>TEST_MODE flags: the latency tests the phone takes part in.</summary>
+/// <summary>CAPTURE flags.</summary>
+public static class CaptureFlags
+{
+    /// <summary>The phone's "Press a key" screen is open: the PC reads its keyboard, mouse and controller (read-only, never held back) and sends CAPTURED.</summary>
+    public const byte On = 1 << 0;
+}
+
 public static class TestModeFlags
 {
     /// <summary>"Measure buttons" is on: the phone sends PRESS_TIME for each press and release.</summary>
@@ -255,6 +269,13 @@ public static class TestModeFlags
     public const byte LatencyScreen = 1 << 1;
     /// <summary>A Link test runs: the phone sends fake moving input at its full rate, marked <see cref="StateFlags.LinkTest"/>.</summary>
     public const byte LinkTest = 1 << 2;
+}
+
+/// <summary>HOST_STATUS's second flags byte (byte 22).</summary>
+public static class HostStatusFlags2
+{
+    /// <summary>"Use the phone over the USB cable" is on: the phone tries the cable now (else it leaves a cable nobody answers on alone).</summary>
+    public const byte UsbDirect = 1 << 0;
 }
 
 public static class HostStatusFlags
