@@ -193,9 +193,9 @@ internal fun SettingsSearchField(
 }
 
 /**
- * A settings page: pinned on top the search box, then (not while searching) [header] (e.g. App
- * and Defaults), the page's own tabs ([PinnedScope]) and its category tabs ([ReorderableSections]);
- * under them [content] (its categories) scrolls. At most 720 dp wide and centred, filtered by the search.
+ * A settings page: the search box, then (not while searching) [header] (e.g. App and Defaults),
+ * the page's own tabs ([PinnedScope]) and its category tabs ([ReorderableSections]), then
+ * [content] (its categories), all scrolling together. At most 720 dp wide and centred, filtered by the search.
  */
 @Composable
 internal fun SearchableSettings(
@@ -211,20 +211,21 @@ internal fun SearchableSettings(
     val tabs = remember { SettingsTabs() }
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Column(
-            Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(bottom = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            SettingsSearchField(query, { query = it })
-            if (q.isEmpty()) {
-                header()
-                tabs.scope.content?.invoke()
-                tabs.bar.content?.invoke()
-            }
-        }
-        Column(
             Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { page.viewport = it.boundsInRoot() }.verticalScroll(scroll),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            // The search box and tabs scroll away with the page: only the title row above stays.
+            Column(
+                Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SettingsSearchField(query, { query = it })
+                if (q.isEmpty()) {
+                    header()
+                    tabs.scope.content?.invoke()
+                    tabs.bar.content?.invoke()
+                }
+            }
             Column(Modifier.widthIn(max = 720.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 CompositionLocalProvider(
                     LocalSettingsQuery provides q,
