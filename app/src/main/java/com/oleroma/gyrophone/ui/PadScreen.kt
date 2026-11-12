@@ -3286,7 +3286,7 @@ fun PadScreen(
                 val ids = chips.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
                 val setIds = chips.filter { it.setValue != null }.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
                 buildList {
-                    if ("" in ids) add(ValueMark("", 0f, 0f, w, h, round = false, set = "" in setIds))
+                    if ("" in ids) add(ValueMark("", 0f, 0f, w, h, round = false, set = "" in setIds, framed = false))
                     for (c in ws.touchControls) {
                         if (c.id !in ids) continue
                         val cx = c.placeX(portrait) * w

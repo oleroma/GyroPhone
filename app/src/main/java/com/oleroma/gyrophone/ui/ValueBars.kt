@@ -52,6 +52,8 @@ class ValueMark(
     val bottom: Float,
     val round: Boolean,
     val set: Boolean,
+    /** It has a button frame (the touchpad has none): the bars stay inside it. */
+    val framed: Boolean = true,
 )
 
 /**
@@ -118,9 +120,16 @@ fun ValueBarsOverlay(
             if (mk.set) tuneIcon(Offset(mk.left + 6.dp.toPx(), mk.top + 6.dp.toPx()), color)
             if (!bars) continue
             // The bars, clipped by the button's edge.
+            // Inside the button's frame (its 2 dp border; a square's corners rounded by 12 % as the button's).
+            val inset = if (mk.framed) FRAME_DP.dp.toPx() else 0f
+            val inner = androidx.compose.ui.geometry.Rect(mk.left + inset, mk.top + inset, mk.right - inset, mk.bottom - inset)
             val clip = Path().apply {
-                if (mk.round) addOval(androidx.compose.ui.geometry.Rect(mk.left, mk.top, mk.right, mk.bottom))
-                else addRect(androidx.compose.ui.geometry.Rect(mk.left, mk.top, mk.right, mk.bottom))
+                if (mk.round) addOval(inner)
+                else if (!mk.framed) addRect(inner)
+                else {
+                    val r = (minOf(w, h) * 0.12f - inset).coerceAtLeast(0f)
+                    addRoundRect(androidx.compose.ui.geometry.RoundRect(inner, CornerRadius(r)))
+                }
             }
             clipPath(clip) {
                 for (j in chips.indices) {
@@ -144,6 +153,9 @@ fun ValueBarsOverlay(
         }
     }
 }
+
+/** A button's frame (border) width in dp, as the pad draws it. */
+private const val FRAME_DP = 2f
 
 /** At most this many value chips show at once. */
 private const val MAX_SHOWN = 32
