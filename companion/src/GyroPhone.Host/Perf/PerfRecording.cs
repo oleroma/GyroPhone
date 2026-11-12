@@ -42,7 +42,11 @@ public static class PcBusy
     }
 }
 
-/// <summary>A finished test record: one row of the Performance page's results.</summary>
+/// <summary>
+/// A finished test record: one row of the Performance page's results. <see cref="Text"/> is its
+/// second-by-second text, shown in results.html; <see cref="File"/> is that page (older versions wrote a text
+/// file per record instead).
+/// </summary>
 public sealed record PerfRun(
     string Name,
     string Link,
@@ -70,7 +74,8 @@ public sealed record PerfRun(
     int Bursts = 0,
     bool Frames = true,
     int BusySeconds = 0,
-    string BusyTop = "")
+    string BusyTop = "",
+    string? Text = null)
 {
     /// <summary>Jumps per minute of the game in front.</summary>
     public double JumpsPerMin => GameSeconds > 0 ? Jumps * 60 / GameSeconds : 0;

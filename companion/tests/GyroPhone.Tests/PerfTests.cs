@@ -182,10 +182,39 @@ public class PerfTests
         Assert.True(run.Frames);
         Assert.Equal("Discovery", run.Game);
         Assert.Equal(100, run.AvgFps, 1);
+        // One results page for every record, with this record's second-by-second text.
+        Assert.Equal(Path.Combine(dir, PerfReport.FileName), run.File);
         Assert.True(File.Exists(run.File));
+        Assert.Contains("Router", File.ReadAllText(run.File!));
+        Assert.Contains("Per second", run.Text);
+        Assert.Contains("Per second", File.ReadAllText(run.File!));
         // Kept for next time.
         var again = new PerfMonitor(new FakeSource(), null, new FakeForeground(), clock, dir, _ => { });
         Assert.Equal("Router", Assert.Single(again.Runs).Name);
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public void OnlyTheNewestRecordsAreKept()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "gp-perf-" + Guid.NewGuid().ToString("N"));
+        var clock = new FakeClock();
+        var m = new PerfMonitor(new FakeSource(), null, new FakeForeground(), clock, dir, _ => { });
+        for (int i = 0; i < PerfMonitor.MaxRuns + 3; i++)
+        {
+            m.StartRecording($"Run {i}", "Router", 0);
+            clock.NowUs += 2_000_000;
+            m.StopRecording();
+        }
+        Assert.Equal(PerfMonitor.MaxRuns, m.Runs.Count);
+        Assert.Equal($"Run {PerfMonitor.MaxRuns + 2}", m.Runs[0].Name);
+        Assert.Equal(PerfMonitor.MaxRuns, File.ReadAllLines(Path.Combine(dir, "runs.jsonl")).Length);
+        var again = new PerfMonitor(new FakeSource(), null, new FakeForeground(), clock, dir, _ => { });
+        Assert.Equal(PerfMonitor.MaxRuns, again.Runs.Count);
+        Assert.Equal($"Run {PerfMonitor.MaxRuns + 2}", again.Runs[0].Name);
+        string page = File.ReadAllText(Path.Combine(dir, PerfReport.FileName));
+        Assert.Contains($"Run {PerfMonitor.MaxRuns + 2}", page);
+        Assert.DoesNotContain(">Run 0<", page);
         Directory.Delete(dir, true);
     }
 

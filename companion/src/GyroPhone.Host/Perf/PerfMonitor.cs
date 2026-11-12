@@ -42,8 +42,8 @@ public sealed record RecordingView(string Name, double Elapsed, int Seconds, dou
 /// <summary>
 /// The Performance page's monitor (docs/spec/pc-companion.md, "Performance"): watches the game's frames only
 /// while an FPS overlay is on (<see cref="Watch"/>), keeps link test records (the phone link's seconds, the
-/// path the packets took, the PC's load, and the frames when watched; perf/runs.jsonl plus one per-second
-/// text file per record).
+/// path the packets took, the PC's load, and the frames when watched): the newest <see cref="MaxRuns"/> in
+/// perf/runs.jsonl, shown together in perf/results.html (<see cref="PerfReport"/>).
 /// </summary>
 public sealed class PerfMonitor : IDisposable
 {
@@ -239,34 +239,52 @@ public sealed class PerfMonitor : IDisposable
         }
         long end = _clock.NowUs;
         var (run, text) = r.Finish(end, Link.Between(r.StartUs, end + 1_100_000));
-        string? file = null;
+        run = run with { Text = text, File = ReportPath };
+        List<PerfRun> kept;
+        lock (_lock)
+        {
+            _runs.Insert(0, run);
+            if (_runs.Count > MaxRuns) _runs.RemoveRange(MaxRuns, _runs.Count - MaxRuns);
+            kept = [.. _runs];
+        }
         try
         {
+            // Only the kept records stay in the file, oldest first, so it never grows past MaxRuns.
             Directory.CreateDirectory(Folder);
-            file = Path.Combine(Folder, $"{r.Start:yyyyMMdd-HHmmss} {Safe(run.Name)}.txt");
-            File.WriteAllText(file, text);
-            run = run with { File = file };
-            File.AppendAllText(Path.Combine(Folder, "runs.jsonl"), JsonSerializer.Serialize(run, Json) + Environment.NewLine);
+            var sb = new System.Text.StringBuilder();
+            for (int i = kept.Count - 1; i >= 0; i--) sb.Append(JsonSerializer.Serialize(kept[i], Json)).Append('\n');
+            string jsonl = Path.Combine(Folder, "runs.jsonl"), tmp = jsonl + ".new";
+            File.WriteAllText(tmp, sb.ToString());
+            File.Move(tmp, jsonl, overwrite: true);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             _log($"performance test not saved: {e.GetType().Name}: {e.Message}");
         }
-        lock (_lock)
-        {
-            _runs.Insert(0, run);
-            if (_runs.Count > MaxRuns) _runs.RemoveAt(_runs.Count - 1);
-        }
+        WriteReport(kept);
         _log($"performance test '{run.Name}' ended: {run.AvgFps:0.0} fps, 1% low {run.Low1Fps:0.0}, jumps {run.Jumps}, lost {run.Lost}, late {run.Late}");
         try { Ended?.Invoke(run); }
         catch (Exception e) { _log($"performance test end notice failed: {e.GetType().Name}: {e.Message}"); }
     }
 
-    private static string Safe(string name)
+    /// <summary>results.html, the page of every kept record.</summary>
+    public string ReportPath => Path.Combine(Folder, PerfReport.FileName);
+
+    /// <summary>Writes results.html afresh from the kept records; returns its path, or null when it couldn't.</summary>
+    public string? WriteReport() => WriteReport(Runs);
+
+    private string? WriteReport(IReadOnlyList<PerfRun> runs)
     {
-        var bad = Path.GetInvalidFileNameChars();
-        var s = new string([.. name.Select(ch => bad.Contains(ch) ? '_' : ch)]);
-        return s.Length > 40 ? s[..40] : s;
+        try
+        {
+            return PerfReport.Write(Folder, runs);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Open somewhere that locks it: written again next time.
+            _log($"performance results page not written: {e.GetType().Name}: {e.Message}");
+            return null;
+        }
     }
 
     private void LoadRuns()

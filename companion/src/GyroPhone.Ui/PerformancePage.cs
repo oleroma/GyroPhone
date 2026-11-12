@@ -147,10 +147,12 @@ internal sealed class PerformancePage : Page
         // Results
         var (res, sb) = Parts.Card("Results");
         sb.Children.Add(_results);
+        var openRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+        openRow.Children.Add(Parts.Button("Open results", app.OpenPerfResults));
         var open = Parts.Button("Open folder", app.OpenPerfFolder, glyph: "");
-        open.Margin = new Thickness(0, 10, 0, 0);
-        open.HorizontalAlignment = HorizontalAlignment.Left;
-        sb.Children.Add(open);
+        open.Margin = new Thickness(8, 0, 0, 0);
+        openRow.Children.Add(open);
+        sb.Children.Add(openRow);
         _root.Children.Add(res);
 
         // Latency test (video)
@@ -341,7 +343,7 @@ internal sealed class PerformancePage : Page
         string[] heads = ["Name", "When", "Path", "Lost", "Late", "Pauses", "Let go", "Bursts", "Latency", "Jitter", "Avg fps", "1% low", "Jumps/min", "Worst frame", "CPU", "Driver"];
         string[] tips =
         [
-            "Click a name to open its second-by-second file, with each burst of link trouble and its time.", "",
+            "Click a name to open the results page in your browser: every test, each with its bursts of link trouble and second-by-second table.", "",
             "The way the phone's packets went, detected (→ when it changed during the test).",
             "Phone packets lost.", "Phone packets held up on the way (more than 15 ms late), and the worst delay.",
             "Times the phone sent nothing for a while during input.", "Times held keys and buttons were let go because the phone went silent.",
@@ -376,13 +378,10 @@ internal sealed class PerformancePage : Page
             g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             int row = i + 1;
             var name = Parts.Text(r.Name);
-            name.ToolTip = (r.Path.Length > 0 ? r.Path : r.Link) + (r.File != null ? "\nClick to open the second-by-second file." : "");
-            if (r.File is { } file)
-            {
-                name.Cursor = System.Windows.Input.Cursors.Hand;
-                name.TextDecorations = TextDecorations.Underline;
-                name.MouseLeftButtonUp += (_, _) => _app.OpenFile(file);
-            }
+            name.ToolTip = (r.Path.Length > 0 ? r.Path : r.Link) + "\nClick to open the results page.";
+            name.Cursor = System.Windows.Input.Cursors.Hand;
+            name.TextDecorations = TextDecorations.Underline;
+            name.MouseLeftButtonUp += (_, _) => _app.OpenPerfResults();
             bool fr = r.Frames && r.GameSeconds > 0;
             Cell(g, name, row, 0);
             Cell(g, Parts.Text(r.Start.ToString("d MMM HH:mm"), "Sub"), row, 1);

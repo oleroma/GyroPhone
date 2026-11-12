@@ -1310,6 +1310,11 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         }
     }
 
+    public void OpenPerfResults()
+    {
+        if (_perf.WriteReport() is { } page) OpenFile(page);
+    }
+
     public void OpenFile(string path)
     {
         try
