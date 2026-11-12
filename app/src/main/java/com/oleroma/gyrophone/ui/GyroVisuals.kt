@@ -884,6 +884,7 @@ private class VisState {
                     aim = feed?.aiming == true,
                     fireBrushDeg = d.laserFireBrush.coerceIn(1, 20) * BRUSH_WIDTH,
                     aimBrushDeg = d.laserAimBrush.coerceIn(1, 20) * BRUSH_WIDTH,
+                    clearSnakeOnPress = d.laserSnakeClearOnRatchet,
                 )
             }
         }

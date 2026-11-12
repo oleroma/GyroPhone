@@ -14,6 +14,12 @@ namespace GyroPhone.Host;
 /// changed, just the pixels that read the map's changed tiles (<see cref="LaserPaint.TileVersion"/>) are drawn
 /// again; anything else draws the whole half again. The picture is the same as drawing every pixel each time.
 /// </para>
+/// <para>
+/// While the sphere turns, where each pixel reads the map changes every frame: the half is drawn straight from the
+/// spots then, without keeping the reads, and the pixels are taken in blocks of <see cref="Block"/> × <see cref="Block"/>:
+/// a block too far from every painted tile (<see cref="LaserPaint.Clearance"/>) reads only empty texels, so it stays
+/// clear without being read. Once the sphere stops, the reads are kept again for the next paint.
+/// </para>
 /// </summary>
 public sealed class PaintPicture
 {
@@ -35,10 +41,15 @@ public sealed class PaintPicture
     // How many pixels are worth spreading over the cores (fewer go faster on this thread).
     private const int ParallelMin = 8192;
 
+    /// <summary>The blocks (pixels across) a turning sphere's half is checked for paint in.</summary>
+    private const int Block = 8;
+
     /// <summary>A pixel showing the sphere, as long as the view and light stay: what the map's paint is shown with there.</summary>
     private struct Spot
     {
         public int Pixel;
+        // Its block (Block × Block pixels, row by row).
+        public int Block;
         public float Px, Py, Pz;
         // The facing shade times the scene's light, the highlight, how far behind (Fire/Aim behind colours), the scene colour.
         public float Kk, Spec, Kb;
@@ -65,6 +76,11 @@ public sealed class PaintPicture
 
     private Spot[] _spots = [];
     private int _spotCount;
+    // Each block's spot nearest its middle (−1: none), how far (radians) its other spots are from that one, and
+    // whether it reads only empty texels this drawing.
+    private int[] _blockMid = [];
+    private float[] _blockRadius = [];
+    private bool[] _blockClear = [];
     private SpotKey? _spotKey;
     private Read[] _reads = [];
     private ReadKey? _readKey;
@@ -88,7 +104,6 @@ public sealed class PaintPicture
             moves[0], moves[1], moves[2], moves[3], moves[4], moves[5]);
         if (_spotKey != spotKey) BuildSpots(spotKey, moves);
         var readKey = new ReadKey(spotKey, lp.Width, lp.Height, cx, cy, cz);
-        if (_readKey != readKey) BuildReads(readKey);
         var look = new Look(lp, s, moves);
         var paintKey = new PaintKey(readKey, lp, lp.Way != null, s.LaserColourByWay, s.LaserGlow, s.LaserFireGlow, s.LaserAimGlow, s.LaserOutline,
             s.Color("fire"), s.Color("fire_behind"), s.Color("aim"), s.Color("aim_behind"), s.Color("outline"));
@@ -99,11 +114,15 @@ public sealed class PaintPicture
             if (Pixels.Length != size * size) Pixels = new int[size * size];
             else Array.Clear(Pixels);
             Size = size;
-            DrawSpots(look, 0, _spotCount, null);
+            // Reads kept for this view: from them; else (a new view, most likely the sphere turning) straight.
+            if (_readKey == readKey) DrawSpots(look, 0, _spotCount, null);
+            else DrawTurning(look, readKey, lp);
             _paintKey = paintKey;
         }
         else if (version != _drawnVersion)
         {
+            // The same view as the last drawing, new paint: the view has settled, so its reads are kept from now on.
+            if (_readKey != readKey) BuildReads(readKey);
             if (!DrawChanged(look, lp)) { _drawnVersion = version; return false; }
         }
         else return false;
@@ -196,7 +215,7 @@ public sealed class PaintPicture
                 float spec = shine * MathF.Pow(Math.Max(nx * hv.X + ny * hv.Y + nz * hv.Z, 0f), 24f);
                 spots[n++] = new Spot
                 {
-                    Pixel = iy * size + ix, Px = px, Py = py, Pz = pz,
+                    Pixel = iy * size + ix, Block = iy / Block * ((size + Block - 1) / Block) + ix / Block, Px = px, Py = py, Pz = pz,
                     Kk = kk, Spec = spec, Kb = LaserTrace.Behind(gz), Dir = mix.Of((gx, gy, gz)),
                 };
             }
@@ -213,6 +232,37 @@ public sealed class PaintPicture
         _spotCount = count;
         _spotKey = key;
         _readKey = null;
+        BuildBlocks(size);
+    }
+
+    /// <summary>Each block's middle spot and how far its spots reach from it (the same however the sphere turns).</summary>
+    private void BuildBlocks(int size)
+    {
+        int across = (size + Block - 1) / Block, blocks = across * across;
+        var mid = new int[blocks];
+        var near = new float[blocks];
+        Array.Fill(mid, -1);
+        Array.Fill(near, float.MaxValue);
+        var spots = _spots;
+        for (int i = 0; i < _spotCount; i++)
+        {
+            int b = spots[i].Block, pixel = spots[i].Pixel;
+            // From the block's middle (pixels).
+            float dx = pixel % size + 0.5f - (b % across * Block + Block / 2f), dy = pixel / size + 0.5f - (b / across * Block + Block / 2f);
+            float d = dx * dx + dy * dy;
+            if (d < near[b]) { near[b] = d; mid[b] = i; }
+        }
+        var radius = new float[blocks];
+        for (int i = 0; i < _spotCount; i++)
+        {
+            ref var p = ref spots[i];
+            ref var m = ref spots[mid[p.Block]];
+            float a = MathF.Acos(Math.Clamp(p.Px * m.Px + p.Py * m.Py + p.Pz * m.Pz, -1f, 1f));
+            if (a > radius[p.Block]) radius[p.Block] = a;
+        }
+        _blockMid = mid;
+        _blockRadius = radius;
+        _blockClear = new bool[blocks];
     }
 
     private void BuildReads(ReadKey key)
@@ -222,31 +272,73 @@ public sealed class PaintPicture
         if (_reads.Length != count) _reads = new Read[count];
         var spots = _spots;
         var reads = _reads;
-        void One(int i)
-        {
-            ref var p = ref spots[i];
-            // The point in the shown frame, and where it is in the map.
-            float vx = cx.Item1 * p.Px + cx.Item2 * p.Py + cx.Item3 * p.Pz;
-            float vy = cy.Item1 * p.Px + cy.Item2 * p.Py + cy.Item3 * p.Pz;
-            float vz = cz.Item1 * p.Px + cz.Item2 * p.Py + cz.Item3 * p.Pz;
-            float lon = MathF.Atan2(vx, -vz), lat = MathF.Asin(Math.Clamp(vy, -1f, 1f));
-            float u = (lon / (2f * MathF.PI) + 0.5f) * w - 0.5f, v = (0.5f - lat / MathF.PI) * h - 0.5f;
-            int i0 = (int)MathF.Floor(u), j0 = (int)MathF.Floor(v);
-            float fx = u - i0, fy = v - j0;
-            int ia = ((i0 % w) + w) % w, ib = (ia + 1) % w;
-            int ja = Math.Clamp(j0, 0, h - 1), jb = Math.Clamp(j0 + 1, 0, h - 1);
-            reads[i] = new Read
-            {
-                K00 = ja * w + ia, K10 = ja * w + ib, K01 = jb * w + ia, K11 = jb * w + ib,
-                W00 = (1 - fx) * (1 - fy), W10 = fx * (1 - fy), W01 = (1 - fx) * fy, W11 = fx * fy,
-            };
-        }
-        if (count >= ParallelMin) Parallel.For(0, (count + 4095) / 4096, c => { for (int i = c * 4096, end = Math.Min(count, i + 4096); i < end; i++) One(i); });
-        else for (int i = 0; i < count; i++) One(i);
+        if (count >= ParallelMin) Parallel.For(0, (count + 4095) / 4096, c => { for (int i = c * 4096, end = Math.Min(count, i + 4096); i < end; i++) reads[i] = ReadAt(spots[i], cx, cy, cz, w, h); });
+        else for (int i = 0; i < count; i++) reads[i] = ReadAt(spots[i], cx, cy, cz, w, h);
         _readKey = key;
         _tileStart = null;
         _tileSpots = null;
-        _paintKey = null;
+    }
+
+    /// <summary>Where spot <paramref name="p"/> reads a <paramref name="w"/> × <paramref name="h"/> map seen as <paramref name="cx"/>, <paramref name="cy"/>, <paramref name="cz"/>.</summary>
+    private static Read ReadAt(in Spot p, (float, float, float) cx, (float, float, float) cy, (float, float, float) cz, int w, int h)
+    {
+        // The point in the shown frame, and where it is in the map.
+        float vx = cx.Item1 * p.Px + cx.Item2 * p.Py + cx.Item3 * p.Pz;
+        float vy = cy.Item1 * p.Px + cy.Item2 * p.Py + cy.Item3 * p.Pz;
+        float vz = cz.Item1 * p.Px + cz.Item2 * p.Py + cz.Item3 * p.Pz;
+        float lon = MathF.Atan2(vx, -vz), lat = MathF.Asin(Math.Clamp(vy, -1f, 1f));
+        float u = (lon / (2f * MathF.PI) + 0.5f) * w - 0.5f, v = (0.5f - lat / MathF.PI) * h - 0.5f;
+        int i0 = (int)MathF.Floor(u), j0 = (int)MathF.Floor(v);
+        float fx = u - i0, fy = v - j0;
+        int ia = ((i0 % w) + w) % w, ib = (ia + 1) % w;
+        int ja = Math.Clamp(j0, 0, h - 1), jb = Math.Clamp(j0 + 1, 0, h - 1);
+        return new Read
+        {
+            K00 = ja * w + ia, K10 = ja * w + ib, K01 = jb * w + ia, K11 = jb * w + ib,
+            W00 = (1 - fx) * (1 - fy), W10 = fx * (1 - fy), W01 = (1 - fx) * fy, W11 = fx * fy,
+        };
+    }
+
+    /// <summary>
+    /// Draws the whole half (its pixels cleared) for a view whose reads aren't kept (the sphere turning): each pixel
+    /// works out where it reads the map as it is drawn, and blocks far from every painted tile are left clear.
+    /// </summary>
+    private void DrawTurning(in Look look, ReadKey key, LaserPaint lp)
+    {
+        int w = key.MapWidth, h = key.MapHeight, count = _spotCount;
+        var (cx, cy, cz) = (key.ColX, key.ColY, key.ColZ);
+        var spots = _spots;
+        var mid = _blockMid;
+        var radius = _blockRadius;
+        var clear = _blockClear;
+        var clearance = lp.Clearance;
+        float reach = 2f * lp.ReadReach;
+        for (int b = 0; b < mid.Length; b++)
+        {
+            if (mid[b] < 0) continue;
+            ref var m = ref spots[mid[b]];
+            float vx = cx.Item1 * m.Px + cx.Item2 * m.Py + cx.Item3 * m.Pz;
+            float vy = cy.Item1 * m.Px + cy.Item2 * m.Py + cy.Item3 * m.Pz;
+            float vz = cz.Item1 * m.Px + cz.Item2 * m.Py + cz.Item3 * m.Pz;
+            float l = MathF.Sqrt(vx * vx + vy * vy + vz * vz);
+            int t = lp.TileAt(vx / l, vy / l, vz / l);
+            // Every texel a pixel here reads is within this of the tile's middle; nothing painted is.
+            clear[b] = clearance[t] > radius[b] + reach + lp.TileRadius(t);
+        }
+        var buf = Pixels;
+        var shade = look;
+        void Run(int from, int to)
+        {
+            for (int i = from; i < to; i++)
+            {
+                ref var p = ref spots[i];
+                if (clear[p.Block]) continue;
+                buf[p.Pixel] = shade.Shade(p, ReadAt(p, cx, cy, cz, w, h));
+            }
+        }
+        const int chunk = 2048;
+        if (count >= ParallelMin) Parallel.For(0, (count + chunk - 1) / chunk, c => Run(c * chunk, Math.Min(count, (c + 1) * chunk)));
+        else Run(0, count);
     }
 
     /// <summary>Draws again the pixels that read the map's tiles changed since the last drawing. Returns whether there were any.</summary>

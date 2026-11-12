@@ -234,8 +234,10 @@ data class GyroDisplay(
     val laserSnakeGlow: Float = 0f,
     /** LASER Draw mode: the paint map's detail, 0 low (512 texels round), 1 normal (1024), 2 high (2048). */
     val laserPaintDetail: Int = 1,
-    /** LASER Draw mode: a ratchet press clears the drawing. */
+    /** LASER Draw mode: a ratchet press clears the paint. */
     val laserClearOnRatchet: Boolean = false,
+    /** LASER Snake: a ratchet press clears the Snake. */
+    val laserSnakeClearOnRatchet: Boolean = false,
     /**
      * LASER Fire display: while GyroPhone sends this output ([com.oleroma.gyrophone.core.engine.LaserFire],
      * default the left mouse button; 0 none) the rifle flashes and Draw paints in the Fire colours,

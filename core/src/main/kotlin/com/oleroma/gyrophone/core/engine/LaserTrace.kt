@@ -144,7 +144,7 @@ class LaserTrace {
     /**
      * The beam now points at ([x], [y], [z]) (any length) at [nowMs]. While a ratchet is [held] it
      * doesn't paint (the pose eases back then, which isn't aiming); with [clearOnPress] pressing
-     * one clears the strokes. With [draw] it paints; turning Draw off clears the strokes. While
+     * one clears the paint, with [clearSnakeOnPress] the Snake. With [draw] it paints; turning Draw off clears the strokes. While
      * [fire] (the display's Fire display output is sent) it paints in the Fire colours, [fireBrushDeg] wide; else
      * while [aim] (its Aim display output) in the Aim colours, [aimBrushDeg] wide; with [fireOnly] only then.
      * [moving] follows the beam, evened out over [SMOOTH_MS] with [smooth]. With [lineSmoothing]
@@ -158,12 +158,16 @@ class LaserTrace {
         fire: Boolean = false, fireOnly: Boolean = false, smooth: Boolean = true, lineSmoothing: Float = 0f,
         brushDeg: Float = 0f, snakeDeg: Float = 0f, wayColors: LongArray? = null, mapWidth: Int = LaserPaint.WIDTH, soft: Float = 0.5f,
         aim: Boolean = false, fireBrushDeg: Float = brushDeg, aimBrushDeg: Float = brushDeg,
+        clearSnakeOnPress: Boolean = false,
     ) {
-        val pressed = clearOnPress && held && !wasHeld
+        val pressed = held && !wasHeld
         wasHeld = held
         val snake = snakeDeg > 0f
         if (!draw && paintUsed) clearPaint() // Draw off wipes the paint (a snake goes on)
-        if ((!(draw || snake) || pressed) && (strokes.count > 0 || paintUsed)) clear()
+        if (!(draw || snake) && (strokes.count > 0 || paintUsed)) clear()
+        // A ratchet press: the paint and the Snake each as set (without Snake the strokes aren't shown: they go with the paint).
+        if (pressed && clearOnPress && (paintUsed || !snake && strokes.count > 0)) { clearPaint(); if (!snake) clearStrokes() }
+        if (pressed && clearSnakeOnPress && snake && strokes.count > 0) clearStrokes()
         val l = sqrt(x * x + y * y + z * z)
         if (l > 1e-6f && !l.isNaN()) follow(x / l, y / l, z / l, nowMs, smooth)
         if (!(draw || snake) || l < 1e-6f || held || l.isNaN() || (fireOnly && !fire && !aim)) {
@@ -219,6 +223,13 @@ class LaserTrace {
 
     // Something is painted on the map (since the last clear).
     private var paintUsed = false
+
+    /** Clears the strokes (the Snake; the paint stays). */
+    private fun clearStrokes() {
+        strokes.clear()
+        strokeGap = true
+        version++
+    }
 
     private fun clearPaint() {
         paint?.clear()

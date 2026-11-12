@@ -61,6 +61,113 @@ public sealed class LaserPaint
     /// <summary>The tile holding texel <paramref name="texel"/> (row × <see cref="Width"/> + column).</summary>
     public int TileOf(int texel) => (texel / Width >> TileShift) * _tilesX + (texel % Width >> TileShift);
 
+    // Which tiles a stamp has reached since the last clear (marked before their texels change), and for each tile how
+    // far (radians) its middle is from the nearest such tile's edge (made when first needed, then kept up to date).
+    private readonly bool[] _touched;
+    private float[]? _clearance;
+    // Each tile's middle (a unit direction) and how far its texels reach from it (radians).
+    private (float X, float Y, float Z)[]? _tileMid;
+    private float[]? _tileRadius;
+
+    /// <summary>
+    /// How far apart (radians) a point and the middles of the four texels a smooth read at it takes can be: one texel
+    /// across each way.
+    /// </summary>
+    public float ReadReach => MathF.Sqrt(MathF.Pow(2f * MathF.PI / Width, 2f) + MathF.Pow(MathF.PI / Height, 2f));
+
+    /// <summary>How far (radians) tile <paramref name="tile"/>'s texels reach from its middle.</summary>
+    public float TileRadius(int tile) { EnsureTileShapes(); return _tileRadius![tile]; }
+
+    /// <summary>
+    /// For each tile, how far (radians) its middle is at least from every texel of every tile painted since the last clear
+    /// (+∞ when none is): a part of the sphere further than that from the paint reads nothing but empty texels. It only
+    /// goes down as paint lands (a stamp lowers it before it changes its texels); a clear sets it back.
+    /// </summary>
+    public float[] Clearance
+    {
+        get
+        {
+            if (_clearance != null) return _clearance;
+            EnsureTileShapes();
+            var c = new float[_tileVersion.Length];
+            Array.Fill(c, float.PositiveInfinity);
+            lock (_clearanceLock)
+            {
+                for (int t = 0; t < c.Length; t++) if (Volatile.Read(ref _touched[t])) Lower(c, t);
+                Volatile.Write(ref _clearance, c);
+                // A tile painted (on the input thread) while it was being made: taken in now.
+                for (int t = 0; t < c.Length; t++) if (Volatile.Read(ref _touched[t])) Lower(c, t);
+            }
+            return c;
+        }
+    }
+
+    /// <summary>The tile holding the direction (x, y, z) (unit), as <see cref="TexelOf"/> finds its texel.</summary>
+    public int TileAt(float x, float y, float z)
+    {
+        float lat = MathF.Asin(Math.Clamp(y, -1f, 1f)), lon = MathF.Atan2(x, -z);
+        int i = Math.Clamp((int)MathF.Floor((lon + MathF.PI) / (2f * MathF.PI) * Width), 0, Width - 1);
+        int j = Math.Clamp((int)MathF.Floor((MathF.PI / 2f - lat) / MathF.PI * Height), 0, Height - 1);
+        return (j >> TileShift) * _tilesX + (i >> TileShift);
+    }
+
+    private void EnsureTileShapes()
+    {
+        if (_tileRadius != null) return;
+        int tilesY = _tileVersion.Length / _tilesX, side = 1 << TileShift;
+        var mid = new (float X, float Y, float Z)[_tileVersion.Length];
+        var radius = new float[_tileVersion.Length];
+        (float X, float Y, float Z) At(int i, int j) => ((float)(Math.Cos(LatOf(j)) * Math.Sin(LonOf(i))), (float)Math.Sin(LatOf(j)), (float)(-Math.Cos(LatOf(j)) * Math.Cos(LonOf(i))));
+        for (int ty = 0; ty < tilesY; ty++)
+        {
+            int j0 = ty * side, j1 = Math.Min(Height, j0 + side) - 1;
+            for (int tx = 0; tx < _tilesX; tx++)
+            {
+                int i0 = tx * side, i1 = Math.Min(Width, i0 + side) - 1;
+                // The middle: of the tile's latitudes and longitudes (texel middles).
+                double lat = (LatOf(j0) + LatOf(j1)) / 2, lon = (LonOf(i0) + LonOf(i1)) / 2;
+                var m = ((float)(Math.Cos(lat) * Math.Sin(lon)), (float)Math.Sin(lat), (float)(-Math.Cos(lat) * Math.Cos(lon)));
+                // The furthest texel middle lies on the tile's edge.
+                float far = 0f;
+                void Edge(int i, int j)
+                {
+                    var p = At(i, j);
+                    far = MathF.Max(far, MathF.Acos(Math.Clamp(p.X * m.Item1 + p.Y * m.Item2 + p.Z * m.Item3, -1f, 1f)));
+                }
+                for (int i = i0; i <= i1; i++) { Edge(i, j0); Edge(i, j1); }
+                for (int j = j0; j <= j1; j++) { Edge(i0, j); Edge(i1, j); }
+                int t = ty * _tilesX + tx;
+                mid[t] = m;
+                // A little over, for rounding.
+                radius[t] = far + 1e-3f;
+            }
+        }
+        (_tileMid, _tileRadius) = (mid, radius);
+    }
+
+    /// <summary>Lowers <paramref name="c"/> for a newly painted tile <paramref name="t"/>.</summary>
+    private void Lower(float[] c, int t)
+    {
+        var mid = _tileMid!;
+        var (x, y, z) = mid[t];
+        float r = _tileRadius![t];
+        for (int k = 0; k < c.Length; k++)
+        {
+            float d = MathF.Acos(Math.Clamp(mid[k].X * x + mid[k].Y * y + mid[k].Z * z, -1f, 1f)) - r - 1e-3f;
+            if (d < c[k]) c[k] = d;
+        }
+    }
+
+    private void Touch(int tile)
+    {
+        if (_touched[tile]) return;
+        Volatile.Write(ref _touched[tile], true);
+        if (Volatile.Read(ref _clearance) is { } c) lock (_clearanceLock) Lower(c, tile);
+    }
+
+    // Lowering the clearance: from the input thread's stamps and the drawing's first making of it.
+    private readonly object _clearanceLock = new();
+
     private readonly int _n;
     private readonly byte[] _lineAmount, _lineGlow;
     private readonly short[] _lineTag, _lineAlong;
@@ -84,6 +191,7 @@ public sealed class LaserPaint
         _lineAlong = new short[_n];
         _tilesX = (width + (1 << TileShift) - 1) >> TileShift;
         _tileVersion = new long[_tilesX * ((height + (1 << TileShift) - 1) >> TileShift)];
+        _touched = new bool[_tileVersion.Length];
         _sinLat = new float[height];
         _cosLat = new float[height];
         for (int j = 0; j < height; j++)
@@ -117,6 +225,8 @@ public sealed class LaserPaint
         Array.Clear(_lineTag);
         _line = 0;
         Array.Fill(_tileVersion, Version + 1);
+        Array.Clear(_touched);
+        if (_clearance != null) lock (_clearanceLock) Array.Fill(_clearance, float.PositiveInfinity);
         Version++;
     }
 
@@ -287,10 +397,10 @@ public sealed class LaserPaint
         int first = ((i0 % Width) + Width) % Width;
         int last = first + Math.Max(count, 1) - 1;
         if (count >= Width) (first, last) = (0, Width - 1);
-        for (int i = first >> TileShift; i <= last >> TileShift; i++) _tileVersion[row + i % _tilesX] = next;
+        for (int i = first >> TileShift; i <= last >> TileShift; i++) { _tileVersion[row + i % _tilesX] = next; Touch(row + i % _tilesX); }
         // Past the map's right edge it goes on at its left.
         if (last >= Width && _tilesX * (1 << TileShift) != Width)
-            for (int i = 0; i <= (last - Width) >> TileShift; i++) _tileVersion[row + i] = next;
+            for (int i = 0; i <= (last - Width) >> TileShift; i++) { _tileVersion[row + i] = next; Touch(row + i); }
     }
 
     /// <summary>The texel holding unit direction (x, y, z).</summary>

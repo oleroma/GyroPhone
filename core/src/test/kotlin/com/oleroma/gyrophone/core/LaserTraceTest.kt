@@ -221,6 +221,25 @@ class LaserTraceTest {
         assertTrue(t.strokes.gap(0))
     }
 
+    @Test fun ratchetClearsPaintAndSnakeEachAsSet() {
+        fun painted(): LaserTrace {
+            val t = LaserTrace()
+            t.add(0f, 0f, -1f, 0, draw = true, held = false, brushDeg = 4f, snakeDeg = 90f)
+            t.add(0.2f, 0f, -1f, 5, draw = true, held = false, brushDeg = 4f, snakeDeg = 90f)
+            return t
+        }
+        // Paint only: the Snake stays.
+        val a = painted()
+        a.add(0.2f, 0f, -1f, 10, draw = true, held = true, clearOnPress = true, brushDeg = 4f, snakeDeg = 90f)
+        assertEquals(2, a.strokes.count)
+        // Snake only: its strokes go.
+        val b = painted()
+        val v = b.version
+        b.add(0.2f, 0f, -1f, 10, draw = true, held = true, brushDeg = 4f, snakeDeg = 90f, clearSnakeOnPress = true)
+        assertEquals(0, b.strokes.count)
+        assertTrue(b.version > v)
+    }
+
     @Test fun ringDropsTheOldestWhenFull() {
         val r = LaserTrace.Ring(3)
         for (i in 0 until 5) r.add(i.toFloat(), 0f, 0f, i.toLong(), false)
