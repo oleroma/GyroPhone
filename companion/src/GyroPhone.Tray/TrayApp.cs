@@ -403,7 +403,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         }
 
         // The phone's "Press a key" opened: say once per opening that this PC's keys and buttons count too.
-        if (s.Capturing && !_captureShown)
+        if (s.Capturing && !_captureShown && _engine.Settings.PressKeyNotice)
         {
             Balloon("Press a key or button",
                 "Your phone is listening. Press a key, mouse button or controller button on this PC to map it.",
@@ -493,7 +493,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _engine.Settings.MeasureButtons,
             _engine.PressLatencyNow(),
             _engine.Settings.InputLog,
-            _engine.Settings.CatchUpMs);
+            _engine.Settings.CatchUpMs,
+            _engine.Settings.PressKeyNotice,
+            _engine.Settings.PressKeyListen);
     }
 
     public void SetLatencyScreen(bool on) => _engine.SetLatencyScreen(on);
@@ -507,6 +509,18 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     public void ToggleInputLog()
     {
         _engine.SetInputLog(!_engine.Settings.InputLog);
+        Refresh();
+    }
+
+    public void TogglePressKeyListen()
+    {
+        _engine.SetPressKeyListen(!_engine.Settings.PressKeyListen);
+        Refresh();
+    }
+
+    public void TogglePressKeyNotice()
+    {
+        _engine.SetPressKeyNotice(!_engine.Settings.PressKeyNotice);
         Refresh();
     }
 

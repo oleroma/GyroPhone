@@ -213,4 +213,35 @@ public class PressCaptureEngineTests
         Assert.False(keys.Running);
         Assert.False(pad.Running);
     }
+
+    [Fact]
+    public void SwitchedOffThePcIsNeverRead()
+    {
+        using var h = new Harness();
+        var keys = new FakeKeyListener();
+        var pad = new FakePcPad();
+        h.Engine.SetKeyMouseListener(keys);
+        h.Engine.SetPcPad(pad);
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        Span<byte> on = stackalloc byte[Wire.CapturePlain];
+        WireCodec.EncodeCapture(CaptureFlags.On, on);
+
+        // Turned off while the phone listens: reading stops at once.
+        h.Send(phone, phone.Sealed(PacketType.Capture, on));
+        Assert.True(keys.Running);
+        h.Engine.SetPressKeyListen(false);
+        Assert.False(keys.Running);
+        Assert.False(pad.Running);
+
+        // Off: the phone's asking reads nothing.
+        h.Send(phone, phone.Sealed(PacketType.Capture, on));
+        Assert.False(keys.Running);
+        Assert.False(h.Engine.Snapshot().Capturing);
+
+        h.Engine.SetPressKeyListen(true);
+        h.Send(phone, phone.Sealed(PacketType.Capture, on));
+        Assert.True(keys.Running);
+        Assert.True(h.Engine.Snapshot().Capturing);
+    }
 }

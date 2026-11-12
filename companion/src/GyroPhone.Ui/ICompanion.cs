@@ -41,7 +41,9 @@ public sealed record CompanionView(
     bool MeasureButtons = false,
     ButtonLatency? Buttons = null,
     bool InputLog = true,
-    int CatchUpMs = 16);
+    int CatchUpMs = 16,
+    bool PressKeyNotice = true,
+    bool PressKeyListen = true);
 
 /// <summary>
 /// The tray app as the windows see it. Every setter saves the setting and refreshes the open windows,
@@ -89,6 +91,10 @@ public interface ICompanion
     void OpenLogFolder();
     void ShowDebugWindow();
     void ToggleInputLog();
+    /// <summary>"Use this PC's keys for Press a key".</summary>
+    void TogglePressKeyListen();
+    /// <summary>"Notify when the phone listens for a key".</summary>
+    void TogglePressKeyNotice();
     /// <summary>"Catch-up time", ms (0 = off).</summary>
     void SetCatchUpMs(int ms);
 

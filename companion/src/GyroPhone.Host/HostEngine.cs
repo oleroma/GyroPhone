@@ -319,6 +319,29 @@ public sealed class HostEngine
             if (on && _sessions.Active is { } a) Recorder?.SessionStarted(a.PhoneName, _clock.NowUs);
         }
     }
+    /// <summary>Saves <see cref="HostSettings.PressKeyListen"/>; turned off while the phone listens, the PC stops being read at once.</summary>
+    public void SetPressKeyListen(bool on)
+    {
+        using (Lock(ByUi))
+        {
+            if (on == _settings.PressKeyListen) return;
+            _settings.PressKeyListen = on;
+            _settingsDirty = true;
+            if (!on) StopCapture();
+        }
+    }
+
+    /// <summary>Saves <see cref="HostSettings.PressKeyNotice"/> (the tray reads it when "Press a key" opens).</summary>
+    public void SetPressKeyNotice(bool on)
+    {
+        using (Lock(ByUi))
+        {
+            if (on == _settings.PressKeyNotice) return;
+            _settings.PressKeyNotice = on;
+            _settingsDirty = true;
+        }
+    }
+
     private long _pendingRecvUs = -1;
 
     public void AttachSender(IDatagramSender sender)
@@ -578,7 +601,8 @@ public sealed class HostEngine
                 OnMotion(plain, nowUs);
                 break;
             case PacketType.Capture:
-                if (_capture.OnCapture(WireCodec.DecodeCapture(plain), nowUs)) CaptureChanged();
+                // "Read this PC's keys for Press a key" off: the PC is never read, and the phone hears nothing back.
+                if (_settings.PressKeyListen && _capture.OnCapture(WireCodec.DecodeCapture(plain), nowUs)) CaptureChanged();
                 break;
             case PacketType.PressTime:
                 if (MeasuringButtons)

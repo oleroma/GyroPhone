@@ -33,6 +33,10 @@ public sealed class HostSettings
     public bool MeasureButtons { get; set; }
     /// <summary>"Record input log" on the App page: the engine writes input.log (<see cref="InputRecorder"/>).</summary>
     public bool InputLog { get; set; } = true;
+    /// <summary>"Use this PC's keys for Press a key" on the App page: off, the PC's keyboard, mouse and controller are never read for it.</summary>
+    public bool PressKeyListen { get; set; } = true;
+    /// <summary>"Notify when the phone listens for a key" on the App page: a tray notification each time the phone's "Press a key" opens.</summary>
+    public bool PressKeyNotice { get; set; } = true;
     /// <summary>"Catch-up time" on the App page, ms: the longest a lost or late stretch of mouse motion is spread over (<see cref="CatchUpChoices"/>; 0 = off).</summary>
     public int CatchUpMs { get; set; } = (int)(MouseCatchUp.DefaultMaxUs / 1000);
     /// <summary>The "Catch-up time" choices, ms.</summary>
