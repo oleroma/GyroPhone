@@ -80,7 +80,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     private volatile bool _keyRetrying;
     /// <summary>The port was taken at start-up: gp-bind keeps trying; true once the first 5 s have passed.</summary>
     private volatile bool _bindRetrying, _bindWaitLong;
-    private bool _firewallHintShown, _publicHintShown;
+    private bool _firewallHintShown;
     // The phone's "Press a key" was open at the last refresh (its notification shows once per opening).
     private bool _captureShown;
     private bool _sessionLocked, _suspended;
@@ -413,15 +413,15 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         }
         _captureShown = s.Capturing;
 
-        if (s.NetworkPublic && !_publicHintShown)
-        {
-            _publicHintShown = true;
-            Balloon("Network is Public", "Windows blocks the phone on Public networks. Set this network to Private in Settings.", ToolTipIcon.Warning);
-        }
+        // A Public network is only a likely cause: the phone often gets through anyway (Windows' own
+        // first-run rule, the USB rule on wired adapters), so it is named only once no phone has been seen.
         if (!s.AnyDatagramSeen && serverOk && !_firewallHintShown && _clock.NowUs - _startUs >= FirewallHintAfterUs)
         {
             _firewallHintShown = true;
-            Balloon("Not seeing your phone?", "Open GyroPhone: Home shows what to fix. Check the phone is on the same Wi-Fi.", ToolTipIcon.Info);
+            if (s.NetworkPublic)
+                Balloon("Not seeing your phone?", "This network is Public, so Windows may block the phone. Set it to Private in Settings.", ToolTipIcon.Warning);
+            else
+                Balloon("Not seeing your phone?", "Open GyroPhone: Home shows what to fix. Check the phone is on the same Wi-Fi.", ToolTipIcon.Info);
         }
     }
 
@@ -437,8 +437,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             list.Add(new Problem(_keyRetrying
                 ? $"Pairing by QR code and key files is off for now: host.key is held by another program ({_keyError}). GyroPhone keeps trying."
                 : $"Pairing by QR code and key files is off: host.key could not be read ({_keyError}).", "Open log folder", OpenLogFolder));
-        if (s.NetworkPublic)
-            list.Add(new Problem("This network is Public, so Windows blocks the phone.", "Make it Private…", OpenNetworkSettings));
+        if (s.NetworkPublic && _firewallHintShown && !s.AnyDatagramSeen)
+            list.Add(new Problem("No phone seen yet, and this network is Public, so Windows may block it.", "Make it Private…", OpenNetworkSettings));
         if (_firewallOk == false)
             list.Add(new Problem("GyroPhone isn't allowed through the firewall yet, so Windows may block the phone.", "Allow…", AllowThroughFirewall));
         else if (_firewallHintShown && !s.AnyDatagramSeen && !s.NetworkPublic)
@@ -1244,7 +1244,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         b.AppendLine($"Output:       {OutputName(s.OutputMode)}, pad {(s.PadPlugged ? "plugged" : "not plugged")}");
         b.AppendLine($"Gamepad driver: {(s.DriverOk ? "ViGEmBus ok" : _padError ?? "missing")}");
         b.AppendLine($"Input:        {(s.Paused ? "paused" : "active")}");
-        b.AppendLine($"Network:      {(s.NetworkPublic ? "Public (set it to Private)" : "Private or Domain")}, firewall rule "
+        b.AppendLine($"Network:      {(!s.NetworkPublic ? "Private or Domain" : s.AnyDatagramSeen ? "Public (the phone gets through)" : "Public (set it to Private if the phone can't connect)")}, firewall rule "
             + (_firewallOk switch { true => "present", false => "missing", null => "checking" })
             + ", USB rule " + (_usbRuleOk switch { true => "present", false => "missing", null => "checking" }));
         b.AppendLine($"Server:       {(_server.State == ServerState.Running ? $"UDP {Wire.Port}" : _server.State.ToString())}, "

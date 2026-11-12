@@ -49,7 +49,7 @@ All engine state is under one lock, which gp-rx takes for every packet and Flush
 
 `GyroPhone.Ui/MainWindow.cs`, a sidebar of pages, refreshed twice a second. A page is built the first time it is shown, only the page on screen is refreshed, and Performance's Latency test reads its result files off the UI thread. A change made on a page (a slider step, a toggle) refreshes only that page at once; the tray and Home follow 250 ms after the changes stop, and an overlay draws the change at its next frame.
 
-- **Home**: a warning bar per problem with its fix (no ViGEmBus, firewall, Public network, input blocked by an elevated window…), then cards: phone, link (only the way its packets go, such as "Phone hotspot · PC Wi-Fi"), gamepad (output, pause); full status under Details. Link numbers and latency are on Performance.
+- **Home**: a warning bar per problem with its fix (no ViGEmBus, firewall, Public network while no phone is seen, input blocked by an elevated window…), then cards: phone, link (only the way its packets go, such as "Phone hotspot · PC Wi-Fi"), gamepad (output, pause); full status under Details. Link numbers and latency are on Performance.
 - **Phones**: Pair new phone, paired phones (each with Forget), this PC's key.
 - **Gamepad**: output Xbox 360 / DualShock 4 / Off, Pause, the ViGEmBus driver state and Retry.
 - **Overlays**: see [Overlays](pc-overlays.md).

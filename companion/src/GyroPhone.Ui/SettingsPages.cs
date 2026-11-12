@@ -228,9 +228,13 @@ internal sealed class ConnectionPage : Page
     public override void Refresh(CompanionView v)
     {
         var s = v.Status;
-        Set(_network, !s.NetworkPublic,
-            s.NetworkPublic ? "Public: Windows blocks the phone. Set this network to Private." : "Private or Domain: the phone can reach this PC.",
-            s.NetworkPublic);
+        // Public is only a problem when the phone doesn't get through.
+        bool publicBlocks = s.NetworkPublic && !s.AnyDatagramSeen;
+        Set(_network, !publicBlocks,
+            !s.NetworkPublic ? "Private or Domain: the phone can reach this PC."
+            : s.AnyDatagramSeen ? "Public, but the phone gets through."
+            : "Public: Windows may block the phone. Set this network to Private if it can't connect.",
+            publicBlocks);
         Set(_firewall, v.FirewallOk,
             v.FirewallOk switch { true => "GyroPhone is allowed through the firewall.", false => "No firewall rule: Windows may block the phone.", null => "Checking…" },
             v.FirewallOk == false);

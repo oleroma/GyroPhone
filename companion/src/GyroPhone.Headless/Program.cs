@@ -199,7 +199,7 @@ internal static class Program
             : "waiting for a phone");
         Console.WriteLine($"output {s.OutputMode} (driver {(s.DriverOk ? "ok" : "missing")}, pad {(s.PadPlugged ? "plugged" : "off")}), "
             + $"paired phones {s.PairedPhones.Count}, pairing window {(s.PairingWindowS > 0 ? $"{s.PairingWindowS} s" : "closed")}");
-        if (s.NetworkPublic) Console.WriteLine("this network is Public: set it to Private in Windows settings");
+        if (s.NetworkPublic && !s.AnyDatagramSeen) Console.WriteLine("this network is Public: if the phone cannot connect, set it to Private in Windows settings");
         var c = s.Counters;
         Console.WriteLine($"datagrams {c.Datagrams}, states {c.States}, injections {c.Injections}, dropped {c.Dropped}, bad auth {c.BadAuth}");
     }
