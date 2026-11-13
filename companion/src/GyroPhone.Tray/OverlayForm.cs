@@ -477,6 +477,36 @@ internal sealed class OverlayForm : Form
     /// (its UpdateLayeredWindow would race the move and resize there) and for one whose
     /// UpdateLayeredWindow refused the pacer's thread.
     /// </summary>
+    // Each window draws on a thread of its own ("overlay <id>"), woken by the pacer each refresh
+    // (Signal): windows draw side by side, so a heavy one (a pointer's paint) never holds the others
+    // back. A window still drawing when the next refresh comes simply skips it. Direct2D's
+    // multithreaded factory and GpuDevice.Enter keep the shared GPU device safe across them.
+    private Thread? _drawThread;
+    private readonly AutoResetEvent _drawWake = new(false);
+    private volatile bool _drawStop;
+
+    /// <summary>A screen refresh (pacer thread): wakes this window's drawing thread, which draws if anything changed.</summary>
+    public void Signal()
+    {
+        if (IsDisposed || _drawStop) return;
+        if (_drawThread == null)
+        {
+            _drawThread = new Thread(DrawLoop) { IsBackground = true, Name = $"overlay {_id}", Priority = ThreadPriority.Normal };
+            _drawThread.Start();
+        }
+        _drawWake.Set();
+    }
+
+    private void DrawLoop()
+    {
+        while (true)
+        {
+            _drawWake.WaitOne();
+            if (_drawStop || IsDisposed) return;
+            Tick();
+        }
+    }
+
     public void Tick()
     {
         if (IsDisposed) return;
@@ -1072,6 +1102,8 @@ internal sealed class OverlayForm : Form
     {
         if (disposing)
         {
+            _drawStop = true;
+            _drawWake.Set();
             lock (_renderLock)
             {
                 _hwnd = IntPtr.Zero;

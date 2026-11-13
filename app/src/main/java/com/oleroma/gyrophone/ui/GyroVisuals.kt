@@ -175,7 +175,7 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
                 val t1 = System.nanoTime()
                 val h = hint ?: com.oleroma.gyrophone.runtime.WorkHint.forThisThread(HINT_TARGET_NS).also { hint = it }
                 h?.done(t1 - t0, t1)
-                timing.frame(t1 - t0, t1)
+                timing.frame(t1 - t0, t1, runtime.drawTimingLogOn.value)
             }
             choreographer?.postFrameCallback(this)
         }
@@ -388,17 +388,18 @@ private class DrawTiming {
     private var longest = 0L
     private var slow = 0
 
-    fun frame(ns: Long, now: Long) {
+    /** Counts a frame of [ns]; once a second logs the line if [log] (Settings › Performance › Display timing log), else only starts over. */
+    fun frame(ns: Long, now: Long, log: Boolean) {
         if (since == 0L) since = now
         frames++
         sum += ns
         if (ns > longest) longest = ns
         if (ns > SLOW_NS) slow++
         if (now - since < 1_000_000_000L) return
-        android.util.Log.i(
+        val probe = DrawProbe.take(frames)
+        if (log) android.util.Log.i(
             "GPDraw",
-            "frames=$frames avg=${"%.2f".format(sum / frames / 1e6)}ms max=${"%.2f".format(longest / 1e6)}ms slow=$slow " +
-                DrawProbe.take(frames),
+            "frames=$frames avg=${"%.2f".format(sum / frames / 1e6)}ms max=${"%.2f".format(longest / 1e6)}ms slow=$slow " + probe,
         )
         since = now; frames = 0; sum = 0L; longest = 0L; slow = 0
     }

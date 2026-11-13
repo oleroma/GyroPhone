@@ -296,7 +296,7 @@ internal sealed class OverlaysPage : Page
         _fps = new Seg<int>(f => Change(o => o.MaxFps = f), false, ("Every screen refresh", 0), ("About 60 fps", 60), ("About 30 fps", 30));
         _fps.View.Margin = new Thickness(0, 6, 0, 2);
         db.Children.Add(_fps.View);
-        db.Children.Add(Parts.Text("Every screen refresh is smoothest but costs more. About 60 and 30 draw every 2nd, 3rd… refresh, whichever is nearest (72 fps on a 144 Hz screen, 55 on 165 Hz), so the motion stays even. Draw times are in the Debug window (App page).", "Hint"));
+        db.Children.Add(Parts.Text("Every screen refresh is smoothest but costs more. About 60 and 30 draw every 2nd, 3rd… refresh, whichever is nearest (72 fps on a 144 Hz screen, 55 on 165 Hz), so the motion stays even. Draw times are in companion.log with Overlay timing log on, and in the Debug window (Performance page, Debug).", "Hint"));
         _windowTab.Children.Add(draw);
 
         // Look tab

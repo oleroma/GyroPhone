@@ -240,19 +240,28 @@ internal static class PaintRenderer
         // Each pixel keeps its strongest cover, the oldest piece's colour where pieces tie. Drawn newest first (the
         // strongest, as the tail fades), so an older piece can skip the pixels a newer one already covers more than it
         // ever could; ties go to the later drawn, older piece: the same picture as drawing oldest first.
-        for (int i = st.PieceCount - 1; i >= 0; i--)
+        // The picture's rows are shared out in bands over the cores: each band runs every piece in the same order,
+        // clipped to its rows, so the picture is the same as drawn in one go (a long Snake is hundreds of pieces).
+        int bands = size >= 128 ? Math.Clamp(Environment.ProcessorCount, 1, 8) : 1;
+        void Band(int b)
         {
-            ref var c = ref st.Pieces[i];
-            Capsule(st, size, c.Ax, c.Ay, c.Bx, c.By, c.Half, c.Col, c.Op, glow);
+            int ya = size * b / bands, yb = size * (b + 1) / bands - 1;
+            for (int i = st.PieceCount - 1; i >= 0; i--)
+            {
+                ref var c = ref st.Pieces[i];
+                Capsule(st, size, c.Ax, c.Ay, c.Bx, c.By, c.Half, c.Col, c.Op, glow, ya, yb);
+            }
+            // The glow, then the line, over the paint at the colours' opacity.
+            if (glow > 0f) Over(buf, st.GlowCov, st.GlowCol, alpha, ya * size, (yb + 1) * size);
+            Over(buf, st.Cov, st.CovCol, alpha, ya * size, (yb + 1) * size);
         }
-        // The glow, then the line, over the paint at the colours' opacity.
-        if (glow > 0f) Over(buf, st.GlowCov, st.GlowCol, alpha);
-        Over(buf, st.Cov, st.CovCol, alpha);
+        if (bands > 1) Parallel.For(0, bands, Band);
+        else Band(0);
     }
 
-    private static void Over(int[] buf, float[] cov, int[] covCol, float alpha)
+    private static void Over(int[] buf, float[] cov, int[] covCol, float alpha, int from, int to)
     {
-        for (int j = 0; j < cov.Length; j++)
+        for (int j = from; j < to; j++)
         {
             float a = cov[j] * alpha;
             if (a <= 0f) continue;
@@ -275,7 +284,7 @@ internal static class PaintRenderer
     /// pieces are drawn newest first); with <paramref name="glow"/> its glow (wider, fainter copies) likewise. Only the
     /// pixels within its reach on each row are looked at, and those it can't make stronger are skipped.
     /// </summary>
-    private static void Capsule(State st, int size, float ax, float ay, float bx, float by, float half, int col, float op, float glow)
+    private static void Capsule(State st, int size, float ax, float ay, float bx, float by, float half, int col, float op, float glow, int rowFrom, int rowTo)
     {
         var cov = st.Cov;
         var covCol = st.CovCol;
@@ -290,7 +299,8 @@ internal static class PaintRenderer
         }
         float reach = (glow > 0f ? half * GlowSteps[0].Wide : half) + 1f;
         int x0 = Math.Max(0, (int)MathF.Floor(Math.Min(ax, bx) - reach)), x1 = Math.Min(size - 1, (int)MathF.Ceiling(Math.Max(ax, bx) + reach));
-        int y0 = Math.Max(0, (int)MathF.Floor(Math.Min(ay, by) - reach)), y1 = Math.Min(size - 1, (int)MathF.Ceiling(Math.Max(ay, by) + reach));
+        int y0 = Math.Max(rowFrom, (int)MathF.Floor(Math.Min(ay, by) - reach)), y1 = Math.Min(rowTo, (int)MathF.Ceiling(Math.Max(ay, by) + reach));
+        if (y0 > y1) return;
         float dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
         // Pixels whose middle is further than this from the piece take nothing from it.
         float far = reach + 0.5f, far2 = far * far;

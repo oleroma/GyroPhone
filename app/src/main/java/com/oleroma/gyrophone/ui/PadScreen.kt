@@ -2251,7 +2251,7 @@ fun PadScreen(
 
         if (!editing && !hidden) DebugOverlay(runtime, Modifier.align(Alignment.BottomStart), covered)
 
-        // Settings › Debugging › Ratchet timing: each ratchet press against the swing's turn-around.
+        // Settings › Performance › Ratchet timing: each ratchet press against the swing's turn-around.
         if (!editing && !hidden && !covered) RatchetTimingPanel(runtime, Modifier.align(Alignment.TopCenter).padding(top = 48.dp))
 
         if (markersShown) LatencyMarkers { latencyHidden = true }

@@ -43,7 +43,8 @@ public sealed record CompanionView(
     bool InputLog = true,
     int CatchUpMs = 16,
     bool PressKeyNotice = true,
-    bool PressKeyListen = true);
+    bool PressKeyListen = true,
+    bool OverlayTimingLog = true);
 
 /// <summary>
 /// The tray app as the windows see it. Every setter saves the setting and refreshes the open windows,
@@ -91,6 +92,8 @@ public interface ICompanion
     void OpenLogFolder();
     void ShowDebugWindow();
     void ToggleInputLog();
+    /// <summary>"Overlay timing log" (Performance › Debug).</summary>
+    void ToggleOverlayTimingLog();
     /// <summary>"Use this PC's keys for Press a key".</summary>
     void TogglePressKeyListen();
     /// <summary>"Notify when the phone listens for a key".</summary>
