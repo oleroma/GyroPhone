@@ -107,7 +107,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         if (isRocker(event, device)) return onRocker(event)
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) return true
         runtime.wifi.pressStamp.note(event.eventTime * 1_000_000L) // KeyEvent has no public ns time; uptime is the nanoTime clock
-        if (event.action == KeyEvent.ACTION_DOWN) runtime.ratchetTiming.inputDown(event.eventTimeNanos)
+        if (event.action == KeyEvent.ACTION_DOWN) runtime.ratchetTiming.inputDown(event.eventTime * 1_000_000L)
         // The PC's phone overlay draws the controller's presses on its handles.
         if (isPad(device)) runtime.wifi.overlay.padKey(event.keyCode, event.action == KeyEvent.ACTION_DOWN)
         // A captured mouse's back / forward buttons come as keys too: they are its buttons already.
@@ -168,7 +168,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         }
         if (pressed && event.repeatCount > 0) return true
         runtime.wifi.pressStamp.note(event.eventTime * 1_000_000L)
-        if (pressed) runtime.ratchetTiming.inputDown(event.eventTimeNanos)
+        if (pressed) runtime.ratchetTiming.inputDown(event.eventTime * 1_000_000L)
         runtime.engine.setKey(PHONE_PAD, event.keyCode, pressed)
         return true
     }
