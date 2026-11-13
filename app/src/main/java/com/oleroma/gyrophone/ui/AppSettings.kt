@@ -146,6 +146,7 @@ private fun AppTab(runtime: GamepadRuntime) {
         )
     }
     val debugOn by runtime.debug.enabled.collectAsStateWithLifecycle()
+    val ratchetTimingOn by runtime.ratchetTimingOn.collectAsStateWithLifecycle()
     val tight by runtime.gyroTightening.collectAsStateWithLifecycle()
     val smooth by runtime.gyroSmoothing.collectAsStateWithLifecycle()
     val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
@@ -347,7 +348,7 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "ends on the PC plays either way.",
             ) { runtime.setGameRumble(it) }
         },
-        category(runtime, "debugging", "Debugging", "The debug panel and recordings") {
+        category(runtime, "debugging", "Debugging", "The debug panel, ratchet timing and recordings") {
             SwitchRow(
                 "Debug tools", debugOn,
                 hint = "Shows a debug panel on the pad: the link's speed and latency, the gyro, the active workspace and " +
@@ -355,6 +356,14 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "Record saves the last 30 seconds (the PC saves its side too over Wi-Fi or USB). " +
                         "Off: nothing is logged.",
             ) { runtime.debug.setEnabled(it) }
+            SwitchRow(
+                "Ratchet timing", ratchetTimingOn,
+                hint = "Measures each ratchet press made during a quick swing and back, shown at the top of the pad " +
+                        "(the last 10 and the middle of each). You: ms from the swing's turn-around to your press " +
+                        "(+ = after the turn). App: ms from the press reaching the phone to the gyro stopping. " +
+                        "Back: how far the camera still moved back after the turn before it stopped (degrees once the " +
+                        "game's turn is set in Gyro, else mouse counts). Turning it off clears the list.",
+            ) { runtime.setRatchetTiming(it) }
         },
         category(runtime, "backup", "Backup", "Export or import everything as a file") {
             Searchable(
