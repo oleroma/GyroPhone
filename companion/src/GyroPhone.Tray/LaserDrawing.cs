@@ -83,7 +83,7 @@ internal static class LaserDrawing
         // The view's turn (shown frame to picture) for the card: the axonometric view after the sphere's turn.
         float[] viewTurn = ViewTurn(s.LaserAxonometric, turned);
         float persp = s.Perspective ? LaserTrace.CameraDistance : 0f;
-        void Grid(List<(float X, float Y)[]> lines, Color col, bool front)
+        void Grid(bool front, Color col)
         {
             // On the graphics card: the grid's circles go up once, then only the view's turn.
             int gridLook = HashCode.Combine(col.ToArgb(), px, persp, c, r, front);
@@ -94,6 +94,9 @@ internal static class LaserDrawing
                     f.Lines(f.Geometry("laser:grid", GridGeo), st.viewTurn, st.c, st.r, st.col, st.px, st.front ? Gpu3D.Side.Front : Gpu3D.Side.Back);
                 }))
                 return;
+            // On the CPU: the grid's lines in the picture (made again for a turning sphere).
+            var gl = buf != null ? buf.GridFor(s.LaserAxonometric, turned) : LaserTrace.GridFor(s.LaserAxonometric, turned);
+            var lines = front ? gl.Front : gl.Back;
             var memo = buf == null ? new DrawBuffers.GridPoints() : front ? buf.GridFront : buf.GridBack;
             if (!ReferenceEquals(memo.Lines, lines) || memo.Cx != c.X || memo.Cy != c.Y || memo.R != r || memo.Perspective != s.Perspective)
             {
@@ -445,16 +448,15 @@ internal static class LaserDrawing
             Axes(true);
             return;
         }
-        var gridLines = buf != null ? buf.GridFor(s.LaserAxonometric, turned) : LaserTrace.GridFor(s.LaserAxonometric, turned);
         if (crosshair)
         {
             // The crosshair look: no sphere or beam; a crosshair lying on the sphere where it aims.
-            if (s.LaserGrid) Grid(gridLines.Back, grid, false);
+            if (s.LaserGrid) Grid(false, grid);
             Axes(false);
             Paint(false);
             Crosshair();
             Paint(true);
-            if (s.LaserGrid) Grid(gridLines.Front, Fade(grid, 0.6f), true);
+            if (s.LaserGrid) Grid(true, Fade(grid, 0.6f));
             Axes(true);
             return;
         }
@@ -505,7 +507,7 @@ internal static class LaserDrawing
             if (dot != null) g.FillPolygon(color, dot);
         }
 
-        if (s.LaserGrid) Grid(gridLines.Back, grid, false);
+        if (s.LaserGrid) Grid(false, grid);
         Rings(false);
         Axes(false);
         Paint(false);
@@ -513,7 +515,7 @@ internal static class LaserDrawing
         g.DrawLine(beamCol, px * 2.5f, c, hit, round: true);
         g.FillEllipse(beamCol, new RectangleF(c.X - px * 3, c.Y - px * 3, px * 6, px * 6));
         Paint(true);
-        if (s.LaserGrid) Grid(gridLines.Front, Fade(grid, 0.6f), true);
+        if (s.LaserGrid) Grid(true, Fade(grid, 0.6f));
         Rings(true);
         Axes(true);
         if (hitFront) Spot();
