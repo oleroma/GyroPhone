@@ -122,7 +122,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         };
         _engine.SetPcPad(new XInputPcPad(_log.Write, _clock));
         _engine.SetKeyMouseListener(new RawInputListener(_log.Write));
-        _perf = new PerfMonitor(new FrameWatch(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
+        _perf = new PerfMonitor(new FpsHelperSource(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
             Path.Combine(_log.Directory, "perf"), _log.Write);
         _engine.Recorder!.Timeline = _perf.Link;
         _perf.Started += () => _engine.Buzz();
@@ -1296,7 +1296,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         return (LinkPaths.Describe(l, pc), LinkPaths.Setup(l, pc));
     }
 
-    public bool AllowFrameWatch() => PerfPermission.Grant(_log.Write);
+    public bool SetUpFpsHelper() => FpsHelperSetup.Install(_log.Write);
 
     public void OpenPerfFolder()
     {
