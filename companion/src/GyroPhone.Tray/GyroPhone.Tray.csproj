@@ -50,16 +50,20 @@
     <WriteLinesToFile File="$(PublishDir)side-files.txt" Lines="@(_GpSideFile)" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
   <!-- The FPS helper (GyroPhone.FrameHelper) rides inside the published exe; "Set up FPS helper" copies it to
-       Program Files. Published on its own first (native AOT, a few MB), with its own settings, not the companion's:
-       the publish's self-extract, ReadyToRun and output folder must not reach it. Plain builds (tests) skip it. -->
+       Program Files. Published on its own first (native AOT, a few MB) by a separate dotnet, so none of the
+       companion's publish settings (self-extract, ReadyToRun, output folder) reach it. Native AOT finds the C++
+       linker with vswhere.exe, which Visual Studio keeps in its Installer folder, not on the PATH: that folder
+       is put first on the PATH for this step. Plain builds (tests) skip it. -->
   <Target Name="EmbedFpsHelper" BeforeTargets="PrepareForBuild" Condition="'$(PublishSingleFile)' == 'true'">
     <PropertyGroup>
       <_GpHelperProject>$(MSBuildProjectDirectory)/../GyroPhone.FrameHelper/GyroPhone.FrameHelper.csproj</_GpHelperProject>
       <_GpHelperDir>$(MSBuildProjectDirectory)/$(BaseIntermediateOutputPath)fps-helper/</_GpHelperDir>
-      <_GpHelperProps>Configuration=Release;RuntimeIdentifier=win-x64;SelfContained=true;PublishAot=true;PublishSingleFile=false;IncludeNativeLibrariesForSelfExtract=false;PublishReadyToRun=false;DebugType=none;PublishDir=$(_GpHelperDir)</_GpHelperProps>
+      <_GpDotnet>$(DOTNET_HOST_PATH)</_GpDotnet>
+      <_GpDotnet Condition="'$(_GpDotnet)' == ''">dotnet</_GpDotnet>
+      <_GpVsInstaller>$([System.Environment]::GetFolderPath(SpecialFolder.ProgramFilesX86))\Microsoft Visual Studio\Installer</_GpVsInstaller>
     </PropertyGroup>
-    <MSBuild Projects="$(_GpHelperProject)" Targets="Restore" Properties="$(_GpHelperProps);MSBuildRestoreSessionId=$([System.Guid]::NewGuid())" />
-    <MSBuild Projects="$(_GpHelperProject)" Targets="Publish" Properties="$(_GpHelperProps)" />
+    <Exec Command="&quot;$(_GpDotnet)&quot; publish &quot;$(_GpHelperProject)&quot; -c Release -r win-x64 --self-contained true -p:PublishAot=true -p:DebugType=none -o &quot;$(_GpHelperDir)&quot;"
+          EnvironmentVariables="PATH=$([MSBuild]::Escape('$(_GpVsInstaller);$(PATH)'))" />
     <ItemGroup>
       <EmbeddedResource Include="$(_GpHelperDir)GyroPhoneFpsHelper.exe" LogicalName="GyroPhoneFpsHelper.exe" />
     </ItemGroup>
