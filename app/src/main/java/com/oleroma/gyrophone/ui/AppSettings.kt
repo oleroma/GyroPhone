@@ -258,7 +258,7 @@ private fun AppTab(runtime: GamepadRuntime) {
                 hint = "A frame on each button lists what it is sending now, one line each (a tap, double tap or long press action " +
                         "stays a moment), and each Toggle it has with its state: \"Crouch on\" in green, \"Crouch off\" in grey. " +
                         "Slider values join the same frame. It sits in the middle of the button, in place of its label, when everything " +
-                        "the button could show fits there; otherwise outside by its top-right corner. A button without a label shows nothing else.",
+                        "the button could show fits there; otherwise outside by its top-right corner.",
             ) { runtime.setTouchVisuals(visuals.copy(liveMappings = it)) }
             SwitchRow(
                 "Show the swipe line on touchpad buttons", visuals.swipeLine,

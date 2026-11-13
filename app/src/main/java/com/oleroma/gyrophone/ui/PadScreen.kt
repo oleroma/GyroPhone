@@ -165,6 +165,8 @@ import com.oleroma.gyrophone.core.model.fingerOf
 import com.oleroma.gyrophone.core.model.heightRatio
 import com.oleroma.gyrophone.core.model.hitOrder
 import com.oleroma.gyrophone.core.model.isTouchpad
+import com.oleroma.gyrophone.core.model.layered
+import com.oleroma.gyrophone.core.model.nothing
 import com.oleroma.gyrophone.core.model.ownSurface
 import com.oleroma.gyrophone.core.model.placeSize
 import com.oleroma.gyrophone.core.model.placeX
@@ -675,6 +677,11 @@ fun PadScreen(
             if (l != layers) layers = l
             delay(LAYER_POLL_MS)
         }
+    }
+    // What each control maps in the set in use (labels).
+    val controlMappings = remember(ws.mappings, layers) {
+        layered(ws.mappings, layers.set, layers.overrides).filterNot { Describe.isHaptic(it.target) }
+            .groupBy { MappingProfiles.touchId(it.source) }
     }
     // What each control really presses now, for the PC's phone overlay (live labels: the engine's
     // mappings in use, held inputs carrying their old set's included). The pad shows it in the frames ([ValueBars]).
@@ -2035,7 +2042,7 @@ fun PadScreen(
                 }
             }
             // A control the edit left as it was keeps its label: a drag works out only the moved one's.
-            val labels = remember(ws, editing) { labelCache.labels(ws, editing) }
+            val labels = remember(ws, editing, controlMappings) { labelCache.labels(ws, editing, controlMappings) }
             // The PC's phone overlay draws this layout on its phone (the last one in play stays during edit mode).
             if (!editing) {
                 val setName = if (layers.set == MappingSet.BASE && layers.overrides.isEmpty()) "" else {
@@ -3374,31 +3381,39 @@ fun PadScreen(
 private class LabelCache {
     private var mappings: List<Mapping>? = null
     private var editing = false
+    private var inUse: Map<String?, List<Mapping>>? = null
     private val byId = HashMap<String, Pair<TouchControl, String>>()
 
-    fun labels(ws: Workspace, editing: Boolean): Map<String, String> {
-        if (ws.mappings !== mappings || editing != this.editing) {
+    fun labels(ws: Workspace, editing: Boolean, inUse: Map<String?, List<Mapping>>): Map<String, String> {
+        if (ws.mappings !== mappings || editing != this.editing || inUse !== this.inUse) {
             byId.clear()
             mappings = ws.mappings
             this.editing = editing
+            this.inUse = inUse
         }
         return ws.touchControls.associate { c ->
             val hit = byId[c.id]
-            c.id to if (hit != null && hit.first === c) hit.second else controlLabel(ws, c, editing).also { byId[c.id] = c to it }
+            c.id to if (hit != null && hit.first === c) hit.second else controlLabel(ws, c, editing, inUse[c.id]).also { byId[c.id] = c to it }
         }
     }
 }
 
 /**
- * Label shown on a control: its own. In play mode one without shows nothing (its frame shows what
- * it does); while editing, its first Base mapping's short name, its cards taken in the order the
- * mapping editor shows them ([cardsInOrder]), else "?".
+ * Label shown on a control: its own, else every mapping of its first card with any, its cards
+ * taken in the order the mapping editor shows them ([cardsInOrder]), joined by " + ": in play
+ * mode from [inUse] (its mappings in the set in use), while editing from Base ("?" for none).
  */
-private fun controlLabel(workspace: Workspace, c: TouchControl, editing: Boolean): String {
+private fun controlLabel(workspace: Workspace, c: TouchControl, editing: Boolean, inUse: List<Mapping>?): String {
     if (c.label.isNotBlank()) return c.label
-    if (!editing) return ""
-    val first = cardsInOrder(c).firstNotNullOfOrNull { Bindings.targets(workspace.mappings, it).firstOrNull() }
-    return first?.let { Describe.shortTarget(it) } ?: "?"
+    val targets = if (editing) {
+        cardsInOrder(c).firstNotNullOfOrNull { input -> Bindings.targets(workspace.mappings, input).takeIf { it.isNotEmpty() } }
+    } else {
+        val ms = inUse.orEmpty().filter { !it.target.nothing }
+        cardsInOrder(c).firstNotNullOfOrNull { input ->
+            ms.filter { m -> input.sources.any { Bindings.sameSource(it, m.source) } }.map { it.target }.distinct().takeIf { it.isNotEmpty() }
+        }
+    }
+    return targets?.joinToString(" + ") { Describe.shortTarget(it) } ?: if (editing) "?" else ""
 }
 
 private fun shapeOf(c: TouchControl): Shape =
