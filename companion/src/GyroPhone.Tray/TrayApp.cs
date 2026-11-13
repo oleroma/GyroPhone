@@ -1114,7 +1114,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     public string OverlayStats()
     {
         var open = _overlayList;
-        return open.Length == 0 ? "overlays: none open" : "overlays: " + string.Join(" · ", open.Select(f => f.Stats).Where(t => t.Length > 0));
+        if (open.Length == 0) return "overlays: none open";
+        string paint = GpuPaint.Status;
+        return "overlays: " + string.Join(" · ", open.Select(f => f.Stats).Where(t => t.Length > 0)) + (paint.Length > 0 ? " · " + paint : "");
     }
 
     /// <summary>An overlay window that shows the phone's pose is open (the FPS overlay needs nothing from the phone).</summary>

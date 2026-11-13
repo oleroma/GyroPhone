@@ -138,6 +138,9 @@ internal static class GpuPaint
     }
 
     private static readonly object KitGate = new();
+
+    /// <summary>Where pointer paint is drawn, for the overlay timing log: "paint on GPU", or on the CPU and why; empty before any.</summary>
+    public static string Status { get; private set; } = "";
     private static readonly ConditionalWeakTable<GpuDevice, Kit> Kits = new();
     // Devices the kit couldn't be made on (an old card, no shader compiler): the CPU draws there.
     private static readonly ConditionalWeakTable<GpuDevice, object> Failed = new();
@@ -247,10 +250,11 @@ internal static class GpuPaint
                 half.HasGlow = false;
             }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // Anything the card refused: this device draws on the CPU from now on.
             lock (KitGate) Failed.AddOrUpdate(gpu, new object());
+            Status = "paint on CPU (" + ex.GetType().Name + ": " + ex.Message + ")";
             t.Dispose();
             return false;
         }
@@ -302,12 +306,14 @@ internal static class GpuPaint
                 if (gpu.D3D.FeatureLevel < FeatureLevel.Level_11_0) throw new NotSupportedException("feature level");
                 kit = MakeKit(gpu.D3D);
                 Kits.Add(gpu, kit);
+                Status = "paint on GPU";
                 return kit;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 kit?.Dispose();
                 Failed.AddOrUpdate(gpu, new object());
+                Status = "paint on CPU (" + ex.Message + ")";
                 return null;
             }
         }
