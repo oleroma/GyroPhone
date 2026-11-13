@@ -33,8 +33,9 @@ import java.util.concurrent.locks.LockSupport
  * The Wi-Fi send loop on its own thread. Event-driven: the engine's onChange unparks it, and
  * [SendScheduler] decides between a normal STATE, the +2/+6 ms repeats after a discrete change
  * and the 20 ms keepalive, capped at [rateHz]. It is the only thread that seals P->H packets,
- * BYE included (sent on its way out). The loop allocates little besides `engine.snapshot()`,
- * the once-a-second PING / LINK_INFO and the overlay's set entries while the PC overlay is on.
+ * BYE included (sent on its way out). The loop allocates little besides `engine.snapshot()` and
+ * the once-a-second PING / LINK_INFO. The PC phone overlay's packets are built on their own thread
+ * ([OverlayOutbox]); this loop only seals and sends them.
  */
 class WifiPump(private val engine: MappingEngine) {
     /** The session to send on; [byeReason] >= 0 says the previous one gets a goodbye first. */
@@ -115,12 +116,8 @@ class WifiPump(private val engine: MappingEngine) {
     private var seq = 0
     private var nextPingNs = 0L
     private var lastLinkInfoNs = 0L
-    private var nextOverlayNs = 0L
-    private var layoutSentVersion = -1
-    private var layoutSentNs = 0L
-    /** Reused for each OVERLAY's pressed and latched controls. */
-    private val overlayPressed = HashSet<String>()
-    private val overlayLatched = HashSet<String>()
+    /** The overlay's packets, built on their own thread. */
+    private val overlayOut = OverlayOutbox(engine, { overlay }, wake)
     private var gyroSnapshot = false
     private var motionSentVersion = -1
     private var nextMotionNs = 0L
@@ -138,6 +135,7 @@ class WifiPump(private val engine: MappingEngine) {
             priority = Thread.MAX_PRIORITY
             start()
         }
+        overlayOut.start()
     }
 
     /** Sends on [socket] from now on (the link moved between USB and Wi-Fi). */
@@ -150,6 +148,7 @@ class WifiPump(private val engine: MappingEngine) {
         val t = thread ?: return
         exitByeReason = byeReason
         running = false
+        overlayOut.stop()
         LockSupport.unpark(t)
         try {
             t.join(STOP_JOIN_MS)
@@ -220,6 +219,8 @@ class WifiPump(private val engine: MappingEngine) {
             val now = System.nanoTime()
             updateStats(now)
             val c = cur
+            val has = c != null
+            if (overlayOut.sending != has) overlayOut.sending = has
             if (c == null) {
                 LockSupport.parkNanos(IDLE_PARK_NS)
                 continue
@@ -269,14 +270,13 @@ class WifiPump(private val engine: MappingEngine) {
             }
             pcGyro?.let { if (it.hostTakes) sendPadGyro(c, it, now) }
             sendCapture(c, now)
-            val ov = overlay?.takeIf { it.wanted }
-            if (ov == null) layoutSentVersion = -1
-            if (ov != null && now >= nextOverlayNs) {
-                nextOverlayNs = now + OVERLAY_NS
-                sendOverlay(c, ov, now)
+            // The overlay's packets, ready-made on their own thread: only sealed and sent here.
+            while (true) {
+                val p = overlayOut.take() ?: break
+                sendSealed(c, p.type, p.plain, p.len)
+                overlayOut.recycle(p)
             }
             var wakeAt = minOf(minOf(scheduler.nextDeadline(), nextPingNs), minOf(lastLinkInfoNs + SECOND_NS, engine.touchpadDeadlineNanos()))
-            if (ov != null) wakeAt = minOf(wakeAt, nextOverlayNs)
             if (mo != null) wakeAt = minOf(wakeAt, nextMotionNs)
             if (capturing) wakeAt = minOf(wakeAt, captureNs + Wire.CAPTURE_RESEND_MS * 1_000_000L)
             else if (captureOffLeft > 0) wakeAt = minOf(wakeAt, captureNs + CAPTURE_OFF_GAP_NS)
@@ -339,22 +339,6 @@ class WifiPump(private val engine: MappingEngine) {
         padGyroHeldSent = held
     }
 
-    /** One OVERLAY, then the layout's pieces when it changed or every [LAYOUT_REPEAT_NS] (a lost piece comes again). */
-    private fun sendOverlay(c: LiveSession, ov: OverlayFeed, now: Long) {
-        engine.touchesInto(overlayPressed, overlayLatched)
-        val n = ov.encodeFrame(plain, 0, phoneUs().toInt(), overlayPressed, overlayLatched)
-        sendSealed(c, PacketType.OVERLAY, n)
-        val v = ov.layoutVersion()
-        if (v < 0 || v == layoutSentVersion && now - layoutSentNs < LAYOUT_REPEAT_NS) return
-        val (version, blob) = ov.layoutSnapshot() ?: return
-        layoutSentVersion = version
-        layoutSentNs = now
-        for (i in 0 until OverlayFeed.pieceCount(blob)) {
-            val m = OverlayFeed.encodeLayoutPiece(plain, 0, version, blob, i)
-            sendSealed(c, PacketType.OVERLAY_LAYOUT, m)
-        }
-    }
-
     private fun switchTo(session: LiveSession?) {
         cur = session
         hires = session != null && session.hostFlags and HostFlags.HIRES_WHEEL != 0
@@ -378,8 +362,7 @@ class WifiPump(private val engine: MappingEngine) {
         nextPingNs = now
         lastLinkInfoNs = now
         linkInfoDue = false
-        nextOverlayNs = now
-        layoutSentVersion = -1
+        overlayOut.clear()
     }
 
     /** One neutral STATE (totals kept), then BYE x3 at 5 ms intervals. */
@@ -402,7 +385,10 @@ class WifiPump(private val engine: MappingEngine) {
     }
 
     /** Seals the first [plainLen] bytes of [plain] as [type] with the next seq and sends it. */
-    private fun sendSealed(c: LiveSession, type: Int, plainLen: Int): Boolean {
+    private fun sendSealed(c: LiveSession, type: Int, plainLen: Int): Boolean = sendSealed(c, type, plain, plainLen)
+
+    /** Seals the first [plainLen] bytes of [src] as [type] with the next seq and sends it. */
+    private fun sendSealed(c: LiveSession, type: Int, src: ByteArray, plainLen: Int): Boolean {
         val ci = cipher ?: return false
         val s = socket ?: return false
         if ((seq.toLong() and 0xFFFF_FFFFL) == 0xFFFF_FFFFL) {
@@ -415,7 +401,7 @@ class WifiPump(private val engine: MappingEngine) {
         seq++
         if ((seq.toLong() and 0xFFFF_FFFFL) >= Wire.REKEY_SEQ) c.rekeyRequested = true
         WireCodec.writeHeader(header, type, c.sessionId, seq)
-        val len = ci.seal(header, plain, plainLen, out)
+        val len = ci.seal(header, src, plainLen, out)
         if (direct?.sendDirect(c.hostAddr, out, 0, len) == true) return true
         packet.setData(out, 0, len)
         packet.socketAddress = c.hostAddr
@@ -443,10 +429,7 @@ class WifiPump(private val engine: MappingEngine) {
         private const val BYE_COUNT = 3
         private const val BYE_SPACING_NS = 5_000_000L
         private const val STOP_JOIN_MS = 500L
-        /** OVERLAY about 60 times a second. */
-        private const val OVERLAY_NS = 16_666_667L
         private const val MOTION_KEEPALIVE_NS = MotionFeed.KEEPALIVE_MS * 1_000_000L
-        private const val LAYOUT_REPEAT_NS = 2 * SECOND_NS
 
         /** Phone clock for STATE, PING and LINK_INFO: elapsed realtime in microseconds. */
         fun phoneUs(): Long = SystemClock.elapsedRealtimeNanos() / 1000
