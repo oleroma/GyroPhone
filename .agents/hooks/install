@@ -4,7 +4,7 @@
 # 1. Installs the companion on this PC at %LOCALAPPDATA%\Programs\GyroPhone, one fixed path,
 #    so its firewall rule and Start with Windows entry survive updates. A running exe is never
 #    touched (it reads parts of itself by path while it runs): the new build waits next to it
-#    as GyroPhoneCompanion.exe.new, and the running companion (or watcher) shuts down, copies
+#    as GyroPhoneCompanion.exe.new, and the running companion (or watcher) shuts down, moves
 #    it into place and starts again within a few seconds, even with a phone connected
 #    (pairing and settings live in %APPDATA%\GyroPhone). OpenCV's DLLs, which ship beside the exe,
 #    are copied next to it when they changed; one a running companion holds waits as <dll>.new,

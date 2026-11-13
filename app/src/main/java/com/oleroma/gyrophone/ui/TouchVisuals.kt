@@ -34,8 +34,8 @@ import kotlin.math.hypot
  * How the pad shows touches (app-wide, [com.oleroma.gyrophone.runtime.GamepadRuntime.touchVisuals]).
  * [showTouches]: a dot under each finger that fades out over [fadeMs] once it lifts. [trail]: a
  * line behind each finger, [trailMs] of its path long, whose oldest [trailFade] (0..1) fades out
- * towards its end; it shrinks back to the finger as it ages. [liveMappings]: a button's label
- * briefly shows what it is sending right now. [swipeLine]: a finger on a swipe button with swipes
+ * towards its end; it shrinks back to the finger as it ages. [liveMappings] (Show mappings on buttons): each
+ * button's frame lists what it is sending now and its Toggles' states ([ValueBars]). [swipeLine]: a finger on a swipe button with swipes
  * or holds mapped shows a line from its start point, through it, to its direction's furthest
  * activation length, marking each ([SwipeLines]). [moveRulers]: a finger on a touch button whose
  * Move X or Y moves shows a sliding ruler per Move instead ([MoveRulers]). The gyroEdge* fields set up the parallax edge

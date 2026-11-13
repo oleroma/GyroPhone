@@ -8,7 +8,9 @@ namespace GyroPhone.Host.Perf;
 /// <summary>The PC's network adapter that a phone's address belongs to.</summary>
 /// <param name="Name">The adapter's name as Windows shows it ("Wi-Fi", "Ethernet", "Local Area Connection* 10").</param>
 /// <param name="Hotspot">It is Windows' Mobile hotspot (the Wi-Fi Direct virtual adapter, 192.168.137.x).</param>
-public sealed record PcAdapter(string Name, bool Hotspot);
+/// <param name="Wireless">It is a Wi-Fi adapter (the hotspot's included).</param>
+/// <param name="Id">The adapter's id ("{GUID}", as the Wi-Fi API names its interfaces).</param>
+public sealed record PcAdapter(string Name, bool Hotspot, bool Wireless = false, string Id = "");
 
 /// <summary>
 /// The way the phone's packets go (docs/spec/pc-companion.md, "Performance"): the phone's side from LINK_INFO's
@@ -80,7 +82,7 @@ public static class LinkPaths
                     uint a = Bits(u.Address);
                     if ((a & mask) != (p & mask)) continue;
                     bool hotspot = ni.Description.Contains("Wi-Fi Direct", StringComparison.OrdinalIgnoreCase) || (a & 0xFFFFFF00) == 0xC0A88900;
-                    found = new PcAdapter(ni.Name, hotspot);
+                    found = new PcAdapter(ni.Name, hotspot, ni.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 || hotspot, ni.Id);
                     break;
                 }
                 if (found != null) break;

@@ -342,6 +342,17 @@ object LinkInfoFlags {
 object HostStatusFlags2 {
     /** "Use the phone over the USB cable" is on in the companion: the phone tries the cable now. */
     const val USB_DIRECT = 1
+
+    /** The PC reaches the phone through its own Wi-Fi as a client (of a router or the phone's hotspot), not by cable or as the hotspot. */
+    const val PC_WIFI = 2
+    /** With [PC_WIFI]: the PC's Wi-Fi is on 2.4 GHz. */
+    const val PC_WIFI_24 = 4
+    /** With [PC_WIFI]: the PC's Wi-Fi signal is weak (below about -70 dBm). */
+    const val PC_WIFI_WEAK = 8
+    /** The PC runs on battery. */
+    const val PC_ON_BATTERY = 16
+    /** The PC saves power: energy (battery) saver on, or power mode "Best power efficiency". */
+    const val PC_POWER_SAVING = 32
 }
 
 /** HOST_STATUS flags. */

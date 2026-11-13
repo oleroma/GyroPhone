@@ -110,10 +110,10 @@ class GyroMappingsTest {
         assertEquals(4f, e.gyroSettings.sensitivityOf(MotionAxis.YAW))
         assertEquals(4f, e.gyroSettings.sensitivityOf(MotionAxis.ROLL))
         e.setTouch("roll", true)
-        // Last pressed wins: roll its own, the rest the workspace's.
+        // Held buttons stack setting by setting: roll the last pressed's own, the rest still aim's.
         assertEquals(40f, e.gyroSettings.sensitivityOf(MotionAxis.ROLL))
-        assertEquals(12f, e.gyroSettings.sensitivityOf(MotionAxis.YAW))
-        assertEquals(10f, e.gyroSettings.sensitivityOf(MotionAxis.PITCH))
+        assertEquals(4f, e.gyroSettings.sensitivityOf(MotionAxis.YAW))
+        assertEquals(4f, e.gyroSettings.sensitivityOf(MotionAxis.PITCH))
         e.setTouch("roll", false)
         e.setTouch("plain", true) // layer 1: aim's layer value
         assertEquals(2f, e.gyroSettings.sensitivityOf(MotionAxis.PITCH))

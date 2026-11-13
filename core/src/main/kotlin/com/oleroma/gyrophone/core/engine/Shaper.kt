@@ -152,15 +152,23 @@ internal class Shaper(var options: MapOptions, var trigger: Trigger = Trigger.HO
             How.TOGGLE -> if (on) {
                 // Ended some other way meanwhile (a timer, Let go): this one starts it again.
                 if (latched && now >= endNs) latched = false
-                if (!latched) {
-                    latched = true; nextUsed = false; sameArmed = false; open(now)
-                    val timer = options.endsAfterMs.coerceIn(0, MapOptions.MAX_TOGGLE_MS)
-                    if (timer > 0) endNs = startNs + timer * MS
-                } else {
+                if (!latched) startToggle(now) else {
                     latched = false; endNs = max(now, startNs + minHold) + endDelay
                 }
             }
         }
+    }
+
+    private fun startToggle(now: Long) {
+        latched = true; nextUsed = false; sameArmed = false; open(now)
+        val timer = options.endsAfterMs.coerceIn(0, MapOptions.MAX_TOGGLE_MS)
+        if (timer > 0) endNs = startNs + timer * MS
+    }
+
+    /** A toggle that is off turns on at [now], as a touch would (a toggle sync turning it with another button). */
+    fun turnOn(now: Long) {
+        if (toggledOn(now)) return
+        startToggle(now)
     }
 
     /** An activation at [now]: on from its start delay; one still on carries on. */

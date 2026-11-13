@@ -148,7 +148,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         _usb = new AoaUsbLink(Wire.Port, settings.UsbDirect, _log.Write);
         _watchdog = new Watchdog(_engine, _clock, _marker, store,
             networkPublicProbe: NetworkCategory.IsAnyConnectedPublic, log: _log.Write,
-            keyLabelsProbe: KeyboardLayoutProbe.Read, tickSleep: () => new HighResolutionSleep());
+            keyLabelsProbe: KeyboardLayoutProbe.Read, tickSleep: () => new HighResolutionSleep(),
+            pcSetupProbe: PcSetupProbe.Read);
 
         // Keep the Run entry pointing at this exe (it may have moved since it was enabled).
         if (settings.StartWithWindows) TrySetAutoStart(true);

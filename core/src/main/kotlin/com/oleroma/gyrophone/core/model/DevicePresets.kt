@@ -84,7 +84,7 @@ data class DevicePreset(
     fun withTiming(keyCode: Int, change: (KeyTiming) -> KeyTiming): DevicePreset {
         val t = change(timing(keyCode) ?: KeyTiming(keyCode))
         val rest = timings.filter { it.keyCode != keyCode }
-        return copy(timings = if (t.longPressMs == null && t.doubleTapMs == null) rest else rest + t)
+        return copy(timings = if (t.longPressMs == null && t.doubleTapMs == null && t.how == null) rest else rest + t)
     }
 
     fun mappings(device: PhysicalDevice): List<Mapping> = when (device) {
@@ -133,7 +133,15 @@ data class HeldButton(val id: String, val sources: List<InputSource>, val gyro: 
  * workspace's ([Workspace.longPressMs], [Workspace.doubleTapMs]).
  */
 @Serializable
-data class KeyTiming(val keyCode: Int, val longPressMs: Int? = null, val doubleTapMs: Int? = null)
+data class KeyTiming(
+    val keyCode: Int,
+    val longPressMs: Int? = null,
+    val doubleTapMs: Int? = null,
+    /** How its chips press when they don't set their own ([ButtonHow]); null = Held. */
+    val how: How? = null,
+    /** [how] Repeat's count. */
+    val repeat: Int = 2,
+)
 
 /** How a stick's travel past its inner deadzone turns into output ([StickTuning.curve]). */
 @Serializable

@@ -102,8 +102,12 @@ object WorkspaceDefaults {
         }
         gyroAxisSens[key]?.let { exact -> return listOf(gyroKey("sensitivity"), exact) }
         if (key in gyroAxisSens.values) return listOf(gyroKey("sensitivity"))
+        if (key in gyroAxisSpaces) return listOf(gyroKey("gyroSpace"))
         return emptyList()
     }
+
+    /** Each gyro axis's own space key: hidden by a level's own Gyro space. */
+    private val gyroAxisSpaces: Set<String> = MotionAxis.entries.mapNotNull { GyroSettings.spaceProp(it)?.let(::gyroKey) }.toSet()
 
     private fun hiddenBy(key: String, own: Collection<String>): Boolean = hidersOf(key).any { it in own }
 
@@ -165,7 +169,7 @@ object WorkspaceDefaults {
         if (!p.isString) return p.booleanOrNull ?: p.doubleOrNull
         val name = p.content
         return when {
-            prop == "gyroSpace" -> GyroSpace.entries.firstOrNull { it.name == name }
+            prop == "gyroSpace" || prop.endsWith("Space") -> GyroSpace.entries.firstOrNull { it.name == name }
             prop == "yawAxis" -> YawAxis.entries.firstOrNull { it.name == name }
             prop == "mode" || prop.endsWith("Mode") -> GyroMode.entries.firstOrNull { it.name == name }
             prop.endsWith("Curve") -> InertiaCurve.entries.firstOrNull { it.name == name }
