@@ -638,7 +638,7 @@ class GamepadRuntime(context: Context) {
     }
 
     /**
-     * Settings › Debugging › "Ratchet timing": each ratchet press during a swing is measured
+     * Settings › Performance › "Ratchet timing": each ratchet press during a swing is measured
      * against the swing's turn-around ([RatchetTiming]) and shown on the pad.
      */
     val ratchetTiming = RatchetTiming().also { rt ->
@@ -659,6 +659,18 @@ class GamepadRuntime(context: Context) {
         prefs.edit().putBoolean(KEY_RATCHET_TIMING, on).apply()
         ratchetTiming.enabled = on
         _ratchetTimingOn.value = on
+    }
+
+    /**
+     * Settings › Performance › "Display timing log" (on by default): the gyro displays' drawing times,
+     * one logcat line a second while they draw (tag GPDraw), read over adb to find a slow display.
+     */
+    private val _drawTimingLogOn = MutableStateFlow(prefs.getBoolean(KEY_DRAW_TIMING_LOG, true))
+    val drawTimingLogOn: StateFlow<Boolean> = _drawTimingLogOn
+
+    fun setDrawTimingLog(on: Boolean) {
+        prefs.edit().putBoolean(KEY_DRAW_TIMING_LOG, on).apply()
+        _drawTimingLogOn.value = on
     }
 
     /**
@@ -1773,6 +1785,7 @@ class GamepadRuntime(context: Context) {
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         private const val KEY_GAME_RUMBLE = "game_rumble"
         private const val KEY_RATCHET_TIMING = "ratchet_timing"
+        private const val KEY_DRAW_TIMING_LOG = "draw_timing_log"
         private const val KEY_USB_DIRECT = "usb_direct"
         private const val KEY_BLACK_SCREEN_IDLE = "black_screen_idle"
         private const val KEY_BLACK_SCREEN_SECONDS = "black_screen_seconds"

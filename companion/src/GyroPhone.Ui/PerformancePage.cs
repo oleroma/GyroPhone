@@ -25,6 +25,8 @@ internal sealed class PerformancePage : Page
     private readonly Sparkline _latGraph = new() { Margin = new Thickness(0, 8, 0, 0) };
     private readonly FrameGraph _graph = new() { Margin = new Thickness(0, 10, 0, 4) };
     private readonly CheckBox _measureButtons;
+    private readonly CheckBox _inputLog, _overlayLog;
+    private readonly TextBlock _logPath;
     private readonly TextBlock _buttonsSub;
     private readonly TextBox _name;
     private readonly Seg<string> _picks;
@@ -44,7 +46,7 @@ internal sealed class PerformancePage : Page
     {
         _app = app;
         _root.Children.Add(Parts.Text("Performance", "H1"));
-        var intro = Parts.Text("The phone link live, link tests to compare ways of connecting, and the video latency test. " +
+        var intro = Parts.Text("The phone link live, link tests to compare ways of connecting, the video latency test, and the debug logs and tools. " +
             "Measured only while this page is open (and while a test records).", "Sub");
         intro.Margin = new Thickness(0, 0, 0, 14);
         _root.Children.Add(intro);
@@ -155,6 +157,23 @@ internal sealed class PerformancePage : Page
         // Latency test (video)
         _latency = new LatencyPage(app, owner, icon);
         _root.Children.Add(_latency.View);
+
+        // Debug: every log and debug tool, each switchable
+        var (debug, db) = Parts.Card("Debug");
+        _inputLog = Parts.Toggle("Record input log", app.ToggleInputLog,
+            "Notes lost, late and stalled input in input.log in the log folder, so a stutter can be traced after you play. Costs almost nothing.");
+        db.Children.Add(_inputLog);
+        db.Children.Add(Parts.Divider());
+        _overlayLog = Parts.Toggle("Overlay timing log", app.ToggleOverlayTimingLog,
+            "Writes each open overlay's draw times to companion.log once a second while they draw, so a slow overlay can be found. Costs almost nothing.");
+        db.Children.Add(_overlayLog);
+        db.Children.Add(Parts.Divider());
+        _logPath = Parts.Text("", "Sub");
+        db.Children.Add(_logPath);
+        db.Children.Add(Parts.Row(
+            Parts.Button("Open log folder", app.OpenLogFolder, glyph: ""),
+            Parts.Button("Debug window…", app.ShowDebugWindow, glyph: "")));
+        _root.Children.Add(debug);
     }
 
     public override void Shown(bool on)
@@ -187,6 +206,9 @@ internal sealed class PerformancePage : Page
 
     public override void Refresh(CompanionView v)
     {
+        Parts.SetChecked(_inputLog, v.InputLog);
+        Parts.SetChecked(_overlayLog, v.OverlayTimingLog);
+        _logPath.Text = $"Log: {v.LogPath}";
         var p = _app.Perf;
         var s = v.Status;
         var path = s.Connected ? _app.LinkPath() : null;

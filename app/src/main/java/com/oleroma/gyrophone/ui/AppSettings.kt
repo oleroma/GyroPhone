@@ -147,6 +147,7 @@ private fun AppTab(runtime: GamepadRuntime) {
     }
     val debugOn by runtime.debug.enabled.collectAsStateWithLifecycle()
     val ratchetTimingOn by runtime.ratchetTimingOn.collectAsStateWithLifecycle()
+    val drawTimingLogOn by runtime.drawTimingLogOn.collectAsStateWithLifecycle()
     val usbDirect by runtime.usbDirectOn.collectAsStateWithLifecycle()
     val tight by runtime.gyroTightening.collectAsStateWithLifecycle()
     val smooth by runtime.gyroSmoothing.collectAsStateWithLifecycle()
@@ -357,7 +358,8 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "ends on the PC plays either way.",
             ) { runtime.setGameRumble(it) }
         },
-        category(runtime, "debugging", "Debugging", "The debug panel, ratchet timing and recordings") {
+        category(runtime, "debugging", "Performance", "Debug: the debug panel, ratchet timing, recordings and logs") {
+            Text("Debug", style = MaterialTheme.typography.titleSmall)
             SwitchRow(
                 "Debug tools", debugOn,
                 hint = "Shows a debug panel on the pad: the link's speed and latency, the gyro, the active workspace and " +
@@ -373,6 +375,11 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "Back: how far the camera still moved back after the turn before it stopped (degrees once the " +
                         "game's turn is set in Gyro, else mouse counts). Turning it off clears the list.",
             ) { runtime.setRatchetTiming(it) }
+            SwitchRow(
+                "Display timing log", drawTimingLogOn,
+                hint = "While the gyro displays draw, writes how long they take to the phone's system log once a " +
+                        "second (tag GPDraw, read with adb logcat), so a slow display can be found. Costs almost nothing.",
+            ) { runtime.setDrawTimingLog(it) }
         },
         category(runtime, "backup", "Backup", "Export or import everything as a file") {
             Searchable(

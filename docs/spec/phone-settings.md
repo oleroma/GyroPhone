@@ -27,7 +27,7 @@ Every settings page (`ui/SettingsLayout.kt`) has a low **search** field on top (
 | Gyro display | Parallax edge (Turn / Tilt); **Fade when phone rests**: the gyro displays on the pad (the kinds with a Level) fade while the phone lies within Flat within (10°) of the tilt each was last leveled at, turning slower than Still below (0.5 °/s, live speed shown), with no finger, key or controller stick in use, for Quiet for (3 s); they fade to Fade to (30 %) over Fade over (0.5 s) and come back at once. Same rules as the PC's overlays ([PC overlays](pc-overlays.md)); never in edit mode (`RestDetector`, `TouchVisuals.restFade`, `GyroDisplay.levelUp`) | parallax off; fade on |
 | Controllers | Read USB controllers directly ([Controllers](phone-controllers.md)), the attached game pads | on |
 | Vibration | **Vibrate with game rumble**: the game's rumble on the PC's virtual controller (Xbox 360 or DualShock 4 output) vibrates the phone, as strong as the stronger motor, while a PC is connected; a haptic mapping's hold or tick plays over it. The two short buzzes and two beeps (notification volume, so silent mode mutes the beeps) when a Performance test record starts or ends on the PC play either way (`PhoneHaptics.rumble`, `buzz`) | on |
-| Debugging | Debug tools; **Ratchet timing** (see [Pad UI](phone-pad-ui.md)) | both off |
+| Performance | Debug section: Debug tools; **Ratchet timing** (see [Pad UI](phone-pad-ui.md)); **Display timing log** (the gyro displays' drawing times to logcat once a second while they draw, tag `GPDraw`) | Debug tools and Ratchet timing off, Display timing log on |
 | Backup | **Export everything**, **Import everything…** (asks first; see [Workspaces](phone-workspaces.md)) | — |
 | About | Version, gyro source and measured rate | — |
 

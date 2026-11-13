@@ -498,7 +498,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _engine.Settings.InputLog,
             _engine.Settings.CatchUpMs,
             _engine.Settings.PressKeyNotice,
-            _engine.Settings.PressKeyListen);
+            _engine.Settings.PressKeyListen,
+            _engine.Settings.OverlayTimingLog);
     }
 
     public void SetLatencyScreen(bool on) => _engine.SetLatencyScreen(on);
@@ -506,6 +507,12 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     public void SetCatchUpMs(int ms)
     {
         _engine.SetCatchUpMs(ms);
+        Refresh();
+    }
+
+    public void ToggleOverlayTimingLog()
+    {
+        _engine.SetOverlayTimingLog(!_engine.Settings.OverlayTimingLog);
         Refresh();
     }
 
@@ -1032,10 +1039,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         if (Volatile.Read(ref _exited) != 0) return;
         foreach (var f in _overlayList)
             if (!f.IsDisposed) f.Tick();
-        // The draw times in the log: every second while an overlay draws (so a short burst of fast moves
-        // can be read back), else now and then, so they can be read without the Debug window.
+        // The draw times in the log (Performance › Debug › Overlay timing log): every second while an overlay
+        // draws (so a short burst of fast moves can be read back), else now and then.
         long now = Environment.TickCount64;
-        if (now - _overlayStatsLoggedAt >= 1_000)
+        if (now - _overlayStatsLoggedAt >= 1_000 && _engine.Settings.OverlayTimingLog)
         {
             string stats = OverlayStats();
             bool drawing = _overlayList.Any(f => f.Stats.Length > 0 && !f.Stats.EndsWith(": idle", StringComparison.Ordinal));

@@ -24,7 +24,7 @@ import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 /**
- * Settings › Debugging › "Ratchet timing" on the pad: the last [RatchetTiming.KEPT] ratchet
+ * Settings › Performance › "Ratchet timing" on the pad: the last [RatchetTiming.KEPT] ratchet
  * presses, newest first, and the middle of each column. A plain box with no touch handling, so
  * the pad under it still gets every finger.
  */

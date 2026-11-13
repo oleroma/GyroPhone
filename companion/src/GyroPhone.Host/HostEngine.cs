@@ -321,6 +321,16 @@ public sealed class HostEngine
             if (on && _sessions.Active is { } a) Recorder?.SessionStarted(a.PhoneName, _clock.NowUs);
         }
     }
+    /// <summary>Saves <see cref="HostSettings.OverlayTimingLog"/> (the tray reads it when it logs the overlays' draw times).</summary>
+    public void SetOverlayTimingLog(bool on)
+    {
+        using (Lock(ByUi))
+        {
+            if (on == _settings.OverlayTimingLog) return;
+            _settings.OverlayTimingLog = on;
+            _settingsDirty = true;
+        }
+    }
     /// <summary>Saves <see cref="HostSettings.PressKeyListen"/>; turned off while the phone listens, the PC stops being read at once.</summary>
     public void SetPressKeyListen(bool on)
     {
