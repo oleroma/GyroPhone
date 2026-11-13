@@ -86,6 +86,7 @@ internal sealed class CompanionUpdater : IDisposable
         // thread pool, so this build keeps serving the phone and drawing overlays meanwhile; it exits only
         // once the finisher runs, and the finisher's move keeps the checked file, so the gap is short.
         var ui = _ui ?? SynchronizationContext.Current;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         Task.Run(() => UpdateFinisher.Launch(_newPath, tray: true, watch: watcher, _log)).ContinueWith(t =>
         {
             void Done(object? _)
@@ -94,7 +95,7 @@ internal sealed class CompanionUpdater : IDisposable
                 if (t.IsCompletedSuccessfully && t.Result)
                 {
                     if (watcher) Watcher.SignalStop(); // the finisher waits for it to exit
-                    _log("update: finisher started, exiting");
+                    _log($"update: finisher started in {clock.ElapsedMilliseconds} ms, exiting");
                     _exitForUpdate();
                     return;
                 }
