@@ -31,7 +31,7 @@ if [ -n "$base" ]; then
   while IFS= read -r f; do
     case "$f" in
       core/src/test/resources/protocol/*) apk=1 companion=1 ;;
-      app/* | core/* | gradle/* | gradlew | gradlew.bat | build.gradle.kts | settings.gradle.kts | gradle.properties | keystore/*) apk=1 ;;
+      app/* | core/* | gradle/* | gradlew | gradlew.bat | build.gradle.kts | settings.gradle.kts | gradle.properties) apk=1 ;;
       companion/*) companion=1 ;;
       driver/*) driver=1 ;;
       *.md | media/* | tools/* | .gitignore | .gitattributes) ;;
