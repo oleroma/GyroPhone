@@ -3338,16 +3338,17 @@ private class LabelCache {
 }
 
 /**
- * Label shown on a control: its own, else its first mapping's short name: in play mode from
+ * Label shown on a control: its own, else its first mapping's short name, its cards taken in the
+ * order the mapping editor shows them ([cardsInOrder]): in play mode from
  * [inUse] (its mappings in the set in use), while editing from Base.
  */
 private fun controlLabel(workspace: Workspace, c: TouchControl, editing: Boolean, inUse: List<Mapping>?): String {
     if (c.label.isNotBlank()) return c.label
     val first = if (editing) {
-        Bindings.touchInputs(c).firstNotNullOfOrNull { Bindings.targets(workspace.mappings, it).firstOrNull() }
+        cardsInOrder(c).firstNotNullOfOrNull { Bindings.targets(workspace.mappings, it).firstOrNull() }
     } else {
         val ms = inUse.orEmpty().filter { it.target != OutputTarget.NoOutput }
-        Bindings.touchInputs(c).firstNotNullOfOrNull { input ->
+        cardsInOrder(c).firstNotNullOfOrNull { input ->
             ms.firstOrNull { m -> input.sources.any { Bindings.sameSource(it, m.source) } }?.target
         }
     }

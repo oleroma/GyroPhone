@@ -137,6 +137,13 @@ data class TouchControl(
      * in each, a change to one made to all.
      */
     val global: Boolean = false,
+    /**
+     * The mapping editor's card order for this control, as card keys (the editor's own); empty =
+     * the default order. The first card's first mapping names a control with no label of its own.
+     */
+    val cardOrder: List<String> = emptyList(),
+    /** The card order last arranged by hand ([cardOrder] after a drag): the editor's Sort > Custom brings it back. */
+    val customOrder: List<String> = emptyList(),
 ) {
     /** Finger position input [axis]'s settings. */
     fun fingerOf(axis: FingerAxis): FingerAxisSettings = fingers.fingerOf(axis)

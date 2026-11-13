@@ -162,9 +162,13 @@ private const val MIN_SPLIT = 0.25f
 private const val MAX_SPLIT = 0.75f
 private const val PREF_SPLIT = "map.split"
 private const val PREF_RECENT = "map.recent"
-private const val PREF_ORDER = "map.order."
-/** The card order last arranged by hand, per control kind: Sort > Custom brings it back. */
-private const val PREF_CUSTOM = "map.custom."
+internal const val PREF_ORDER = "map.order."
+/**
+ * The card order last arranged by hand, per control kind: Sort > Custom brings it back. A touch
+ * button keeps its own orders ([TouchControl.cardOrder]); these are the touchpad's and the
+ * physical controls', and what buttons took over once ([GamepadRuntime.moveCardOrders]).
+ */
+internal const val PREF_CUSTOM = "map.custom."
 private val recentSerializer = ListSerializer(OutputTarget.serializer())
 private val prefJson = Json { ignoreUnknownKeys = true }
 
@@ -312,8 +316,8 @@ private fun actionTitle(control: TouchControl, input: BindableInput): String {
     return s.fingers.toString() + "f " + if (d != null) "Swipe " + Bindings.slotLabel(d.ordinal) else input.label
 }
 
-/** Remembered card orders are per control kind. */
-private fun kindKey(c: TouchControl) = when {
+/** Remembered card orders of controls with no order of their own are per control kind. */
+internal fun kindKey(c: TouchControl) = when {
     c.isTouchpadStandIn -> "touchpad"
     c.physicalDevice != null -> "device." + if (c.kind == TouchKind.STICK) "stick" else "button"
     c.kind == TouchKind.STICK -> "stick"
@@ -322,15 +326,21 @@ private fun kindKey(c: TouchControl) = when {
 }
 
 /** A card's key in the remembered order: its label, surface ones (and a swipe button's hold) without the finger count. */
-private fun orderKey(control: TouchControl, input: BindableInput): String =
+internal fun orderKey(control: TouchControl, input: BindableInput): String =
     when {
-        isSurface(input) -> "f:" + input.label.replace(Regex("^[0-9]f "), "")
+        isSurface(input) -> "f:" + input.label.replace(FINGERS_PREFIX, "")
         control.swipes && input.sources.first() is InputSource.Touch -> "f:" + SurfaceInput.HOLD.label
         else -> actionLabel(control, input)
     }
 
+private val FINGERS_PREFIX = Regex("^[0-9]f ")
+
+/** [c]'s actions ([Bindings.touchInputs]) in its own card order ([TouchControl.cardOrder]): its first card first. */
+internal fun cardsInOrder(c: TouchControl): List<BindableInput> =
+    Bindings.touchInputs(c).let { if (c.cardOrder.isEmpty()) it else sorted(c, it, c.cardOrder) }
+
 /** [inputs] in the remembered [order]; unknown ones last, in their own order. */
-private fun sorted(control: TouchControl, inputs: List<BindableInput>, order: List<String>): List<BindableInput> =
+internal fun sorted(control: TouchControl, inputs: List<BindableInput>, order: List<String>): List<BindableInput> =
     inputs.sortedBy { order.indexOf(orderKey(control, it)).let { i -> if (i < 0) Int.MAX_VALUE else i } }
 
 private fun loadRecent(runtime: GamepadRuntime): List<OutputTarget> =
@@ -594,23 +604,27 @@ internal fun ControlMappingScreen(
     val extras = remember(inputs) { inputs.flatMap { it.extra }.distinct() }
 
     var fingers by remember(control.id) { mutableIntStateOf(1) }
+    // A touch button (or stick) keeps its own card order; the touchpad and physical controls one per kind.
+    val ownOrder = onControlChange != null && !control.isTouchpadStandIn && control.physicalDevice == null && physicalInputs == null
     var order by remember(control.id) {
-        mutableStateOf(runtime.uiPref(PREF_ORDER + kindKey(control))?.split("\n").orEmpty())
+        mutableStateOf(if (ownOrder) control.cardOrder else runtime.uiPref(PREF_ORDER + kindKey(control))?.split("\n").orEmpty())
     }
     var custom by remember(control.id) {
-        mutableStateOf(runtime.uiPref(PREF_CUSTOM + kindKey(control))?.split("\n").orEmpty())
+        mutableStateOf(if (ownOrder) control.customOrder else runtime.uiPref(PREF_CUSTOM + kindKey(control))?.split("\n").orEmpty())
     }
     var sortMenu by remember { mutableStateOf(false) }
     var confirmDefault by remember { mutableStateOf(false) }
 
-    /** Saves [next] as the card order of this kind of control (and, [byHand], as its custom order). */
+    /** Saves [next] as the card order of this control (or its kind, [ownOrder]) and, [byHand], as its custom order. */
     fun saveOrder(next: List<String>, byHand: Boolean = false) {
         order = next
-        runtime.setUiPref(PREF_ORDER + kindKey(control), next.joinToString("\n"))
-        if (byHand) {
-            custom = next
-            runtime.setUiPref(PREF_CUSTOM + kindKey(control), next.joinToString("\n"))
+        if (byHand) custom = next
+        if (ownOrder) {
+            onControlChange?.invoke { c -> c.copy(cardOrder = next, customOrder = if (byHand) next else c.customOrder) }
+            return
         }
+        runtime.setUiPref(PREF_ORDER + kindKey(control), next.joinToString("\n"))
+        if (byHand) runtime.setUiPref(PREF_CUSTOM + kindKey(control), next.joinToString("\n"))
     }
     /** The card of touching the button (or stick) itself: its Area and Outside chips show on it. */
     fun isTouchCard(s: InputSource) = s == InputSource.Touch(control.id) ||
@@ -770,7 +784,8 @@ internal fun ControlMappingScreen(
         snackbar.currentSnackbarData?.dismiss()
         redo.add(allMappings to (if (was != null) currentControl else null))
         emit(prev)
-        if (was != null) onControlChange?.invoke { was }
+        // Undo brings back a preset's settings, not the card order arranged since.
+        if (was != null) onControlChange?.invoke { was.copy(cardOrder = it.cardOrder, customOrder = it.customOrder) }
     }
 
     fun redoLast() {
@@ -778,7 +793,7 @@ internal fun ControlMappingScreen(
         snackbar.currentSnackbarData?.dismiss()
         undo.add(allMappings to (if (was != null) currentControl else null))
         emit(next)
-        if (was != null) onControlChange?.invoke { was }
+        if (was != null) onControlChange?.invoke { was.copy(cardOrder = it.cardOrder, customOrder = it.customOrder) }
     }
 
     /**
@@ -2156,7 +2171,7 @@ internal fun ControlMappingScreen(
             title = { Text("Default order?") },
             text = {
                 Text(
-                    "Every action of every " + controlKindName(control).lowercase() +
+                    (if (ownOrder) "Every action of this " else "Every action of every ") + controlKindName(control).lowercase() +
                             " goes back to its default place. The order you arranged by hand is lost.",
                 )
             },
