@@ -66,13 +66,22 @@ internal class PointerPaintShader {
      * frame's time (the old upload path sends new paint at most every [UPLOAD_MS]).
      */
     fun draw(
-        canvas: Canvas, lp: LaserPaint, front: Boolean, cx: Float, cy: Float, r: Float,
+        canvas: Canvas, lp: LaserPaint, lock: java.util.concurrent.locks.ReentrantLock, front: Boolean, cx: Float, cy: Float, r: Float,
         view: (Float, Float, Float, FloatArray) -> Unit, scene: (Float, Float, Float, FloatArray) -> Unit, look: Look,
         nowMs: Long,
     ) {
         val s = if (front) near else far
         val m0 = System.nanoTime()
-        if (!drawPacked(lp, look)) uploadMaps(lp, look, nowMs)
+        // gp-paint paints the map under [lock]: while it is busy, the paint shown so far stays (the
+        // new rows go up next frame); only a map never sent waits for it.
+        val never = packed == null && uploadedOf == null
+        if (if (never) { lock.lock(); true } else lock.tryLock()) {
+            try {
+                if (!drawPacked(lp, look)) uploadMaps(lp, look, nowMs)
+            } finally {
+                lock.unlock()
+            }
+        }
         DrawProbe.add(DrawProbe.MAPS, System.nanoTime() - m0)
         s.setFloatUniform("packedMaps", if (packed != null) 1f else 0f)
         setUniforms(s, lp, front, cx, cy, r, view, scene, look)

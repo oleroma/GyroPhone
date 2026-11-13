@@ -397,17 +397,19 @@ private class DrawTiming {
 
 /**
  * Where the gyro displays' frame time goes, added up between [DrawTiming]'s log lines: feeding
- * the pointer's path and paint (CPU), the paint maps to the GPU, making the Snake, and handing the
- * frame over (unlockCanvasAndPost: it waits while the GPU side takes it).
+ * the pointer's path (and, before gp-paint, its paint), the paint maps to the GPU, making the Snake,
+ * handing the frame over (unlockCanvasAndPost: it waits while the GPU side takes it) and waiting for
+ * gp-paint ([PaintWorker]).
  */
 internal object DrawProbe {
     const val FEED = 0
     const val MAPS = 1
     const val SNAKE = 2
     const val POST = 3
-    private val names = arrayOf("feed", "maps", "snake", "post")
-    private val ns = LongArray(4)
-    private val most = LongArray(4)
+    const val WAIT = 4
+    private val names = arrayOf("feed", "maps", "snake", "post", "wait")
+    private val ns = LongArray(5)
+    private val most = LongArray(5)
 
     fun add(section: Int, t: Long) {
         ns[section] += t
@@ -425,6 +427,9 @@ internal object DrawProbe {
         return sb.toString()
     }
 }
+
+/** How long a frame waits for its paint ([PaintWorker]) before it shows what is painted so far. */
+private const val PAINT_WAIT_NS = 5_000_000L
 
 /** Each display frame should be drawn within this: half a 120 Hz frame. */
 private const val HINT_TARGET_NS = 4_000_000L
@@ -617,6 +622,9 @@ private class VisState {
     private val way = FloatArray(3)
     // Each pointer's paint drawing (its map's upload).
     private val paintShaders = java.util.WeakHashMap<LaserTrace, PointerPaintShader>()
+    // The pointer whose paint this frame already waited for ([PaintWorker.await]), and the frame.
+    private var paintAwaited: LaserTrace? = null
+    private var paintAwaitedAt = Long.MIN_VALUE
     private val viewOf: (Float, Float, Float, FloatArray) -> Unit = { x, y, z, out -> LaserTrace.view(x, y, z, out, axon = laserAxon, turned = laserTurned) }
     private val turnBase = FloatArray(9)
     // A pose from the gyro's history ([GyroDisplayFeed.history]): its quaternion, matrix and beam.
@@ -1128,6 +1136,7 @@ private class VisState {
         val moveAlpha = moveColors.sumOf { it shr 24 and 0xFF } / (6f * 255f)
         val lt = feed?.laser
         if (lt != null) {
+            if (!lt.deferPaint) PaintWorker.adopt(lt)
             val v = feed?.pose?.version ?: 0L
             fun addBeam(bx: Float, by: Float, bz: Float, ms: Long) {
                 lt.add(
@@ -1169,6 +1178,8 @@ private class VisState {
             }
             // The paint goes in runs: what is left of this frame's run is painted now, so it reaches the beam.
             lt.flushPaint()
+            // The stamps are painted on gp-paint while this thread draws the rest ([PaintWorker]).
+            PaintWorker.start(lt)
             DrawProbe.add(DrawProbe.FEED, System.nanoTime() - feedT0)
         }
         val rifle = d.laserRifle
@@ -1274,7 +1285,14 @@ private class VisState {
             val t = lt ?: return
             val lp = t.paint
             if (lp != null && look != null) {
-                paintShaders.getOrPut(t) { PointerPaintShader() }.draw(drawContext.canvas.nativeCanvas, lp, front, c.x, c.y, r, viewOf, sceneOf, look, now)
+                if (paintAwaited !== t || paintAwaitedAt != now) {
+                    // This frame's paint, if gp-paint gets it done within the budget; else what it has so far.
+                    paintAwaited = t; paintAwaitedAt = now
+                    val w0 = System.nanoTime()
+                    PaintWorker.await(t, PAINT_WAIT_NS)
+                    DrawProbe.add(DrawProbe.WAIT, System.nanoTime() - w0)
+                }
+                paintShaders.getOrPut(t) { PointerPaintShader() }.draw(drawContext.canvas.nativeCanvas, lp, t.paintLock, front, c.x, c.y, r, viewOf, sceneOf, look, now)
             }
             if (d.laserSnake) snake(t, d, front, c, r, col)
             if (d.laserShotDraw && d.laserDraw) hits(t, d, front, c, r, col)

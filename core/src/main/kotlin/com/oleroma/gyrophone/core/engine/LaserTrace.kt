@@ -1,5 +1,7 @@
 package com.oleroma.gyrophone.core.engine
 
+import kotlin.concurrent.withLock
+
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -207,10 +209,12 @@ class LaserTrace {
             if (strokeGap || !runOpen) {
                 // A line starts: a dot here, and the run from it.
                 stampRun(b, dot = true)
-            } else if (strokes.along(b) - runAlong >= maxOf(RUN_MIN_DEG, runHalf.toDouble())) {
-                // Painted in runs of about half the brush's width, not every 0.5° step: each stamp
-                // paints the brush and its glow all round, so short steps would paint the same
-                // texels many times over (a fast turn then took hundreds of milliseconds a frame).
+            } else if (strokes.along(b) - runAlong >= maxOf(RUN_MIN_DEG, runHalf * LaserPaint.REACH.toDouble())) {
+                // Painted in runs as long as the glow reaches (three half widths), not every 0.5°
+                // step: each stamp paints the brush and its glow all round, so short steps would
+                // paint the same texels many times over (a fast turn then took hundreds of
+                // milliseconds a frame). The run is a straight piece on the sphere; at that length its
+                // bend from the beam's path is far under the brush's width.
                 stampRun(b, dot = false)
             }
         }
@@ -261,7 +265,7 @@ class LaserTrace {
 
     private fun clearPaint() {
         runOpen = false
-        paint?.clear()
+        paintLock.withLock { jobs.clear(); paint?.clear() }
         paintUsed = false
         hitCount = 0
         version++
@@ -297,6 +301,41 @@ class LaserTrace {
     private val pa = FloatArray(3)
     private val pb = FloatArray(3)
 
+    /** One stamp of paint, made by [add] and painted at once or, with [deferPaint], by [paintPending]. */
+    private class Stamp(
+        val p: LaserPaint, val dot: Boolean, val ax: Float, val ay: Float, val az: Float, val bx: Float, val by: Float, val bz: Float,
+        val along: Double, val half: Float, val kind: Int, val soft: Float, val rgb: Int?,
+    ) {
+        fun run() {
+            if (dot) p.newLine()
+            p.stamp(ax, ay, az, bx, by, bz, along, half, kind, soft, rgb)
+        }
+    }
+
+    /**
+     * Stamps wait for [paintPending] (on another thread) instead of being painted inside [add], so
+     * a burst of paint never holds up drawing. The paint map is then only touched under [paintLock].
+     */
+    @Volatile var deferPaint = false
+
+    /** Held while the paint map is painted or read (with [deferPaint]). */
+    val paintLock = java.util.concurrent.locks.ReentrantLock()
+    // Added to by the drawing thread without waiting for the painter, which takes them one by one.
+    private val jobs = java.util.concurrent.ConcurrentLinkedQueue<Stamp>()
+
+    /** Stamps waiting to be painted (with [deferPaint]). */
+    val paintWaiting: Boolean get() = jobs.isNotEmpty()
+
+    /** Paints every waiting stamp, oldest first, each under [paintLock] (another thread may read the map between them). The painter's thread. */
+    fun paintPending() {
+        while (true) {
+            paintLock.withLock {
+                val j = jobs.poll() ?: return
+                j.run()
+            }
+        }
+    }
+
     // The paint's run not painted yet: from [runFrom] ([runAlong] degrees along) to the newest stroke point, with these settings.
     private val runFrom = FloatArray(3)
     private var runAlong = 0.0
@@ -329,12 +368,9 @@ class LaserTrace {
             if (dot) wayDir.fill(0f) else strokes.direction(b, runReach, wayDir)
             (directionColor(wayDir, ways) and 0xFFFFFF).toInt()
         }
-        if (dot) {
-            p.newLine()
-            p.stamp(pb[0], pb[1], pb[2], pb[0], pb[1], pb[2], strokes.along(b), runHalf, runKind, runSoft, rgb)
-        } else {
-            p.stamp(runFrom[0], runFrom[1], runFrom[2], pb[0], pb[1], pb[2], strokes.along(b), runHalf, runKind, runSoft, rgb)
-        }
+        val job = Stamp(p, dot, if (dot) pb[0] else runFrom[0], if (dot) pb[1] else runFrom[1], if (dot) pb[2] else runFrom[2],
+            pb[0], pb[1], pb[2], strokes.along(b), runHalf, runKind, runSoft, rgb)
+        if (deferPaint) jobs.add(job) else job.run()
         pb.copyInto(runFrom)
         runAlong = strokes.along(b)
         runOpen = true
@@ -362,7 +398,7 @@ class LaserTrace {
     fun clear() {
         strokes.clear()
         runOpen = false
-        paint?.clear()
+        paintLock.withLock { jobs.clear(); paint?.clear() }
         paintUsed = false
         hitCount = 0
         hitNext = 0
