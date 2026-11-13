@@ -2,28 +2,22 @@ package com.oleroma.gyrophone.ui
 
 import android.graphics.Paint
 import android.graphics.Typeface
-import android.graphics.SurfaceTexture
+import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Process
 import android.view.Choreographer
 import android.view.Surface
-import android.view.TextureView
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -41,7 +35,6 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.lerp
@@ -78,10 +71,13 @@ class DisplayBox(val control: TouchControl, val box: Rect)
  * drawn flat in its [DisplayBox] (no 3D library) from the runtime's data for it, once per screen
  * frame. In edit mode each also gets its box, the [selected] ones lit in their [selectedColor].
  *
- * They are drawn on a thread of their own ([GyroDisplaysRenderer]) into a [TextureView], never on
+ * They are drawn on a thread of their own ([GyroDisplaysRenderer]) into a [SurfaceView], never on
  * the screen thread: Android hands touches and controller keys to the app only on the screen
  * thread, so a heavy frame (Paint and Snake on a fast swing took up to 300 ms) would hold every
- * press, a ratchet's too, until it was drawn.
+ * press, a ratchet's too, until it was drawn. A SurfaceView is its own layer on the screen, put
+ * together with the app's by the display hardware: a new frame of it shows a frame sooner than
+ * through the app's window (as a TextureView would) and costs the screen thread nothing. It sits
+ * under the app's window, which leaves a hole there, so it paints the pad's background itself.
  */
 @Composable
 fun GyroDisplaysLayer(
@@ -90,21 +86,22 @@ fun GyroDisplaysLayer(
     editing: Boolean,
     selected: Set<String>,
     selectedColor: (String) -> Color,
+    edge: TouchVisuals?,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
     val renderer = remember { GyroDisplaysRenderer(runtime) }
     renderer.density = density
-    SideEffect { renderer.input = GyroDisplaysRenderer.Input(boxes, editing, selected, selectedColor) }
+    SideEffect { renderer.input = GyroDisplaysRenderer.Input(boxes, editing, selected, selectedColor, edge) }
     DisposableEffect(renderer) { onDispose { renderer.dispose() } }
     AndroidView(
         factory = { ctx ->
-            TextureView(ctx).apply {
-                isOpaque = false
+            SurfaceView(ctx).apply {
+                holder.setFormat(PixelFormat.OPAQUE)
                 // Never takes focus or touches: keys stay with the pad, fingers reach the controls over it.
                 isFocusable = false
                 isClickable = false
-                surfaceTextureListener = renderer
+                holder.addCallback(renderer)
             }
         },
         modifier = modifier,
@@ -117,13 +114,16 @@ fun GyroDisplaysLayer(
  * only while some display's data changes (and a moment after, so ghost trails catch up): a still
  * pose, as in edit mode, with the gyro off or the phone lying still (its sensor noise moves the
  * pose by less than shows), draws nothing new. Drawing goes through a [CanvasDrawScope] onto the
- * texture's surface ([Surface.lockHardwareCanvas]), the same drawing code as before.
+ * SurfaceView's surface ([Surface.lockHardwareCanvas]), the same drawing code as before.
  */
-internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : TextureView.SurfaceTextureListener {
-    /** What the pad shows now, set from the screen thread. */
-    class Input(val boxes: List<DisplayBox>, val editing: Boolean, val selected: Set<String>, val selectedColor: (String) -> Color)
+internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : SurfaceHolder.Callback {
+    /** What the pad shows now, set from the screen thread; [edge]: the parallax edge's settings, or null when it isn't shown. */
+    class Input(
+        val boxes: List<DisplayBox>, val editing: Boolean, val selected: Set<String>, val selectedColor: (String) -> Color,
+        val edge: TouchVisuals? = null,
+    )
 
-    @Volatile var input = Input(emptyList(), false, emptySet()) { Color.White }
+    @Volatile var input = Input(emptyList(), false, emptySet(), { Color.White })
         set(v) {
             field = v
             dirty = true
@@ -138,7 +138,6 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
 
     // Only on the render thread from here on.
     private var surface: Surface? = null
-    private var texture: SurfaceTexture? = null
     private var width = 0
     private var height = 0
     private var running = false
@@ -159,6 +158,9 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
     // The pose each display showed when it last moved visibly ([VISIBLE_TURN]).
     private val seen = HashMap<String, FloatArray>()
     private val pose = FloatArray(9)
+    // The parallax edge where it was last drawn, and where it would be now ([VisState.edgeState]).
+    private val edgeDrawn = FloatArray(EDGE_STATE)
+    private val edgeNow = FloatArray(EDGE_STATE)
     private var last = 0L
     private var until = 0L
     private var lastT = 0L
@@ -167,15 +169,28 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
     private val callback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
             if (!running) return
-            step(frameTimeNanos / 1_000_000L)
+            val t0 = System.nanoTime()
+            val drew = step(frameTimeNanos / 1_000_000L)
+            if (drew) {
+                val t1 = System.nanoTime()
+                val h = hint ?: com.oleroma.gyrophone.runtime.WorkHint.forThisThread(HINT_TARGET_NS).also { hint = it }
+                h?.done(t1 - t0, t1)
+                timing.frame(t1 - t0, t1)
+            }
             choreographer?.postFrameCallback(this)
         }
     }
 
-    override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
+    // Keeps this thread on cores and clocks that finish a frame in time ([com.oleroma.gyrophone.runtime.WorkHint]).
+    private var hint: com.oleroma.gyrophone.runtime.WorkHint? = null
+    private val timing = DrawTiming()
+
+    override fun surfaceCreated(holder: SurfaceHolder) = Unit
+
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {
+        val sf = holder.surface
         handler.post {
-            texture = st
-            surface = Surface(st)
+            surface = sf
             width = w; height = h
             dirty = true
             if (!running) {
@@ -186,34 +201,30 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
         }
     }
 
-    override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
-        handler.post { width = w; height = h; dirty = true }
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
+        // The surface goes when this returns: wait (briefly) for the render thread to stop drawing on it.
+        val stopped = java.util.concurrent.CountDownLatch(1)
+        if (!handler.post { stopSurface(); stopped.countDown() }) return
+        runCatching { stopped.await(200, java.util.concurrent.TimeUnit.MILLISECONDS) }
     }
-
-    override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
-        // Released on the render thread, after any frame it is drawing.
-        handler.post { releaseSurface() }
-        return false
-    }
-
-    override fun onSurfaceTextureUpdated(st: SurfaceTexture) = Unit
 
     /** The layer left the pad: stop and let the thread go. */
     fun dispose() {
         handler.post {
-            releaseSurface()
+            stopSurface()
+            hint?.close(); hint = null
             thread.quitSafely()
         }
     }
 
-    private fun releaseSurface() {
+    private fun stopSurface() {
         running = false
         choreographer?.removeFrameCallback(callback)
-        surface?.release(); surface = null
-        texture?.release(); texture = null
+        surface = null
     }
 
-    private fun step(t: Long) {
+    /** One frame at [t] (ms): steps the displays and draws them if anything changed; true when it drew. */
+    private fun step(t: Long): Boolean {
         val inp = input
         val shown = inp.boxes
         val inEdit = inp.editing
@@ -249,6 +260,16 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
             if (was == null || movedVisibly(was, pose)) {
                 seen[b.control.id] = pose.copyInto(was ?: FloatArray(9))
                 moved = true
+            }
+        }
+        // The parallax edge: redrawn once where it is drawn moved by a visible amount (or its tint changed).
+        val edge = inp.edge
+        if (edge != null) {
+            st.edgeState(runtime, edge, density.density, edgeNow)
+            for (i in 0 until EDGE_STATE) if (kotlin.math.abs(edgeNow[i] - edgeDrawn[i]) > EDGE_STEP[i]) {
+                edgeNow.copyInto(edgeDrawn)
+                until = maxOf(until, t)
+                break
             }
         }
         if (moved || sig != last || frame == 0L) {
@@ -300,7 +321,9 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
             frame = t
             dirty = false
             draw(inp)
+            return true
         }
+        return false
     }
 
     private fun draw(inp: Input) {
@@ -312,7 +335,8 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
             return
         }
         try {
-            canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+            // The pad's background: the window over this layer has a hole here.
+            canvas.drawColor(PAD_BACKGROUND.toArgb())
             drawScope.draw(density, LayoutDirection.Ltr, androidx.compose.ui.graphics.Canvas(canvas), Size(width.toFloat(), height.toFloat())) {
                 st.now = frame
                 for (b in inp.boxes) {
@@ -325,7 +349,9 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
                     st.shots = kicks[b.control.id]
                     st.lower = 1f - (raises[b.control.id] ?: 1f)
                     st.hip = (hips[b.control.id] ?: 0f) * shownAs.gunHipPull.coerceIn(0f, 1f)
+                    val k0 = System.nanoTime()
                     st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
+                    DrawProbe.kind(d.kind.ordinal, System.nanoTime() - k0)
                     if (inp.editing) {
                         val sel = b.control.id in inp.selected
                         drawRect(
@@ -338,45 +364,111 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
                         )
                     }
                 }
+                // The parallax edge, over the displays.
+                val edge = inp.edge
+                if (edge != null) st.drawEdge(this, runtime, edge)
             }
         } finally {
+            val p0 = System.nanoTime()
             s.unlockCanvasAndPost(canvas)
+            DrawProbe.add(DrawProbe.POST, System.nanoTime() - p0)
         }
     }
 }
+
+/**
+ * The gyro displays' drawing times, logged once a second while they draw (logcat tag GPDraw):
+ * frames drawn, the average and the longest, and how many took longer than [SLOW_NS]. Read over
+ * adb (`adb logcat -s GPDraw`) to check the displays keep up, a fast turn included.
+ */
+private class DrawTiming {
+    private var since = 0L
+    private var frames = 0
+    private var sum = 0L
+    private var longest = 0L
+    private var slow = 0
+
+    fun frame(ns: Long, now: Long) {
+        if (since == 0L) since = now
+        frames++
+        sum += ns
+        if (ns > longest) longest = ns
+        if (ns > SLOW_NS) slow++
+        if (now - since < 1_000_000_000L) return
+        android.util.Log.i(
+            "GPDraw",
+            "frames=$frames avg=${"%.2f".format(sum / frames / 1e6)}ms max=${"%.2f".format(longest / 1e6)}ms slow=$slow " +
+                DrawProbe.take(frames),
+        )
+        since = now; frames = 0; sum = 0L; longest = 0L; slow = 0
+    }
+
+    companion object {
+        /** Longer than this misses a 120 Hz frame. */
+        const val SLOW_NS = 8_000_000L
+    }
+}
+
+/**
+ * Where the gyro displays' frame time goes, added up between [DrawTiming]'s log lines: feeding
+ * the pointer's path (and, before gp-paint, its paint), the paint maps to the GPU, making the Snake,
+ * handing the frame over (unlockCanvasAndPost: it waits while the GPU side takes it) and waiting for
+ * gp-paint ([PaintWorker]).
+ */
+internal object DrawProbe {
+    const val FEED = 0
+    const val MAPS = 1
+    const val SNAKE = 2
+    const val POST = 3
+    const val WAIT = 4
+    private val names = arrayOf("feed", "maps", "snake", "post", "wait")
+    private val ns = LongArray(5)
+    private val most = LongArray(5)
+
+    fun add(section: Int, t: Long) {
+        ns[section] += t
+        if (t > most[section]) most[section] = t
+    }
+
+    // Each display kind's whole drawing (its CPU side), by [com.oleroma.gyrophone.core.model.GyroDisplayKind] ordinal.
+    private val kinds = com.oleroma.gyrophone.core.model.GyroDisplayKind.entries
+    private val kindNs = LongArray(kinds.size)
+    private val kindMost = LongArray(kinds.size)
+
+    fun kind(ordinal: Int, t: Long) {
+        kindNs[ordinal] += t
+        if (t > kindMost[ordinal]) kindMost[ordinal] = t
+    }
+
+    /** "name=avg/max" per section, then per display kind shown, over [frames] frames (ms), then zeroed. */
+    fun take(frames: Int): String {
+        val sb = StringBuilder()
+        val per = frames.coerceAtLeast(1)
+        for (i in names.indices) {
+            sb.append(names[i]).append('=').append("%.1f".format(ns[i] / per / 1e6))
+                .append('/').append("%.1f".format(most[i] / 1e6)).append(' ')
+            ns[i] = 0L; most[i] = 0L
+        }
+        for (i in kinds.indices) {
+            if (kindMost[i] == 0L) continue
+            sb.append(kinds[i].name.lowercase()).append('=').append("%.1f".format(kindNs[i] / per / 1e6))
+                .append('/').append("%.1f".format(kindMost[i] / 1e6)).append(' ')
+            kindNs[i] = 0L; kindMost[i] = 0L
+        }
+        return sb.toString()
+    }
+}
+
+/** How long a frame waits for its paint ([PaintWorker]) before it shows what is painted so far. */
+private const val PAINT_WAIT_NS = 5_000_000L
+
+/** Each display frame should be drawn within this: half a 120 Hz frame. */
+private const val HINT_TARGET_NS = 4_000_000L
 
 /** The pose matrix [now] moved from [was] by more than [VISIBLE_TURN] in any entry (a turn of about that many radians). */
 private fun movedVisibly(was: FloatArray, now: FloatArray): Boolean {
     for (i in 0..8) if (kotlin.math.abs(now[i] - was[i]) > VISIBLE_TURN) return true
     return false
-}
-
-/** The parallax edge ([TouchVisuals.gyroEdge]): outlines just inside the screen's edge that sway as the phone turns. */
-@Composable
-fun GyroEdgeLayer(runtime: GamepadRuntime, v: TouchVisuals, modifier: Modifier = Modifier) {
-    var frame by remember { mutableLongStateOf(0L) }
-    val st = remember { VisState() }
-    val visuals by rememberUpdatedState(v)
-    val density = LocalDensity.current.density
-    // Redrawn only when where it is drawn moved by a visible amount (or its tint changed): a still phone draws nothing new.
-    LaunchedEffect(Unit) {
-        val drawn = FloatArray(EDGE_STATE)
-        val now = FloatArray(EDGE_STATE)
-        while (true) withFrameMillis { t ->
-            st.edgeState(runtime, visuals, density, now)
-            var moved = frame == 0L
-            for (i in 0 until EDGE_STATE) if (kotlin.math.abs(now[i] - drawn[i]) > EDGE_STEP[i]) moved = true
-            if (moved) {
-                now.copyInto(drawn)
-                frame = t
-            }
-        }
-    }
-    // Its own layer: its redraws leave the gyro displays alone.
-    Canvas(modifier.graphicsLayer()) {
-        @Suppress("UNUSED_EXPRESSION") frame // redrawn when it moved
-        st.drawEdge(this, runtime, v)
-    }
 }
 
 /** Buffers reused from frame to frame, so drawing allocates little. */
@@ -533,8 +625,16 @@ private class VisState {
     private val way = FloatArray(3)
     // Each pointer's paint drawing (its map's upload).
     private val paintShaders = java.util.WeakHashMap<LaserTrace, PointerPaintShader>()
+    // The pointer whose paint this frame already waited for ([PaintWorker.await]), and the frame.
+    private var paintAwaited: LaserTrace? = null
+    private var paintAwaitedAt = Long.MIN_VALUE
     private val viewOf: (Float, Float, Float, FloatArray) -> Unit = { x, y, z, out -> LaserTrace.view(x, y, z, out, axon = laserAxon, turned = laserTurned) }
     private val turnBase = FloatArray(9)
+    // A pose from the gyro's history ([GyroDisplayFeed.history]): its quaternion, matrix and beam.
+    private val histQ = FloatArray(4)
+    private val histM = FloatArray(9)
+    private val histBeam = FloatArray(3)
+    private val histTmp = FloatArray(9)
     private val nv = FloatArray(3)
     private val hv = FloatArray(3)
     private val sceneOf: (Float, Float, Float, FloatArray) -> Unit = { x, y, z, out -> LaserTrace.view(x, y, z, out, axon = laserAxon) }
@@ -549,6 +649,7 @@ private class VisState {
     private var snakeW = FloatArray(0)
     private var snakeA = FloatArray(0)
     private var snakeCol = IntArray(0)
+    private var snakeFront = BooleanArray(0)
     // Reused from frame to frame: the paint's look, the gimbal rings' points, the rifle's muzzle.
     private val paintLook = PointerPaintShader.Look()
     private val gimbalPts = Array(3) { FloatArray(65 * 3) }
@@ -757,9 +858,30 @@ private class VisState {
      * overlaps neither darken nor show the older piece's round end; the layer is laid on at the colours' opacity.
      */
     private fun DrawScope.snake(t: LaserTrace, d: GyroDisplay, front: Boolean, c: Offset, r: Float, col: (GyroDisplayColor) -> Color) {
+        // Both halves' pieces are made once a frame (the far half is drawn first, the near half takes the same pieces).
+        if (t !== snakeOf || now != snakeAt || t.version != snakeVersion || c.x != snakeCx || c.y != snakeCy || r != snakeR) {
+            snakeOf = t; snakeAt = now; snakeVersion = t.version; snakeCx = c.x; snakeCy = c.y; snakeR = r
+            val b0 = System.nanoTime()
+            snakeCount = buildSnake(t, d, c, r, col)
+            DrawProbe.add(DrawProbe.SNAKE, System.nanoTime() - b0)
+        }
+        drawSnake(d, front, c, r, snakeCount)
+    }
+
+    // What the Snake's pieces were last made for ([snake]).
+    private var snakeOf: LaserTrace? = null
+    private var snakeAt = Long.MIN_VALUE
+    private var snakeVersion = Long.MIN_VALUE
+    private var snakeCx = 0f
+    private var snakeCy = 0f
+    private var snakeR = 0f
+    private var snakeCount = 0
+
+    /** Makes the Snake's pieces, oldest first, each on the near or far half ([snakeFront]); returns how many. */
+    private fun DrawScope.buildSnake(t: LaserTrace, d: GyroDisplay, c: Offset, r: Float, col: (GyroDisplayColor) -> Color): Int {
         val s = t.strokes
         val n = s.count
-        if (n < 2) return
+        if (n < 2) return 0
         val len = d.laserSnakeDeg.toFloat().coerceAtLeast(1f)
         snakeFire[0] = col(GyroDisplayColor.LASER_FIRE).toArgb(); snakeFire[1] = col(GyroDisplayColor.LASER_FIRE_BEHIND).toArgb()
         snakeFire[2] = col(GyroDisplayColor.LASER_AIM).toArgb(); snakeFire[3] = col(GyroDisplayColor.LASER_AIM_BEHIND).toArgb()
@@ -808,7 +930,7 @@ private class VisState {
                 val p = laserAt(c, r, la[0], la[1], la[2])
                 val z = pv[2]
                 val isFront = z > 0f
-                if (isFront == front && prevFront == front) {
+                if (isFront == prevFront) {
                     if (byWay) {
                         for (q in 0..2) way[q] = wayA[q] + (wayB[q] - wayA[q]) * f
                         LaserTrace.unit(way)
@@ -818,37 +940,50 @@ private class VisState {
                     snakeXY[m * 4] = prevX; snakeXY[m * 4 + 1] = prevY; snakeXY[m * 4 + 2] = p.x; snakeXY[m * 4 + 3] = p.y
                     snakeW[m] = headPx * (1f - taper * (1f - tail)) * (if (laserPersp) LaserTrace.perspective(z) else 1f)
                     snakeA[m] = 1f - fade * (1f - tail)
-                    snakeCol[m] = snakeShade(d, kind, byWay, z, front, ld)
+                    snakeCol[m] = snakeShade(d, kind, byWay, z, isFront, ld)
+                    snakeFront[m] = isFront
                     m++
                 }
                 prevX = p.x; prevY = p.y; prevFront = isFront
             }
         }
+        return m
+    }
+
+    /**
+     * Draws the [m] pieces on the [front] (near) or far half, newest first, in one layer: each piece
+     * goes under what is drawn already (DST_OVER), so overlapping pieces never add up; the glow's
+     * wider, fainter copies go under the line the same way, so together they fall off softly.
+     */
+    private fun DrawScope.drawSnake(d: GyroDisplay, front: Boolean, c: Offset, r: Float, m: Int) {
         if (m == 0) return
+        var any = false
+        for (k in 0 until m) if (snakeFront[k] == front) { any = true; break }
+        if (!any) return
         val canvas = drawContext.canvas.nativeCanvas
         val alpha = moveColors.sumOf { it shr 24 and 0xFF } / (6f * 255f)
         val e = r * 1.3f
         snakePaint.strokeCap = Paint.Cap.ROUND
         snakePaint.style = Paint.Style.STROKE
         snakePaint.isAntiAlias = true
-        snakePaint.blendMode = android.graphics.BlendMode.DST_OVER
-        // Glow: wider, fainter copies under the line, each its own layer, so together they fall off softly.
-        val glow = d.laserSnakeGlow.coerceIn(0f, 1f)
-        if (glow > 0f) for ((wide, share) in SNAKE_GLOW) {
-            val layer = canvas.saveLayerAlpha(c.x - e, c.y - e, c.x + e, c.y + e, (255f * alpha * glow * share).toInt().coerceIn(0, 255))
-            snakePieces(canvas, m, wide)
-            canvas.restoreToCount(layer)
-        }
         val layer = canvas.saveLayerAlpha(c.x - e, c.y - e, c.x + e, c.y + e, (255f * alpha).toInt().coerceIn(0, 255))
-        snakePieces(canvas, m, 1f)
+        snakePaint.blendMode = android.graphics.BlendMode.DST_OVER
+        snakePieces(canvas, m, front, 1f, 1f)
+        val glow = d.laserSnakeGlow.coerceIn(0f, 1f)
+        // Narrowest (strongest) first: each wider copy only shows outside the ones before it.
+        if (glow > 0f) for (g in SNAKE_GLOW.indices.reversed()) {
+            val (wide, share) = SNAKE_GLOW[g]
+            snakePieces(canvas, m, front, wide, glow * share)
+        }
         canvas.restoreToCount(layer)
         snakePaint.blendMode = null
     }
 
-    /** The Snake's [m] pieces, newest first, [wide] times their width. */
-    private fun snakePieces(canvas: android.graphics.Canvas, m: Int, wide: Float) {
+    /** The Snake's [m] pieces on the [front] or far half, newest first, [wide] times their width, [share] of their opacity. */
+    private fun snakePieces(canvas: android.graphics.Canvas, m: Int, front: Boolean, wide: Float, share: Float) {
         for (k in m - 1 downTo 0) {
-            val a = (snakeA[k] * 255f + 0.5f).toInt().coerceIn(0, 255)
+            if (snakeFront[k] != front) continue
+            val a = (snakeA[k] * share * 255f + 0.5f).toInt().coerceIn(0, 255)
             if (a == 0) continue
             snakePaint.color = (snakeCol[k] and 0xFFFFFF) or (a shl 24)
             snakePaint.strokeWidth = snakeW[k] * wide
@@ -862,6 +997,7 @@ private class VisState {
         snakeW = snakeW.copyOf(size)
         snakeA = snakeA.copyOf(size)
         snakeCol = snakeCol.copyOf(size)
+        snakeFront = snakeFront.copyOf(size)
     }
 
     /**
@@ -1003,12 +1139,12 @@ private class VisState {
         val moveAlpha = moveColors.sumOf { it shr 24 and 0xFF } / (6f * 255f)
         val lt = feed?.laser
         if (lt != null) {
+            if (!lt.deferPaint) PaintWorker.adopt(lt)
             val v = feed?.pose?.version ?: 0L
-            if (v != lt.fedVersion) {
-                lt.fedVersion = v
+            fun addBeam(bx: Float, by: Float, bz: Float, ms: Long) {
                 lt.add(
                     // Draw each shot: firing paints its hits, not a Fire line.
-                    beam[0], beam[1], beam[2], now, d.laserDraw, held, d.laserClearOnRatchet,
+                    bx, by, bz, ms, d.laserDraw, held, d.laserClearOnRatchet,
                     feed?.firing == true && !(d.laserShotDraw && d.laserDraw), d.laserFireOnly,
                     d.laserSmoothColours, d.laserLineSmoothing,
                     brushDeg = d.laserBrush.coerceIn(1, 20) * BRUSH_WIDTH,
@@ -1022,6 +1158,32 @@ private class VisState {
                     clearSnakeOnPress = d.laserSnakeClearOnRatchet,
                 )
             }
+            // Every pose the gyro made since the last frame, so a fast turn draws a smooth curve
+            // through all of them, not straight pieces from one frame's pose to the next.
+            val feedT0 = System.nanoTime()
+            val h = feed?.history
+            if (feed != null && h != null && (d.laserDraw || d.laserSnake)) {
+                if (lt.historySeen == 0L || lt.historySeen > h.count) lt.historySeen = h.count
+                lt.historySeen = h.since(lt.historySeen, histQ) { pq, ns ->
+                    feed.shownFrom(pq, histM)
+                    when (d.turnsWith) {
+                        com.oleroma.gyrophone.core.model.TurnsWith.PHONE -> LaserTrace.aim(histM, histTmp)
+                        com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL -> LaserTrace.faces(histM, d.laserFaces, histTmp)
+                        else -> {}
+                    }
+                    LaserTrace.beam(histM, histBeam)
+                    addBeam(histBeam[0], histBeam[1], histBeam[2], minOf(ns / 1_000_000L, now))
+                }
+            }
+            if (v != lt.fedVersion) {
+                lt.fedVersion = v
+                addBeam(beam[0], beam[1], beam[2], now)
+            }
+            // The paint goes in runs: what is left of this frame's run is painted now, so it reaches the beam.
+            lt.flushPaint()
+            // The stamps are painted on gp-paint while this thread draws the rest ([PaintWorker]).
+            PaintWorker.start(lt)
+            DrawProbe.add(DrawProbe.FEED, System.nanoTime() - feedT0)
         }
         val rifle = d.laserRifle
         val crosshair = d.laserCrosshair && !rifle
@@ -1126,7 +1288,14 @@ private class VisState {
             val t = lt ?: return
             val lp = t.paint
             if (lp != null && look != null) {
-                paintShaders.getOrPut(t) { PointerPaintShader() }.draw(drawContext.canvas.nativeCanvas, lp, front, c.x, c.y, r, viewOf, sceneOf, look, now)
+                if (paintAwaited !== t || paintAwaitedAt != now) {
+                    // This frame's paint, if gp-paint gets it done within the budget; else what it has so far.
+                    paintAwaited = t; paintAwaitedAt = now
+                    val w0 = System.nanoTime()
+                    PaintWorker.await(t, PAINT_WAIT_NS)
+                    DrawProbe.add(DrawProbe.WAIT, System.nanoTime() - w0)
+                }
+                paintShaders.getOrPut(t) { PointerPaintShader() }.draw(drawContext.canvas.nativeCanvas, lp, t.paintLock, front, c.x, c.y, r, viewOf, sceneOf, look, now)
             }
             if (d.laserSnake) snake(t, d, front, c, r, col)
             if (d.laserShotDraw && d.laserDraw) hits(t, d, front, c, r, col)
@@ -1155,6 +1324,8 @@ private class VisState {
             val gun = d.gun()
             // Kick size scales the gun's own recoil (50% is the gun as it is).
             val kickK = d.kickOf().coerceIn(0f, 3f) * 2f
+            val edge = Stroke(density * 0.75f, join = StrokeJoin.Round)
+            val edgeCol = Color(body.red * 0.5f, body.green * 0.5f, body.blue * 0.5f, body.alpha)
             for (f in LaserTrace.rifle(m, laserAxon, laserTurned, laserPersp, aim, kick * kickK, gun, lower, d.gunScope, hip)) {
                 path.reset()
                 for (i in 0 until f.xy.size / 2) {
@@ -1165,7 +1336,7 @@ private class VisState {
                 path.close()
                 val k = f.light
                 drawPath(path, Color(body.red * k, body.green * k, body.blue * k, body.alpha))
-                drawPath(path, Color(body.red * 0.5f, body.green * 0.5f, body.blue * 0.5f, body.alpha), style = Stroke(density * 0.75f, join = StrokeJoin.Round))
+                drawPath(path, edgeCol, style = edge)
             }
             if (aim > 0f) laserSight(c, r, col(GyroDisplayColor.LASER_AIM), gun, kickK)
             val fm = flashMs(d)
@@ -1383,7 +1554,7 @@ private class VisState {
                 if (!d.fillFaces) {
                     drawPath(path, lines, style = stroke)
                 } else if (mesh.convex) {
-                    for (f in mesh.faces.indices) if (mesh.faceFront[f]) drawFace(mesh, f, c, r, body)
+                    drawFrontFaces(mesh, c, r, body)
                     drawPath(path, lines, style = stroke)
                 } else {
                     // Far to near, each face with its own outline, so near ones cover far ones.
@@ -1402,10 +1573,61 @@ private class VisState {
         if (d.axonometric) worldAxes(c, r * 1.22f, true, d.opacity.coerceIn(0.05f, 1f), d.perspective)
     }
 
-    /** A smooth ball's fill: one disk, lit from the top left. */
+    /** A smooth ball's fill: one disk, lit from the top left (its gradient made again only when its colour or place changes). */
     private fun DrawScope.drawBody(c: Offset, r: Float, body: Color) {
-        val lit = Color(body.red + (1 - body.red) * 0.35f, body.green + (1 - body.green) * 0.35f, body.blue + (1 - body.blue) * 0.35f, body.alpha)
-        drawCircle(Brush.radialGradient(listOf(lit, body), Offset(c.x - r * 0.35f, c.y - r * 0.4f), r * 1.3f), r, c)
+        val k = bodyKey
+        var b = bodyFill
+        if (b == null || body != bodyKeyColor || k[0] != c.x || k[1] != c.y || k[2] != r) {
+            val lit = Color(body.red + (1 - body.red) * 0.35f, body.green + (1 - body.green) * 0.35f, body.blue + (1 - body.blue) * 0.35f, body.alpha)
+            b = Brush.radialGradient(listOf(lit, body), Offset(c.x - r * 0.35f, c.y - r * 0.4f), r * 1.3f)
+            bodyFill = b; bodyKeyColor = body; k[0] = c.x; k[1] = c.y; k[2] = r
+        }
+        drawCircle(b, r, c)
+    }
+
+    private var bodyFill: Brush? = null
+    private var bodyKeyColor = Color.Unspecified
+    private val bodyKey = FloatArray(3)
+
+    // The front faces as flat-coloured triangles, for [drawFrontFaces]: one draw for the whole shape.
+    private var triXY = FloatArray(0)
+    private var triCol = IntArray(0)
+    private val triPaint = Paint()
+
+    /**
+     * Every front face of a convex [mesh] (projected) filled with [body], darker the more it turns
+     * away, as one batch of triangles: a finely cut icosphere has hundreds of faces, and one path
+     * each was hundreds of draws a frame. Front faces of a convex shape never overlap, so their order
+     * doesn't matter; the edges stroked over them hide the triangles' unsmoothed borders.
+     */
+    private fun DrawScope.drawFrontFaces(mesh: Mesh, c: Offset, r: Float, body: Color) {
+        var tris = 0
+        for (f in mesh.faces.indices) if (mesh.faceFront[f]) tris += mesh.faces[f].size - 2
+        if (tris <= 0) return
+        val verts = tris * 3
+        if (triCol.size < verts) {
+            triCol = IntArray(verts)
+            triXY = FloatArray(verts * 2)
+        }
+        var v = 0
+        fun put(i: Int, argb: Int) {
+            triXY[v * 2] = c.x + mesh.tx[i] * r
+            triXY[v * 2 + 1] = c.y - mesh.ty[i] * r
+            triCol[v] = argb
+            v++
+        }
+        for (f in mesh.faces.indices) {
+            if (!mesh.faceFront[f]) continue
+            val face = mesh.faces[f]
+            val k = 0.45f + 0.55f * mesh.faceShade[f]
+            val argb = Color(body.red * k, body.green * k, body.blue * k, body.alpha).toArgb()
+            for (t in 1 until face.size - 1) {
+                put(face[0], argb); put(face[t], argb); put(face[t + 1], argb)
+            }
+        }
+        drawContext.canvas.nativeCanvas.drawVertices(
+            android.graphics.Canvas.VertexMode.TRIANGLES, v * 2, triXY, 0, null, 0, triCol, 0, null, 0, 0, triPaint,
+        )
     }
 
     /** Face [f] of [mesh] (projected) filled with [body], darker the more it turns away; its outline left in [facePath]. */
@@ -1651,7 +1873,7 @@ private class VisState {
                     Offset(x, tRect.bottom), Offset(x, tRect.bottom - tape * (if (big) 0.35f else 0.2f)), density,
                 )
                 if (big) {
-                    drawContext.canvas.nativeCanvas.drawText("${((deg % 360) + 360) % 360}", x, tRect.top + tape * 0.5f, text)
+                    drawContext.canvas.nativeCanvas.drawText(HEADING_LABELS[(((deg % 360) + 360) % 360) / 10], x, tRect.top + tape * 0.5f, text)
                 }
                 deg += 10
             }
@@ -1970,6 +2192,9 @@ private const val VISIBLE_TURN = 0.0009f
 private val AXIS_COLORS = arrayOf(Color(0xFFFF5A5A), Color(0xFF5ADB6E), Color(0xFF5AA8FF))
 private val RING_AXES = MotionAxis.shown.toTypedArray()
 private val RING_LETTERS = arrayOf("Y", "P", "R")
+
+/** The horizon tape's heading numbers, every 10° (made once, not each frame). */
+private val HEADING_LABELS = Array(36) { "${it * 10}" }
 
 /** The laser pointer's axis letters, X, Y, Z: pitch, yaw, roll as it aims (facing −Z). */
 private val LASER_AXIS_LETTERS = arrayOf("P", "Y", "R")

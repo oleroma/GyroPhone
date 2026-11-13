@@ -1,5 +1,7 @@
 package com.oleroma.gyrophone.core.engine
 
+import kotlin.concurrent.withLock
+
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -141,6 +143,9 @@ class LaserTrace {
     /** The pose version last fed (the UI feeds once per new pose). */
     var fedVersion = Long.MIN_VALUE
 
+    /** The pose history count ([GyroDisplayFeed.history]) the UI has fed up to. */
+    var historySeen = 0L
+
     /**
      * The beam now points at ([x], [y], [z]) (any length) at [nowMs]. While a ratchet is [held] it
      * doesn't paint (the pose eases back then, which isn't aiming); with [clearOnPress] pressing
@@ -171,6 +176,8 @@ class LaserTrace {
         val l = sqrt(x * x + y * y + z * z)
         if (l > 1e-6f && !l.isNaN()) follow(x / l, y / l, z / l, nowMs, smooth)
         if (!(draw || snake) || l < 1e-6f || held || l.isNaN() || (fireOnly && !fire && !aim)) {
+            // The line ends: its last run is painted up to where it stopped.
+            if (draw && !strokeGap) flushPaint()
             strokeGap = true
             return
         }
@@ -185,8 +192,32 @@ class LaserTrace {
         val brush = when (kind) { LaserPaint.FIRE -> fireBrushDeg; LaserPaint.AIM -> aimBrushDeg; else -> brushDeg }
         // A new point once the beam moved a little (or the firing or aiming started or stopped): a still beam adds nothing.
         if (!strokeGap && kind == lastKind && lastX * dx + lastY * dy + lastZ * dz > STROKE_STEP_COS) return
+        val painting = draw && brush > 0f
+        // A new line, or new colours: what is left of the run so far is painted first, as it was.
+        if (painting && (strokeGap || kind != runKind)) flushPaint()
+        val hadPoint = strokes.count > 0 && !strokeGap
+        if (painting && hadPoint && kind != runKind) {
+            // The run in the new colours starts at the point before (the line to this one is theirs).
+            strokes.point(strokes.count - 1, runFrom)
+            runAlong = strokes.along(strokes.count - 1)
+        }
         strokes.add(dx, dy, dz, nowMs, strokeGap, kind)
-        if (draw && brush > 0f) stampNewest(brush / 2f, kind, wayColors, if (smooth) SMOOTH_REACH else 0, mapWidth, soft)
+        if (painting) {
+            runHalf = brush / 2f; runKind = kind; runWays = wayColors; runReach = if (smooth) SMOOTH_REACH else 0
+            runWidth = mapWidth; runSoft = soft
+            val b = strokes.count - 1
+            if (strokeGap || !runOpen) {
+                // A line starts: a dot here, and the run from it.
+                stampRun(b, dot = true)
+            } else if (strokes.along(b) - runAlong >= maxOf(RUN_MIN_DEG, runHalf * LaserPaint.REACH.toDouble())) {
+                // Painted in runs as long as the glow reaches (three half widths), not every 0.5°
+                // step: each stamp paints the brush and its glow all round, so short steps would
+                // paint the same texels many times over (a fast turn then took hundreds of
+                // milliseconds a frame). The run is a straight piece on the sphere; at that length its
+                // bend from the beam's path is far under the brush's width.
+                stampRun(b, dot = false)
+            }
+        }
         if (snake) strokes.cut(snakeDeg)
         strokeGap = false
         lastKind = kind
@@ -227,12 +258,14 @@ class LaserTrace {
     /** Clears the strokes (the Snake; the paint stays). */
     private fun clearStrokes() {
         strokes.clear()
+        runOpen = false
         strokeGap = true
         version++
     }
 
     private fun clearPaint() {
-        paint?.clear()
+        runOpen = false
+        paintLock.withLock { jobs.clear(); paint?.clear() }
         paintUsed = false
         hitCount = 0
         version++
@@ -268,21 +301,79 @@ class LaserTrace {
     private val pa = FloatArray(3)
     private val pb = FloatArray(3)
 
-    /** Paints the newest stroke point into [paint], from the point before it unless it starts a line. */
-    private fun stampNewest(halfDeg: Float, kind: Int, wayColors: LongArray?, reach: Int, mapWidth: Int, soft: Float) {
-        // A new map when the detail changed (the paint so far goes).
-        val p = paint?.takeIf { it.width == mapWidth } ?: LaserPaint(mapWidth, mapWidth / 2).also { paint = it }
-        val n = strokes.count
-        val b = n - 1
-        val a = if (strokes.gap(b) || n < 2) b else b - 1
-        strokes.point(a, pa)
-        strokes.point(b, pb)
-        val rgb = if (wayColors == null) null else {
-            if (a == b) wayDir.fill(0f) else strokes.direction(b, reach, wayDir)
-            (directionColor(wayDir, wayColors) and 0xFFFFFF).toInt()
+    /** One stamp of paint, made by [add] and painted at once or, with [deferPaint], by [paintPending]. */
+    private class Stamp(
+        val p: LaserPaint, val dot: Boolean, val ax: Float, val ay: Float, val az: Float, val bx: Float, val by: Float, val bz: Float,
+        val along: Double, val half: Float, val kind: Int, val soft: Float, val rgb: Int?,
+    ) {
+        fun run() {
+            if (dot) p.newLine()
+            p.stamp(ax, ay, az, bx, by, bz, along, half, kind, soft, rgb)
         }
-        if (a == b) p.newLine()
-        p.stamp(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2], strokes.along(b), halfDeg, kind, soft, rgb)
+    }
+
+    /**
+     * Stamps wait for [paintPending] (on another thread) instead of being painted inside [add], so
+     * a burst of paint never holds up drawing. The paint map is then only touched under [paintLock].
+     */
+    @Volatile var deferPaint = false
+
+    /** Held while the paint map is painted or read (with [deferPaint]). */
+    val paintLock = java.util.concurrent.locks.ReentrantLock()
+    // Added to by the drawing thread without waiting for the painter, which takes them one by one.
+    private val jobs = java.util.concurrent.ConcurrentLinkedQueue<Stamp>()
+
+    /** Stamps waiting to be painted (with [deferPaint]). */
+    val paintWaiting: Boolean get() = jobs.isNotEmpty()
+
+    /** Paints every waiting stamp, oldest first, each under [paintLock] (another thread may read the map between them). The painter's thread. */
+    fun paintPending() {
+        while (true) {
+            paintLock.withLock {
+                val j = jobs.poll() ?: return
+                j.run()
+            }
+        }
+    }
+
+    // The paint's run not painted yet: from [runFrom] ([runAlong] degrees along) to the newest stroke point, with these settings.
+    private val runFrom = FloatArray(3)
+    private var runAlong = 0.0
+    private var runOpen = false
+    private var runHalf = 0f
+    private var runKind = LaserPaint.PAINT
+    private var runWays: LongArray? = null
+    private var runReach = 0
+    private var runWidth = LaserPaint.WIDTH
+    private var runSoft = 0.5f
+
+    /**
+     * Paints what is left of the current run up to the newest stroke point, so the paint reaches
+     * the beam. Called once a frame after the frame's points are in (and by [add] before a new line
+     * or new colours).
+     */
+    fun flushPaint() {
+        if (!runOpen || strokes.count == 0) return
+        val b = strokes.count - 1
+        if (strokes.along(b) > runAlong) stampRun(b, dot = false)
+    }
+
+    /** Paints the run from [runFrom] to stroke point [b] (a dot at [b] that starts a line with [dot]); the run then starts at [b]. */
+    private fun stampRun(b: Int, dot: Boolean) {
+        // A new map when the detail changed (the paint so far goes).
+        val p = paint?.takeIf { it.width == runWidth } ?: LaserPaint(runWidth, runWidth / 2).also { paint = it }
+        strokes.point(b, pb)
+        val ways = runWays
+        val rgb = if (ways == null) null else {
+            if (dot) wayDir.fill(0f) else strokes.direction(b, runReach, wayDir)
+            (directionColor(wayDir, ways) and 0xFFFFFF).toInt()
+        }
+        val job = Stamp(p, dot, if (dot) pb[0] else runFrom[0], if (dot) pb[1] else runFrom[1], if (dot) pb[2] else runFrom[2],
+            pb[0], pb[1], pb[2], strokes.along(b), runHalf, runKind, runSoft, rgb)
+        if (deferPaint) jobs.add(job) else job.run()
+        pb.copyInto(runFrom)
+        runAlong = strokes.along(b)
+        runOpen = true
         paintUsed = true
     }
 
@@ -306,7 +397,8 @@ class LaserTrace {
     /** Clears the strokes. */
     fun clear() {
         strokes.clear()
-        paint?.clear()
+        runOpen = false
+        paintLock.withLock { jobs.clear(); paint?.clear() }
         paintUsed = false
         hitCount = 0
         hitNext = 0
@@ -418,6 +510,9 @@ class LaserTrace {
             return argb
         }
         const val STROKE_STEP_DEG = 0.5f
+
+        /** The shortest run of paint painted at once (degrees); runs are about half the brush's width. */
+        const val RUN_MIN_DEG = 1.0
 
         /** Snake: its curve is cut into steps of at most this many degrees. */
         const val CURVE_STEP_DEG = 0.5f
@@ -723,18 +818,21 @@ class LaserTrace {
                 }
                 faces.add(Face(xy, light, depth / n))
             }
+            // Scratch for box(): face() copies the corners out, so one set serves every face of a frame.
+            val c = FloatArray(12)
+            val h = FloatArray(3)
+            val ctr = FloatArray(3)
             fun box(cx: Float, cy: Float, cz: Float, hx: Float, hy: Float, hz: Float) {
+                h[0] = hx; h[1] = hy; h[2] = hz
+                ctr[0] = cx; ctr[1] = cy; ctr[2] = cz
+                val us = BOX_US
+                val ws = BOX_WS
                 for (f in 0 until 6) {
                     val axis = f / 2
                     val sign = if (f % 2 == 0) -1f else 1f
                     // The face's corners, in order round it.
                     val o1 = (axis + 1) % 3
                     val o2 = (axis + 2) % 3
-                    val c = FloatArray(12)
-                    val us = floatArrayOf(-1f, 1f, 1f, -1f)
-                    val ws = floatArrayOf(-1f, -1f, 1f, 1f)
-                    val h = floatArrayOf(hx, hy, hz)
-                    val ctr = floatArrayOf(cx, cy, cz)
                     for (k in 0 until 4) {
                         for (d in 0..2) c[k * 3 + d] = ctr[d]
                         c[k * 3 + axis] += sign * h[axis]
@@ -793,8 +891,7 @@ class LaserTrace {
          * screen) then swings the beam sideways, and pitch up and down. A · m · Aᵀ with A taking the
          * phone's up into the screen and its screen's normal up.
          */
-        fun aim(m: FloatArray) {
-            val r = FloatArray(9)
+        fun aim(m: FloatArray, r: FloatArray = FloatArray(9)) {
             for (i in 0..2) for (j in 0..2) r[i * 3 + j] = AIM_SIGN[i] * AIM_SIGN[j] * m[AIM_AXIS[i] * 3 + AIM_AXIS[j]]
             r.copyInto(m)
         }
@@ -804,9 +901,8 @@ class LaserTrace {
          * [FACES] (0 −Z into the screen at rest, 1 +Z, 2 +X, 3 −X, 4 +Y, 5 −Y). m · F, F turning −Z
          * onto that direction.
          */
-        fun faces(m: FloatArray, faces: Int) {
+        fun faces(m: FloatArray, faces: Int, r: FloatArray = FloatArray(9)) {
             val f = FACE_TURNS.getOrNull(faces) ?: return
-            val r = FloatArray(9)
             for (i in 0..2) for (j in 0..2) r[i * 3 + j] = m[i * 3] * f[j] + m[i * 3 + 1] * f[3 + j] + m[i * 3 + 2] * f[6 + j]
             r.copyInto(m)
         }
@@ -822,6 +918,9 @@ class LaserTrace {
             floatArrayOf(1f, 0f, 0f, 0f, 0f, -1f, 0f, 1f, 0f),
             floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, -1f, 0f),
         )
+
+        private val BOX_US = floatArrayOf(-1f, 1f, 1f, -1f)
+        private val BOX_WS = floatArrayOf(-1f, -1f, 1f, 1f)
 
         private val AIM_AXIS = intArrayOf(0, 2, 1)
         private val AIM_SIGN = floatArrayOf(1f, 1f, -1f)

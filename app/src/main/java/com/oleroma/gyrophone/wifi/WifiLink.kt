@@ -166,7 +166,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             pump.linkTest = v and TestModeFlags.LINK_TEST != 0
             _linkTest.value = v and TestModeFlags.LINK_TEST != 0
         }
-    private val accessory = AccessoryBridge(appContext)
+    private val accessory = AccessoryBridge(appContext).also { pump.direct = it }
 
     private val _state = MutableStateFlow<LinkState>(LinkState.Off)
     override val state: StateFlow<LinkState> = _state

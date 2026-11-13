@@ -39,7 +39,7 @@ import kotlin.math.hypot
  * or holds mapped shows a line from its start point, through it, to its direction's furthest
  * activation length, marking each ([SwipeLines]). [moveRulers]: a finger on a touch button whose
  * Move X or Y moves shows a sliding ruler per Move instead ([MoveRulers]). The gyroEdge* fields set up the parallax edge
- * ([GyroEdgeLayer]); the other gyro displays are placed in edit mode ([GyroDisplaysLayer]).
+ * ([GyroDisplaysLayer], on its thread); the other gyro displays are placed in edit mode ([GyroDisplaysLayer]).
  */
 @Serializable
 data class TouchVisuals(

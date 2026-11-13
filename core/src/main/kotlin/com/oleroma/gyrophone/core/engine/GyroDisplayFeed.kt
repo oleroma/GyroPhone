@@ -92,6 +92,14 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         yaw: Float, pitch: Float, roll: Float, dtSeconds: Float, axes: Int, pressed: Boolean, held: Boolean,
         gyro: GyroSettings? = null,
     ) {
+        feedPose(yaw, pitch, roll, dtSeconds, axes, pressed, held, gyro)
+        if (laser != null) record()
+    }
+
+    private fun feedPose(
+        yaw: Float, pitch: Float, roll: Float, dtSeconds: Float, axes: Int, pressed: Boolean, held: Boolean,
+        gyro: GyroSettings?,
+    ) {
         val d = display
         ratchetHeld = held
         if (d.kind == GyroDisplayKind.GRAPH) {
@@ -201,9 +209,33 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
      */
     fun shown(out: FloatArray) {
         pose.quaternion(q)
+        shownFrom(q, out)
+    }
+
+    /** [shown] for the pose quaternion [pq] (w, x, y, z), such as one from [history]. */
+    fun shownFrom(pq: FloatArray, out: FloatArray) {
         val d = display
         // Following the camera it turns by Spin (or as far as the game's camera): no turn amount on top.
-        shownMatrix(q, restIn(d), if (d.followsCamera) 1f else d.motionScale, out)
+        shownMatrix(pq, restIn(d), if (d.followsCamera) 1f else d.motionScale, out)
+    }
+
+    /**
+     * The pose after each sample that turned it (pointer only): the UI draws the beam's path
+     * through every one, not just the pose at each screen frame, so a fast turn paints a smooth
+     * curve instead of straight pieces from frame to frame.
+     */
+    val history: PoseHistory? = if (display.kind == GyroDisplayKind.LASER) PoseHistory() else null
+    private var recordedVersion = Long.MIN_VALUE
+    private val recordQ = FloatArray(4)
+
+    /** Writes the pose to [history] if it turned since the last sample (the sample's thread). */
+    private fun record() {
+        val h = history ?: return
+        val v = pose.version
+        if (v == recordedVersion) return
+        recordedVersion = v
+        pose.quaternion(recordQ)
+        h.add(recordQ, System.nanoTime())
     }
 
     /**
@@ -233,6 +265,11 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
      * at [gyro]'s sensitivity of that axis. The pose takes turns from both threads.
      */
     fun camera(dx: Int, dy: Int, routes: List<Mapping>, gyro: GyroSettings) {
+        cameraPose(dx, dy, routes, gyro)
+        if (laser != null) record()
+    }
+
+    private fun cameraPose(dx: Int, dy: Int, routes: List<Mapping>, gyro: GyroSettings) {
         val d = display
         if (!d.followsCamera) return
         val deg = cameraDegrees(dx, dy, routes, gyro)
@@ -485,5 +522,53 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         private const val ACTIVE_NS = 150_000_000L
 
         private const val DEG_TO_RAD = (Math.PI / 180).toFloat()
+    }
+}
+
+/**
+ * The latest [SIZE] poses (quaternions) with their times, written by one thread (the gyro's) and
+ * read by another (the displays'): the writer fills a slot, then moves [count] on; the reader takes
+ * the slots after the count it last saw. No lock, nothing made per sample.
+ */
+class PoseHistory {
+    private val q = FloatArray(SIZE * 4)
+    private val t = LongArray(SIZE)
+
+    /** Poses written so far (the newest is slot (count − 1) % SIZE). */
+    @Volatile var count = 0L
+        private set
+
+    fun add(pq: FloatArray, nowNs: Long) {
+        val c = count
+        val i = (c % SIZE).toInt()
+        pq.copyInto(q, i * 4, 0, 4)
+        t[i] = nowNs
+        count = c + 1
+    }
+
+    /**
+     * Calls [each] with every pose written after the first [seen] (at most the newest [SIZE] − 8,
+     * so the writer never fills a slot being read) and its time (ns), oldest first; returns the
+     * count to pass next time.
+     */
+    inline fun since(seen: Long, out: FloatArray, each: (FloatArray, Long) -> Unit): Long {
+        val c = count
+        var from = if (seen < c - (SIZE - 8)) c - (SIZE - 8) else seen
+        if (from < 0) from = 0
+        while (from < c) {
+            val i = (from % SIZE).toInt()
+            copy(i, out)
+            each(out, time(i))
+            from++
+        }
+        return c
+    }
+
+    fun copy(slot: Int, out: FloatArray) { q.copyInto(out, 0, slot * 4, slot * 4 + 4) }
+    fun time(slot: Int): Long = t[slot]
+
+    companion object {
+        /** About 135 ms of samples at the phone's ~950 Hz: plenty for the slowest frame. */
+        const val SIZE = 128
     }
 }
