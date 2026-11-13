@@ -13,6 +13,7 @@ import com.oleroma.gyrophone.core.model.AxisGlide
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.ButtonGyro
 import com.oleroma.gyrophone.core.model.GyroMode
+import com.oleroma.gyrophone.core.model.GyroSpace
 import com.oleroma.gyrophone.core.model.GyroCurve
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.TouchpadSettings
@@ -220,6 +221,11 @@ private fun buttonGyroGear(g: ButtonGyroLevel, key: String, axis: MotionAxis): @
             onReset = { g.edit { it.withMode(axis, null) } },
             hint = "While this is held${g.where}. Unset, the workspace's.",
         ) { m -> g.edit { it.withMode(axis, m) } }
+        GyroSpaceRow(
+            axis, g.inUse.ownSpace(axis) ?: g.parent.spaceOf(axis), g.own.ownSpace(axis) != null,
+            onReset = { g.edit { it.withSpace(axis, null) } },
+            hint = "While this is held${g.where}. Unset, the workspace's.",
+        ) { sp -> g.edit { it.withSpace(axis, sp) } }
         val hint = "While this is held: how fast ${axis.label.lowercase()} turns${g.where}. Unset, it follows this button's " +
             "Gyro sensitivity (in Settings), else the workspace's."
         val own = g.own.own(axis) != null || g.own.ownScale(axis) != null
@@ -414,6 +420,12 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
             children = level.kids(k("Mode")),
             hint = "Unset, it follows the gyro mode in Settings." + if (g.mode == GyroMode.SENSOR_OFF) " Gyro is off there now." else "",
         ) { m -> level.edit { it.copy(gyro = it.gyro.withMode(axis, m)) } }
+        GyroSpaceRow(
+            axis, g.spaceOf(axis), level.isOwn(k("Space")),
+            onReset = { level.reset(k("Space")) },
+            children = level.kids(k("Space")),
+            hint = "Unset, it follows the Gyro space in Settings (${g.gyroSpace.label}).",
+        ) { sp -> level.edit { it.copy(gyro = it.gyro.withSpace(axis, sp)) } }
         val sensHint = "How fast ${axis.label.lowercase()} turns; scrolling and sticks go faster or slower with it too. " +
             "Unset, it follows the shared Sensitivity (${gyroShow(g)(g.sensitivity)}) in Settings."
         val sensOwn = level.isOwn(k("Sensitivity")) || level.isOwn(k("Scale"))
@@ -523,6 +535,34 @@ private fun RatchetModeRow(
             for (m in listOf(GyroMode.ALWAYS, GyroMode.OFF)) {
                 FilterChip(selected = mode == m, onClick = { onSet(m) }, label = { Text(if (m == GyroMode.ALWAYS) "Disables it" else "Enables it") })
             }
+        }
+    }
+}
+
+/**
+ * Gyro [axis]'s space for its mappings ([GyroSpace]): Local, World, and for yaw Player. [space]: the
+ * one in effect (Player off yaw shows as Local: it changes nothing there).
+ */
+@Composable
+private fun GyroSpaceRow(
+    axis: MotionAxis,
+    space: GyroSpace,
+    overridden: Boolean,
+    onReset: () -> Unit,
+    hint: String,
+    children: ChildInfo? = null,
+    onSet: (GyroSpace) -> Unit,
+) {
+    val choices = GyroSpace.choicesFor(axis)
+    val shown = if (space in choices) space else GyroSpace.LOCAL
+    val what = when (shown) {
+        GyroSpace.LOCAL -> "Local: ${axis.label.lowercase()} about the phone's own axis."
+        GyroSpace.WORLD -> "World: ${axis.label.lowercase()} measured against gravity, however the phone is held."
+        GyroSpace.PLAYER -> "Player: yaw blends the phone's yaw and roll by how it leans, so turning stays level when you tilt or lie down."
+    }
+    OverrideRow("${axis.label}: space", overridden, onReset, "$what $hint", children = children) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (sp in choices) FilterChip(selected = shown == sp, onClick = { onSet(sp) }, label = { Text(sp.label) })
         }
     }
 }

@@ -84,6 +84,16 @@ data class Workspace(
     /** Sensitivities kept by sliders ([SliderOverride]), over its settings in effect; the newest of each sensitivity only. */
     val sliders: List<SliderOverride> = emptyList(),
 ) {
+    /**
+     * Some gyro mapping may be measured against gravity (World or Player space): the workspace's,
+     * a layer's, or a held button's own: the accelerometer is needed.
+     */
+    val gyroSpaced: Boolean get() {
+        fun ButtonGyro.spaced() = MotionAxis.shown.any { a -> ownSpace(a).let { it != null && it != GyroSpace.LOCAL } }
+        return gyro.anySpaced || sets.any { it.settings?.gyro?.anySpaced == true } ||
+            touchControls.any { c -> c.gyro.any { it.spaced() } } || heldButtons.any { b -> b.gyro.any { it.spaced() } }
+    }
+
     /** The first attached pad that matches a device, or null (the device does nothing here). */
     fun padFor(vendorId: Int, productId: Int, name: String): AttachedPad? =
         pads.firstOrNull { it.matches(vendorId, productId, name) }

@@ -659,7 +659,16 @@ fun touchedControls(
 enum class GyroSpace(val label: String) {
     LOCAL("Local"),
     WORLD("World"),
-    PLAYER("Player"),
+    PLAYER("Player");
+
+    /** The card title of gyro axis [a] ([MotionAxis.label]) measured in this space: "World yaw"; the plain name where it changes nothing (Local, or Player off yaw). */
+    fun title(a: MotionAxis): String =
+        if (this == LOCAL || this == PLAYER && a != MotionAxis.ROLL) a.label else label + " " + a.label.lowercase()
+
+    companion object {
+        /** The spaces axis [a] can be measured in: Player only changes yaw (stored [MotionAxis.ROLL]). */
+        fun choicesFor(a: MotionAxis): List<GyroSpace> = if (a == MotionAxis.ROLL) entries else listOf(LOCAL, WORLD)
+    }
 }
 
 /**
@@ -771,6 +780,10 @@ data class ButtonGyro(
     val rollScale: Float? = null,
     /** The touchpad cursor's factor while held (× the workspace's exact sensitivities), instead of [touchSensitivity]. */
     val touchScale: Float? = null,
+    /** Yaw's, pitch's and roll's space while held ([GyroSettings.spaceOf]); null = the workspace's. */
+    val yawSpace: GyroSpace? = null,
+    val pitchSpace: GyroSpace? = null,
+    val rollSpace: GyroSpace? = null,
 ) {
     /** It sets something. */
     val any: Boolean get() = anyGyro || anyTouch
@@ -779,7 +792,24 @@ data class ButtonGyro(
     val anyGyro: Boolean get() = sensitivity != null || yaw != null || pitch != null || roll != null ||
         yawScale != null || pitchScale != null || rollScale != null ||
         yawMode != null || pitchMode != null || rollMode != null || yawGlide != null || pitchGlide != null || rollGlide != null ||
-        accel != null || yawAccel != null || pitchAccel != null || rollAccel != null
+        accel != null || yawAccel != null || pitchAccel != null || rollAccel != null ||
+        yawSpace != null || pitchSpace != null || rollSpace != null
+
+    /** Axis [a]'s own space while held. */
+    fun ownSpace(a: MotionAxis): GyroSpace? = when (a) {
+        MotionAxis.YAW -> yawSpace
+        MotionAxis.PITCH -> pitchSpace
+        MotionAxis.ROLL -> rollSpace
+        MotionAxis.NONE -> null
+    }
+
+    /** Copy with axis [a]'s own space [s] while held (null: the workspace's). */
+    fun withSpace(a: MotionAxis, s: GyroSpace?): ButtonGyro = when (a) {
+        MotionAxis.YAW -> copy(yawSpace = s)
+        MotionAxis.PITCH -> copy(pitchSpace = s)
+        MotionAxis.ROLL -> copy(rollSpace = s)
+        MotionAxis.NONE -> this
+    }
 
     /** It sets something of the touchpad's. */
     val anyTouch: Boolean get() = touchSensitivity != null || touchAcceleration != null || touchScale != null
@@ -915,6 +945,7 @@ data class ButtonGyro(
             yawScale = scale(yawScale, o.yawScale, o.yaw), pitchScale = scale(pitchScale, o.pitchScale, o.pitch),
             rollScale = scale(rollScale, o.rollScale, o.roll),
             touchScale = scale(touchScale, o.touchScale, o.touchSensitivity),
+            yawSpace = o.yawSpace ?: yawSpace, pitchSpace = o.pitchSpace ?: pitchSpace, rollSpace = o.rollSpace ?: rollSpace,
         )
     }
 
@@ -933,6 +964,7 @@ data class ButtonGyro(
         yawMode = yawMode ?: g.yawMode, pitchMode = pitchMode ?: g.pitchMode, rollMode = rollMode ?: g.rollMode,
         accel = accel ?: g.accel,
         yawAccel = accelOf(MotionAxis.YAW, g), pitchAccel = accelOf(MotionAxis.PITCH, g), rollAccel = accelOf(MotionAxis.ROLL, g),
+        yawSpace = yawSpace ?: g.yawSpace, pitchSpace = pitchSpace ?: g.pitchSpace, rollSpace = rollSpace ?: g.rollSpace,
     ).let { r ->
         listOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL).fold(r) { acc, a -> acc.withGlide(a, g.ownGlide(a).under(ownGlide(a))) }
     }
@@ -1148,6 +1180,13 @@ data class GyroSettings(
     val gameName: String = "",
     /** Which axes yaw, pitch and roll are measured about ([GyroSpace]); the workspace's (and Defaults') only. */
     val gyroSpace: GyroSpace = GyroSpace.LOCAL,
+    /**
+     * Yaw's, pitch's and roll's own space for the gyro's mappings (their cards' Space); null =
+     * [gyroSpace]. The gyro displays and the PC overlays keep [gyroSpace].
+     */
+    val yawSpace: GyroSpace? = null,
+    val pitchSpace: GyroSpace? = null,
+    val rollSpace: GyroSpace? = null,
     /** Which screen axis is yaw ([YawAxis]): the phone's frame for everything gyro; the workspace's (and Defaults') only. */
     val yawAxis: YawAxis = YawAxis.SCREEN_Z,
     /** [YawAxis.CUSTOM]'s tilt back (degrees, 0 = Screen Z, 90 = Screen Y), from a granular Set orientation; the workspace's (and Defaults') only. */
@@ -1198,6 +1237,28 @@ data class GyroSettings(
 
     /** Axis [a]'s acceleration in effect ([GyroCurve.OFF] for none). */
     fun accelOf(a: MotionAxis): GyroCurve = ownAccel(a) ?: accel ?: GyroCurve.OFF
+
+    /** Axis [a]'s own space for its mappings, null when it follows [gyroSpace]. */
+    fun ownSpace(a: MotionAxis): GyroSpace? = when (a) {
+        MotionAxis.YAW -> yawSpace
+        MotionAxis.PITCH -> pitchSpace
+        MotionAxis.ROLL -> rollSpace
+        MotionAxis.NONE -> null
+    }
+
+    /** Axis [a]'s space in effect for its mappings. */
+    fun spaceOf(a: MotionAxis): GyroSpace = ownSpace(a) ?: gyroSpace
+
+    /** Copy with axis [a]'s own space [s] (null: it follows [gyroSpace]). */
+    fun withSpace(a: MotionAxis, s: GyroSpace?): GyroSettings = when (a) {
+        MotionAxis.YAW -> copy(yawSpace = s)
+        MotionAxis.PITCH -> copy(pitchSpace = s)
+        MotionAxis.ROLL -> copy(rollSpace = s)
+        MotionAxis.NONE -> this
+    }
+
+    /** Some axis's mappings are measured against gravity (World or Player): the accelerometer is needed. */
+    val anySpaced: Boolean get() = MotionAxis.shown.any { spaceOf(it) != GyroSpace.LOCAL }
 
     /** Copy with axis [a]'s own acceleration [c] (null: it follows [accel]). */
     fun withAccel(a: MotionAxis, c: GyroCurve?): GyroSettings = when (a) {
@@ -1339,6 +1400,14 @@ data class GyroSettings(
             MotionAxis.YAW -> "yawAccel"
             MotionAxis.PITCH -> "pitchAccel"
             MotionAxis.ROLL -> "rollAccel"
+            MotionAxis.NONE -> null
+        }
+
+        /** The property of axis [a]'s own space ([WorkspaceDefaults.gyroKey]). */
+        fun spaceProp(a: MotionAxis): String? = when (a) {
+            MotionAxis.YAW -> "yawSpace"
+            MotionAxis.PITCH -> "pitchSpace"
+            MotionAxis.ROLL -> "rollSpace"
             MotionAxis.NONE -> null
         }
     }

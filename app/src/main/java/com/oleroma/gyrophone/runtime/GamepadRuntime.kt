@@ -49,6 +49,7 @@ import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.WorkspaceSet
+import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.ui.PREF_CUSTOM
 import com.oleroma.gyrophone.ui.PREF_ORDER
 import com.oleroma.gyrophone.ui.TouchVisuals
@@ -531,7 +532,20 @@ class GamepadRuntime(context: Context) {
     /** Some gyro display holds its pose to gravity, or may fade when the phone rests (and so needs the accelerometer). */
     private val needsGravity: Boolean get() = wifi.overlay.wanted ||
         (!visualsCovered && (vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity } || (vis.restFade.on && gyroFeeds.isNotEmpty()))) ||
-        _activeProfile.value.workspace(_workspaceIndex.value).gyro.gyroSpace != GyroSpace.LOCAL
+        cardsSpaced()
+
+    // [cardsSpaced]'s answer and the workspace it is for (made again only when that changes).
+    @Volatile private var spacedFor: Pair<Workspace, Boolean>? = null
+
+    /**
+     * Some gyro card of the workspace may be measured against gravity ([Workspace.gyroSpaced]):
+     * the pose follows gravity all along, so a layer or held button switching it on finds it ready.
+     */
+    private fun cardsSpaced(): Boolean {
+        val w = _activeProfile.value.workspace(_workspaceIndex.value)
+        spacedFor?.let { (f, v) -> if (f === w) return v }
+        return w.gyroSpaced.also { spacedFor = w to it }
+    }
 
     /** The phone's pose against gravity, for the World and Player gyro spaces ([GyroSpace]). */
     private val gravityPose = GravityPose()
@@ -1174,8 +1188,10 @@ class GamepadRuntime(context: Context) {
         val feeds = if (visualsCovered) NO_FEEDS else gyroFeeds
         val tilt = vis.gyroNeedsGravity && !visualsCovered
         val spaced = wsGyro.gyroSpace != GyroSpace.LOCAL
+        // Some gyro card measured against gravity (its own space, a layer's or a held button's).
+        val mapSpaced = spaced || cardsSpaced()
         val overlay = wifi.overlay.wanted
-        val visuals = tilt || feeds.isNotEmpty() || spaced || overlay
+        val visuals = tilt || feeds.isNotEmpty() || mapSpaced || overlay
         // The world's up in the screen's own frame, for Set orientation.
         val s = gyroMouse.screenMotion(x, y, z)
         screenUp[0] = s.pitch; screenUp[1] = -s.yaw; screenUp[2] = -s.roll
@@ -1189,7 +1205,7 @@ class GamepadRuntime(context: Context) {
             if (overlay) wifi.overlay.up(d.pitch, -d.yaw, -d.roll, g)
             for (f in feeds) f.up(d.pitch, -d.yaw, -d.roll, g)
             if (feeds.isNotEmpty() && vis.restFade.on) restDetector.up(d.pitch, -d.yaw, -d.roll, g, System.nanoTime(), feeds)
-            if (spaced) gravityPose.setUp(m.pitch, -m.yaw, -m.roll, g)
+            if (mapSpaced) gravityPose.setUp(m.pitch, -m.yaw, -m.roll, g)
         }
         if (wifi.motion.wanted) {
             // The PC's DualShock 4 accelerometer: in g, right, up and toward the player.
@@ -1915,6 +1931,11 @@ class GamepadRuntime(context: Context) {
         val overlayOn = overlay.wanted && !measuring
         val space = wsGyro.gyroSpace
         val real = space != GyroSpace.LOCAL
+        // The settings in effect (a layer's or a held button's included): each gyro card's own space.
+        val gsNow = engine.gyroSettings
+        val mapReal = real || gsNow.anySpaced
+        // The pose follows gravity whenever some card may need it.
+        val poseOn = mapReal || cardsSpaced()
         // The sample turned once for everything below: about the screen's own axes, in the
         // workspace's base orientation (as [GyroMouse.motion]), and as the displays show it ([displayMotion]).
         val screen = gyroMouse.screenMotion(bx, by, bz)
@@ -1966,7 +1987,7 @@ class GamepadRuntime(context: Context) {
             } else if (motion.still()) engine.onChange?.run()
         }
         // World and player space read the phone's pose against gravity.
-        if (real) {
+        if (poseOn) {
             gravityPose.rotate(local.yaw, local.pitch, local.roll, dt)
             gravityPose.up(upNow)
             gravityPoseUsed = true
@@ -1975,8 +1996,8 @@ class GamepadRuntime(context: Context) {
             gravityPose.reset()
             gravityPoseUsed = false
         }
-        // The turn in the workspace's gyro space, against the pose this sample left.
-        val spaced = if (real && (pcMode || accelWatchers.get() > 0)) gyroMouse.inSpace(local, space, upNow) else local
+        // The turn with each axis in its card's space, against the pose this sample left.
+        val spaced = if (mapReal && (pcMode || accelWatchers.get() > 0)) gyroMouse.inSpaces(local, gsNow, upNow) else local
         if (accelWatchers.get() > 0) liveSpeed(spaced.yaw, spaced.pitch, spaced.roll, dt, ts)
         if (pcMode) {
             pcGyroSample(pc, allowed, axes, spaced, dt, ts)
@@ -1988,7 +2009,7 @@ class GamepadRuntime(context: Context) {
                 val gs = engine.gyroSettings
                 if (gs !== gyroMouse.settings) gyroMouse.settings = gs
                 val routes = engine.gyroRoutes()
-                val r = gyroMouse.route(gyroMouse.inSpace(screen, space, upNow), dt, routes, axes)
+                val r = gyroMouse.route(if (mapReal) gyroMouse.inSpaces(screen, gs, upNow) else screen, dt, routes, axes)
                 if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel, fromGyro = active)
                 engine.setGyroAxes(r.pad)
                 gyroPadSet = true

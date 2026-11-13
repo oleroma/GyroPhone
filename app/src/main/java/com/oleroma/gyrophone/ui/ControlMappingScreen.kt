@@ -124,6 +124,8 @@ import com.oleroma.gyrophone.core.model.MappingPresets
 import com.oleroma.gyrophone.core.model.PresetChip
 import com.oleroma.gyrophone.core.model.PresetLevel
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.WorkspaceDefaults
+import com.oleroma.gyrophone.core.model.ButtonGyro
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.HoldMode
@@ -487,6 +489,8 @@ internal fun ControlMappingScreen(
      * id). Its Motion tab then maps gyro axes while it is held; null = no Motion tab.
      */
     physicalMotionId: String? = null,
+    /** That physical key's or button's own gyro settings while held ([HeldButton.gyro]), for its gyro cards' space. */
+    physicalGyro: List<ButtonGyro>? = null,
     /** The actions' own settings (their ⚙) and the shared ones (Settings); null = none. */
     settings: MappingSettings? = null,
     /**
@@ -511,6 +515,25 @@ internal fun ControlMappingScreen(
 ) {
     // The edited set seen as Base, so the Base-only Bindings helpers edit it.
     val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
+
+    /**
+     * Gyro card [src]'s title: "World yaw" or "Player yaw" in the space it measures in (its button's
+     * own while held, else the layer's or workspace's), its plain name where the space changes nothing.
+     */
+    fun gyroCardTitle(input: BindableInput, src: InputSource.Gyro): String {
+        val ws = workspace ?: runtime.engine.workspace
+        val sets = if (editSet == MappingSet.BASE) listOf(MappingSet.BASE) else listOf(MappingSet.BASE, editSet)
+        val parent = WorkspaceDefaults.layered(ws, MappingSet.BASE, sets.drop(1)).gyro
+        val own = when {
+            src.id.isEmpty() -> null
+            physicalGyro != null -> sets.fold(ButtonGyro()) { r, s -> physicalGyro.firstOrNull { it.set == s }?.let { r.under(it) } ?: r }
+            src.id == control.id -> control.gyroIn(sets)
+            else -> null
+        }
+        val space = own?.ownSpace(src.axis) ?: parent.spaceOf(src.axis)
+        val title = space.title(src.axis)
+        return if (title == src.axis.label) input.label else title
+    }
     val parentView = remember(inherited) { inherited.map { it.copy(set = MappingSet.BASE) }.distinct() }
 
     /** [input] firing on [t] (itself for Hold). */
@@ -1683,6 +1706,7 @@ internal fun ControlMappingScreen(
                             isAxisCard(src) -> "Move"
                             isSurface(input) && (src as InputSource.Surface).input == SurfaceInput.HOLD -> "Touch"
                             isSurface(input) -> input.label
+                            src is InputSource.Gyro -> gyroCardTitle(input, src)
                             else -> actionLabel(control, input)
                         },
                         row = row,
