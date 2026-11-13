@@ -3715,14 +3715,14 @@ private fun PanelMenu(panel: Rect, onDismiss: () -> Unit, content: @Composable C
 
 /** Select's Sync choices for the [picked] controls ([ControlGroups]). */
 private class SyncChoices(controls: List<TouchControl>, picked: Set<String>) {
-    val sizeIds = picked.filter { id -> controls.any { it.id == id && it.kind != TouchKind.FULLSCREEN } }
-    val canSize = sizeIds.count() >= 2
-    val sizeSynced = ControlGroups.anySynced(controls, picked)
-    val flip = ControlGroups.canSyncToggles(controls, picked)
-    val neverBoth = ControlGroups.canNeverBoth(controls, picked)
-    val toggleSynced = ControlGroups.anyToggleSynced(controls, picked)
-    val rule = ControlGroups.toggleRuleOf(controls, picked)
-    val any = canSize || sizeSynced || flip || toggleSynced
+    val sizeIds: List<String> = picked.filter { p -> controls.any { c -> c.id == p && c.kind != TouchKind.FULLSCREEN } }
+    val canSize: Boolean = sizeIds.size >= 2
+    val sizeSynced: Boolean = ControlGroups.anySynced(controls, picked)
+    val flip: Boolean = ControlGroups.canSyncToggles(controls, picked)
+    val neverBoth: Boolean = ControlGroups.canNeverBoth(controls, picked)
+    val toggleSynced: Boolean = ControlGroups.anyToggleSynced(controls, picked)
+    val rule: ToggleRule? = ControlGroups.toggleRuleOf(controls, picked)
+    val any: Boolean = canSize || sizeSynced || flip || toggleSynced
 }
 
 /** A capsule in a [PanelMenu]; the [chosen] one is filled. */
