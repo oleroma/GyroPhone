@@ -27,7 +27,7 @@ import com.oleroma.gyrophone.runtime.GamepadRuntime
  * attached. Each event carries its device, so only pads attached to the active workspace act.
  * Android only delivers these to the foreground activity, so MainActivity forwards them.
  */
-class ControllerInput(context: Context, private val runtime: GamepadRuntime) : InputManager.InputDeviceListener {
+class ControllerInput(context: Context, private val runtime: GamepadRuntime) : InputManager.InputDeviceListener, UsbPads.Ui {
 
     private val inputManager = context.getSystemService(InputManager::class.java)
 
@@ -52,6 +52,10 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         var zStick = false
         /** "Press a key": each [AndroidAxis.polled] axis pushed past half way, -1 / 0 / 1. */
         val pushed = IntArray(AndroidAxis.polled.size)
+        /** One event's axes (deadzone applied, NaN = the device has none), and for MappingEngine.setAxes, reused. */
+        val values = FloatArray(AndroidAxis.polled.size)
+        val axisIds = IntArray(AndroidAxis.polled.size)
+        val axisValues = FloatArray(AndroidAxis.polled.size)
 
         fun readRanges(device: InputDevice, source: Int) {
             val polled = AndroidAxis.polled
@@ -73,9 +77,8 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
 
     /** Wheel travel of the captured mouse not yet a whole notch: vertical, horizontal. */
     private val wheelRest = FloatArray(2)
-    // One joystick event's axes for MappingEngine.setAxes, reused.
-    private val axisIds = IntArray(AndroidAxis.polled.size)
-    private val axisValues = FloatArray(AndroidAxis.polled.size)
+
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     fun register() {
         inputManager.registerInputDeviceListener(this, null)
@@ -95,10 +98,14 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
                 src.rangesFor = 0 // its axes may have changed too: read again on the next event
             }
         }
+        runtime.usbPads.ui = this
         refresh()
     }
 
-    fun unregister() = inputManager.unregisterInputDeviceListener(this)
+    fun unregister() {
+        inputManager.unregisterInputDeviceListener(this)
+        if (runtime.usbPads.ui === this) runtime.usbPads.ui = null
+    }
 
     /** Returns true if the event was consumed. */
     fun onKeyEvent(event: KeyEvent): Boolean {
@@ -116,25 +123,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             device.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC && !isPad(device)
         ) return true
         val pressed = event.action == KeyEvent.ACTION_DOWN
-        runtime.pressListener?.let { listen ->
-            val target = PressTargets.ofPhoneKey(event.keyCode, isPad(device), mouse = isMouse(device))
-            listen("phone:${device.id}:key:${event.keyCode}", target, pressed)
-            return true
-        }
-        runtime.learnListener?.let { learn ->
-            if (pressed) {
-                runtime.learnListener = null
-                val kind = kindOf(device)
-                // A mouse's back and forward buttons come as keys while the pointer isn't captured.
-                val code = if (kind == PhysicalDevice.MOUSE) when (event.keyCode) {
-                    AndroidKey.BACK -> AndroidKey.MOUSE_BACK
-                    PressTargets.KEYCODE_FORWARD -> AndroidKey.MOUSE_FORWARD
-                    else -> event.keyCode
-                } else event.keyCode
-                learn(kind, InputSource.Key(code))
-            }
-            return true
-        }
+        if (listenKey(device.id, event.keyCode, pressed, isPad(device), isMouse(device)) { kindOf(device) }) return true
         // Unmapped pad buttons must do nothing, not fall back to BACK / focus navigation.
         val fromPad = event.source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
             runtime.controllers.value.any { it.deviceId == device.id }
@@ -144,6 +133,58 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         // Pad closed: a keyboard's keys are sent and still type into the app (its search and name boxes).
         if (!runtime.inputAllowed) return fromPad
         return mapped || fromPad
+    }
+
+    /**
+     * "Press a key" or a mapping editor learning a key: the key goes to the listener ([kind] says
+     * which device view it belongs in). Returns false when nothing listens.
+     */
+    private inline fun listenKey(deviceId: Int, keyCode: Int, pressed: Boolean, pad: Boolean, mouse: Boolean, kind: () -> PhysicalDevice): Boolean {
+        runtime.pressListener?.let { listen ->
+            val target = PressTargets.ofPhoneKey(keyCode, pad, mouse = mouse)
+            listen("phone:$deviceId:key:$keyCode", target, pressed)
+            return true
+        }
+        runtime.learnListener?.let { learn ->
+            if (pressed) {
+                runtime.learnListener = null
+                val kind = kind()
+                // A mouse's back and forward buttons come as keys while the pointer isn't captured.
+                val code = if (kind == PhysicalDevice.MOUSE) when (keyCode) {
+                    AndroidKey.BACK -> AndroidKey.MOUSE_BACK
+                    PressTargets.KEYCODE_FORWARD -> AndroidKey.MOUSE_FORWARD
+                    else -> keyCode
+                } else keyCode
+                learn(kind, InputSource.Key(code))
+            }
+            return true
+        }
+        return false
+    }
+
+    /**
+     * A key of a USB pad read directly ([UsbPads]) while "Press a key" or a mapping editor listens
+     * (otherwise it goes from its reader thread straight to the engine): to them, on this thread.
+     */
+    override fun usbKey(pad: UsbPads.Pad, keyCode: Int, pressed: Boolean) {
+        main.post { listenKey(pad.id, keyCode, pressed, pad = true, mouse = false) { PhysicalDevice.CONTROLLER } }
+    }
+
+    /** A USB pad's axes ([AndroidAxis.polled]'s order, deadzone applied, NaN = none) while a listener listens. */
+    override fun usbAxes(pad: UsbPads.Pad, values: FloatArray) {
+        main.post {
+            val src = (pad.source as? Source) ?: Source(pad.device).also {
+                it.zStick = pad.zStick
+                pad.source = it
+            }
+            values.copyInto(src.values)
+            applyAxes(src, pad.id, PhysicalDevice.CONTROLLER)
+        }
+    }
+
+    /** GP took or let go of a USB pad: the attached list changes. */
+    override fun usbChanged() {
+        main.post { refresh() }
     }
 
     /** Whether [event] is the phone's own volume rocker (a built-in key device, not an attached pad or keyboard). */
@@ -198,14 +239,34 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             src.pushed.fill(0)
         }
         val polled = AndroidAxis.polled
+        for (i in polled.indices) {
+            val flat = src.flat[i]
+            src.values[i] = if (flat.isNaN()) Float.NaN else AndroidAxis.deadzone(polled[i], event.getAxisValue(polled[i]), flat)
+        }
+        return applyAxes(src, event.deviceId, PhysicalDevice.CONTROLLER)
+    }
+
+    /**
+     * One event's axes, in [Source.values], of device [deviceId]: to "Press a key", to a mapping
+     * editor learning an axis, or to the engine. Returns true (consumed).
+     */
+    private fun applyAxes(src: Source, deviceId: Int, kind: PhysicalDevice): Boolean {
+        val learn = runtime.learnListener
+        val listen = runtime.pressListener
+        val listening: Any? = learn ?: listen
+        if (listening !== src.learnFor) {
+            src.learnFor = listening
+            src.last.copyInto(src.rest)
+            src.pushed.fill(0)
+        }
+        val polled = AndroidAxis.polled
         var n = 0
         var learnedAxis = -1
         var learned: AxisHalf? = null
         for (i in polled.indices) {
             val axis = polled[i]
-            val flat = src.flat[i]
-            if (flat.isNaN()) continue
-            val v = AndroidAxis.deadzone(axis, event.getAxisValue(axis), flat)
+            val v = src.values[i]
+            if (v.isNaN()) continue
             src.last[i] = v
             if (listen != null && learn == null) {
                 if (!src.seen) { src.rest[i] = v; continue }
@@ -215,8 +276,8 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
                 val was = src.pushed[i]
                 if (way != was) {
                     src.pushed[i] = way
-                    if (was != 0) listen("phone:${event.deviceId}:axis:$axis:$was", null, false)
-                    if (way != 0) listen("phone:${event.deviceId}:axis:$axis:$way", PressTargets.ofPhoneAxis(axis, way > 0, src.zStick), true)
+                    if (was != 0) listen("phone:$deviceId:axis:$axis:$was", null, false)
+                    if (way != 0) listen("phone:$deviceId:axis:$axis:$way", PressTargets.ofPhoneAxis(axis, way > 0, src.zStick), true)
                 }
                 continue
             }
@@ -228,7 +289,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
                 }
                 continue
             }
-            axisIds[n] = axis; axisValues[n] = v; n++
+            src.axisIds[n] = axis; src.axisValues[n] = v; n++
         }
         src.seen = true
         if (runtime.wifi.overlay.wanted) overlayAxes(src.zStick, src.last)
@@ -236,13 +297,13 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             if (learned != null) {
                 runtime.learnListener = null
                 src.learnFor = null
-                learn(PhysicalDevice.CONTROLLER, InputSource.Axis(learnedAxis, learned))
+                learn(kind, InputSource.Axis(learnedAxis, learned))
             }
             return true
         }
         if (listen != null) return true
         // Hardware held back with the pad closed: nothing is sent ([last] still follows the device for learning).
-        if (runtime.hardwareAllowed) runtime.engine.setAxes(src.pad, axisIds, axisValues, n)
+        if (runtime.hardwareAllowed) runtime.engine.setAxes(src.pad, src.axisIds, src.axisValues, n)
         return true
     }
 
@@ -406,9 +467,12 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             // A game pad saying it is a mouse too is not one: it would capture the pointer and lose its keys.
             d != null && !d.isVirtual && mouseSource(d) && !isPad(d)
         }
+        val usb = runtime.usbPads
         val list = ids.mapNotNull { id ->
             val d = inputManager.getInputDevice(id) ?: return@mapNotNull null
             if (d.isVirtual || !isPad(d)) return@mapNotNull null
+            // GP reads this one over USB itself (Android's copy is on its way out).
+            if (usb.holds(d.vendorId, d.productId)) return@mapNotNull null
             val has = d.hasKeys(*KEY_CANDIDATES)
             AttachedController(
                 deviceId = d.id,
@@ -419,7 +483,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
                 keys = KEY_CANDIDATES.filterIndexed { i, _ -> has.getOrElse(i) { false } }.toSet(),
                 axes = d.motionRanges.map { it.axis }.toSet(),
             )
-        }
+        } + usb.attached()
         runtime.wifi.overlay.padAttached = list.isNotEmpty()
         runtime.onControllersChanged(list, mouse)
     }
