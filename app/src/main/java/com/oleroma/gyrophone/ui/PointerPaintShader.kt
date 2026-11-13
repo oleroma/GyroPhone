@@ -72,7 +72,7 @@ internal class PointerPaintShader {
     ) {
         val s = if (front) near else far
         if (!drawPacked(lp, look)) uploadMaps(lp, look, nowMs)
-        s.setFloatUniform("packed", if (packed != null) 1f else 0f)
+        s.setFloatUniform("packedMaps", if (packed != null) 1f else 0f)
         setUniforms(s, lp, front, cx, cy, r, view, scene, look)
         paint.shader = s
         val e = r * 1.05f
@@ -257,7 +257,7 @@ internal class PointerPaintShader {
             uniform float3 sceneY;
             uniform float3 sceneZ;
             uniform float wayMode;
-            uniform float packed;
+            uniform float packedMaps;
             uniform float glowK;
             uniform float fireGlowK;
             uniform float aimGlowK;
@@ -308,7 +308,7 @@ internal class PointerPaintShader {
                 float2 uv = float2((lon / 6.28318531 + 0.5) * mapSize.x, (0.5 - lat / 3.14159265) * mapSize.y);
                 // Packed: amount, fire, aim, glow in one picture's r, g, b, a; the glow's shares in another's r, g.
                 float c; float gl; float fRaw; float aRaw; float gfRaw; float gaRaw;
-                if (packed > 0.5) {
+                if (packedMaps > 0.5) {
                     float4 pm = float4(amount.eval(uv));
                     c = pm.r; fRaw = pm.g; aRaw = pm.b; gl = pm.a;
                     if (c < 0.004 && gl < 0.004) return half4(0.0);
