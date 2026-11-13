@@ -11,6 +11,10 @@ object ButtonHow {
     /** The touch control a mapping's source belongs to (its press, surface or area), or null. */
     fun ownerOf(s: InputSource): String? = when (s) {
         is InputSource.Touch -> s.id
+        is InputSource.TouchTap -> s.id
+        is InputSource.TouchDoubleTap -> s.id
+        is InputSource.TouchLongPress -> s.id
+        is InputSource.TouchRelease -> s.id
         is InputSource.Surface -> s.id.takeIf { it.isNotEmpty() }
         is InputSource.TouchArea -> s.id
         else -> null
