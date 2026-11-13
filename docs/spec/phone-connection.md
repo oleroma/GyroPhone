@@ -76,8 +76,25 @@ Two USB paths carry the same Wi-Fi protocol, so pairing, sessions and encryption
 
 **Haptics.** Haptic mappings play on the phone's vibrator only while a PC is connected (`runtime/PhoneHaptics.kt`), on a thread of their own so the report never waits for a vibrator call.
 
+## Setup tips
+
+A **Setup tips** card sits at the top of the Connection page (`ui/SetupTipsCard.kt`, rules in `link/SetupTips.kt`) whenever something about the phone's or the PC's setup could be better for GP, and the **Connection** capsule on the pad shows a dot (`Connection •`) while it has any. It lists only what could be improved, never what is already fine, and never suggests a cable for the phone (moving freely is the point). Each tip is one line; a button opens the Android setting that fixes it where there is one. It is read every 2 s; nothing pops up during play. In order:
+
+- **PC on Wi-Fi too** (router Wi-Fi only): the PC's adapter toward the phone is a Wi-Fi client. Fix: a cable from the PC to the router, or the PC's Mobile hotspot.
+- **Phone hotspot**: the PC's own Mobile hotspot tested smoother (see "Which link is smoothest" above).
+- **Phone on 2.4 GHz**, **weak phone signal** (below −70 dBm), or else **slow phone link** (below 100 Mbps): button **Wi-Fi**. Router Wi-Fi only.
+- **PC on 2.4 GHz**, **weak PC signal** (below −70 dBm).
+- **Loss** above 2 %.
+- **Battery saver** on: button **Battery saver**.
+- **PC on battery**, **PC saving power** (energy saver, or power mode "Best power efficiency").
+- **GP not Unrestricted** for battery (Android may pause it in the background): button **App battery** (the app's info page).
+- **Phone hot** (thermal status moderate or worse).
+- **No gamepad driver** on the PC.
+
+Link and PC tips need a live Wi-Fi session; the phone's own power tips show over Bluetooth too. The PC's tips come from HOST_STATUS flags2 ([protocol](protocol.md)): the companion reads the adapter on the phone's subnet, its Wi-Fi band and signal through the Native Wi-Fi API, and the PC's power state, once a second (the radio every 5 s), read only (`GyroPhone.Host/Perf/PcSetup.cs`, `GyroPhone.Windows/PcSetupProbe.cs`). Windows 11 24H2 and later give the PC's Wi-Fi band only with location access on; without it the PC 2.4 GHz tip can't show.
+
 ## Key files
 
-`link/OutputLink.kt`, `link/BluetoothLink.kt`, `hid/HidDeviceManager.kt`, `hid/ReportPump.kt`, `core/.../hid/ReportScheduler.kt`, `core/.../hid/HostReconnect.kt`, `core/.../hid/HidDescriptor.kt`, `wifi/WifiLink.kt`, `wifi/WifiPump.kt`, `wifi/WifiLocks.kt`, `wifi/WifiNetworkBinder.kt`, `wifi/WifiPairingStore.kt`, `wifi/PhoneKeys.kt`, `wifi/AccessoryBridge.kt`, `wifi/UsbTether.kt`, `core/.../net/SendScheduler.kt`, `service/GamepadService.kt`, `ui/ConnectScreen.kt`, `ui/WifiPanel.kt`, `ui/KeyPairingSection.kt`, `ui/PairDialog.kt`.
+`link/OutputLink.kt`, `link/BluetoothLink.kt`, `hid/HidDeviceManager.kt`, `hid/ReportPump.kt`, `core/.../hid/ReportScheduler.kt`, `core/.../hid/HostReconnect.kt`, `core/.../hid/HidDescriptor.kt`, `wifi/WifiLink.kt`, `wifi/WifiPump.kt`, `wifi/WifiLocks.kt`, `wifi/WifiNetworkBinder.kt`, `wifi/WifiPairingStore.kt`, `wifi/PhoneKeys.kt`, `wifi/AccessoryBridge.kt`, `wifi/UsbTether.kt`, `core/.../net/SendScheduler.kt`, `service/GamepadService.kt`, `ui/ConnectScreen.kt`, `ui/WifiPanel.kt`, `ui/KeyPairingSection.kt`, `ui/PairDialog.kt`, `link/SetupTips.kt`, `ui/SetupTipsCard.kt`.
 
 Paths starting `core/...` are under `core/src/main/kotlin/com/oleroma/gyrophone/core/`; the others under `app/src/main/java/com/oleroma/gyrophone/`.
