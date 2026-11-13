@@ -71,7 +71,9 @@ internal class PointerPaintShader {
         nowMs: Long,
     ) {
         val s = if (front) near else far
+        val m0 = System.nanoTime()
         if (!drawPacked(lp, look)) uploadMaps(lp, look, nowMs)
+        DrawProbe.add(DrawProbe.MAPS, System.nanoTime() - m0)
         s.setFloatUniform("packedMaps", if (packed != null) 1f else 0f)
         setUniforms(s, lp, front, cx, cy, r, view, scene, look)
         paint.shader = s

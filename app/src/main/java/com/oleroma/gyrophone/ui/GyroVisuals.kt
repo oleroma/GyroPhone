@@ -355,7 +355,9 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
                 }
             }
         } finally {
+            val p0 = System.nanoTime()
             s.unlockCanvasAndPost(canvas)
+            DrawProbe.add(DrawProbe.POST, System.nanoTime() - p0)
         }
     }
 }
@@ -381,7 +383,8 @@ private class DrawTiming {
         if (now - since < 1_000_000_000L) return
         android.util.Log.i(
             "GPDraw",
-            "frames=$frames avg=${"%.2f".format(sum / frames / 1e6)}ms max=${"%.2f".format(longest / 1e6)}ms slow=$slow",
+            "frames=$frames avg=${"%.2f".format(sum / frames / 1e6)}ms max=${"%.2f".format(longest / 1e6)}ms slow=$slow " +
+                DrawProbe.take(frames),
         )
         since = now; frames = 0; sum = 0L; longest = 0L; slow = 0
     }
@@ -389,6 +392,37 @@ private class DrawTiming {
     companion object {
         /** Longer than this misses a 120 Hz frame. */
         const val SLOW_NS = 8_000_000L
+    }
+}
+
+/**
+ * Where the gyro displays' frame time goes, added up between [DrawTiming]'s log lines: feeding
+ * the pointer's path and paint (CPU), the paint maps to the GPU, making the Snake, and handing the
+ * frame over (unlockCanvasAndPost: it waits while the GPU side takes it).
+ */
+internal object DrawProbe {
+    const val FEED = 0
+    const val MAPS = 1
+    const val SNAKE = 2
+    const val POST = 3
+    private val names = arrayOf("feed", "maps", "snake", "post")
+    private val ns = LongArray(4)
+    private val most = LongArray(4)
+
+    fun add(section: Int, t: Long) {
+        ns[section] += t
+        if (t > most[section]) most[section] = t
+    }
+
+    /** "name=avg/max" per section over [frames] frames (ms), then zeroed. */
+    fun take(frames: Int): String {
+        val sb = StringBuilder()
+        for (i in names.indices) {
+            sb.append(names[i]).append('=').append("%.1f".format(ns[i] / frames.coerceAtLeast(1) / 1e6))
+                .append('/').append("%.1f".format(most[i] / 1e6)).append(' ')
+            ns[i] = 0L; most[i] = 0L
+        }
+        return sb.toString()
     }
 }
 
@@ -816,7 +850,9 @@ private class VisState {
         // Both halves' pieces are made once a frame (the far half is drawn first, the near half takes the same pieces).
         if (t !== snakeOf || now != snakeAt || t.version != snakeVersion || c.x != snakeCx || c.y != snakeCy || r != snakeR) {
             snakeOf = t; snakeAt = now; snakeVersion = t.version; snakeCx = c.x; snakeCy = c.y; snakeR = r
+            val b0 = System.nanoTime()
             snakeCount = buildSnake(t, d, c, r, col)
+            DrawProbe.add(DrawProbe.SNAKE, System.nanoTime() - b0)
         }
         drawSnake(d, front, c, r, snakeCount)
     }
@@ -1112,6 +1148,7 @@ private class VisState {
             }
             // Every pose the gyro made since the last frame, so a fast turn draws a smooth curve
             // through all of them, not straight pieces from one frame's pose to the next.
+            val feedT0 = System.nanoTime()
             val h = feed?.history
             if (feed != null && h != null && (d.laserDraw || d.laserSnake)) {
                 if (lt.historySeen == 0L || lt.historySeen > h.count) lt.historySeen = h.count
@@ -1130,6 +1167,7 @@ private class VisState {
                 lt.fedVersion = v
                 addBeam(beam[0], beam[1], beam[2], now)
             }
+            DrawProbe.add(DrawProbe.FEED, System.nanoTime() - feedT0)
         }
         val rifle = d.laserRifle
         val crosshair = d.laserCrosshair && !rifle
