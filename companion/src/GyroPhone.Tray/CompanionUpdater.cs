@@ -7,7 +7,7 @@ namespace GyroPhone.Tray;
 /// touches a running exe: it puts the new build at "&lt;exe&gt;.new". A folder watcher notices it about 300 ms
 /// after it lands (the 5 s check stays as a fallback for a missed event); then it
 /// stops the watcher, starts the .new file as an <see cref="UpdateFinisher"/> and exits cleanly (release-all,
-/// bye). The finisher copies itself over this exe once it has exited and starts it again, even with a phone
+/// bye). The finisher moves itself over this exe once it has exited and starts it again, even with a phone
 /// connected (Olex: always restart on update); the phone reconnects by itself. The exe is single-file and
 /// reads parts of itself by path while it runs, which is why it must never be renamed or replaced under a
 /// running instance. The path never changes, so the firewall rule and the Start with Windows entry stay
@@ -82,18 +82,32 @@ internal sealed class CompanionUpdater : IDisposable
         _timer.Stop();
         bool watcher = Watcher.IsRunning();
         _log($"new build {pending} at {_newPath}, restarting{(watcher ? " with the watcher" : "")}");
-        if (!UpdateFinisher.Launch(_newPath, tray: true, watch: watcher, _log))
+        // Starting the 190 MB .new file waits for the antivirus to check it (about 4 s). That happens on the
+        // thread pool, so this build keeps serving the phone and drawing overlays meanwhile; it exits only
+        // once the finisher runs, and the finisher's move keeps the checked file, so the gap is short.
+        var ui = _ui ?? SynchronizationContext.Current;
+        Task.Run(() => UpdateFinisher.Launch(_newPath, tray: true, watch: watcher, _log)).ContinueWith(t =>
         {
-            // Keep running this build; the update is tried again when .new changes.
-            _failedStamp = UpdateFinisher.StampOf(_newPath);
-            _restarting = false;
-            Pending = null;
-            Changed?.Invoke();
-            _timer.Start();
-            return;
-        }
-        if (watcher) Watcher.SignalStop(); // the finisher waits for it to exit
-        _exitForUpdate();
+            void Done(object? _)
+            {
+                if (_disposed) return;
+                if (t.IsCompletedSuccessfully && t.Result)
+                {
+                    if (watcher) Watcher.SignalStop(); // the finisher waits for it to exit
+                    _log("update: finisher started, exiting");
+                    _exitForUpdate();
+                    return;
+                }
+                // Keep running this build; the update is tried again when .new changes.
+                _failedStamp = UpdateFinisher.StampOf(_newPath);
+                _restarting = false;
+                Pending = null;
+                Changed?.Invoke();
+                _timer.Start();
+            }
+            if (ui != null) ui.Post(Done, null);
+            else Done(null);
+        }, TaskScheduler.Default);
     }
 
     private void Tick(bool restart = true)
