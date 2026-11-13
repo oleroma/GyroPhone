@@ -252,7 +252,9 @@ public sealed class LaserPaint
         float half = MathF.Max(halfDeg * MathF.PI / 180f, 1e-4f);
         var brush = new Brush(half, Math.Clamp(soft, 0f, 1f));
         double hop = Math.Acos(Math.Clamp((double)(ax * bx + ay * by + az * bz), -1.0, 1.0));
-        int pieces = Math.Max(1, (int)Math.Ceiling(hop * 180 / Math.PI / PieceDeg));
+        // Pieces at least as long as half the brush: each paints the brush and its glow all round, so short ones
+        // with a wide brush paint the same texels over and over (a fast turn with a wide brush took most of a frame).
+        int pieces = Math.Max(1, (int)Math.Ceiling(hop * 180 / Math.PI / Math.Max(PieceDeg, halfDeg)));
         int along = (int)((long)Math.Round(alongDeg / AlongUnit) & 0xFFFF);
         for (int k = 0; k < pieces; k++)
         {
@@ -307,8 +309,14 @@ public sealed class LaserPaint
         var ways = Way;
         float f = kind == FireKind ? 1f : 0f;
         float ai = kind == AimKind ? 1f : 0f;
+        // First each row's span within the cap (and its tiles marked, which isn't thread-safe), then the texels,
+        // a big piece's rows shared out over the cores: rows touch only their own texels.
+        if (_rowI0.Length < Height) { _rowI0 = new int[Height]; _rowCount = new int[Height]; }
+        var rowI0 = _rowI0;
+        var rowCount = _rowCount;
         for (int j = j0; j <= j1; j++)
         {
+            rowCount[j] = 0;
             double lat = LatOf(j);
             // The longitudes of this row within the cap: cos(d) = sin φ sin φc + cos φ cos φc cos Δλ ≥ cos(span).
             double den = Math.Cos(lat) * cosLatC;
@@ -327,6 +335,13 @@ public sealed class LaserPaint
                 }
             }
             MarkTiles(j, i0, count);
+            rowI0[j] = i0;
+            rowCount[j] = count;
+        }
+        void Row(int j)
+        {
+            int i0 = rowI0[j], count = rowCount[j];
+            if (count <= 0) return;
             float sl = _sinLat[j], clat = _cosLat[j];
             int row = j * Width;
             for (int s = 0; s < count; s++)
@@ -387,7 +402,15 @@ public sealed class LaserPaint
                 _lineGlow[k] = (byte)(pg * 255f + 0.5f);
             }
         }
+        if (j1 - j0 + 1 >= ParallelRows) Parallel.For(j0, j1 + 1, Row);
+        else for (int j = j0; j <= j1; j++) Row(j);
     }
+
+    // Each row's first texel and count for the piece being painted (Piece).
+    private int[] _rowI0 = [], _rowCount = [];
+
+    /// <summary>A piece this many rows tall or more paints its rows on several cores.</summary>
+    private const int ParallelRows = 24;
 
     /// <summary>Marks the tiles of row <paramref name="j"/>'s texels <paramref name="i0"/> .. + <paramref name="count"/> (round the map) as changing in the next <see cref="Version"/>.</summary>
     private void MarkTiles(int j, int i0, int count)

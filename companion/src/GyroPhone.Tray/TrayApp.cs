@@ -1038,7 +1038,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     {
         if (Volatile.Read(ref _exited) != 0) return;
         foreach (var f in _overlayList)
-            if (!f.IsDisposed) f.Tick();
+            if (!f.IsDisposed) f.Signal();
         // The draw times in the log (Performance › Debug › Overlay timing log): every second while an overlay
         // draws (so a short burst of fast moves can be read back), else now and then.
         long now = Environment.TickCount64;
