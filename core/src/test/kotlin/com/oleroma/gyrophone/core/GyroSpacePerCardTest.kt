@@ -43,12 +43,12 @@ class GyroSpacePerCardTest {
         assertEquals(world, all)
     }
 
-    @Test fun titlesNameTheSpaceOnlyWhereItChangesSomething() {
+    @Test fun titlesNameTheSpace() {
         assertEquals("World yaw", GyroSpace.WORLD.title(yaw))
         assertEquals("Player yaw", GyroSpace.PLAYER.title(yaw))
         assertEquals("World pitch", GyroSpace.WORLD.title(MotionAxis.PITCH))
-        assertEquals("Pitch", GyroSpace.PLAYER.title(MotionAxis.PITCH))
-        assertEquals("Yaw", GyroSpace.LOCAL.title(yaw))
+        assertEquals("Local pitch", GyroSpace.PLAYER.title(MotionAxis.PITCH))
+        assertEquals("Local yaw", GyroSpace.LOCAL.title(yaw))
         assertEquals(listOf(GyroSpace.LOCAL, GyroSpace.WORLD), GyroSpace.choicesFor(MotionAxis.PITCH))
         assertEquals(GyroSpace.entries, GyroSpace.choicesFor(yaw))
     }

@@ -661,9 +661,9 @@ enum class GyroSpace(val label: String) {
     WORLD("World"),
     PLAYER("Player");
 
-    /** The card title of gyro axis [a] ([MotionAxis.label]) measured in this space: "World yaw"; the plain name where it changes nothing (Local, or Player off yaw). */
+    /** The card title of gyro axis [a] ([MotionAxis.label]) measured in this space: "World yaw", "Local pitch" (Player off yaw is Local: it changes nothing there). */
     fun title(a: MotionAxis): String =
-        if (this == LOCAL || this == PLAYER && a != MotionAxis.ROLL) a.label else label + " " + a.label.lowercase()
+        (if (this == PLAYER && a != MotionAxis.ROLL) LOCAL else this).label + " " + a.label.lowercase()
 
     companion object {
         /** The spaces axis [a] can be measured in: Player only changes yaw (stored [MotionAxis.ROLL]). */

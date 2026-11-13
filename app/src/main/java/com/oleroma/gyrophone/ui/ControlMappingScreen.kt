@@ -517,8 +517,8 @@ internal fun ControlMappingScreen(
     val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
 
     /**
-     * Gyro card [src]'s title: "World yaw" or "Player yaw" in the space it measures in (its button's
-     * own while held, else the layer's or workspace's), its plain name where the space changes nothing.
+     * Gyro card [src]'s title: "Local pitch", "World yaw" or "Player yaw", by the space it measures in
+     * (its button's own while held, else the layer's or workspace's).
      */
     fun gyroCardTitle(input: BindableInput, src: InputSource.Gyro): String {
         val ws = workspace ?: runtime.engine.workspace
@@ -531,8 +531,7 @@ internal fun ControlMappingScreen(
             else -> null
         }
         val space = own?.ownSpace(src.axis) ?: parent.spaceOf(src.axis)
-        val title = space.title(src.axis)
-        return if (title == src.axis.label) input.label else title
+        return space.title(src.axis)
     }
     val parentView = remember(inherited) { inherited.map { it.copy(set = MappingSet.BASE) }.distinct() }
 
@@ -1550,7 +1549,7 @@ internal fun ControlMappingScreen(
                         Column(Modifier.animateItem(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 FilterChip(selected = fingers != 0, onClick = { fingers = 1 }, label = { Text("Button") })
-                                FilterChip(selected = fingers == 0, onClick = { fingers = 0 }, label = { Text("Motion") })
+                                FilterChip(selected = fingers == 0, onClick = { fingers = 0 }, label = { Text("Gyro") })
                             }
                             if (fingers == 0) {
                                 Text(
@@ -1581,7 +1580,7 @@ internal fun ControlMappingScreen(
                                     )
                                 }
                                 if (physicalInputs == null) {
-                                    FilterChip(selected = fingers == 0, onClick = { fingers = 0 }, label = { Text("Motion") })
+                                    FilterChip(selected = fingers == 0, onClick = { fingers = 0 }, label = { Text("Gyro") })
                                 }
                             }
                             if (fingers == 0) {
