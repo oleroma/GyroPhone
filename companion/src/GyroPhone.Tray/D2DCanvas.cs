@@ -406,6 +406,12 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
     /// <summary>The device context drawn on (for <see cref="GpuPaint"/>'s pictures).</summary>
     public ID2D1DeviceContext Dc => _dc;
 
+    // The 3D overlay's pictures on the card (<see cref="Gpu3D"/>), let go with this canvas.
+    private IDisposable? _scene;
+
+    /// <summary>Lets go of <paramref name="scene"/> (<see cref="Gpu3D"/>'s pictures for this canvas) when this canvas goes.</summary>
+    public void OwnScene(IDisposable scene) => _scene = scene;
+
     private readonly record struct TextKey(string Text, float Px, bool Bold, int Argb, float W, float H, TextAlign Hz, TextAlign Vt, int Scale8);
     // What each Push did, so Pop undoes it: a transform to restore, or a layer (with its geometry) to pop.
     private readonly Stack<(Matrix3x2? Transform, ID2D1Geometry? Geometry, bool Layer)> _stack = new();
@@ -797,6 +803,8 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
         ForgetLast();
         ForgetLineSets();
         _ball?.Dispose();
+        _scene?.Dispose();
+        _scene = null;
         _textBrush.Dispose();
         _textDc.Dispose();
         _round.Dispose();
