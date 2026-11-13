@@ -260,7 +260,7 @@ private const val IDLE_MS = 120L
 private class LinePart(val pct: String, val kind: Int, name: String, val value: String) {
     val names = arrayListOf(name)
 
-    /** "40 · Yaw Pitch 4.50 RWS", "40 · Yaw sens 16", "40 · Sens 16", "62 · RT 62 %". */
+    /** "40 · Yaw Pitch 4.50 RWS", "40 · Yaw sens 16", "40 · Sens 16", "62 · RT 62 %", "50 · Tap 300 ms". */
     fun text(): String {
         val n = names.filter { it.isNotEmpty() }.joinToString(" ")
         val what = when (kind) {
@@ -290,6 +290,7 @@ private fun linePart(m: Mapping, out: Float, counts: Float): LinePart {
             else LinePart(p, KIND_SENS, name, "%.1f".format(out).removeSuffix(".0").removeSuffix(",0"))
         }
         is OutputTarget.TouchSens -> LinePart(p, KIND_TOUCH, t.axis?.name ?: "", "%.2f".format(out))
+        OutputTarget.TapTime -> LinePart(p, KIND_PAD, "Tap", "%.0f ms".format(out))
         else -> LinePart(p, KIND_PAD, Describe.shortTarget(t), "%.0f %%".format(kotlin.math.abs(out) * 100))
     }
 }

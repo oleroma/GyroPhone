@@ -15,6 +15,7 @@ import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.SetValue
 import com.oleroma.gyrophone.core.model.SliderOverrides
 import com.oleroma.gyrophone.core.model.valueTarget
+import com.oleroma.gyrophone.core.model.settingTarget
 import com.oleroma.gyrophone.core.model.AxisStage
 import com.oleroma.gyrophone.core.model.PhysicalSticks
 import com.oleroma.gyrophone.core.model.StickTuning
@@ -236,12 +237,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val vals = sensVals
         best.fill(null); bestSeq.fill(-1L); vals.fill(0f)
         touchBest.fill(null); touchBestSeq.fill(-1L); touchVals.fill(0f)
+        tapBestSeq = -1L; tapVal = 0f
         val now = clock()
         forEachGroup { ms, dev ->
             for (i in ms.indices) {
                 val m = ms[i]
                 val t = m.target
-                if (t !is OutputTarget.GyroSens && t !is OutputTarget.TouchSens) continue
+                if (!t.settingTarget) continue
                 if (m.range == null) continue
                 val v = abs(chipValue(m, dev, now))
                 if (v.isNaN()) continue
@@ -257,6 +259,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                     if (seq > touchBestSeq[a]) {
                         touchBestSeq[a] = seq; touchBest[a] = m; touchVals[a] = v
                     }
+                } else if (seq > tapBestSeq) {
+                    tapBestSeq = seq; tapVal = v
                 }
             }
         }
@@ -285,7 +289,20 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val t = withTouchSens(touchBase)
             if (t != touchpad.settings) touchpad.settings = t
         }
+        val tap = if (tapBestSeq < 0L) -1 else SliderOverrides.tapMs(tapVal)
+        if (tap != tapNow) {
+            tapNow = tap
+            applyTapTimes()
+        }
     }
+
+    /** The last activated Tap time chip in effect ([OutputTarget.TapTime], ms); -1 = none. Set by [refreshSens]. */
+    private var tapNow = -1
+    private var tapBestSeq = -1L
+    private var tapVal = 0f
+
+    /** The Tap time in effect without the Tap time chips: the workspace's slider override, else the layers' ([eff]). */
+    private var tapBase: Int = ws.longPressMs
 
     /**
      * Finger position inputs ([InputSource.Finger]) by touch button id ("" = the touchpad): where
@@ -390,7 +407,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         else abs(v) > RANGE_ACTIVE
 
     /** An output that takes an input's size (an axis), not just on or off. */
-    private fun analogTarget(t: OutputTarget): Boolean = t is OutputTarget.PadAxis || t is OutputTarget.GyroSens ||
+    private fun analogTarget(t: OutputTarget): Boolean = t is OutputTarget.PadAxis || t.settingTarget ||
             t is OutputTarget.HapticStep || (t is OutputTarget.Haptic && t.held)
 
     /**
@@ -450,7 +467,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val s = m.source
         if (s !is InputSource.Surface || (s.input != SurfaceInput.MOTION_X && s.input != SurfaceInput.MOTION_Y)) return false
         val t = m.target
-        return t is OutputTarget.GyroSens || t is OutputTarget.TouchSens || (t is OutputTarget.PadAxis && t.axis.isTrigger)
+        return t.settingTarget || (t is OutputTarget.PadAxis && t.axis.isTrigger)
     }
 
     /**
@@ -468,6 +485,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             StickAxis.X -> touchBase.feel(1).sensitivityX
             StickAxis.Y -> touchBase.feel(1).sensitivityY
         }
+        OutputTarget.TapTime -> tapBase.toFloat()
         else -> 0f
     }
 
@@ -519,7 +537,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             // A Toggle sensitivity shows the one in effect (its override, once saved) while nothing holds it.
             val t = m.target
             val r = m.range
-            if (r != null && (t is OutputTarget.GyroSens || t is OutputTarget.TouchSens)) {
+            if (r != null && t.settingTarget) {
                 val v = settingOf(m)
                 val sh = shown.getOrPut(m) { FloatArray(2) }
                 sh[0] = if (src is InputSource.Finger && r.to != r.from) ((v - r.from) / (r.to - r.from)).coerceIn(0f, 1f) else Float.NaN
@@ -531,7 +549,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             // Just let go: a sensitivity with no end becomes the workspace's slider override.
             k.down = false; k.liftNs = now; k.armed = false
             val t = m.target
-            if (!sv.ends && (t is OutputTarget.GyroSens || t is OutputTarget.TouchSens)) {
+            if (!sv.ends && t.settingTarget) {
                 k.committed = true
                 onSetValue?.invoke(SetCommit(m, k.value, workspaceIndex))
             }
@@ -1287,7 +1305,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for (d in deviceList) d.clear()
         anyDevice.clear()
         touches.clear(); pressOrder.clear(); physDown.clear(); setTouchHeld.clear(); touchSticks.clear()
-        fingers.clear(); fingerPointer.clear(); sensOrder.clear(); sensNow.fill(Float.NaN); touchSensNow.fill(Float.NaN)
+        fingers.clear(); fingerPointer.clear(); sensOrder.clear(); sensNow.fill(Float.NaN); touchSensNow.fill(Float.NaN); tapNow = -1
         kept.clear(); slideBase.clear(); shown.clear()
         updateGyroNow()
         for (s in surfaceList) s.reset()
@@ -2411,7 +2429,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 OutputTarget.NoOutput, is OutputTarget.Off -> Unit
 
                 // The gyro reads it on every sample ([refreshSens]); the touchpad when it changes.
-                is OutputTarget.GyroSens, is OutputTarget.TouchSens -> Unit
+                is OutputTarget.GyroSens, is OutputTarget.TouchSens, OutputTarget.TapTime -> Unit
 
                 is OutputTarget.Haptic, is OutputTarget.HapticStep -> {
                     val a = min(1f, abs(v))
@@ -2769,7 +2787,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun keyEdge(d: Dev, code: Int, pressed: Boolean, now: Long) {
         val cfg = (if (d === anyDevice) anyKeyCfgs else keyCfgs.getOrNull(d.pad))?.get(code) ?: return
         val g = d.gestures.getOrPut(code) {
-            ButtonGestures(0, 0, cfg.hasDouble, cfg.tapWaits).also { keyTimes(code, it); tapList.add(it) }
+            ButtonGestures(0, 0, cfg.hasDouble, cfg.tapWaits).also { keyTimes(code, it, if (tapNow >= 0) tapNow else tapBase); tapList.add(it) }
         }
         if (pressed) g.down(now, touchpad.minPulseNanos) else g.up(now, touchpad.minPulseNanos)
     }
@@ -3217,8 +3235,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         touchEvents = touchMappings.filter { isEvent(it.target) }
         padEvents = Array(padMappings.size) { padMappings[it].filter { m -> isEvent(m.target) } }
         eventsMapped = touchEvents.isNotEmpty() || padEvents.any { it.isNotEmpty() }
-        fun sens(t: OutputTarget) = t is OutputTarget.GyroSens || t is OutputTarget.TouchSens
-        sensMapped = touchMappings.any { sens(it.target) } || padMappings.any { l -> l.any { sens(it.target) } }
+        sensMapped = touchMappings.any { it.target.settingTarget } || padMappings.any { l -> l.any { it.target.settingTarget } }
         valueMapped = touchMappings.any { valueChip(it) } || padMappings.any { l -> l.any { valueChip(it) } }
         keptPadChips = touchMappings.filter { it.setValue != null && it.target is OutputTarget.PadAxis }
         trace?.let { traceLayers(it) }
@@ -3252,28 +3269,38 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         eff = e
         touchpad.settings = e.touchpad
         updateGyroNow()
-        // One Tap time: the double-tap window is the long-press time.
-        touchpad.doubleTapNanos = e.longPressMs.coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
-        touchpad.longPressNanos = e.longPressMs.coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
-        for (c in ws.touchControls) {
-            surfaces[c.id]?.let { s ->
-                s.settings = c.surfaceSettings(e.touchpad)
-                s.doubleTapNanos = c.doubleTap(e) * 1_000_000L; s.longPressNanos = c.longPress(e) * 1_000_000L
-            }
-            tapStates[c.id]?.let { st -> st.longNs = c.longPress(e) * 1_000_000L; st.doubleNs = c.doubleTap(e) * 1_000_000L }
-            for (k in TouchAreaKind.entries) areaGestures[areaKey(c.id, k)]?.let { st ->
-                st.longNs = c.longPress(e) * 1_000_000L; st.doubleNs = c.doubleTap(e) * 1_000_000L
-            }
-        }
-        for (d in deviceList) for ((code, g) in d.gestures) keyTimes(code, g)
-        for ((code, g) in anyDevice.gestures) keyTimes(code, g)
+        for (c in ws.touchControls) surfaces[c.id]?.let { s -> s.settings = c.surfaceSettings(e.touchpad) }
+        tapBase = SliderOverrides.tapTime(ws.sliders) ?: e.longPressMs
+        applyTapTimes()
         updateGyroNow()
     }
 
-    /** Key [code]'s gesture times: its own from the pinned preset, else those in effect ([eff]). */
-    private fun keyTimes(code: Int, g: ButtonGestures) {
+    /**
+     * Puts the Tap time in effect into the gesture times of the touchpad, and of the touch buttons
+     * and keys without their own: a Tap time chip's ([tapNow]), else [tapBase].
+     */
+    private fun applyTapTimes() {
+        val ms = if (tapNow >= 0) tapNow else tapBase
+        val e = if (eff.longPressMs == ms) eff else eff.copy(longPressMs = ms)
+        // One Tap time: the double-tap window is the long-press time.
+        val ns = ms.coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
+        touchpad.doubleTapNanos = ns
+        touchpad.longPressNanos = ns
+        for (c in ws.touchControls) {
+            val long = c.longPress(e) * 1_000_000L
+            val double = c.doubleTap(e) * 1_000_000L
+            surfaces[c.id]?.let { s -> s.doubleTapNanos = double; s.longPressNanos = long }
+            tapStates[c.id]?.let { st -> st.longNs = long; st.doubleNs = double }
+            for (k in TouchAreaKind.entries) areaGestures[areaKey(c.id, k)]?.let { st -> st.longNs = long; st.doubleNs = double }
+        }
+        for (d in deviceList) for ((code, g) in d.gestures) keyTimes(code, g, ms)
+        for ((code, g) in anyDevice.gestures) keyTimes(code, g, ms)
+    }
+
+    /** Key [code]'s gesture times: its own from the pinned preset, else Tap time [ms]. */
+    private fun keyTimes(code: Int, g: ButtonGestures, ms: Int) {
         val own = ws.keyTimings.firstOrNull { it.keyCode == code }
-        g.longNs = (own?.longPressMs ?: eff.longPressMs).coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
+        g.longNs = (own?.longPressMs ?: ms).coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L
         g.doubleNs = g.longNs
     }
 

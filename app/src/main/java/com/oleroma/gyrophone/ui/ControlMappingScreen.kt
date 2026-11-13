@@ -815,6 +815,9 @@ internal fun ControlMappingScreen(
             val base = runtime.engine.workspace.touchpad.sensitivity
             next = next.map { if (Bindings.belongs(it, input) && it.target == t && it.range == null) it.copy(range = AxisRange(base * 0.8f, base * 1.2f)) else it }
         }
+        if (t == OutputTarget.TapTime) {
+            next = next.map { if (Bindings.belongs(it, input) && it.target == t && it.range == null) it.copy(range = TAP_TIME_RANGE) else it }
+        }
         if (t is OutputTarget.GyroSens) {
             // It needs a range to do anything: around the sensitivity it would change.
             val g = runtime.engine.workspace.gyro
@@ -1056,6 +1059,7 @@ internal fun ControlMappingScreen(
                 if (c > 0f) "%.2f–%.2f".format(GameSens.rws(r.from, c), GameSens.rws(r.to, c)) else "%.1f–%.1f".format(r.from, r.to)
             }
             is OutputTarget.TouchSens -> "%.2f–%.2f".format(r.from, r.to)
+            OutputTarget.TapTime -> "%.0f–%.0f ms".format(r.from, r.to)
             else -> null
         }
     }
@@ -3199,12 +3203,16 @@ private fun chipValue(target: OutputTarget, source: InputSource, e: Bindings.Ent
             ) else ChipValue(init, move, e?.perDp, def, 1f, 0.005f, { "%.3f".format(it) })
         }
         is OutputTarget.TouchSens -> ChipValue(init, move, e?.perDp, def, 0.1f, 0.001f, { "%.3f".format(it) })
+        OutputTarget.TapTime -> ChipValue(init, move, e?.perDp, def, 10f, 0.1f, { "%.1f ms".format(it) })
         else -> ChipValue(
             init, move, e?.perDp, def, 5f, 0.05f, { "%.2f %%".format(it) },
             shown = { it * 100f }, stored = { it / 100f },
         )
     }
 }
+
+/** A new Tap time chip's range (ms). */
+private val TAP_TIME_RANGE = AxisRange(150f, 600f)
 
 /** Touch sensitivity typed into a range goes up to this. */
 private const val MAX_TOUCH_SENS_TYPED = 50f
@@ -3250,6 +3258,17 @@ private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings
                 current, AxisRange(base * 0.8f, base * 1.2f), null, 0f..10f, 0f..MAX_TOUCH_SENS_TYPED, 0.05f, { "%.2f".format(it) },
                 "The touchpad's Move sensitivity at the input's 0 and at full; it changes evenly between them while " +
                     "the input is active and goes back when it lets go (unless a Toggle keeps it). Drag one handle past the other to reverse it.",
+            )
+        }
+
+        OutputTarget.TapTime -> {
+            val lo = Workspace.MIN_LONG_PRESS_MS.toFloat()
+            val hi = Workspace.MAX_LONG_PRESS_MS.toFloat()
+            ChipRange(
+                current, TAP_TIME_RANGE, null, lo..hi, lo..hi, 10f, { "%.0f ms".format(it) },
+                "The Tap time at the input's 0 and at full: how long a tap may last, and the gap of a double tap, for " +
+                    "the workspace's buttons, touchpad and keys without their own. It changes the taps to come while the " +
+                    "input is active and goes back when it lets go (unless a Toggle keeps it). Drag one handle past the other to reverse it.",
             )
         }
 

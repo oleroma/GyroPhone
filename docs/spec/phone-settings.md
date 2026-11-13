@@ -49,7 +49,7 @@ Opened by ⚙ in edit mode, the touchpad's Settings in its mapping editor, or th
 | Tilt & shake | Tilt range, Tilt deadzone (per axis), Use compass when flat (sideways tilt lying flat; with a warning that magnets and metal bend it), Shake strength | 30°, off, off, 14 m/s² |
 | Buttons (Base only) | Control opacity (10–100 %) | 100 % |
 | Haptics | Feel (system or custom strength / length), Ticks play (On press / enter, On release / exit, Both) | system, On press |
-| Taps | Tap time (100–1000 ms): the longest tap, when a long press starts, and the double-tap gap | 300 ms |
+| Taps | Tap time (100–1000 ms): the longest tap, when a long press starts, and the double-tap gap. A Tap time slider (a mapping, see [Mapping system](phone-mapping.md#set-value-and-move-sliders)) can change it while you play | 300 ms |
 
 ## A touch control's or controller button's settings
 
