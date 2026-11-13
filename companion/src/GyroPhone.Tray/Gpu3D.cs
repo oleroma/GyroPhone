@@ -452,7 +452,9 @@ internal static class Gpu3D
             slot.UsedAt = frame;
             if (!slot.HasShown || !slot.Shown.Equals(key))
             {
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 gpu.Enter();
+                long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                 try
                 {
                     slot.Picture ??= new Target(gpu.D3D, g.Dc, w, h);
@@ -464,6 +466,10 @@ internal static class Gpu3D
                 finally
                 {
                     gpu.Leave();
+                    long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    double ms = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                    g.CardWaitMs += (t1 - t0) * ms;
+                    g.CardWorkMs += (t2 - t1) * ms;
                 }
                 slot.Shown = key;
                 slot.HasShown = true;

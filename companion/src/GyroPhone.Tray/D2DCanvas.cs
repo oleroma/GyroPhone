@@ -167,6 +167,8 @@ internal sealed class GpuDevice
 /// </summary>
 internal sealed class GpuSurface : IDisposable
 {
+    private static double Ms(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+
     private readonly GpuDevice _shared;
     private readonly ID2D1DeviceContext _dc = null!;
     private readonly D2DCanvas _canvas = null!;
@@ -176,6 +178,21 @@ internal sealed class GpuSurface : IDisposable
     private int _width, _height;
     private readonly IDXGISwapChain1? _swap;
     private bool _disposed;
+
+    /// <summary>Where a window's frames went, summed (ms) until <see cref="TakeTimes"/>: drawing, D2D's EndDraw, the presenting (with the wait for the shared lock).</summary>
+    private double _drawMs, _endMs, _presentMs;
+    private int _timed;
+
+    /// <summary>The sums since the last call as one short text (average ms a frame), then starts again.</summary>
+    public string TakeTimes()
+    {
+        if (_timed == 0) return "";
+        var t = $"draw {_drawMs / _timed:0.00}, end {_endMs / _timed:0.00}, present {_presentMs / _timed:0.00}";
+        string card = _canvas.TakeCardTimes(_timed);
+        _drawMs = _endMs = _presentMs = 0;
+        _timed = 0;
+        return card.Length > 0 ? t + ", " + card : t;
+    }
 
     /// <summary>With <paramref name="hwnd"/>: presented by a swap chain to that window; without: copied (see the class).</summary>
     public GpuSurface(IntPtr hwnd = default, int width = 1, int height = 1)
@@ -300,17 +317,21 @@ internal sealed class GpuSurface : IDisposable
                     _shared.Leave();
                 }
             }
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
             _dc.BeginDraw();
+            long t1 = t0;
             try
             {
                 _canvas.Begin(quality);
                 draw(_canvas);
                 _canvas.End();
+                t1 = System.Diagnostics.Stopwatch.GetTimestamp();
             }
             finally
             {
                 _dc.EndDraw().CheckError();
             }
+            long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
             _shared.Enter();
             try
             {
@@ -320,6 +341,11 @@ internal sealed class GpuSurface : IDisposable
             {
                 _shared.Leave();
             }
+            long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
+            _drawMs += Ms(t1 - t0);
+            _endMs += Ms(t2 - t1);
+            _presentMs += Ms(t3 - t2);
+            _timed++;
             return;
         }
         if (_bitmap == null || width != _width || height != _height) Bind(width, height);
@@ -419,6 +445,17 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
 
     /// <summary>Counts the pictures begun on this canvas.</summary>
     public long Frame { get; private set; }
+
+    /// <summary>What <see cref="Gpu3D"/> spent on this canvas, summed (ms): waiting for the shared lock, and its own drawing.</summary>
+    internal double CardWaitMs, CardWorkMs;
+
+    internal string TakeCardTimes(int frames)
+    {
+        if (CardWaitMs == 0 && CardWorkMs == 0) return "";
+        var t = $"card wait {CardWaitMs / frames:0.00}, card {CardWorkMs / frames:0.00}";
+        CardWaitMs = CardWorkMs = 0;
+        return t;
+    }
 
     private readonly record struct TextKey(string Text, float Px, bool Bold, int Argb, float W, float H, TextAlign Hz, TextAlign Vt, int Scale8);
     // What each Push did, so Pop undoes it: a transform to restore, or a layer (with its geometry) to pop.
