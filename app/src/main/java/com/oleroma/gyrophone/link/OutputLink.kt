@@ -56,4 +56,6 @@ data class LinkStats(
     val ethernet: Boolean = false,
     /** False when the PC has no virtual gamepad driver (pad input is dropped there). */
     val vigemOk: Boolean? = null,
+    /** The PC's setup bits from HOST_STATUS ([com.oleroma.gyrophone.core.net.HostStatusFlags2], PC_*), null before the first. */
+    val pcSetup: Int? = null,
 )

@@ -276,6 +276,18 @@ public static class HostStatusFlags2
 {
     /// <summary>"Use the phone over the USB cable" is on: the phone tries the cable now (else it leaves a cable nobody answers on alone).</summary>
     public const byte UsbDirect = 1 << 0;
+    /// <summary>The PC reaches the phone through its own Wi-Fi as a client (of a router or the phone's hotspot), not by cable or as the hotspot.</summary>
+    public const byte PcWifi = 1 << 1;
+    /// <summary>With <see cref="PcWifi"/>: the PC's Wi-Fi is on 2.4 GHz.</summary>
+    public const byte PcWifi24 = 1 << 2;
+    /// <summary>With <see cref="PcWifi"/>: the PC's Wi-Fi signal is weak (below about -70 dBm).</summary>
+    public const byte PcWifiWeak = 1 << 3;
+    /// <summary>The PC runs on battery.</summary>
+    public const byte PcOnBattery = 1 << 4;
+    /// <summary>The PC saves power: energy (battery) saver on, or power mode "Best power efficiency".</summary>
+    public const byte PcPowerSaving = 1 << 5;
+    /// <summary>The setup bits (all but <see cref="UsbDirect"/>).</summary>
+    public const byte SetupMask = PcWifi | PcWifi24 | PcWifiWeak | PcOnBattery | PcPowerSaving;
 }
 
 public static class HostStatusFlags
