@@ -290,6 +290,7 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
             physicalInputs = e.inputs,
             physicalMotionId = held?.let { HeldButton.GYRO_ID + it.id },
             physicalGyro = held?.let { preset.held(it.id)?.gyro.orEmpty() },
+            physicalTimings = preset.timings,
             inherited = held?.let { h -> Inheritance.gyroInherited(Inheritance.workspace(ws, profile.defaults), HeldButton.GYRO_ID + h.id, editSet) }.orEmpty(),
             parentName = "Workspace",
             settings = physicalSettings(runtime, preset, ws, held, editSet) { change ->

@@ -126,6 +126,8 @@ import com.oleroma.gyrophone.core.model.PresetLevel
 import com.oleroma.gyrophone.core.model.Workspace
 import com.oleroma.gyrophone.core.model.WorkspaceDefaults
 import com.oleroma.gyrophone.core.model.ButtonGyro
+import com.oleroma.gyrophone.core.model.ButtonHow
+import com.oleroma.gyrophone.core.model.KeyTiming
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.HoldMode
@@ -491,6 +493,8 @@ internal fun ControlMappingScreen(
     physicalMotionId: String? = null,
     /** That physical key's or button's own gyro settings while held ([HeldButton.gyro]), for its gyro cards' space. */
     physicalGyro: List<ButtonGyro>? = null,
+    /** A physical device's keys' own settings ([KeyTiming]): their How, which their chips follow; null = not a physical control. */
+    physicalTimings: List<KeyTiming>? = null,
     /** The actions' own settings (their ⚙) and the shared ones (Settings); null = none. */
     settings: MappingSettings? = null,
     /**
@@ -515,6 +519,18 @@ internal fun ControlMappingScreen(
 ) {
     // The edited set seen as Base, so the Base-only Bindings helpers edit it.
     val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
+
+    /** The How (null = Held) and Repeat count of the button or key [src] belongs to, or null when it is no button's. */
+    fun buttonHowOf(src: InputSource): Pair<How?, Int>? {
+        ButtonHow.keyOf(src)?.let { k -> if (physicalTimings != null) return physicalTimings.firstOrNull { it.keyCode == k }.let { it?.how to (it?.repeat ?: 2) } }
+        return if (control.kind == TouchKind.BUTTON && ButtonHow.ownerOf(src) == control.id) control.how to control.repeat else null
+    }
+
+    /** The How chip [target] on [src] follows from its button (Held where it can't take the button's), or null when it is no button's. */
+    fun chipButtonHow(src: InputSource, target: OutputTarget): How? {
+        val h = (buttonHowOf(src) ?: return null).first ?: How.HELD
+        return if (h == How.HELD || ButtonHow.takes(target, src, h)) h else How.HELD
+    }
 
     /**
      * Gyro card [src]'s title: "Local pitch", "World yaw" or "Player yaw", by the space it measures in
@@ -1087,9 +1103,14 @@ internal fun ControlMappingScreen(
         }
     }
 
-    /** The options of [chip] of [card] in [m]; null = none, or not there. */
-    fun chipOptions(m: List<Mapping>, card: BindableInput, chip: RowItem.Chip): MapOptions? =
-        Bindings.entry(m, trig(chipInput(card, chip), chip.trigger), chip.target, chip.n)?.options
+    /** The options of [chip] of [card] in [m], with its button's How where it follows it; null = none, or not there. */
+    fun chipOptions(m: List<Mapping>, card: BindableInput, chip: RowItem.Chip): MapOptions? {
+        val ti = trig(chipInput(card, chip), chip.trigger)
+        val o = Bindings.entry(m, ti, chip.target, chip.n)?.options
+        val src = ti.sources.firstOrNull() ?: return o
+        val (h, n) = buttonHowOf(src) ?: return o
+        return ButtonHow.options(o, chip.target, src, h, n)
+    }
 
     /** A chip's range as its text shows it ("10–85 %"), or null. */
     fun chipRangeText(m: List<Mapping>, card: BindableInput, chip: RowItem.Chip): String? {
@@ -2326,6 +2347,7 @@ internal fun ControlMappingScreen(
             range = chipRange(chip.target, Bindings.entry(view, ti, chip.target, chip.n)?.range, runtime.engine.workspace.gyro),
             value = chipValue(chip.target, zi.sources.first(), Bindings.entry(view, ti, chip.target, chip.n), runtime.engine.workspace.gyro),
             position = zi.sources.first() is InputSource.Finger,
+            buttonHow = ti.sources.firstOrNull()?.let { chipButtonHow(it, chip.target) },
             onApply = { tr, o, w, r, pd ->
                 chipDialog = null
                 val target = (chip.target as? OutputTarget.SetOrientation)?.copy(granular = granular) ?: chip.target

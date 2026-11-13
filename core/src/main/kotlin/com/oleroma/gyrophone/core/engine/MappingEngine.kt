@@ -30,6 +30,7 @@ import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KeyMode
 import com.oleroma.gyrophone.core.model.How
+import com.oleroma.gyrophone.core.model.ButtonHow
 import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
@@ -925,6 +926,24 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Touch controls held, first pressed first: the last one's gyro mappings win ([gyroRoutes]). */
     private val pressOrder = LinkedHashSet<String>()
 
+    /**
+     * Buttons with How Toggle turned on by a touch (touch control ids, [PHYS] + a held button's id):
+     * they stay in [pressOrder] (their gyro cards and gyro settings on) until the next touch.
+     */
+    private val latched = HashSet<String>()
+
+    /** [id] (a touch control, or [PHYS] + a held button) has How Toggle in [w]. */
+    private fun togglesGyro(id: String, w: Workspace = ws): Boolean =
+        if (id.startsWith(PHYS)) w.heldButtons.firstOrNull { PHYS + it.id == id }?.let { ButtonHow.toggles(w, it) } == true
+        else w.touchControls.firstOrNull { it.id == id }?.how == How.TOGGLE
+
+    /** Button [id] went down: a Toggle one turns its latch on or off. Returns false when it isn't Toggle. */
+    private fun latchDown(id: String): Boolean {
+        if (!togglesGyro(id)) return false
+        if (latched.remove(id)) pressOrder.remove(id) else { latched.add(id); pressOrder.add(id) }
+        return true
+    }
+
     /** Controls held through [setTouch], with their press time. */
     private val setTouchHeld = HashMap<String, Long>()
     private val touchSticks = HashMap<String, StickState>()
@@ -1263,10 +1282,22 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             kept.clear(); slideBase.clear(); shown.clear()
         } else if (kept.isNotEmpty()) kept.values.removeIf { it.committed }
         // The touchpad mappings it does not set come from the Defaults.
-        val w = loaded.copy(mappings = Bindings.upgradeSwipes(Inheritance.workspace(loaded, profile.defaults)))
+        val filled = loaded.copy(mappings = Bindings.upgradeSwipes(Inheritance.workspace(loaded, profile.defaults)))
+        // Chips that don't set their own How take their button's or key's ([ButtonHow]).
+        val w = filled.copy(
+            mappings = ButtonHow.touch(filled, filled.mappings),
+            pads = if (filled.keyTimings.none { it.how != null }) filled.pads else filled.pads.map { it.copy(mappings = ButtonHow.keys(filled, it.mappings)) },
+            keyboard = ButtonHow.keys(filled, filled.keyboard), mouse = ButtonHow.keys(filled, filled.mouse), phone = ButtonHow.keys(filled, filled.phone),
+        )
+        // Another workspace lets go of every latch; a button no longer Toggle lets go of its own.
+        val unlatch = if (loaded.id != ws.id) latched.toList() else latched.filter { !togglesGyro(it, w) }
+        for (id in unlatch) {
+            latched.remove(id)
+            if (id !in touches && id.removePrefix(PHYS) !in physDown) pressOrder.remove(id)
+        }
         ws = w
         heldPhys = heldOf(w)
-        for (id in physDown) pressOrder.remove(PHYS + id)
+        for (id in physDown) if (PHYS + id !in latched) pressOrder.remove(PHYS + id)
         physDown.clear()
         axisStick.fill(null); axisStickRx.fill(null); axisTrigger.fill(null)
         for ((id, axes) in PhysicalSticks.sticks) w.stickTunings[id]?.let { axisStick[axes.first] = it; axisStick[axes.second] = it }
@@ -1350,7 +1381,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun releaseHeld() {
         for (d in deviceList) d.clear()
         anyDevice.clear()
-        touches.clear(); pressOrder.clear(); physDown.clear(); setTouchHeld.clear(); touchSticks.clear()
+        touches.clear(); pressOrder.clear(); latched.clear(); physDown.clear(); setTouchHeld.clear(); touchSticks.clear()
         fingers.clear(); fingerPointer.clear(); sensOrder.clear(); sensNow.fill(Float.NaN); touchSensNow.fill(Float.NaN); tapNow = -1
         gyroValNow.fill(Float.NaN)
         kept.clear(); slideBase.clear(); shown.clear()
@@ -1569,6 +1600,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun latchedTouches(): Set<String> = synchronized(lock) {
         val out = HashSet<String>()
         for ((id, s) in surfaces) if (s.latched) out.add(id)
+        out.addAll(latched)
         out
     }
 
@@ -1648,6 +1680,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val zone = areas[TouchAreaKind.ZONE.ordinal]
             pressed.addAll(zone.since.keys); pressed.addAll(zone.late.keys)
             for ((id, s) in surfaces) if (s.latched) latched.add(id)
+            latched.addAll(this.latched)
         }
     }
 
@@ -2765,7 +2798,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
             if (on == (b.id in physDown)) continue
             changed = true
-            if (on) { physDown.add(b.id); pressOrder.add(PHYS + b.id) } else { physDown.remove(b.id); pressOrder.remove(PHYS + b.id) }
+            val id = PHYS + b.id
+            if (on) {
+                physDown.add(b.id)
+                if (!latchDown(id)) pressOrder.add(id)
+            } else {
+                physDown.remove(b.id)
+                if (id !in latched && !togglesGyro(id)) pressOrder.remove(id)
+            }
         }
         if (changed) updateGyroNow()
     }
@@ -3381,7 +3421,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val n = touches[id] ?: 0
         touches[id] = n + 1
         if (n == 0) {
-            pressOrder.add(id); updateGyroNow()
+            if (!latchDown(id)) pressOrder.add(id)
+            updateGyroNow()
         }
         if (n == 0 && tapList.isNotEmpty()) controlDown(id, clock())
     }
@@ -3392,7 +3433,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             touches[id] = n - 1; return
         }
         touches.remove(id)
-        pressOrder.remove(id)
+        if (id !in latched && !togglesGyro(id)) pressOrder.remove(id)
         updateGyroNow()
         if (tapList.isNotEmpty()) controlUp(id, clock())
     }

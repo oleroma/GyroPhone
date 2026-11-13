@@ -91,6 +91,13 @@ data class TouchControl(
     /** BUTTON: the longest gap between the taps of a double tap (ms); null = the workspace's. */
     val doubleTapMs: Int? = null,
     /**
+     * BUTTON: how its chips press when they don't set their own ([ButtonHow]); null = Held. Toggle
+     * also keeps its own gyro cards and gyro settings on from one touch to the next.
+     */
+    val how: How? = null,
+    /** BUTTON: [how] Repeat's count. */
+    val repeat: Int = 2,
+    /**
      * Zone mapping ([TouchAreaKind.ZONE]): a finger that slides in from elsewhere stops what it
      * was doing (cursor, stick, another button) while it is in the zone, and one that lands on
      * the zone but on no other control starts no cursor.

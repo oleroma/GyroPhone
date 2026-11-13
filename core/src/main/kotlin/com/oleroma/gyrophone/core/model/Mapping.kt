@@ -689,7 +689,8 @@ enum class How(val label: String, val mark: String) {
  */
 @Serializable
 data class MapOptions(
-    val how: How = How.HELD,
+    /** Null: Held, or its button's How ([ButtonHow]) on a button that sets one. */
+    val how: How? = null,
     /** Superseded by [how] (TOGGLE); still read. */
     val toggle: Boolean = false,
     val cycle: Boolean = false,
@@ -708,7 +709,7 @@ data class MapOptions(
     val none: Boolean get() = this == MapOptions()
 
     /** [how], with the older toggle switch read as TOGGLE. */
-    val mode: How get() = if (toggle) How.TOGGLE else how
+    val mode: How get() = if (toggle) How.TOGGLE else how ?: How.HELD
 
     companion object {
         const val MAX_DELAY_MS = 2000

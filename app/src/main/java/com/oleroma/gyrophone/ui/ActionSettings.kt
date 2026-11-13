@@ -14,6 +14,9 @@ import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.ButtonGyro
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSpace
+import com.oleroma.gyrophone.core.model.How
+import com.oleroma.gyrophone.core.model.MapOptions
+import com.oleroma.gyrophone.core.model.ButtonHow
 import com.oleroma.gyrophone.core.model.GyroCurve
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.TouchpadSettings
@@ -305,6 +308,9 @@ internal fun touchControlSettings(
     // The settings its actions share, as categories: its gyro, a touchpad button's surface, a stick's own.
     val heldCategories = gyro?.let { g ->
         listOf(
+            category(runtime, "buttonHow", "Press", "How its chips press: Held, Once, Toggle or Repeat", prefKey = "button.How") {
+                ButtonHowRow(control.how, control.repeat) { h, n -> update { it.copy(how = h, repeat = n) } }
+            },
             category(runtime, "buttonGyro", "Gyro", "Gyro sensitivity and acceleration while held", prefKey = "button.Gyro") {
                 ButtonGyroSensitivity(g, key)
             },
@@ -583,7 +589,14 @@ internal fun physicalSettings(
         ButtonGyroLevel(ws, set, preset.held(h.id)?.gyro.orEmpty()) { change -> update { p -> p.withHeld(h.id, h.sources, set, change) } }
     }
     val key = preset.id + ":" + held?.id
-    val items = if (level == null) emptyList() else listOf(
+    val keyCode = held?.sources?.firstNotNullOfOrNull { ButtonHow.keyOf(it) }
+    val howItem = keyCode?.let { k ->
+        category(runtime, "heldHow", "Press", "How its chips press: Held, Once, Toggle or Repeat", prefKey = "physical.How") {
+            val t = preset.timing(k)
+            ButtonHowRow(t?.how, t?.repeat ?: 2) { h, n -> update { p -> p.withTiming(k) { it.copy(how = h, repeat = n) } } }
+        }
+    }
+    val items = listOfNotNull(howItem) + if (level == null) emptyList() else listOf(
         category(runtime, "heldGyro", "Gyro", "Gyro sensitivity and acceleration while held", prefKey = "physical.Held", defaultOpen = true) {
             ButtonGyroSensitivity(level, key)
         },
@@ -601,6 +614,32 @@ internal fun physicalSettings(
             shared = if (items.isEmpty()) null else ui { ReorderableSections(runtime, "physical", items) },
             items = items,
         )
+    }
+}
+
+/**
+ * A button's How ([TouchControl.how], [KeyTiming.how]): what its chips do when they don't set their
+ * own. [onSet] gets the new How (null = Held) and Repeat count.
+ */
+@Composable
+private fun ButtonHowRow(how: How?, repeat: Int, onSet: (How?, Int) -> Unit) {
+    val shown = how ?: How.HELD
+    OverrideRow(
+        "How", how != null && how != How.HELD, { onSet(null, 2) },
+        "Every chip of this button that doesn't set its own How follows this one (a chip's own How shows ↺ to follow again). " +
+            "Toggle also keeps this button's own gyro cards and gyro settings on from one touch to the next. " +
+            "Chips that move something (a stick, the mouse, a sensitivity) stay Held, except Toggle on Position and Move.",
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (h in How.entries) FilterChip(
+                selected = shown == h, onClick = { onSet(h.takeUnless { it == How.HELD }, repeat) }, label = { Text(h.label) },
+            )
+        }
+        if (shown == How.REPEAT) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (n in MapOptions.MIN_REPEAT..MapOptions.MAX_REPEAT) FilterChip(
+                selected = repeat == n, onClick = { onSet(How.REPEAT, n) }, label = { Text("×$n") },
+            )
+        }
     }
 }
 
