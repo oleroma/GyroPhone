@@ -97,7 +97,7 @@ guard_workflow_change() {
 open_build_window() {
   [ -f /git-bash.exe ] && command -v cygpath >/dev/null 2>&1 || return 0
   cmd //c start "" "$(cygpath -w /git-bash.exe)" -c \
-    "bash '$(cygpath -m "$AGENTS_DIR/build-window")' '$(cygpath -m "$LOG_FILE")' '$(cygpath -m "$CANCEL_FILE")' '$(cygpath -m "$BUILD_DIR/logs/build-output.txt")'" ||
+    "bash '$(cygpath -m "$AGENTS_DIR/build-window")' '$(cygpath -m "$LOG_FILE")' '$(cygpath -m "$CANCEL_FILE")' '$(cygpath -m "$BUILD_DIR/logs/build-output.txt")' $$" ||
     echo "Couldn't open the build window."
 }
 
@@ -128,8 +128,9 @@ build_pc() {
   report() { report_pr "PC build" "$@"; }
   [ "$WORKTREE" -ef "$BUILD_DIR/src" ] || die "Run this from the build/src worktree, as in AGENTS.md step 3."
 
-  local lock="$BUILD_DIR/.build-lock"
-  mkdir "$lock" 2>/dev/null || die "Another build is running in build/src, or $lock was left behind. Ask Olex."
+  take_lock "$(git rev-parse --short=7 HEAD)"
+  # The commit is read once: everything below builds, publishes and reports this one.
+  SHA="$(git rev-parse HEAD)"
   # The build window shows this log; Ctrl+C there makes the cancel file, and watch_cancel stops
   # the build. The file stays until the next build, so the result can still see it.
   CANCEL_FILE="$BUILD_DIR/.build-cancel"
@@ -139,12 +140,12 @@ build_pc() {
   trap 'exit 130' TERM
   watch_cancel &
   local watcher=$!
-  cleanup() { kill "$watcher" 2>/dev/null || true; rmdir "$lock" 2>/dev/null || true; }
+  cleanup() { kill "$watcher" 2>/dev/null || true; release_lock; }
 
   local commit
   commit="$(git rev-parse --short=7 HEAD)"
   guard_workflow_change
-  guard_other_build "$(git rev-parse HEAD)"
+  guard_other_build "$SHA"
 
   # An Android repo: say at once whether the phone is on adb, so Olex can connect it while this
   # builds. The install runs after the build, so a phone connected by then still gets it.
@@ -159,7 +160,7 @@ build_pc() {
   # When CI already built this commit (agent-build ci while the PC was away), download and
   # install that build instead of building it again.
   local version="" line rel v files=() names=() ci_tag="" built_here=1
-  read -r ci_tag version < <(ci_build_release "$(git rev-parse HEAD)") || true
+  read -r ci_tag version < <(ci_build_release "$SHA") || true
   if [ -n "$ci_tag" ]; then
     built_here=0
     fetch_ci_build "$ci_tag" "$BUILD_DIR/logs/ci-build"
@@ -265,7 +266,7 @@ build_pc() {
   if [ "$built_here" = 1 ]; then
     if gh release create "build/$BUILD_NUMBER" "${files[@]}" -R "$SLUG" --verify-tag --prerelease \
       --title "$version" \
-      --notes "$(bash "$AGENTS_DIR/release-notes" "$(git rev-parse HEAD)" "$BUILD_NUMBER" "PC build of $(git rev-parse HEAD)")" >/dev/null; then
+      --notes "$(bash "$AGENTS_DIR/release-notes" "$SHA" "$BUILD_NUMBER" "PC build of $SHA")" >/dev/null; then
       summary+=("Published: https://github.com/$SLUG/releases/tag/build/$BUILD_NUMBER")
     else
       summary+=("Publishing the build failed (see the log).")
@@ -321,13 +322,8 @@ if [ -n "$BRANCH" ]; then
   git fetch origin "$BRANCH" || die "Couldn't fetch $BRANCH."
   case "$MODE" in
     pc)
-      src="$MAIN_REPO/build/src"
-      if [ -e "$src/.git" ]; then
-        git -C "$src" checkout --detach "origin/$BRANCH" || die "Couldn't check out $BRANCH in build/src."
-      else
-        git -C "$MAIN_REPO" worktree add --detach "$src" "origin/$BRANCH" || die "Couldn't make build/src."
-      fi
-      exec bash "$src/.agents/agent-build" pc "${FLAGS[@]}" >&3 2>&3 3>&-
+      checkout_src "$BRANCH"
+      exec bash "$MAIN_REPO/build/src/.agents/agent-build" pc "${FLAGS[@]}" >&3 2>&3 3>&-
       ;;
     ci)
       git checkout "$BRANCH" && git merge --ff-only "origin/$BRANCH" || die "Couldn't check out $BRANCH."
