@@ -224,7 +224,7 @@ private fun AppTab(runtime: GamepadRuntime) {
             }
             Hint("The ← / → buttons are ordinary buttons of every workspace (Make global): move, resize, map or delete them in Edit layout. Add them back from Add preset ★ → Workspace arrows.")
         },
-        category(runtime, "touchDisplay", "Touch display", "Touches, trails, live mappings, swipe lines, Move rulers") {
+        category(runtime, "touchDisplay", "Touch display", "Touches, trails, mappings on buttons, swipe lines, Move rulers") {
             SwitchRow("Show touches", visuals.showTouches) { runtime.setTouchVisuals(visuals.copy(showTouches = it)) }
             SwitchRow("Trail behind fingers", visuals.trail) { runtime.setTouchVisuals(visuals.copy(trail = it)) }
             if (visuals.trail) {
@@ -254,8 +254,11 @@ private fun AppTab(runtime: GamepadRuntime) {
                 ) { runtime.setTouchVisuals(visuals.copy(fadeMs = it)) }
             }
             SwitchRow(
-                "Show live mappings on buttons", visuals.liveMappings,
-                hint = "A button's label briefly shows what it is sending, such as a tap, double tap or long press action.",
+                "Show mappings on buttons", visuals.liveMappings,
+                hint = "A frame on each button lists what it is sending now, one line each (a tap, double tap or long press action " +
+                        "stays a moment), and each Toggle it has with its state: \"Crouch on\" in green, \"Crouch off\" in grey. " +
+                        "Slider values join the same frame. It sits in the middle of the button, in place of its label, when everything " +
+                        "the button could show fits there; otherwise outside by its top-right corner.",
             ) { runtime.setTouchVisuals(visuals.copy(liveMappings = it)) }
             SwitchRow(
                 "Show the swipe line on touchpad buttons", visuals.swipeLine,
