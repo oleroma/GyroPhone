@@ -291,6 +291,8 @@ private fun linePart(m: Mapping, out: Float, counts: Float): LinePart {
         }
         is OutputTarget.TouchSens -> LinePart(p, KIND_TOUCH, t.axis?.name ?: "", "%.2f".format(out))
         OutputTarget.TapTime -> LinePart(p, KIND_PAD, "Tap", "%.0f ms".format(out))
+        is OutputTarget.GyroGlide, is OutputTarget.TiltRange ->
+            LinePart(p, KIND_PAD, Describe.shortTarget(t), if (t is OutputTarget.GyroGlide) "%.0f ms".format(out) else "%.0f°".format(out))
         else -> LinePart(p, KIND_PAD, Describe.shortTarget(t), "%.0f %%".format(kotlin.math.abs(out) * 100))
     }
 }

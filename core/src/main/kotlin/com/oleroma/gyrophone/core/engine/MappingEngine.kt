@@ -185,7 +185,35 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (!pitch.isNaN()) r = r.copy(pitchSensitivity = pitch, pitchScale = null)
         val roll = sensNow[MotionAxis.ROLL.ordinal]
         if (!roll.isNaN()) r = r.copy(rollSensitivity = roll, rollScale = null)
+        for (i in GYRO_VALUE_SLOTS.indices) {
+            val v = gyroValNow[i]
+            if (!v.isNaN()) r = SliderOverrides.gyroValue(r, GYRO_VALUE_SLOTS[i], v)
+        }
         return r
+    }
+
+    /**
+     * Gyro glide and Tilt range chips ([OutputTarget.GyroGlide], [OutputTarget.TiltRange]) in
+     * effect, by [gyroValueSlot] ([GYRO_VALUE_SLOTS]); NaN = none. Set by [refreshSens] like [sensNow].
+     */
+    private val gyroValNow = FloatArray(GYRO_VALUE_SLOTS.size) { Float.NaN }
+    private val gyroValSeq = LongArray(GYRO_VALUE_SLOTS.size)
+    private val gyroValVals = FloatArray(GYRO_VALUE_SLOTS.size)
+
+    /** Chip target [t]'s place in [GYRO_VALUE_SLOTS], -1 for none. */
+    private fun gyroValueSlot(t: OutputTarget): Int = when (t) {
+        is OutputTarget.GyroGlide -> when (t.axis) {
+            MotionAxis.NONE -> 0
+            MotionAxis.YAW -> 1
+            MotionAxis.PITCH -> 2
+            MotionAxis.ROLL -> 3
+        }
+        is OutputTarget.TiltRange -> when (t.axis) {
+            null -> 4
+            StickAxis.X -> 5
+            StickAxis.Y -> 6
+        }
+        else -> -1
     }
 
     // [refreshSens]' per-axis working arrays, kept so a touch makes none.
@@ -238,6 +266,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         best.fill(null); bestSeq.fill(-1L); vals.fill(0f)
         touchBest.fill(null); touchBestSeq.fill(-1L); touchVals.fill(0f)
         tapBestSeq = -1L; tapVal = 0f
+        gyroValSeq.fill(-1L); gyroValVals.fill(0f)
         val now = clock()
         forEachGroup { ms, dev ->
             for (i in ms.indices) {
@@ -259,8 +288,15 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                     if (seq > touchBestSeq[a]) {
                         touchBestSeq[a] = seq; touchBest[a] = m; touchVals[a] = v
                     }
-                } else if (seq > tapBestSeq) {
-                    tapBestSeq = seq; tapVal = v
+                } else if (t == OutputTarget.TapTime) {
+                    if (seq > tapBestSeq) {
+                        tapBestSeq = seq; tapVal = v
+                    }
+                } else {
+                    val a = gyroValueSlot(t)
+                    if (a >= 0 && seq > gyroValSeq[a]) {
+                        gyroValSeq[a] = seq; gyroValVals[a] = v
+                    }
                 }
             }
         }
@@ -274,6 +310,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             else vals[i].coerceIn(MIN_SENS_CHIP, MAX_SENS_CHIP)
             if (v.toBits() != sensNow[i].toBits()) {
                 sensNow[i] = v; changed = true
+            }
+        }
+        // Glide's every-axis slot is 0, Tilt range's 4: an axis's own counts only if it came after it.
+        for (i in GYRO_VALUE_SLOTS.indices) {
+            val all = if (i < 4) 0 else 4
+            val v = if (gyroValSeq[i] < 0L || (i != all && gyroValSeq[i] < gyroValSeq[all])) Float.NaN else gyroValVals[i]
+            if (v.toBits() != gyroValNow[i].toBits()) {
+                gyroValNow[i] = v; changed = true
             }
         }
         if (changed) gyroNow = withSens(gyroBase)
@@ -486,6 +530,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             StickAxis.Y -> touchBase.feel(1).sensitivityY
         }
         OutputTarget.TapTime -> tapBase.toFloat()
+        is OutputTarget.GyroGlide -> if (t.axis == MotionAxis.NONE) gyroBase.glideMs else gyroBase.glideMsOf(t.axis)
+        is OutputTarget.TiltRange -> if (t.axis == null) gyroBase.tiltRangeDeg else gyroBase.tiltRangeOf(t.axis == StickAxis.X)
         else -> 0f
     }
 
@@ -1306,6 +1352,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         anyDevice.clear()
         touches.clear(); pressOrder.clear(); physDown.clear(); setTouchHeld.clear(); touchSticks.clear()
         fingers.clear(); fingerPointer.clear(); sensOrder.clear(); sensNow.fill(Float.NaN); touchSensNow.fill(Float.NaN); tapNow = -1
+        gyroValNow.fill(Float.NaN)
         kept.clear(); slideBase.clear(); shown.clear()
         updateGyroNow()
         for (s in surfaceList) s.reset()
@@ -2429,7 +2476,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 OutputTarget.NoOutput, is OutputTarget.Off -> Unit
 
                 // The gyro reads it on every sample ([refreshSens]); the touchpad when it changes.
-                is OutputTarget.GyroSens, is OutputTarget.TouchSens, OutputTarget.TapTime -> Unit
+                is OutputTarget.GyroSens, is OutputTarget.TouchSens, OutputTarget.TapTime,
+                is OutputTarget.GyroGlide, is OutputTarget.TiltRange -> Unit
 
                 is OutputTarget.Haptic, is OutputTarget.HapticStep -> {
                     val a = min(1f, abs(v))
@@ -3510,6 +3558,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         const val RANGE_ACTIVE = 1e-4f
 
         /** The sensitivities a Gyro sensitivity chip can set, counts per degree. */
+        /** The Gyro glide and Tilt range chips' places ([gyroValueSlot]): every axis first, then each axis. */
+        private val GYRO_VALUE_SLOTS: List<OutputTarget> = listOf(
+            OutputTarget.GyroGlide(), OutputTarget.GyroGlide(MotionAxis.YAW), OutputTarget.GyroGlide(MotionAxis.PITCH),
+            OutputTarget.GyroGlide(MotionAxis.ROLL),
+            OutputTarget.TiltRange(), OutputTarget.TiltRange(StickAxis.X), OutputTarget.TiltRange(StickAxis.Y),
+        )
+
         const val MIN_SENS_CHIP = 0f
         const val MAX_SENS_CHIP = 10_000f
         const val MIN_TOUCH_SENS_CHIP = 0f

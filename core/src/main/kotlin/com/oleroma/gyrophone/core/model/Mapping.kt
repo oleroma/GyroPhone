@@ -529,6 +529,24 @@ sealed interface OutputTarget {
     @SerialName("tap_time")
     data object TapTime : OutputTarget
 
+    /**
+     * Gyro inertia glide of [axis] ([MotionAxis.NONE] = every axis; [GyroSettings.glideMs], ms) from
+     * the source's value, through the chip's range, like [GyroSens]. It changes only how long a
+     * glide lasts: Inertia itself stays on or off as set.
+     */
+    @Serializable
+    @SerialName("gyro_glide")
+    data class GyroGlide(val axis: MotionAxis = MotionAxis.NONE) : OutputTarget
+
+    /**
+     * Tilt range ([GyroSettings.tiltRangeDeg], degrees; [axis] null = both, X = sideways, Y =
+     * forward and back): how far a tilt goes for full, from the source's value through the
+     * chip's range, like [GyroSens].
+     */
+    @Serializable
+    @SerialName("tilt_range")
+    data class TiltRange(val axis: StickAxis? = null) : OutputTarget
+
     /** Does nothing: in a set used as an override, it stops an input falling through to the set below. */
     @Serializable
     @SerialName("nothing")
@@ -630,12 +648,14 @@ val OutputTarget.valueTarget: Boolean
     get() = this is OutputTarget.PadAxis || settingTarget
 
 /**
- * A chip's output that drives a workspace setting (Gyro or Touch sensitivity, Tap time): its value
+ * A chip's output that drives a workspace setting (Gyro or Touch sensitivity, Tap time, Gyro glide,
+ * Tilt range): its value
  * lies over the setting while it is active, and a Toggle one with no end is kept as the
  * workspace's slider override ([SliderOverride]).
  */
 val OutputTarget.settingTarget: Boolean
-    get() = this is OutputTarget.GyroSens || this is OutputTarget.TouchSens || this is OutputTarget.TapTime
+    get() = this is OutputTarget.GyroSens || this is OutputTarget.TouchSens || this is OutputTarget.TapTime ||
+        this is OutputTarget.GyroGlide || this is OutputTarget.TiltRange
 
 /** A Position or Move input: one a value chip can slide and Set value works on. */
 val InputSource.slides: Boolean
