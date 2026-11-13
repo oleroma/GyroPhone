@@ -704,8 +704,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (c.gyro.isEmpty()) continue
                 c.gyroIn(sets)
             }
-            if (g.anyGyro) held = g
-            if (g.anyTouch) heldTouch = g
+            // Stacked setting by setting: the last pressed that sets one wins it, then the one before.
+            if (g.anyGyro) held = held?.under(g) ?: g
+            if (g.anyTouch) heldTouch = heldTouch?.under(g) ?: g
         }
         // Slider overrides lie over everything set, a held button's own included.
         gyroBase = (held?.over(eff.gyro) ?: eff.gyro).let { if (ws.sliders.isEmpty()) it else SliderOverrides.overGyro(it, ws.sliders) }

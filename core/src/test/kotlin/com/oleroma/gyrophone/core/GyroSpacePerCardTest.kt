@@ -63,6 +63,15 @@ class GyroSpacePerCardTest {
         assertEquals(GyroSpace.PLAYER, ButtonGyro().under(held).rollSpace)
     }
 
+    @Test fun heldButtonsStackSettingBySetting() {
+        // A (Player yaw) held first, then B (only a sensitivity): B's sensitivity, A's space.
+        val a = ButtonGyro(rollSpace = GyroSpace.PLAYER)
+        val b = ButtonGyro(sensitivity = 4f)
+        val s = a.under(b).over(GyroSettings(gyroSpace = GyroSpace.WORLD))
+        assertEquals(GyroSpace.PLAYER, s.spaceOf(yaw))
+        assertEquals(4f, s.sensitivityOf(yaw), 0f)
+    }
+
     @Test fun theAccelerometerIsNeededWhenAnyCardIsSpaced() {
         assertFalse(Workspace("w", "W").gyroSpaced)
         assertTrue(Workspace("w", "W", gyro = GyroSettings(pitchSpace = GyroSpace.WORLD)).gyroSpaced)
