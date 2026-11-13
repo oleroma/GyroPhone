@@ -100,7 +100,7 @@ internal static class ShapeDrawing
             HashCode.Combine(s.Color("lines"), s.Color("body"), s.Color("equator"), s.Color("mark"), s.Color("pole")),
             HashCode.Combine(s.Color("gyaw"), s.Color("gpitch"), s.Color("groll")));
         var key = new Gpu3D.Key(look, Gpu3D.TurnOf(m), area, s.Shape == OverlayShape.Gimbal ? liveAxes : 0);
-        return Gpu3D.Draw(g, area, key, (area, s, m, liveAxes), static (f, st) => Build(f, st.area, st.s, st.m, st.liveAxes));
+        return Gpu3D.Draw(g, area, "shape", key, (area, s, m, liveAxes), static (f, st) => Build(f, st.area, st.s, st.m, st.liveAxes));
     }
 
     private static void Build(Gpu3D.Frame f, RectangleF area, OverlaySettings s, float[] m, int liveAxes)

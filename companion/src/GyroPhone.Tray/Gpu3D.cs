@@ -96,11 +96,74 @@ internal static class Gpu3D
         }
     }
 
+    /// <summary>One corner of a flat item: (x, y, kind 0 fill / 1 line, line half width), a line's ends, premultiplied colour.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct FlatVertex
+    {
+        public Vector4 P, E, C;
+    }
+
+    /// <summary>
+    /// Flat items in picture pixels, drawn in order (each over those before it, as Direct2D's calls): filled polygons
+    /// and round-ended lines with smooth edges. For pictures worked out on the CPU each frame (cheap maths) whose
+    /// drawing was the costly part.
+    /// </summary>
+    public sealed class FlatList
+    {
+        public readonly List<FlatVertex> Items = [];
+
+        public void Clear() => Items.Clear();
+
+        private static Vector4 Pre(Color c)
+        {
+            float a = c.A / 255f;
+            return new Vector4(c.R / 255f * a, c.G / 255f * a, c.B / 255f * a, a);
+        }
+
+        /// <summary>A convex polygon filled (as a fan from its first corner).</summary>
+        public void Fill(ReadOnlySpan<PointF> pts, Color color)
+        {
+            if (pts.Length < 3 || color.A == 0) return;
+            var c = Pre(color);
+            for (int i = 1; i + 1 < pts.Length; i++)
+            {
+                Items.Add(new FlatVertex { P = new Vector4(pts[0].X, pts[0].Y, 0f, 0f), C = c });
+                Items.Add(new FlatVertex { P = new Vector4(pts[i].X, pts[i].Y, 0f, 0f), C = c });
+                Items.Add(new FlatVertex { P = new Vector4(pts[i + 1].X, pts[i + 1].Y, 0f, 0f), C = c });
+            }
+        }
+
+        /// <summary>A line from a to b, <paramref name="width"/> wide, round-ended.</summary>
+        public void Line(PointF a, PointF b, Color color, float width)
+        {
+            if (color.A == 0) return;
+            var c = Pre(color);
+            float hw = width / 2f, e = hw + 1f;
+            float dx = b.X - a.X, dy = b.Y - a.Y, l = MathF.Sqrt(dx * dx + dy * dy);
+            float ux = l > 1e-4f ? dx / l : 1f, uy = l > 1e-4f ? dy / l : 0f;
+            float nx = -uy * e, ny = ux * e;
+            var p0 = new Vector2(a.X - ux * e + nx, a.Y - uy * e + ny);
+            var p1 = new Vector2(a.X - ux * e - nx, a.Y - uy * e - ny);
+            var p2 = new Vector2(b.X + ux * e + nx, b.Y + uy * e + ny);
+            var p3 = new Vector2(b.X + ux * e - nx, b.Y + uy * e - ny);
+            var ends = new Vector4(a.X, a.Y, b.X, b.Y);
+            void V(Vector2 p) => Items.Add(new FlatVertex { P = new Vector4(p.X, p.Y, 1f, hw), E = ends, C = c });
+            V(p0); V(p1); V(p2);
+            V(p2); V(p1); V(p3);
+        }
+
+        /// <summary>A closed polygon's outline.</summary>
+        public void Outline(ReadOnlySpan<PointF> pts, Color color, float width)
+        {
+            for (int i = 0; i < pts.Length; i++) Line(pts[i], pts[(i + 1) % pts.Length], color, width);
+        }
+    }
+
     /// <summary>The device-wide parts: shaders, states, the draw constants and the geometry (made once per device).</summary>
     internal sealed class Kit
     {
-        public ID3D11VertexShader LineVs = null!, FaceVs = null!, DiskVs = null!, FullVs = null!;
-        public ID3D11PixelShader LinePs = null!, FacePs = null!, DiskPs = null!, CopyPs = null!;
+        public ID3D11VertexShader LineVs = null!, FaceVs = null!, DiskVs = null!, FullVs = null!, FlatVs = null!;
+        public ID3D11PixelShader LinePs = null!, FacePs = null!, DiskPs = null!, CopyPs = null!, FlatPs = null!;
         public ID3D11BlendState Max = null!, Over = null!;
         public ID3D11DepthStencilState DepthWrite = null!, DepthTest = null!, DepthOff = null!;
         public ID3D11RasterizerState Raster = null!;
@@ -111,8 +174,8 @@ internal static class Gpu3D
         {
             foreach (var g in Geos.Values) g.Dispose();
             Geos.Clear();
-            LineVs?.Dispose(); FaceVs?.Dispose(); DiskVs?.Dispose(); FullVs?.Dispose();
-            LinePs?.Dispose(); FacePs?.Dispose(); DiskPs?.Dispose(); CopyPs?.Dispose();
+            LineVs?.Dispose(); FaceVs?.Dispose(); DiskVs?.Dispose(); FullVs?.Dispose(); FlatVs?.Dispose();
+            LinePs?.Dispose(); FacePs?.Dispose(); DiskPs?.Dispose(); CopyPs?.Dispose(); FlatPs?.Dispose();
             Max?.Dispose(); Over?.Dispose(); DepthWrite?.Dispose(); DepthTest?.Dispose(); DepthOff?.Dispose();
             Raster?.Dispose(); Cb?.Dispose();
         }
@@ -146,22 +209,44 @@ internal static class Gpu3D
         }
     }
 
-    /// <summary>One window's pictures: the drawing, the scratch picture for line layers and the depth buffer.</summary>
+    /// <summary>One window's pictures: one per slot (what is drawn where, such as a shape or a grid's near half), and the scratch picture, depth buffer and flat items they share.</summary>
     internal sealed class Surface : IDisposable
     {
         public GpuDevice? Gpu;
         public int W, H;
-        public Target? Picture, Scratch;
+        public Target? Scratch;
         public ID3D11Texture2D? DepthTexture;
         public ID3D11DepthStencilView? Depth;
-        public Key Shown;
-        public bool HasShown;
+        public readonly Dictionary<string, Slot> Slots = [];
+        public ID3D11Buffer? Flats;
+        public ID3D11ShaderResourceView? FlatView;
+        public int FlatRoom;
 
         public void Dispose()
         {
-            Picture?.Dispose(); Scratch?.Dispose(); Depth?.Dispose(); DepthTexture?.Dispose();
-            Picture = Scratch = null; Depth = null; DepthTexture = null;
+            foreach (var slot in Slots.Values) slot.Dispose();
+            Slots.Clear();
+            Scratch?.Dispose(); Depth?.Dispose(); DepthTexture?.Dispose();
+            FlatView?.Dispose(); Flats?.Dispose();
+            Scratch = null; Depth = null; DepthTexture = null; FlatView = null; Flats = null;
+            FlatRoom = 0;
             W = H = 0;
+        }
+    }
+
+    /// <summary>One slot's picture and what it shows.</summary>
+    internal sealed class Slot : IDisposable
+    {
+        public Target? Picture;
+        public Key Shown;
+        public bool HasShown;
+        // Drawn in this window's last frame (a slot not drawn for a while lets its picture go).
+        public long UsedAt;
+
+        public void Dispose()
+        {
+            Picture?.Dispose();
+            Picture = null;
             HasShown = false;
         }
     }
@@ -185,7 +270,7 @@ internal static class Gpu3D
     /// <see cref="Frame"/> (only when <paramref name="key"/> changed since the last one), then Direct2D shows it.
     /// False when the card can't (draw on the CPU then).
     /// </summary>
-    public static bool Draw<T>(ICanvas canvas, RectangleF area, Key key, T state, Action<Frame, T> build)
+    public static bool Draw<T>(ICanvas canvas, RectangleF area, string slotName, Key key, T state, Action<Frame, T> build)
     {
         if (canvas is not D2DCanvas g || g.Gpu is not { } gpu) return false;
         if (area.Width < 2f || area.Height < 2f) return true;
@@ -193,8 +278,10 @@ internal static class Gpu3D
         if (kit == null) return false;
         var surface = Surfaces.GetValue(g, _ => new Surface());
         g.OwnScene(surface);
-        int ox = (int)MathF.Floor(area.X), oy = (int)MathF.Floor(area.Y);
-        int w = (int)MathF.Ceiling(area.Right) - ox, h = (int)MathF.Ceiling(area.Bottom) - oy;
+        // Every slot of a window shares its size: the whole canvas.
+        int w = (int)MathF.Ceiling(g.Width), h = (int)MathF.Ceiling(g.Height);
+        if (w < 2 || h < 2) return true;
+        long frame = g.Frame;
         try
         {
             if (surface.Gpu != gpu || surface.W != w || surface.H != h)
@@ -205,7 +292,6 @@ internal static class Gpu3D
                     surface.Dispose();
                     surface.Gpu = gpu;
                     var d3d = gpu.D3D;
-                    surface.Picture = new Target(d3d, g.Dc, w, h);
                     surface.Scratch = new Target(d3d, g.Dc, w, h);
                     surface.DepthTexture = d3d.CreateTexture2D(new Texture2DDescription(Format.D32_Float, (uint)w, (uint)h, 1, 1, BindFlags.DepthStencil));
                     surface.Depth = d3d.CreateDepthStencilView(surface.DepthTexture);
@@ -217,12 +303,25 @@ internal static class Gpu3D
                     gpu.Leave();
                 }
             }
-            if (!surface.HasShown || !surface.Shown.Equals(key))
+            if (!surface.Slots.TryGetValue(slotName, out var slot))
+            {
+                // Slots not drawn for a second (a look switched off) let their pictures go first.
+                foreach (var (name, old) in surface.Slots.ToArray())
+                    if (frame - old.UsedAt > 120)
+                    {
+                        old.Dispose();
+                        surface.Slots.Remove(name);
+                    }
+                surface.Slots[slotName] = slot = new Slot();
+            }
+            slot.UsedAt = frame;
+            if (!slot.HasShown || !slot.Shown.Equals(key))
             {
                 gpu.Enter();
                 try
                 {
-                    var f = new Frame(kit, gpu, surface, -ox, -oy);
+                    slot.Picture ??= new Target(gpu.D3D, g.Dc, w, h);
+                    var f = new Frame(kit, gpu, surface, slot.Picture, 0f, 0f);
                     f.Start();
                     build(f, state);
                     f.Finish();
@@ -231,9 +330,10 @@ internal static class Gpu3D
                 {
                     gpu.Leave();
                 }
-                surface.Shown = key;
-                surface.HasShown = true;
+                slot.Shown = key;
+                slot.HasShown = true;
             }
+            g.Dc.DrawBitmap(slot.Picture!.Bitmap, new Rect(0, 0, w, h), 1f, BitmapInterpolationMode.NearestNeighbor, null);
         }
         catch (Exception ex)
         {
@@ -243,7 +343,6 @@ internal static class Gpu3D
             surface.Dispose();
             return false;
         }
-        g.Dc.DrawBitmap(surface.Picture!.Bitmap, new Rect(ox, oy, w, h), 1f, BitmapInterpolationMode.NearestNeighbor, null);
         return true;
     }
 
@@ -253,20 +352,27 @@ internal static class Gpu3D
         private readonly Kit _kit;
         private readonly GpuDevice _gpu;
         private readonly Surface _s;
+        private readonly Target _picture;
         private readonly float _dx, _dy;
         private DrawData _d;
 
-        internal Frame(Kit kit, GpuDevice gpu, Surface s, float dx, float dy)
+        internal Frame(Kit kit, GpuDevice gpu, Surface s, Target picture, float dx, float dy)
         {
-            _kit = kit; _gpu = gpu; _s = s; _dx = dx; _dy = dy;
+            _kit = kit; _gpu = gpu; _s = s; _picture = picture; _dx = dx; _dy = dy;
         }
+
+        /// <summary>
+        /// Perspective for the line layers that follow: a point at depth z is scaled by
+        /// <c>distance / (distance − min(z, distance − 0.5))</c> (the pointer's <see cref="GyroPhone.Host.LaserTrace.Perspective"/>); 0 for none.
+        /// </summary>
+        public float Perspective { get => _d.Persp; set => _d.Persp = value; }
 
         private ID3D11DeviceContext Ctx => _gpu.D3D.ImmediateContext;
 
         internal void Start()
         {
             var ctx = Ctx;
-            ctx.ClearRenderTargetView(_s.Picture!.View, new Color4(0f, 0f, 0f, 0f));
+            ctx.ClearRenderTargetView(_picture.View, new Color4(0f, 0f, 0f, 0f));
             ctx.ClearDepthStencilView(_s.Depth!, DepthStencilClearFlags.Depth, 1f, 0);
             ctx.RSSetState(_kit.Raster);
             ctx.RSSetViewport(0f, 0f, _s.W, _s.H);
@@ -363,7 +469,7 @@ internal static class Gpu3D
             ctx.PSSetConstantBuffer(0, _kit.Cb);
             ctx.DrawInstanced(6, (uint)geo.SegCount, 0, 0);
             // The layer over the picture at the colour's opacity.
-            ctx.OMSetRenderTargets(_s.Picture!.View, null);
+            ctx.OMSetRenderTargets(_picture.View, null);
             ctx.OMSetDepthStencilState(_kit.DepthOff, 0);
             ctx.OMSetBlendState(_kit.Over);
             ctx.VSSetShader(_kit.FullVs);
@@ -385,7 +491,7 @@ internal static class Gpu3D
             _d.Col = Straight(body);
             _d.TwoSided = twoSided ? 1f : 0f;
             Push();
-            ctx.OMSetRenderTargets(_s.Picture!.View, _s.Depth);
+            ctx.OMSetRenderTargets(_picture.View, _s.Depth);
             ctx.OMSetDepthStencilState(_kit.DepthWrite, 0);
             ctx.OMSetBlendState(_kit.Over);
             ctx.VSSetShader(_kit.FaceVs);
@@ -405,7 +511,7 @@ internal static class Gpu3D
             _d.Col2 = Straight(lit);
             _d.Lit = new Vector2(litAt.X + _dx, litAt.Y + _dy);
             Push();
-            ctx.OMSetRenderTargets(_s.Picture!.View, null);
+            ctx.OMSetRenderTargets(_picture.View, null);
             ctx.OMSetDepthStencilState(_kit.DepthOff, 0);
             ctx.OMSetBlendState(_kit.Over);
             ctx.VSSetShader(_kit.DiskVs);
@@ -417,6 +523,45 @@ internal static class Gpu3D
 
         /// <summary>A plain disk.</summary>
         public void Disk(PointF c, float r, Color color) => Ball(c, r, c, color, color);
+
+        /// <summary><paramref name="list"/>'s items over the picture, in order.</summary>
+        public unsafe void Flat(FlatList list)
+        {
+            int n = list.Items.Count;
+            if (n == 0) return;
+            var d3d = _gpu.D3D;
+            var ctx = Ctx;
+            if (_s.FlatRoom < n)
+            {
+                _s.FlatView?.Dispose(); _s.Flats?.Dispose();
+                int room = Math.Max(1024, _s.FlatRoom);
+                while (room < n) room *= 2;
+                int stride = sizeof(FlatVertex);
+                _s.Flats = d3d.CreateBuffer(new BufferDescription((uint)(room * stride), BindFlags.ShaderResource, ResourceUsage.Dynamic,
+                    CpuAccessFlags.Write, ResourceOptionFlags.BufferStructured, (uint)stride));
+                _s.FlatView = d3d.CreateShaderResourceView(_s.Flats, new ShaderResourceViewDescription(_s.Flats, Format.Unknown, 0, (uint)room));
+                _s.FlatRoom = room;
+            }
+            var mapped = ctx.Map(_s.Flats!, 0, MapMode.WriteDiscard);
+            try
+            {
+                CollectionsMarshal.AsSpan(list.Items).CopyTo(new Span<FlatVertex>((void*)mapped.DataPointer, n));
+            }
+            finally
+            {
+                ctx.Unmap(_s.Flats!, 0);
+            }
+            Set(null, new PointF(0f, 0f), 1f);
+            Push();
+            ctx.OMSetRenderTargets(_picture.View, null);
+            ctx.OMSetDepthStencilState(_kit.DepthOff, 0);
+            ctx.OMSetBlendState(_kit.Over);
+            ctx.VSSetShader(_kit.FlatVs);
+            ctx.VSSetConstantBuffer(0, _kit.Cb);
+            ctx.VSSetShaderResource(3, _s.FlatView!);
+            ctx.PSSetShader(_kit.FlatPs);
+            ctx.Draw((uint)n, 0);
+        }
     }
 
     private static Vector4 Straight(Color c) => new(c.R / 255f, c.G / 255f, c.B / 255f, c.A / 255f);
@@ -483,6 +628,8 @@ internal static class Gpu3D
             kit.DiskPs = d3d.CreatePixelShader(CompileShader("DiskPs", "ps_5_0"));
             kit.FullVs = d3d.CreateVertexShader(CompileShader("FullVs", "vs_5_0"));
             kit.CopyPs = d3d.CreatePixelShader(CompileShader("CopyPs", "ps_5_0"));
+            kit.FlatVs = d3d.CreateVertexShader(CompileShader("FlatVs", "vs_5_0"));
+            kit.FlatPs = d3d.CreatePixelShader(CompileShader("FlatPs", "ps_5_0"));
             kit.Max = MakeBlend(d3d, Blend.One, Blend.One, BlendOperation.Max);
             // Premultiplied "over".
             kit.Over = MakeBlend(d3d, Blend.One, Blend.InverseSourceAlpha, BlendOperation.Add);
@@ -535,7 +682,7 @@ internal static class Gpu3D
         public Vector2 Target;
         public float Side, TwoSided;
         public Vector2 Lit;
-        public float Pad0, Pad1;
+        public float Persp, Pad1;
     }
 
     /// <summary>The shaders (HLSL, shader model 5). Positions are in the picture's pixels (y down); the view has z toward the viewer.</summary>
@@ -546,7 +693,7 @@ internal static class Gpu3D
             float4 Col; float4 Col2;
             float2 Centre; float Radius; float HalfW;
             float2 TargetSize; float Side; float TwoSided;
-            float2 LitAt; float2 Pad;
+            float2 LitAt; float Persp; float Pad;
         };
 
         struct Seg { float4 A; float4 B; float4 N1; float4 N2; };
@@ -556,7 +703,11 @@ internal static class Gpu3D
         Texture2D<float4> Layer : register(t2);
 
         float3 Turn(float3 p) { return float3(dot(M0.xyz, p), dot(M1.xyz, p), dot(M2.xyz, p)); }
-        float2 OnScreen(float3 v) { return Centre + float2(v.x, -v.y) * Radius; }
+        float2 OnScreen(float3 v)
+        {
+            float k = Persp > 0.0 ? Persp / (Persp - min(v.z, Persp - 0.5)) : 1.0;
+            return Centre + float2(v.x, -v.y) * (Radius * k);
+        }
         float4 ClipAt(float2 s, float depth) { return float4(s.x / TargetSize.x * 2.0 - 1.0, 1.0 - s.y / TargetSize.y * 2.0, depth, 1.0); }
         // Nearer is smaller; the shapes lie within the unit ball.
         float DepthOf(float z) { return saturate(0.5 - z * 0.45); }
@@ -664,6 +815,41 @@ internal static class Gpu3D
             float4 c = lerp(Col2, Col, s);
             float al = c.a * cover;
             return float4(c.rgb * al, al);
+        }
+
+        struct FlatV { float4 P; float4 E; float4 C; };
+        StructuredBuffer<FlatV> Flats : register(t3);
+        struct FlatOut
+        {
+            float4 Pos : SV_Position;
+            nointerpolation float4 Ends : TEXCOORD0;
+            nointerpolation float2 Kind : TEXCOORD1;
+            nointerpolation float4 C : COLOR0;
+        };
+
+        FlatOut FlatVs(uint v : SV_VertexID)
+        {
+            FlatV f = Flats[v];
+            FlatOut o;
+            o.Pos = ClipAt(f.P.xy + Centre, 0.0);
+            o.Ends = f.E + float4(Centre, Centre);
+            o.Kind = f.P.zw;
+            o.C = f.C;
+            return o;
+        }
+
+        // A fill as it is; a line covered as a round-ended strip, smooth-edged.
+        float4 FlatPs(FlatOut i) : SV_Target
+        {
+            if (i.Kind.x < 0.5) return i.C;
+            float2 a = i.Ends.xy;
+            float2 d = i.Ends.zw - a;
+            float2 q = i.Pos.xy - a;
+            float l2 = dot(d, d);
+            float t = l2 < 1e-6 ? 0.0 : saturate(dot(q, d) / l2);
+            float cover = saturate(i.Kind.y - length(q - d * t) + 0.5);
+            clip(cover - 0.001);
+            return i.C * cover;
         }
 
         float4 FullVs(uint v : SV_VertexID) : SV_Position

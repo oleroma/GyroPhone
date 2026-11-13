@@ -412,6 +412,14 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
     /// <summary>Lets go of <paramref name="scene"/> (<see cref="Gpu3D"/>'s pictures for this canvas) when this canvas goes.</summary>
     public void OwnScene(IDisposable scene) => _scene = scene;
 
+    /// <summary>The picture's size in pixels (<see cref="Gpu3D"/>'s pictures are as big).</summary>
+    public float Width => _dc.PixelSize.Width;
+
+    public float Height => _dc.PixelSize.Height;
+
+    /// <summary>Counts the pictures begun on this canvas.</summary>
+    public long Frame { get; private set; }
+
     private readonly record struct TextKey(string Text, float Px, bool Bold, int Argb, float W, float H, TextAlign Hz, TextAlign Vt, int Scale8);
     // What each Push did, so Pop undoes it: a transform to restore, or a layer (with its geometry) to pop.
     private readonly Stack<(Matrix3x2? Transform, ID2D1Geometry? Geometry, bool Layer)> _stack = new();
@@ -437,6 +445,7 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
 
     public void Begin(OverlayQuality quality)
     {
+        Frame++;
         _dc.Transform = Matrix3x2.Identity;
         _dc.AntialiasMode = quality == OverlayQuality.Fast ? AntialiasMode.Aliased : AntialiasMode.PerPrimitive;
         _dc.TextAntialiasMode = quality == OverlayQuality.Fast ? Vortice.Direct2D1.TextAntialiasMode.Aliased : Vortice.Direct2D1.TextAntialiasMode.Grayscale;
