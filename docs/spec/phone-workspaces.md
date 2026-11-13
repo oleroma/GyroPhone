@@ -71,7 +71,7 @@ All on the phone, in the app's private storage (`data/ProfileStore.kt`):
 
 - `files/profiles/<id>.json`: the workspace set, read with `ProfileJson.decode` and written atomically (`.tmp` then replace). At start only the set's own file is read (`ProfileStore.readOwnFile`); every profile file is read only for the one-time merge, or when the set's file is missing, unreadable or has a second copy. The runtime that reads it is built on a background thread from `GyroPhoneApp.onCreate`, so it overlaps the activity's start; the pad waits only for what is left. A mapping a build can't read (a newer build's action) is left out (`decodeLenient`) and the file is first copied to `<file>.newer-build.bak` before it is saved over. A file that fails to decode is skipped but never deleted or overwritten.
 - `files/button_library.json`: the button library (buttons saved with their look and mappings, shared by every workspace).
-- Shared preferences: app-wide options, the active workspace, capsule order, UI state (open sections, card order, recent targets), the gyro bias.
+- Shared preferences: app-wide options, the active workspace, capsule order, UI state (open sections, the touchpad's and physical controls' card order, recent targets; a touch control's card order is its own, in the workspace), the gyro bias.
 - The Wi-Fi pairing store and the key folders ([Connection](phone-connection.md)).
 
 The app has `allowBackup="false"`.

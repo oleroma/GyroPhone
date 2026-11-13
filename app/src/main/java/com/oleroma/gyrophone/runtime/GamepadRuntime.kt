@@ -49,7 +49,10 @@ import com.oleroma.gyrophone.core.model.NavCorners
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.WorkspaceSet
+import com.oleroma.gyrophone.ui.PREF_CUSTOM
+import com.oleroma.gyrophone.ui.PREF_ORDER
 import com.oleroma.gyrophone.ui.TouchVisuals
+import com.oleroma.gyrophone.ui.kindKey
 import com.oleroma.gyrophone.data.ProfileStore
 import com.oleroma.gyrophone.core.net.ByeReason
 import com.oleroma.gyrophone.core.net.PcGyroFeed
@@ -123,7 +126,7 @@ class GamepadRuntime(context: Context) {
     private var stored: Profile = run {
         // Only the one-time trigger reset needs to know; every later start skips reading every profile.
         val existing = !store.triggerReset && store.userProfiles().isNotEmpty()
-        resetForTriggers(loadOwnMappings(loadWorkspaceSet()), existing)
+        moveCardOrders(resetForTriggers(loadOwnMappings(loadWorkspaceSet()), existing))
     }
 
     /** The last stored set resolved and what it resolved to: the next resolve reuses each workspace it didn't change ([resolveStored]). */
@@ -1373,6 +1376,31 @@ class GamepadRuntime(context: Context) {
      * current) and every other user profile. Old profile files are left on disk untouched.
      */
     /**
+     * Once: the mapping editor's card order, kept per kind of control until now, becomes each touch
+     * control's own ([TouchControl.cardOrder]), so every button starts from the order it showed.
+     * Runs before [prefs] is set up, so it opens the same file itself.
+     */
+    private fun moveCardOrders(set: Profile): Profile {
+        val p = appContext.getSharedPreferences("gyrophone", Context.MODE_PRIVATE)
+        if (p.getBoolean(KEY_CARD_ORDERS_MOVED, false)) return set
+        fun pref(key: String) = p.getString(KEY_UI_PREFIX + key, null)?.split("\n").orEmpty().filter { it.isNotEmpty() }
+        fun own(c: TouchControl): TouchControl {
+            if (c.cardOrder.isNotEmpty() || c.customOrder.isNotEmpty()) return c
+            val kind = kindKey(c)
+            val order = pref(PREF_ORDER + kind)
+            val custom = pref(PREF_CUSTOM + kind)
+            return if (order.isEmpty() && custom.isEmpty()) c else c.copy(cardOrder = order, customOrder = custom)
+        }
+        val moved = set.copy(
+            workspaces = set.workspaces.map { w -> w.copy(touchControls = w.touchControls.map(::own)) },
+            corners = set.corners.map(::own),
+        )
+        if (moved != set) store.save(moved)
+        p.edit().putBoolean(KEY_CARD_ORDERS_MOVED, true).apply()
+        return moved
+    }
+
+    /**
      * On the first start with mapping triggers, a set from before goes back to a fresh install's
      * config, keeping its workspaces' names and layouts ([TriggerReset]); the set as it was is
      * kept beside it as a backup. A fresh install has nothing to reset.
@@ -1690,6 +1718,8 @@ class GamepadRuntime(context: Context) {
         private const val KEY_TOUCH_VISUALS = "touch_visuals"
         private val visualsJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
         private const val KEY_UI_PREFIX = "ui."
+        /** [moveCardOrders] ran. */
+        private const val KEY_CARD_ORDERS_MOVED = "card_orders_moved"
         private const val TURN_TICK_MS = 4L
         private const val KEY_BIAS_X = "gyro_bias_x"
         private const val KEY_BIAS_Y = "gyro_bias_y"
