@@ -208,10 +208,7 @@ private const val REVEAL_TAPS = 4
 private const val REVEAL_GAP_NS = 300_000_000L
 private const val PILL_MS = 1_000L
 
-/** Highlight refresh while a finger is on a button (holds and lift commits happen between events). */
-private const val HIGHLIGHT_POLL_MS = 50L
-
-/** With live mappings: refresh fast enough to catch a tap's short pulse. */
+/** Highlight and live mappings refresh: fast enough to catch a tap's short pulse. */
 private const val LIVE_POLL_MS = 16L
 
 /** How often the pad screen checks the mapping set in use (for its pill and live labels). */
@@ -616,6 +613,9 @@ fun PadScreen(
     var fingersOnButtons by remember { mutableIntStateOf(0) }
     var pressedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var latchedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    /** Controls lit as pressed: one of their mappings in use is active now (a finger on a Position or Move counts). */
+    var activeIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var cornersHeld by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     /** Counts multi-finger touches that Android cancelled (a phone gesture took them). */
@@ -696,20 +696,24 @@ fun PadScreen(
     val liveWatchUntil = remember { LongArray(1) }
     var liveWatching by remember { mutableStateOf(false) }
 
-    fun refreshLive() {
-        val now = SystemClock.uptimeMillis()
-        if (!visuals.liveMappings || editing) {
-            liveLabels.clear(); liveUntil.clear(); liveWatching = false
-            return
-        }
+    /** The touch mappings in use that light or label their control: not haptics, empty ones or gyro cards. */
+    fun shownInUse(): List<Mapping> {
         val inUse = runtime.engine.touchMappingsInUse
         if (inUse !== inUseCache[0]) {
             inUseCache[0] = inUse
             inUseShown[0] = inUse.filter { MappingProfiles.touchId(it.source) != null || it.source.isTouchpad }
                 .filterNot { Describe.isHaptic(it.target) || it.target == OutputTarget.NoOutput }
+                .filterNot { it.source is InputSource.Gyro || it.source is InputSource.Tilt || it.source is InputSource.Shake }
         }
-        // One engine call per poll; the labels are rebuilt only when what is on changes.
-        val active = runtime.engine.activeMappings(inUseShown[0])
+        return inUseShown[0]
+    }
+
+    fun refreshLive(active: List<Mapping>) {
+        val now = SystemClock.uptimeMillis()
+        if (!visuals.liveMappings || editing) {
+            liveLabels.clear(); liveUntil.clear()
+            return
+        }
         val last = activeCache[0]
         if (active.size != last.size || active.indices.any { active[it] !== last[it] }) {
             activeCache[0] = active
@@ -732,7 +736,6 @@ fun PadScreen(
                 if (id in liveLabels) liveLabels.remove(id)
             }
         }
-        if (liveWatching && now > liveWatchUntil[0] && liveLabels.isEmpty()) liveWatching = false
     }
 
     fun refreshHighlights() {
@@ -740,12 +743,19 @@ fun PadScreen(
         if (p != pressedIds) pressedIds = p
         val l = runtime.engine.latchedTouches()
         if (l != latchedIds) latchedIds = l
-        refreshLive()
+        // Lit only while something on it is active: a button with just a long press lights when it fires.
+        val shown = shownInUse()
+        val active = runtime.engine.activeMappings(shown.filterNot { it.source.slides })
+        val ids = HashSet<String>()
+        for (m in active) MappingProfiles.touchId(m.source)?.let(ids::add)
+        for (m in shown) if (m.source.slides) MappingProfiles.touchId(m.source)?.takeIf { it in p }?.let(ids::add)
+        if (ids != activeIds) activeIds = ids
+        refreshLive(active)
+        if (liveWatching && SystemClock.uptimeMillis() > liveWatchUntil[0] && liveLabels.isEmpty() && ids.isEmpty()) liveWatching = false
     }
 
-    /** A touch began or ended: watch the live mappings for a while (gestures fire after lifts). */
+    /** A touch began or ended: watch the mappings for a while (gestures fire after lifts). */
     fun watchLive() {
-        if (!visuals.liveMappings) return
         liveWatchUntil[0] = SystemClock.uptimeMillis() + ws.longPressMs + LIVE_LINGER_MS
         if (!liveWatching) liveWatching = true
     }
@@ -899,7 +909,7 @@ fun PadScreen(
         snapshotFlow { fingersOnButtons > 0 || pressedIds.isNotEmpty() || liveWatching }.collectLatest { poll ->
             if (!poll) return@collectLatest
             while (true) {
-                delay(if (visuals.liveMappings) LIVE_POLL_MS else HIGHLIGHT_POLL_MS)
+                delay(LIVE_POLL_MS)
                 refreshHighlights()
             }
         }
@@ -2113,7 +2123,7 @@ fun PadScreen(
                     editing = editing,
                     label = labels[c.id] ?: "",
                     selectedTint = if (isSelected) litColor(c.id) else null,
-                    pressed = { c.id in pressedIds || c.id in heldSticks },
+                    pressed = { c.id in activeIds || c.id in heldSticks },
                     latched = { c.id in latchedIds },
                     syncTint = syncTints[c.id],
                     // A frame in the button's middle takes its label's place.
