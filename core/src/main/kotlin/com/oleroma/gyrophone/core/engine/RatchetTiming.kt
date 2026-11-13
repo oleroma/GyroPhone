@@ -56,6 +56,9 @@ class RatchetTiming(private val capacity: Int = 4096) {
 
     private val results = ArrayDeque<Result>()
 
+    /** Called with every new result (on the gyro thread), for a log. */
+    @Volatile var onResult: ((Result) -> Unit)? = null
+
     /** Goes up with every new result (for a display to redraw). */
     @Volatile var version = 0
         private set
@@ -104,6 +107,7 @@ class RatchetTiming(private val capacity: Int = 4096) {
             while (results.size > KEPT) results.removeLast()
         }
         version++
+        onResult?.invoke(r)
     }
 
     /** The i-th sample, oldest first. */

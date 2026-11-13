@@ -641,7 +641,17 @@ class GamepadRuntime(context: Context) {
      * Settings › Debugging › "Ratchet timing": each ratchet press during a swing is measured
      * against the swing's turn-around ([RatchetTiming]) and shown on the pad.
      */
-    val ratchetTiming = RatchetTiming().also { it.enabled = prefs.getBoolean(KEY_RATCHET_TIMING, false) }
+    val ratchetTiming = RatchetTiming().also { rt ->
+        rt.enabled = prefs.getBoolean(KEY_RATCHET_TIMING, false)
+        // Each result to logcat too (tag GPRatchet), so it can be read over adb: `adb logcat -d -s GPRatchet`.
+        rt.onResult = { r ->
+            fun f(v: Float?) = v?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: "-"
+            android.util.Log.i(
+                "GPRatchet",
+                "swing=${r.swing} you_ms=${f(r.playerMs)} app_ms=${f(r.appMs)} back_counts=${r.backCounts ?: "-"} back_deg=${f(r.backDeg)}",
+            )
+        }
+    }
     private val _ratchetTimingOn = MutableStateFlow(ratchetTiming.enabled)
     val ratchetTimingOn: StateFlow<Boolean> = _ratchetTimingOn
 
