@@ -267,18 +267,13 @@ internal fun GyroDisplaySettingsScreen(
                         if (d.crosshairShape != 4) SwitchRow("Centre dot", d.crosshairDot) { set(d.copy(crosshairDot = it)) }
                         SwitchRow("Outline", d.crosshairOutline, "A dark edge so it shows on any background.") { set(d.copy(crosshairOutline = it)) }
                     }
-                    if (d.turnsWith == TurnsWith.TRACKBALL) {
-                        Text("Pointer faces (as a trackball)", style = MaterialTheme.typography.bodyMedium)
-                        Chips(listOf("−Z (into the screen)" to 0, "+Z" to 1, "+X" to 2, "−X" to 3, "+Y" to 4, "−Y" to 5), d.laserFaces) { set(d.copy(laserFaces = it)) }
-                    }
                     SwitchRow("Axonometric view", d.laserAxonometric, LASER_AXON_HINT) { set(d.copy(laserAxonometric = it)) }
                     SwitchRow("Perspective", d.perspective, "Nearer parts show bigger, as a camera sees them. Off: flat, every part the same size wherever it is.") { set(d.copy(perspective = it)) }
                     SwitchRow("Fixed pointer mode", d.laserSphereTurns, "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.") { set(d.copy(laserSphereTurns = it)) }
                     if (!d.laserRifle) SwitchRow("Grid every 15°", d.laserGrid) { set(d.copy(laserGrid = it)) }
                     SwitchRow("Axes (pitch X red, yaw Y green, roll Z blue)", d.laserAxes, "They turn with the pointer, R along its beam.") { set(d.copy(laserAxes = it)) }
-                    val paints = d.laserDraw || d.laserSnake
                     ButtonPicker("Fire display", d.laserFire, "While GyroPhone sends this button the gun and crosshair kick and flash with each shot, and Draw mode paints in the Fire colours. Tap to pick another, or None.") { set(d.copy(laserFire = it)) }
-                    if (d.laserFire != LaserFire.NONE && (paints || look != 0)) Indented {
+                    if (d.laserFire != LaserFire.NONE && (d.laserDraw || look != 0)) Indented {
                         if (look != 0) {
                             Text("Kick", style = MaterialTheme.typography.bodyMedium)
                             Hint(if (look == 2) "Each shot the crosshair jumps bigger and bounces back with the recoil of the gun picked here. Once: one kick per press. Auto rifle: keeps kicking while the button is held. Each gun keeps its own kick size and fire rate." else "Each shot the gun kicks back toward you, its muzzle jumping up, and springs back with its own recoil. Once: one kick per press. Auto rifle: keeps kicking while the button is held. Each gun keeps its own kick size and fire rate.")
@@ -307,29 +302,10 @@ internal fun GyroDisplaySettingsScreen(
                                 SwitchRow("Bloom", d.laserBloom, "Shots fired in a row spread wider, up to twice over ${CrosshairKick.BLOOM_SHOTS} shots; it settles half a second after you let go.") { set(d.copy(laserBloom = it)) }
                             }
                         }
-                        if (d.laserDraw) {
-                            SwitchRow("Draw each shot", d.laserShotDraw, "Each shot marks a hit where it lands, in the Fire colours, as wide as the Fire brush (a shotgun's pellets half that). Firing then paints no Fire line. Hits stay until you clear the drawing.") { set(d.copy(laserShotDraw = it)) }
-                            if (d.laserShotDraw) Indented {
-                                if (look == 0) {
-                                    // The Sphere look has no Kick: its shots' beat here.
-                                    Chips(CrosshairKick.MODES.drop(1).mapIndexed { i, n -> n to i + 1 }, d.crosshairKick.coerceAtLeast(CrosshairKick.ONCE)) { set(d.copy(crosshairKick = it)) }
-                                    if (d.crosshairKick == CrosshairKick.AUTO) IntSlider("Fire rate %d a minute (${d.gun().name})", d.rpmOf(d.gun()), CrosshairKick.RPM_MIN..1200, 5) { set(d.copy(gunRpm = d.gunRpm + (d.gun().key to it))) }
-                                }
-                                Text("Hit look", style = MaterialTheme.typography.bodySmall)
-                                Chips(LaserTrace.HIT_LOOKS.mapIndexed { i, n -> n to i }, d.laserHitLook) { set(d.copy(laserHitLook = it)) }
-                            }
-                        }
-                        if (paints) IntSlider("Fire brush %d°", d.laserFireBrush, 1..20) { set(d.copy(laserFireBrush = it)) }
-                        if (d.laserDraw) PercentSlider("Fire glow", d.laserFireGlow, 0f..3f) { set(d.copy(laserFireGlow = it)) }
                     }
                     ButtonPicker("Aim display", d.laserAim, "While GyroPhone sends this button the crosshair shrinks and turns laser red (its Crosshair aiming colour), the gun is shouldered with a scope and a laser sight, and Draw mode paints in the Aim colours. Firing wins over aiming. Tap to pick another, or None.") { set(d.copy(laserAim = it)) }
-                    if (d.laserAim != LaserFire.NONE) Indented {
-                        if (look == 2) PercentSlider("Crosshair while aiming", d.laserAimSize, 0.2f..1f) { set(d.copy(laserAimSize = it)) }
-                        if (paints) IntSlider("Aim brush %d°", d.laserAimBrush, 1..20) { set(d.copy(laserAimBrush = it)) }
-                        if (d.laserDraw) PercentSlider("Aim glow", d.laserAimGlow, 0f..3f) { set(d.copy(laserAimGlow = it)) }
-                    }
-                    if (paints && (d.laserFire != LaserFire.NONE || d.laserAim != LaserFire.NONE)) {
-                        SwitchRow("Paint only while firing or aiming", d.laserFireOnly, "The beam alone leaves no trail; only shots and aiming draw.") { set(d.copy(laserFireOnly = it)) }
+                    if (d.laserAim != LaserFire.NONE && look == 2) Indented {
+                        PercentSlider("Crosshair while aiming", d.laserAimSize, 0.2f..1f) { set(d.copy(laserAimSize = it)) }
                     }
                     if (!d.laserRifle && !d.laserCrosshair) SwitchRow("Gimbal rings", d.laserGimbal, "Yaw (green, outside), pitch (red) and roll (blue) rings turning with the pointer's axes, each round its own: the path the beam and crosshair take turning about it. A None axis's ring is faint and dashed, and an axis lights up while the gyro turns it.") { set(d.copy(laserGimbal = it)) }
                 }
@@ -342,8 +318,13 @@ internal fun GyroDisplaySettingsScreen(
                 Colours()
             }
         }
-        val draw = if (!laser) null else category(runtime, "gyroDisplayDraw", "Draw", "Draw mode, snake, brush, Clear") {
+        val draw = if (!laser) null else category(runtime, "gyroDisplayDraw", "Draw", "Draw mode, snake, brush, shots and aiming, Clear") {
             SwitchRow("Draw mode", d.laserDraw, "The beam paints the inside of the sphere as you aim; the paint stays until you clear it.") { set(d.copy(laserDraw = it)) }
+            if (d.laserDraw) Indented {
+                IntSlider("Brush %d°", d.laserBrush, 1..20) { set(d.copy(laserBrush = it)) }
+                SwitchRow("Clear on ratchet", d.laserClearOnRatchet, "A ratchet press clears the paint (the Snake has its own).") { set(d.copy(laserClearOnRatchet = it)) }
+                Hint("The paint uncovers the sphere's own colours where it lands (the Moving colours, laid on the sphere as a normal map: right pink, left teal, up light green, down purple), or with Colour by the way it moved, the colour of each sweep's direction. Shots take the Fire colours and aiming the Aim colours, each with its own brush and glow (Shots and aiming below). Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every pointer at once.")
+            }
             SwitchRow("Snake", d.laserSnake, "A line following the beam along the newest stretch of its path, thinning and fading toward its tail as set. With or without Draw mode.") { set(d.copy(laserSnake = it)) }
             // Length 10° to 720°, finer toward the short ones: the slider's square, in 5° steps.
             if (d.laserSnake) Indented {
@@ -359,10 +340,31 @@ internal fun GyroDisplaySettingsScreen(
                 SwitchRow("Clear on ratchet", d.laserSnakeClearOnRatchet, "A ratchet press clears the Snake.") { set(d.copy(laserSnakeClearOnRatchet = it)) }
                 Hint("Snake brush: how wide its head is. Taper: how much it thins toward its tail (0 keeps it the same width). Tail fade: how see-through it gets toward its tail (0 none). Snake glow: a soft glow round it (0 none). Shots and aiming keep their own brushes.")
             }
-            if (d.laserDraw || d.laserSnake) Indented {
-                if (d.laserDraw) IntSlider("Brush %d°", d.laserBrush, 1..20) { set(d.copy(laserBrush = it)) }
-                if (d.laserDraw) SwitchRow("Clear on ratchet", d.laserClearOnRatchet, "A ratchet press clears the paint (the Snake has its own).") { set(d.copy(laserClearOnRatchet = it)) }
-                Hint("The paint uncovers the sphere's own colours where it lands (the Moving colours, laid on the sphere as a normal map: right pink, left teal, up light green, down purple), or with Colour by the way it moved, the colour of each sweep's direction. Shots take the Fire colours and aiming the Aim colours, each with its own brush and glow (Look tab). Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping (Other targets) clears every pointer at once.")
+            // Paint from shots and aiming (the Fire and Aim display buttons are in the Look tab).
+            if ((d.laserDraw || d.laserSnake) && (d.laserFire != LaserFire.NONE || d.laserAim != LaserFire.NONE)) {
+                val look = if (d.laserRifle) 1 else if (d.laserCrosshair) 2 else 0
+                GroupTitle("Shots and aiming")
+                if (d.laserFire != LaserFire.NONE) {
+                    IntSlider("Fire brush %d°", d.laserFireBrush, 1..20) { set(d.copy(laserFireBrush = it)) }
+                    if (d.laserDraw) PercentSlider("Fire glow", d.laserFireGlow, 0f..3f) { set(d.copy(laserFireGlow = it)) }
+                    if (d.laserDraw) {
+                        SwitchRow("Draw each shot", d.laserShotDraw, "Each shot marks a hit where it lands, in the Fire colours, as wide as the Fire brush (a shotgun's pellets half that). Firing then paints no Fire line. Hits stay until you clear the drawing.") { set(d.copy(laserShotDraw = it)) }
+                        if (d.laserShotDraw) Indented {
+                            if (look == 0) {
+                                // The Sphere look has no Kick: its shots' beat here.
+                                Chips(CrosshairKick.MODES.drop(1).mapIndexed { i, n -> n to i + 1 }, d.crosshairKick.coerceAtLeast(CrosshairKick.ONCE)) { set(d.copy(crosshairKick = it)) }
+                                if (d.crosshairKick == CrosshairKick.AUTO) IntSlider("Fire rate %d a minute (${d.gun().name})", d.rpmOf(d.gun()), CrosshairKick.RPM_MIN..1200, 5) { set(d.copy(gunRpm = d.gunRpm + (d.gun().key to it))) }
+                            }
+                            Text("Hit look", style = MaterialTheme.typography.bodySmall)
+                            Chips(LaserTrace.HIT_LOOKS.mapIndexed { i, n -> n to i }, d.laserHitLook) { set(d.copy(laserHitLook = it)) }
+                        }
+                    }
+                }
+                if (d.laserAim != LaserFire.NONE) {
+                    IntSlider("Aim brush %d°", d.laserAimBrush, 1..20) { set(d.copy(laserAimBrush = it)) }
+                    if (d.laserDraw) PercentSlider("Aim glow", d.laserAimGlow, 0f..3f) { set(d.copy(laserAimGlow = it)) }
+                }
+                SwitchRow("Paint only while firing or aiming", d.laserFireOnly, "The beam alone leaves no trail; only shots and aiming draw.") { set(d.copy(laserFireOnly = it)) }
             }
             TextButton(onClick = { runtime.clearLaser(control.id) }) { Text("Clear") }
         }
@@ -414,6 +416,10 @@ internal fun GyroDisplaySettingsScreen(
                 }
             }
             if (d.turnsWith == TurnsWith.TRACKBALL) Indented { TrackballAxesSettings(d) { set(it) } }
+            if (laser && d.turnsWith == TurnsWith.TRACKBALL) Indented {
+                Text("Pointer faces (as a trackball)", style = MaterialTheme.typography.bodyMedium)
+                Chips(listOf("−Z (into the screen)" to 0, "+Z" to 1, "+X" to 2, "−X" to 3, "+Y" to 4, "−Y" to 5), d.laserFaces) { set(d.copy(laserFaces = it)) }
+            }
             if (d.turnsWith == TurnsWith.PHONE) PoseSettings(d) { set(it) }
             // A trackball eases back per axis (in its axis rows), not here.
             if (d.turnsWith == TurnsWith.CAMERA) {
