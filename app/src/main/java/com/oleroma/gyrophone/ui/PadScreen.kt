@@ -935,7 +935,7 @@ fun PadScreen(
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF101318))
+            .background(PAD_BACKGROUND)
             .recordTouches(trails, visuals, showTouchVisuals)
             .watchTouches(lastTouchMs, fingersDown)
             .onGloballyPositioned { padOrigin = it.positionInWindow() },
@@ -3943,3 +3943,6 @@ private fun fadeAlpha(c: TouchControl, ws: Workspace, touched: () -> Boolean): S
     }
     return animateFloatAsState(if (idle && faded != null) faded else full, tween(if (idle) 600 else 120), label = "fade")
 }
+
+/** The pad's background (the gyro displays' layer paints it too: [GyroDisplaysLayer]). */
+val PAD_BACKGROUND = Color(0xFF101318)

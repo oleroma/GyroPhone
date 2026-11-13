@@ -63,7 +63,7 @@ internal class PointerPaintShader {
      * half, the shown frame seen through [view] (shown-frame direction to picture, as [LaserTrace.view]).
      * The paint's colours (as light would) stay with the scene, seen through [scene] (the view without
      * the sphere's turn), so in Fixed pointer mode they don't turn with the sphere. [nowMs] is the
-     * frame's time: new paint goes up to the GPU at most every [UPLOAD_MS], the rest at the next.
+     * frame's time (the old upload path sends new paint at most every [UPLOAD_MS]).
      */
     fun draw(
         canvas: Canvas, lp: LaserPaint, front: Boolean, cx: Float, cy: Float, r: Float,
@@ -71,6 +71,72 @@ internal class PointerPaintShader {
         nowMs: Long,
     ) {
         val s = if (front) near else far
+        if (!drawPacked(lp, look)) uploadMaps(lp, look, nowMs)
+        s.setFloatUniform("packed", if (packed != null) 1f else 0f)
+        setUniforms(s, lp, front, cx, cy, r, view, scene, look)
+        paint.shader = s
+        val e = r * 1.05f
+        canvas.drawRect(cx - e, cy - e, cx + e, cy + e, paint)
+    }
+
+    // The paint written straight into GPU-read buffers ([PaintBuffers]); null where the phone can't (the uploads below then).
+    private var packed: PaintBuffers? = null
+    private var packedOf: LaserPaint? = null
+    private var packedFailed = false
+
+    /**
+     * Brings the shaders' maps up to date through [PaintBuffers]: only the rows painted since the
+     * last frame are written, every frame. False when that isn't possible here (no such buffers).
+     */
+    private fun drawPacked(lp: LaserPaint, look: Look): Boolean {
+        if (packedFailed) return false
+        var pb = packed
+        val fresh = lp !== packedOf || pb == null || pb.width != lp.width || pb.height != lp.height
+        if (fresh) {
+            pb = PaintBuffers.create(lp.width, lp.height)
+            if (pb == null) { packedFailed = true; packed = null; return false }
+            packed = pb
+            packedOf = lp
+            uploaded = Long.MIN_VALUE
+            wayStale = true
+        }
+        if (pb == null) return false
+        val ways = lp.way
+        val wayNow = look.byWay && ways != null
+        if (lp.version == uploaded && !(wayNow && wayStale)) return true
+        val all = fresh || uploaded == Long.MIN_VALUE
+        val j0 = if (all) 0 else lp.changedFrom.coerceAtLeast(0)
+        val j1 = if (all) lp.height - 1 else lp.changedTo.coerceAtMost(lp.height - 1)
+        if (!pb.write(lp, j0, j1)) { packedFailed = true; packed = null; return false }
+        if (wayNow) {
+            // A way picture that missed paint (colour by way was off) takes every row again.
+            val wAll = all || wayStale
+            if (!pb.writeWay(ways!!, if (wAll) 0 else j0, if (wAll) lp.height - 1 else j1)) { packedFailed = true; packed = null; return false }
+            wayStale = false
+        } else wayStale = true
+        lp.takeChanged()
+        uploaded = lp.version
+        val m = pb.mainShader!!
+        val g = pb.glowShader!!
+        val w = if (wayNow) pb.wayShader ?: m else m
+        for (sh in arrayOf(near, far)) {
+            sh.setInputBuffer("amount", m)
+            sh.setInputBuffer("fire", m)
+            sh.setInputBuffer("aim", m)
+            sh.setInputBuffer("glow", m)
+            sh.setInputBuffer("glowFire", g)
+            sh.setInputBuffer("glowAim", g)
+            sh.setInputBuffer("way", w)
+        }
+        wayMapReady = wayNow
+        return true
+    }
+
+    // The way colours are on the GPU (packed path): wayMode may be on.
+    private var wayMapReady = false
+
+    /** The old path: the maps copied into bitmaps and taken up by the GPU whole, about 30 times a second. */
+    private fun uploadMaps(lp: LaserPaint, look: Look, nowMs: Long) {
         val fresh = lp !== uploadedOf || amountMap?.width != lp.width || (look.byWay && lp.way != null && (wayMap == null || wayStale))
         // While the beam paints, the map changes on nearly every frame: it goes up about 30 times a
         // second (the beam's dot and the snake still move every frame), a new or cleared map at once.
@@ -116,6 +182,13 @@ internal class PointerPaintShader {
                 sh.setInputBuffer("way", way)
             }
         }
+        wayMapReady = wayMap != null
+    }
+
+    private fun setUniforms(
+        s: RuntimeShader, lp: LaserPaint, front: Boolean, cx: Float, cy: Float, r: Float,
+        view: (Float, Float, Float, FloatArray) -> Unit, scene: (Float, Float, Float, FloatArray) -> Unit, look: Look,
+    ) {
         s.setFloatUniform("mapSize", lp.width.toFloat(), lp.height.toFloat())
         s.setFloatUniform("center", cx, cy)
         s.setFloatUniform("radius", r)
@@ -127,7 +200,7 @@ internal class PointerPaintShader {
         scene(1f, 0f, 0f, col); s.setFloatUniform("sceneX", col[0], col[1], col[2])
         scene(0f, 1f, 0f, col); s.setFloatUniform("sceneY", col[0], col[1], col[2])
         scene(0f, 0f, 1f, col); s.setFloatUniform("sceneZ", col[0], col[1], col[2])
-        s.setFloatUniform("wayMode", if (look.byWay && wayMap != null) 1f else 0f)
+        s.setFloatUniform("wayMode", if (look.byWay && wayMapReady) 1f else 0f)
         s.setFloatUniform("glowK", look.glow)
         s.setFloatUniform("fireGlowK", look.fireGlow)
         s.setFloatUniform("aimGlowK", look.aimGlow)
@@ -145,9 +218,6 @@ internal class PointerPaintShader {
         s.setColorUniform("aimAhead", look.aimAhead)
         s.setColorUniform("aimBehind", look.aimBehind)
         s.setColorUniform("outlineColor", look.outlineColor)
-        paint.shader = s
-        val e = r * 1.05f
-        canvas.drawRect(cx - e, cy - e, cx + e, cy + e, paint)
     }
 
     // The map read smoothly between texels (its values are premultiplied amounts), round the sphere in longitude.
@@ -187,6 +257,7 @@ internal class PointerPaintShader {
             uniform float3 sceneY;
             uniform float3 sceneZ;
             uniform float wayMode;
+            uniform float packed;
             uniform float glowK;
             uniform float fireGlowK;
             uniform float aimGlowK;
@@ -235,16 +306,28 @@ internal class PointerPaintShader {
                 float lon = atan(s.x, -s.z);
                 float lat = asin(clamp(s.y, -1.0, 1.0));
                 float2 uv = float2((lon / 6.28318531 + 0.5) * mapSize.x, (0.5 - lat / 3.14159265) * mapSize.y);
-                float c = float(amount.eval(uv).a);
-                float gl = float(glow.eval(uv).a);
-                if (c < 0.004 && gl < 0.004) return half4(0.0);
+                // Packed: amount, fire, aim, glow in one picture's r, g, b, a; the glow's shares in another's r, g.
+                float c; float gl; float fRaw; float aRaw; float gfRaw; float gaRaw;
+                if (packed > 0.5) {
+                    float4 pm = float4(amount.eval(uv));
+                    c = pm.r; fRaw = pm.g; aRaw = pm.b; gl = pm.a;
+                    if (c < 0.004 && gl < 0.004) return half4(0.0);
+                    float4 pg = float4(glowFire.eval(uv));
+                    gfRaw = pg.r; gaRaw = pg.g;
+                } else {
+                    c = float(amount.eval(uv).a);
+                    gl = float(glow.eval(uv).a);
+                    if (c < 0.004 && gl < 0.004) return half4(0.0);
+                    fRaw = float(fire.eval(uv).a); aRaw = float(aim.eval(uv).a);
+                    gfRaw = float(glowFire.eval(uv).a); gaRaw = float(glowAim.eval(uv).a);
+                }
                 float cs = max(c, 0.004);
-                float fired = clamp(float(fire.eval(uv).a) / cs, 0.0, 1.0);
-                float aimed = clamp(float(aim.eval(uv).a) / cs, 0.0, 1.0 - fired);
+                float fired = clamp(fRaw / cs, 0.0, 1.0);
+                float aimed = clamp(aRaw / cs, 0.0, 1.0 - fired);
                 // The glow's shares that are shots' and aiming's.
                 float gs = max(gl, 0.004);
-                float gFired = clamp(float(glowFire.eval(uv).a) / gs, 0.0, 1.0);
-                float gAimed = clamp(float(glowAim.eval(uv).a) / gs, 0.0, 1.0 - gFired);
+                float gFired = clamp(gfRaw / gs, 0.0, 1.0);
+                float gAimed = clamp(gaRaw / gs, 0.0, 1.0 - gFired);
                 // The point in the scene's frame: what its colour goes by.
                 float3 g = float3(dot(sceneX, p), dot(sceneY, p), dot(sceneZ, p));
 

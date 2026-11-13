@@ -141,6 +141,9 @@ class LaserTrace {
     /** The pose version last fed (the UI feeds once per new pose). */
     var fedVersion = Long.MIN_VALUE
 
+    /** The pose history count ([GyroDisplayFeed.history]) the UI has fed up to. */
+    var historySeen = 0L
+
     /**
      * The beam now points at ([x], [y], [z]) (any length) at [nowMs]. While a ratchet is [held] it
      * doesn't paint (the pose eases back then, which isn't aiming); with [clearOnPress] pressing
@@ -793,8 +796,7 @@ class LaserTrace {
          * screen) then swings the beam sideways, and pitch up and down. A · m · Aᵀ with A taking the
          * phone's up into the screen and its screen's normal up.
          */
-        fun aim(m: FloatArray) {
-            val r = FloatArray(9)
+        fun aim(m: FloatArray, r: FloatArray = FloatArray(9)) {
             for (i in 0..2) for (j in 0..2) r[i * 3 + j] = AIM_SIGN[i] * AIM_SIGN[j] * m[AIM_AXIS[i] * 3 + AIM_AXIS[j]]
             r.copyInto(m)
         }
@@ -804,9 +806,8 @@ class LaserTrace {
          * [FACES] (0 −Z into the screen at rest, 1 +Z, 2 +X, 3 −X, 4 +Y, 5 −Y). m · F, F turning −Z
          * onto that direction.
          */
-        fun faces(m: FloatArray, faces: Int) {
+        fun faces(m: FloatArray, faces: Int, r: FloatArray = FloatArray(9)) {
             val f = FACE_TURNS.getOrNull(faces) ?: return
-            val r = FloatArray(9)
             for (i in 0..2) for (j in 0..2) r[i * 3 + j] = m[i * 3] * f[j] + m[i * 3 + 1] * f[3 + j] + m[i * 3 + 2] * f[6 + j]
             r.copyInto(m)
         }

@@ -2,13 +2,14 @@ package com.oleroma.gyrophone.ui
 
 import android.graphics.Paint
 import android.graphics.Typeface
-import android.graphics.SurfaceTexture
+import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Process
 import android.view.Choreographer
 import android.view.Surface
-import android.view.TextureView
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
@@ -78,10 +79,13 @@ class DisplayBox(val control: TouchControl, val box: Rect)
  * drawn flat in its [DisplayBox] (no 3D library) from the runtime's data for it, once per screen
  * frame. In edit mode each also gets its box, the [selected] ones lit in their [selectedColor].
  *
- * They are drawn on a thread of their own ([GyroDisplaysRenderer]) into a [TextureView], never on
+ * They are drawn on a thread of their own ([GyroDisplaysRenderer]) into a [SurfaceView], never on
  * the screen thread: Android hands touches and controller keys to the app only on the screen
  * thread, so a heavy frame (Paint and Snake on a fast swing took up to 300 ms) would hold every
- * press, a ratchet's too, until it was drawn.
+ * press, a ratchet's too, until it was drawn. A SurfaceView is its own layer on the screen, put
+ * together with the app's by the display hardware: a new frame of it shows a frame sooner than
+ * through the app's window (as a TextureView would) and costs the screen thread nothing. It sits
+ * under the app's window, which leaves a hole there, so it paints the pad's background itself.
  */
 @Composable
 fun GyroDisplaysLayer(
@@ -99,12 +103,12 @@ fun GyroDisplaysLayer(
     DisposableEffect(renderer) { onDispose { renderer.dispose() } }
     AndroidView(
         factory = { ctx ->
-            TextureView(ctx).apply {
-                isOpaque = false
+            SurfaceView(ctx).apply {
+                holder.setFormat(PixelFormat.OPAQUE)
                 // Never takes focus or touches: keys stay with the pad, fingers reach the controls over it.
                 isFocusable = false
                 isClickable = false
-                surfaceTextureListener = renderer
+                holder.addCallback(renderer)
             }
         },
         modifier = modifier,
@@ -117,9 +121,9 @@ fun GyroDisplaysLayer(
  * only while some display's data changes (and a moment after, so ghost trails catch up): a still
  * pose, as in edit mode, with the gyro off or the phone lying still (its sensor noise moves the
  * pose by less than shows), draws nothing new. Drawing goes through a [CanvasDrawScope] onto the
- * texture's surface ([Surface.lockHardwareCanvas]), the same drawing code as before.
+ * SurfaceView's surface ([Surface.lockHardwareCanvas]), the same drawing code as before.
  */
-internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : TextureView.SurfaceTextureListener {
+internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : SurfaceHolder.Callback {
     /** What the pad shows now, set from the screen thread. */
     class Input(val boxes: List<DisplayBox>, val editing: Boolean, val selected: Set<String>, val selectedColor: (String) -> Color)
 
@@ -138,7 +142,6 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
 
     // Only on the render thread from here on.
     private var surface: Surface? = null
-    private var texture: SurfaceTexture? = null
     private var width = 0
     private var height = 0
     private var running = false
@@ -167,15 +170,28 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
     private val callback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
             if (!running) return
-            step(frameTimeNanos / 1_000_000L)
+            val t0 = System.nanoTime()
+            val drew = step(frameTimeNanos / 1_000_000L)
+            if (drew) {
+                val t1 = System.nanoTime()
+                val h = hint ?: com.oleroma.gyrophone.runtime.WorkHint.forThisThread(HINT_TARGET_NS).also { hint = it }
+                h?.done(t1 - t0, t1)
+                timing.frame(t1 - t0, t1)
+            }
             choreographer?.postFrameCallback(this)
         }
     }
 
-    override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
+    // Keeps this thread on cores and clocks that finish a frame in time ([com.oleroma.gyrophone.runtime.WorkHint]).
+    private var hint: com.oleroma.gyrophone.runtime.WorkHint? = null
+    private val timing = DrawTiming()
+
+    override fun surfaceCreated(holder: SurfaceHolder) = Unit
+
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {
+        val sf = holder.surface
         handler.post {
-            texture = st
-            surface = Surface(st)
+            surface = sf
             width = w; height = h
             dirty = true
             if (!running) {
@@ -186,34 +202,30 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
         }
     }
 
-    override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
-        handler.post { width = w; height = h; dirty = true }
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
+        // The surface goes when this returns: wait (briefly) for the render thread to stop drawing on it.
+        val stopped = java.util.concurrent.CountDownLatch(1)
+        if (!handler.post { stopSurface(); stopped.countDown() }) return
+        runCatching { stopped.await(200, java.util.concurrent.TimeUnit.MILLISECONDS) }
     }
-
-    override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
-        // Released on the render thread, after any frame it is drawing.
-        handler.post { releaseSurface() }
-        return false
-    }
-
-    override fun onSurfaceTextureUpdated(st: SurfaceTexture) = Unit
 
     /** The layer left the pad: stop and let the thread go. */
     fun dispose() {
         handler.post {
-            releaseSurface()
+            stopSurface()
+            hint?.close(); hint = null
             thread.quitSafely()
         }
     }
 
-    private fun releaseSurface() {
+    private fun stopSurface() {
         running = false
         choreographer?.removeFrameCallback(callback)
-        surface?.release(); surface = null
-        texture?.release(); texture = null
+        surface = null
     }
 
-    private fun step(t: Long) {
+    /** One frame at [t] (ms): steps the displays and draws them if anything changed; true when it drew. */
+    private fun step(t: Long): Boolean {
         val inp = input
         val shown = inp.boxes
         val inEdit = inp.editing
@@ -300,7 +312,9 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
             frame = t
             dirty = false
             draw(inp)
+            return true
         }
+        return false
     }
 
     private fun draw(inp: Input) {
@@ -312,7 +326,8 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
             return
         }
         try {
-            canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+            // The pad's background: the window over this layer has a hole here.
+            canvas.drawColor(PAD_BACKGROUND.toArgb())
             drawScope.draw(density, LayoutDirection.Ltr, androidx.compose.ui.graphics.Canvas(canvas), Size(width.toFloat(), height.toFloat())) {
                 st.now = frame
                 for (b in inp.boxes) {
@@ -344,6 +359,41 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Textu
         }
     }
 }
+
+/**
+ * The gyro displays' drawing times, logged once a second while they draw (logcat tag GPDraw):
+ * frames drawn, the average and the longest, and how many took longer than [SLOW_NS]. Read over
+ * adb (`adb logcat -s GPDraw`) to check the displays keep up, a fast turn included.
+ */
+private class DrawTiming {
+    private var since = 0L
+    private var frames = 0
+    private var sum = 0L
+    private var longest = 0L
+    private var slow = 0
+
+    fun frame(ns: Long, now: Long) {
+        if (since == 0L) since = now
+        frames++
+        sum += ns
+        if (ns > longest) longest = ns
+        if (ns > SLOW_NS) slow++
+        if (now - since < 1_000_000_000L) return
+        android.util.Log.i(
+            "GPDraw",
+            "frames=$frames avg=${"%.2f".format(sum / frames / 1e6)}ms max=${"%.2f".format(longest / 1e6)}ms slow=$slow",
+        )
+        since = now; frames = 0; sum = 0L; longest = 0L; slow = 0
+    }
+
+    companion object {
+        /** Longer than this misses a 120 Hz frame. */
+        const val SLOW_NS = 8_000_000L
+    }
+}
+
+/** Each display frame should be drawn within this: half a 120 Hz frame. */
+private const val HINT_TARGET_NS = 4_000_000L
 
 /** The pose matrix [now] moved from [was] by more than [VISIBLE_TURN] in any entry (a turn of about that many radians). */
 private fun movedVisibly(was: FloatArray, now: FloatArray): Boolean {
@@ -535,6 +585,11 @@ private class VisState {
     private val paintShaders = java.util.WeakHashMap<LaserTrace, PointerPaintShader>()
     private val viewOf: (Float, Float, Float, FloatArray) -> Unit = { x, y, z, out -> LaserTrace.view(x, y, z, out, axon = laserAxon, turned = laserTurned) }
     private val turnBase = FloatArray(9)
+    // A pose from the gyro's history ([GyroDisplayFeed.history]): its quaternion, matrix and beam.
+    private val histQ = FloatArray(4)
+    private val histM = FloatArray(9)
+    private val histBeam = FloatArray(3)
+    private val histTmp = FloatArray(9)
     private val nv = FloatArray(3)
     private val hv = FloatArray(3)
     private val sceneOf: (Float, Float, Float, FloatArray) -> Unit = { x, y, z, out -> LaserTrace.view(x, y, z, out, axon = laserAxon) }
@@ -549,6 +604,7 @@ private class VisState {
     private var snakeW = FloatArray(0)
     private var snakeA = FloatArray(0)
     private var snakeCol = IntArray(0)
+    private var snakeFront = BooleanArray(0)
     // Reused from frame to frame: the paint's look, the gimbal rings' points, the rifle's muzzle.
     private val paintLook = PointerPaintShader.Look()
     private val gimbalPts = Array(3) { FloatArray(65 * 3) }
@@ -757,9 +813,28 @@ private class VisState {
      * overlaps neither darken nor show the older piece's round end; the layer is laid on at the colours' opacity.
      */
     private fun DrawScope.snake(t: LaserTrace, d: GyroDisplay, front: Boolean, c: Offset, r: Float, col: (GyroDisplayColor) -> Color) {
+        // Both halves' pieces are made once a frame (the far half is drawn first, the near half takes the same pieces).
+        if (t !== snakeOf || now != snakeAt || t.version != snakeVersion || c.x != snakeCx || c.y != snakeCy || r != snakeR) {
+            snakeOf = t; snakeAt = now; snakeVersion = t.version; snakeCx = c.x; snakeCy = c.y; snakeR = r
+            snakeCount = buildSnake(t, d, c, r, col)
+        }
+        drawSnake(d, front, c, r, snakeCount)
+    }
+
+    // What the Snake's pieces were last made for ([snake]).
+    private var snakeOf: LaserTrace? = null
+    private var snakeAt = Long.MIN_VALUE
+    private var snakeVersion = Long.MIN_VALUE
+    private var snakeCx = 0f
+    private var snakeCy = 0f
+    private var snakeR = 0f
+    private var snakeCount = 0
+
+    /** Makes the Snake's pieces, oldest first, each on the near or far half ([snakeFront]); returns how many. */
+    private fun DrawScope.buildSnake(t: LaserTrace, d: GyroDisplay, c: Offset, r: Float, col: (GyroDisplayColor) -> Color): Int {
         val s = t.strokes
         val n = s.count
-        if (n < 2) return
+        if (n < 2) return 0
         val len = d.laserSnakeDeg.toFloat().coerceAtLeast(1f)
         snakeFire[0] = col(GyroDisplayColor.LASER_FIRE).toArgb(); snakeFire[1] = col(GyroDisplayColor.LASER_FIRE_BEHIND).toArgb()
         snakeFire[2] = col(GyroDisplayColor.LASER_AIM).toArgb(); snakeFire[3] = col(GyroDisplayColor.LASER_AIM_BEHIND).toArgb()
@@ -808,7 +883,7 @@ private class VisState {
                 val p = laserAt(c, r, la[0], la[1], la[2])
                 val z = pv[2]
                 val isFront = z > 0f
-                if (isFront == front && prevFront == front) {
+                if (isFront == prevFront) {
                     if (byWay) {
                         for (q in 0..2) way[q] = wayA[q] + (wayB[q] - wayA[q]) * f
                         LaserTrace.unit(way)
@@ -818,37 +893,50 @@ private class VisState {
                     snakeXY[m * 4] = prevX; snakeXY[m * 4 + 1] = prevY; snakeXY[m * 4 + 2] = p.x; snakeXY[m * 4 + 3] = p.y
                     snakeW[m] = headPx * (1f - taper * (1f - tail)) * (if (laserPersp) LaserTrace.perspective(z) else 1f)
                     snakeA[m] = 1f - fade * (1f - tail)
-                    snakeCol[m] = snakeShade(d, kind, byWay, z, front, ld)
+                    snakeCol[m] = snakeShade(d, kind, byWay, z, isFront, ld)
+                    snakeFront[m] = isFront
                     m++
                 }
                 prevX = p.x; prevY = p.y; prevFront = isFront
             }
         }
+        return m
+    }
+
+    /**
+     * Draws the [m] pieces on the [front] (near) or far half, newest first, in one layer: each piece
+     * goes under what is drawn already (DST_OVER), so overlapping pieces never add up; the glow's
+     * wider, fainter copies go under the line the same way, so together they fall off softly.
+     */
+    private fun DrawScope.drawSnake(d: GyroDisplay, front: Boolean, c: Offset, r: Float, m: Int) {
         if (m == 0) return
+        var any = false
+        for (k in 0 until m) if (snakeFront[k] == front) { any = true; break }
+        if (!any) return
         val canvas = drawContext.canvas.nativeCanvas
         val alpha = moveColors.sumOf { it shr 24 and 0xFF } / (6f * 255f)
         val e = r * 1.3f
         snakePaint.strokeCap = Paint.Cap.ROUND
         snakePaint.style = Paint.Style.STROKE
         snakePaint.isAntiAlias = true
-        snakePaint.blendMode = android.graphics.BlendMode.DST_OVER
-        // Glow: wider, fainter copies under the line, each its own layer, so together they fall off softly.
-        val glow = d.laserSnakeGlow.coerceIn(0f, 1f)
-        if (glow > 0f) for ((wide, share) in SNAKE_GLOW) {
-            val layer = canvas.saveLayerAlpha(c.x - e, c.y - e, c.x + e, c.y + e, (255f * alpha * glow * share).toInt().coerceIn(0, 255))
-            snakePieces(canvas, m, wide)
-            canvas.restoreToCount(layer)
-        }
         val layer = canvas.saveLayerAlpha(c.x - e, c.y - e, c.x + e, c.y + e, (255f * alpha).toInt().coerceIn(0, 255))
-        snakePieces(canvas, m, 1f)
+        snakePaint.blendMode = android.graphics.BlendMode.DST_OVER
+        snakePieces(canvas, m, front, 1f, 1f)
+        val glow = d.laserSnakeGlow.coerceIn(0f, 1f)
+        // Narrowest (strongest) first: each wider copy only shows outside the ones before it.
+        if (glow > 0f) for (g in SNAKE_GLOW.indices.reversed()) {
+            val (wide, share) = SNAKE_GLOW[g]
+            snakePieces(canvas, m, front, wide, glow * share)
+        }
         canvas.restoreToCount(layer)
         snakePaint.blendMode = null
     }
 
-    /** The Snake's [m] pieces, newest first, [wide] times their width. */
-    private fun snakePieces(canvas: android.graphics.Canvas, m: Int, wide: Float) {
+    /** The Snake's [m] pieces on the [front] or far half, newest first, [wide] times their width, [share] of their opacity. */
+    private fun snakePieces(canvas: android.graphics.Canvas, m: Int, front: Boolean, wide: Float, share: Float) {
         for (k in m - 1 downTo 0) {
-            val a = (snakeA[k] * 255f + 0.5f).toInt().coerceIn(0, 255)
+            if (snakeFront[k] != front) continue
+            val a = (snakeA[k] * share * 255f + 0.5f).toInt().coerceIn(0, 255)
             if (a == 0) continue
             snakePaint.color = (snakeCol[k] and 0xFFFFFF) or (a shl 24)
             snakePaint.strokeWidth = snakeW[k] * wide
@@ -862,6 +950,7 @@ private class VisState {
         snakeW = snakeW.copyOf(size)
         snakeA = snakeA.copyOf(size)
         snakeCol = snakeCol.copyOf(size)
+        snakeFront = snakeFront.copyOf(size)
     }
 
     /**
@@ -1004,11 +1093,10 @@ private class VisState {
         val lt = feed?.laser
         if (lt != null) {
             val v = feed?.pose?.version ?: 0L
-            if (v != lt.fedVersion) {
-                lt.fedVersion = v
+            fun addBeam(bx: Float, by: Float, bz: Float, ms: Long) {
                 lt.add(
                     // Draw each shot: firing paints its hits, not a Fire line.
-                    beam[0], beam[1], beam[2], now, d.laserDraw, held, d.laserClearOnRatchet,
+                    bx, by, bz, ms, d.laserDraw, held, d.laserClearOnRatchet,
                     feed?.firing == true && !(d.laserShotDraw && d.laserDraw), d.laserFireOnly,
                     d.laserSmoothColours, d.laserLineSmoothing,
                     brushDeg = d.laserBrush.coerceIn(1, 20) * BRUSH_WIDTH,
@@ -1021,6 +1109,26 @@ private class VisState {
                     aimBrushDeg = d.laserAimBrush.coerceIn(1, 20) * BRUSH_WIDTH,
                     clearSnakeOnPress = d.laserSnakeClearOnRatchet,
                 )
+            }
+            // Every pose the gyro made since the last frame, so a fast turn draws a smooth curve
+            // through all of them, not straight pieces from one frame's pose to the next.
+            val h = feed?.history
+            if (feed != null && h != null && (d.laserDraw || d.laserSnake)) {
+                if (lt.historySeen == 0L || lt.historySeen > h.count) lt.historySeen = h.count
+                lt.historySeen = h.since(lt.historySeen, histQ) { pq, ns ->
+                    feed.shownFrom(pq, histM)
+                    when (d.turnsWith) {
+                        com.oleroma.gyrophone.core.model.TurnsWith.PHONE -> LaserTrace.aim(histM, histTmp)
+                        com.oleroma.gyrophone.core.model.TurnsWith.TRACKBALL -> LaserTrace.faces(histM, d.laserFaces, histTmp)
+                        else -> {}
+                    }
+                    LaserTrace.beam(histM, histBeam)
+                    addBeam(histBeam[0], histBeam[1], histBeam[2], minOf(ns / 1_000_000L, now))
+                }
+            }
+            if (v != lt.fedVersion) {
+                lt.fedVersion = v
+                addBeam(beam[0], beam[1], beam[2], now)
             }
         }
         val rifle = d.laserRifle

@@ -23,7 +23,7 @@ On the OnePlus 15 the listener delivers about 480 Hz and the gralloc direct chan
 
 ## Performance hints
 
-The gyro poll thread, the Wi-Fi sender (`WifiPump`) and the Bluetooth sender (`ReportPump`) each open a performance hint session for their own thread (`runtime/WorkHint.kt`, `PerformanceHintManager`) with a 1 ms target per pass, prefer speed to saving power (`setPreferPowerEfficiency(false)`), and report how long each pass took (the longest at most once a millisecond), after the pass's work, so it adds no delay. Without hint support they run as before.
+The gyro poll thread, the Wi-Fi sender (`WifiPump`) and the Bluetooth sender (`ReportPump`) each open a performance hint session (the gyro displays' drawing thread too, with 4 ms a frame) for their own thread (`runtime/WorkHint.kt`, `PerformanceHintManager`) with a 1 ms target per pass, prefer speed to saving power (`setPreferPowerEfficiency(false)`), and report how long each pass took (the longest at most once a millisecond), after the pass's work, so it adds no delay. Without hint support they run as before.
 
 ## When the sensor runs
 

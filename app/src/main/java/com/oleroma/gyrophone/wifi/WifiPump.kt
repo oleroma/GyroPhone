@@ -46,6 +46,9 @@ class WifiPump(private val engine: MappingEngine) {
     @Volatile private var running = false
     @Volatile private var exitByeReason = ByeReason.SHUTDOWN
     @Volatile private var socket: DatagramSocket? = null
+
+    /** Sends a sealed packet straight down the USB cable when it goes there ([AccessoryBridge.sendDirect]). */
+    @Volatile var direct: AccessoryBridge? = null
     @Volatile private var thread: Thread? = null
 
     @Volatile var rateHz: Int = Wire.DEFAULT_RATE_HZ
@@ -413,6 +416,7 @@ class WifiPump(private val engine: MappingEngine) {
         if ((seq.toLong() and 0xFFFF_FFFFL) >= Wire.REKEY_SEQ) c.rekeyRequested = true
         WireCodec.writeHeader(header, type, c.sessionId, seq)
         val len = ci.seal(header, plain, plainLen, out)
+        if (direct?.sendDirect(c.hostAddr, out, 0, len) == true) return true
         packet.setData(out, 0, len)
         packet.socketAddress = c.hostAddr
         return try {
