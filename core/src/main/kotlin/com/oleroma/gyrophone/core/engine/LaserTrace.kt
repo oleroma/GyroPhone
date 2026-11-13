@@ -818,18 +818,21 @@ class LaserTrace {
                 }
                 faces.add(Face(xy, light, depth / n))
             }
+            // Scratch for box(): face() copies the corners out, so one set serves every face of a frame.
+            val c = FloatArray(12)
+            val h = FloatArray(3)
+            val ctr = FloatArray(3)
             fun box(cx: Float, cy: Float, cz: Float, hx: Float, hy: Float, hz: Float) {
+                h[0] = hx; h[1] = hy; h[2] = hz
+                ctr[0] = cx; ctr[1] = cy; ctr[2] = cz
+                val us = BOX_US
+                val ws = BOX_WS
                 for (f in 0 until 6) {
                     val axis = f / 2
                     val sign = if (f % 2 == 0) -1f else 1f
                     // The face's corners, in order round it.
                     val o1 = (axis + 1) % 3
                     val o2 = (axis + 2) % 3
-                    val c = FloatArray(12)
-                    val us = floatArrayOf(-1f, 1f, 1f, -1f)
-                    val ws = floatArrayOf(-1f, -1f, 1f, 1f)
-                    val h = floatArrayOf(hx, hy, hz)
-                    val ctr = floatArrayOf(cx, cy, cz)
                     for (k in 0 until 4) {
                         for (d in 0..2) c[k * 3 + d] = ctr[d]
                         c[k * 3 + axis] += sign * h[axis]
@@ -915,6 +918,9 @@ class LaserTrace {
             floatArrayOf(1f, 0f, 0f, 0f, 0f, -1f, 0f, 1f, 0f),
             floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, -1f, 0f),
         )
+
+        private val BOX_US = floatArrayOf(-1f, 1f, 1f, -1f)
+        private val BOX_WS = floatArrayOf(-1f, -1f, 1f, 1f)
 
         private val AIM_AXIS = intArrayOf(0, 2, 1)
         private val AIM_SIGN = floatArrayOf(1f, 1f, -1f)

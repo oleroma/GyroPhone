@@ -340,7 +340,9 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
                     st.shots = kicks[b.control.id]
                     st.lower = 1f - (raises[b.control.id] ?: 1f)
                     st.hip = (hips[b.control.id] ?: 0f) * shownAs.gunHipPull.coerceIn(0f, 1f)
+                    val k0 = System.nanoTime()
                     st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
+                    DrawProbe.kind(d.kind.ordinal, System.nanoTime() - k0)
                     if (inp.editing) {
                         val sel = b.control.id in inp.selected
                         drawRect(
@@ -416,13 +418,30 @@ internal object DrawProbe {
         if (t > most[section]) most[section] = t
     }
 
-    /** "name=avg/max" per section over [frames] frames (ms), then zeroed. */
+    // Each display kind's whole drawing (its CPU side), by [com.oleroma.gyrophone.core.model.GyroDisplayKind] ordinal.
+    private val kinds = com.oleroma.gyrophone.core.model.GyroDisplayKind.entries
+    private val kindNs = LongArray(kinds.size)
+    private val kindMost = LongArray(kinds.size)
+
+    fun kind(ordinal: Int, t: Long) {
+        kindNs[ordinal] += t
+        if (t > kindMost[ordinal]) kindMost[ordinal] = t
+    }
+
+    /** "name=avg/max" per section, then per display kind shown, over [frames] frames (ms), then zeroed. */
     fun take(frames: Int): String {
         val sb = StringBuilder()
+        val per = frames.coerceAtLeast(1)
         for (i in names.indices) {
-            sb.append(names[i]).append('=').append("%.1f".format(ns[i] / frames.coerceAtLeast(1) / 1e6))
+            sb.append(names[i]).append('=').append("%.1f".format(ns[i] / per / 1e6))
                 .append('/').append("%.1f".format(most[i] / 1e6)).append(' ')
             ns[i] = 0L; most[i] = 0L
+        }
+        for (i in kinds.indices) {
+            if (kindMost[i] == 0L) continue
+            sb.append(kinds[i].name.lowercase()).append('=').append("%.1f".format(kindNs[i] / per / 1e6))
+                .append('/').append("%.1f".format(kindMost[i] / 1e6)).append(' ')
+            kindNs[i] = 0L; kindMost[i] = 0L
         }
         return sb.toString()
     }
@@ -1321,6 +1340,8 @@ private class VisState {
             val gun = d.gun()
             // Kick size scales the gun's own recoil (50% is the gun as it is).
             val kickK = d.kickOf().coerceIn(0f, 3f) * 2f
+            val edge = Stroke(density * 0.75f, join = StrokeJoin.Round)
+            val edgeCol = Color(body.red * 0.5f, body.green * 0.5f, body.blue * 0.5f, body.alpha)
             for (f in LaserTrace.rifle(m, laserAxon, laserTurned, laserPersp, aim, kick * kickK, gun, lower, d.gunScope, hip)) {
                 path.reset()
                 for (i in 0 until f.xy.size / 2) {
@@ -1331,7 +1352,7 @@ private class VisState {
                 path.close()
                 val k = f.light
                 drawPath(path, Color(body.red * k, body.green * k, body.blue * k, body.alpha))
-                drawPath(path, Color(body.red * 0.5f, body.green * 0.5f, body.blue * 0.5f, body.alpha), style = Stroke(density * 0.75f, join = StrokeJoin.Round))
+                drawPath(path, edgeCol, style = edge)
             }
             if (aim > 0f) laserSight(c, r, col(GyroDisplayColor.LASER_AIM), gun, kickK)
             val fm = flashMs(d)
