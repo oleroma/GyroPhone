@@ -260,7 +260,6 @@ internal sealed class AppPage : Page
     private readonly StackPanel _root = new();
     private readonly CheckBox _autoStart, _watcher, _pressListen, _pressNotice;
     private readonly Seg<TrayClickAction> _trayClick;
-    private readonly Seg<int> _catchUp;
     private readonly TextBlock _version;
 
     public override FrameworkElement View => _root;
@@ -297,13 +296,6 @@ internal sealed class AppPage : Page
         pb.Children.Add(_pressNotice);
         _root.Children.Add(press);
 
-        var (input, ib) = Parts.Card("Mouse");
-        ib.Children.Add(Parts.Text("Catch-up time"));
-        _catchUp = new Seg<int>(app.SetCatchUpMs, false, ("Off", 0), ("8 ms", 8), ("16 ms", 16), ("32 ms", 32));
-        _catchUp.View.Margin = new Thickness(0, 8, 0, 4);
-        ib.Children.Add(_catchUp.View);
-        ib.Children.Add(Parts.Text("When Wi-Fi loses or holds up a stretch of gyro or mouse movement, it is played out over up to this long instead of landing as one jump. New movement always goes out at once. Off: the old one-step jump.", "Hint"));
-        _root.Children.Add(input);
 
         var (about, ab) = Parts.Card("About");
         _version = Parts.Text("");
@@ -320,7 +312,6 @@ internal sealed class AppPage : Page
         Parts.SetChecked(_pressNotice, v.PressKeyNotice);
         _pressNotice.IsEnabled = v.PressKeyListen;
         _trayClick.Set(v.TrayClick);
-        _catchUp.Set(v.CatchUpMs);
         _version.Text = v.UpdatePending is { } p ? $"{v.Version} · restarting into {p}" : v.Version;
     }
 }

@@ -26,6 +26,7 @@ internal sealed class PerformancePage : Page
     private readonly FrameGraph _graph = new() { Margin = new Thickness(0, 10, 0, 4) };
     private readonly CheckBox _measureButtons;
     private readonly CheckBox _inputLog, _overlayLog;
+    private readonly Seg<int> _catchUp;
     private readonly TextBlock _logPath;
     private readonly TextBlock _buttonsSub;
     private readonly TextBox _name;
@@ -158,6 +159,15 @@ internal sealed class PerformancePage : Page
         _latency = new LatencyPage(app, owner, icon);
         _root.Children.Add(_latency.View);
 
+        // Speed settings
+        var (mouse, mb) = Parts.Card("Mouse");
+        mb.Children.Add(Parts.Text("Catch-up time"));
+        _catchUp = new Seg<int>(app.SetCatchUpMs, false, ("Off", 0), ("8 ms", 8), ("16 ms", 16), ("32 ms", 32));
+        _catchUp.View.Margin = new Thickness(0, 8, 0, 4);
+        mb.Children.Add(_catchUp.View);
+        mb.Children.Add(Parts.Text("When Wi-Fi loses or holds up a stretch of gyro or mouse movement, it is played out over up to this long instead of landing as one jump. New movement always goes out at once. Off: the old one-step jump.", "Hint"));
+        _root.Children.Add(mouse);
+
         // Debug: every log and debug tool, each switchable
         var (debug, db) = Parts.Card("Debug");
         _inputLog = Parts.Toggle("Record input log", app.ToggleInputLog,
@@ -208,6 +218,7 @@ internal sealed class PerformancePage : Page
     {
         Parts.SetChecked(_inputLog, v.InputLog);
         Parts.SetChecked(_overlayLog, v.OverlayTimingLog);
+        _catchUp.Set(v.CatchUpMs);
         _logPath.Text = $"Log: {v.LogPath}";
         var p = _app.Perf;
         var s = v.Status;
