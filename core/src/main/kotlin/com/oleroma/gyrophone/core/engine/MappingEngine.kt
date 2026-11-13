@@ -1736,6 +1736,29 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     /**
+     * For the buttons' mapping frames, under one lock: of [mappings], each that toggles (How Toggle
+     * of its own or from its button, or a Toggle button's plain press chip, [ButtonHow.stateOf]) with
+     * whether it is on now, into [out] (cleared first).
+     */
+    fun togglesOn(mappings: List<Mapping>, out: MutableMap<Mapping, Boolean>) {
+        synchronized(lock) {
+            out.clear()
+            val now = clock()
+            for (m in mappings) {
+                val button = stateChips[m]
+                if (button != null) {
+                    toggleStates[button]?.let { out[m] = it.on(now) }
+                    continue
+                }
+                if (m.options?.mode != How.TOGGLE) continue
+                // A swipe chip whose Toggle the surface latches runs Held: its direction stays held while on.
+                val sh = touchShapers[m]
+                out[m] = if (sh != null && sh.options.mode == How.TOGGLE) sh.toggledOn(now) else abs(sourceValue(m.source)) >= 0.5f
+            }
+        }
+    }
+
+    /**
      * Every input held now, for the debug panel: touch controls pressed (by label), then each
      * device's held keys ("Gamepad: A"), then touchpad fingers.
      */
