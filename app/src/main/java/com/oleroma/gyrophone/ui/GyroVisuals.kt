@@ -615,7 +615,7 @@ private class VisState {
      * [GyroDisplay.laserSnakeBrush] wide at the head (shots and aiming their own brushes), thinning by
      * [GyroDisplay.laserSnakeTaper] and fading by [GyroDisplay.laserSnakeFade] toward its tail, with a soft
      * [GyroDisplay.laserSnakeGlow]; coloured as the paint (the Moving colours by where it is in the scene, or by
-     * the way it moved; shots in the Fire colours), shaded as the paint. It follows a smooth curve through the
+     * the way it moved; shots in the Fire colours), shaded as the paint, each by its own settings ([GyroDisplay.snakeShade] and the rest). It follows a smooth curve through the
      * stroke points ([LaserTrace.curve]), cut into steps of at most [LaserTrace.CURVE_STEP_DEG] with the colour,
      * width and fade blended along each, so a fast turn (points far apart) stays round and the joints don't show.
      * The pieces go newest first into one layer, each only where the layer is still empty (DST_OVER), so
@@ -628,14 +628,14 @@ private class VisState {
         val len = d.laserSnakeDeg.toFloat().coerceAtLeast(1f)
         snakeFire[0] = col(GyroDisplayColor.LASER_FIRE).toArgb(); snakeFire[1] = col(GyroDisplayColor.LASER_FIRE_BEHIND).toArgb()
         snakeFire[2] = col(GyroDisplayColor.LASER_AIM).toArgb(); snakeFire[3] = col(GyroDisplayColor.LASER_AIM_BEHIND).toArgb()
-        val ld = PointerPaintShader.lightDir(d.laserLightFrom)
+        val ld = PointerPaintShader.lightDir(d.snakeLightFrom)
         val reach = if (d.laserSmoothColours) LaserTrace.SMOOTH_REACH else 0
         val taper = d.laserSnakeTaper.coerceIn(0f, 1f)
         val fade = d.laserSnakeFade.coerceIn(0f, 1f)
         fun brushPx(deg: Int) = maxOf(1.5f * density, r * Math.toRadians(deg.coerceIn(1, 20).toDouble()).toFloat() * BRUSH_WIDTH)
         val paintPx = brushPx(d.laserSnakeBrush)
-        val firePx = brushPx(d.laserFireBrush)
-        val aimPx = brushPx(d.laserAimBrush)
+        val firePx = brushPx(d.snakeFireBrush)
+        val aimPx = brushPx(d.snakeAimBrush)
         // The pieces of this half, oldest first: from, to, width, colour, opacity.
         var m = 0
         var hasPrev = false
@@ -655,7 +655,7 @@ private class VisState {
             val headPx = when (kind) { LaserPaint.FIRE -> firePx; LaserPaint.AIM -> aimPx; else -> paintPx }
             val tailA = 1f - s.behindNewest(i - 1) / len
             val tailB = 1f - s.behindNewest(i) / len
-            val byWay = kind == LaserPaint.PAINT && d.laserColourByWay
+            val byWay = kind == LaserPaint.PAINT && d.snakeColourByWay
             if (byWay) {
                 // The way blends from the span before's to this span's.
                 s.direction(i, reach, wayB)
@@ -761,15 +761,15 @@ private class VisState {
             cr = (argb shr 16 and 0xFF) / 255f; cg = (argb shr 8 and 0xFF) / 255f; cb = (argb and 0xFF) / 255f
         }
         val facing = kotlin.math.abs(z).coerceAtMost(1f)
-        var k = (1f + (0.25f + 0.75f * facing - 1f) * d.laserShade) * (if (front) 1f else d.laserInside)
+        var k = (1f + (0.25f + 0.75f * facing - 1f) * d.snakeShade) * (if (front) 1f else d.snakeInside)
         // The scene's light (as the paint's shader): the side you see, outside near, inside far.
         LaserTrace.view(la[0], la[1], la[2], nv, axon = laserAxon, turned = turned)
         if (!front) for (q in 0..2) nv[q] = -nv[q]
         val diffuse = (nv[0] * ld[0] + nv[1] * ld[1] + nv[2] * ld[2]).coerceAtLeast(0f)
-        k *= 1f + (0.3f + 0.9f * diffuse - 1f) * d.laserLight
+        k *= 1f + (0.3f + 0.9f * diffuse - 1f) * d.snakeLight
         hv[0] = ld[0]; hv[1] = ld[1]; hv[2] = ld[2] + 1f
         LaserTrace.unit(hv)
-        val spec = d.laserShine * Math.pow((nv[0] * hv[0] + nv[1] * hv[1] + nv[2] * hv[2]).coerceAtLeast(0f).toDouble(), 24.0).toFloat()
+        val spec = d.snakeShine * Math.pow((nv[0] * hv[0] + nv[1] * hv[1] + nv[2] * hv[2]).coerceAtLeast(0f).toDouble(), 24.0).toFloat()
         fun b(v: Float) = ((v * k + spec).coerceIn(0f, 1f) * 255f + 0.5f).toInt()
         return (0xFF shl 24) or (b(cr) shl 16) or (b(cg) shl 8) or b(cb)
     }
