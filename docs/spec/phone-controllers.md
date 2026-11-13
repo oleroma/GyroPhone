@@ -36,9 +36,9 @@ Mappings use the same model as touch ([Mapping system](phone-mapping.md)): every
 
 `TriggerTuning`: **Press** from 0.5 of the pull, **Full pull** from 0.95.
 
-## Held buttons and the Motion tab
+## Held buttons and the Gyro tab
 
-A physical button's mapping editor has a **Motion** tab: gyro axes mapped there (`InputSource.Gyro` with id `phys:<device>:<control>`) take over that axis while the button is held, like a touch button's own gyro. Its ⚙ sets its gyro sensitivity, acceleration and touchpad speed while held, per layer (`HeldButton`, `ButtonGyro`). The last pressed of the held buttons wins.
+A physical button's mapping editor has a **Gyro** tab: gyro axes mapped there (`InputSource.Gyro` with id `phys:<device>:<control>`) take over that axis while the button is held, like a touch button's own gyro. Its ⚙ sets its gyro sensitivity, acceleration and touchpad speed while held, per layer (`HeldButton`, `ButtonGyro`). The last pressed of the held buttons wins.
 
 ## PC controller for gyro ratchet
 

@@ -128,6 +128,7 @@ import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.ControlGroups
+import com.oleroma.gyrophone.core.model.ToggleRule
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.FingerAxis
 import com.oleroma.gyrophone.core.model.FingerAxisSettings
@@ -507,6 +508,8 @@ fun PadScreen(
 
     /** The menu's Select: taps pick several controls ([picked], whole groups) and a drag moves them all. */
     var selectMode by remember { mutableStateOf(false) }
+    /** Select's Sync list is open (like Add's): Size, Flip, Never both. */
+    var syncOpen by remember { mutableStateOf(false) }
     var picked by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     /** The control whose Delete (in its long-press popup) is asking to be confirmed. */
@@ -2077,6 +2080,8 @@ fun PadScreen(
             valueBars?.let { ValueFramesBehind(it, Modifier.fillMaxSize()) }
             // Back first, so the front one (as touches see them) is drawn on top.
             // Gyro displays are drawn elsewhere. No return inside key {}: D8 can't take a composable inline return.
+            // Toggle-synced buttons are painted in their sync's own colour.
+            val syncTints = remember(ws.touchControls) { toggleSyncTints(ws.touchControls) }
             for (c in hitOrder(ws.touchControls, portrait).asReversed().filter { it.kind != TouchKind.DISPLAY }) key(c.id) {
                 val r = half(c)
                 val rh = halfH(c)
@@ -2090,6 +2095,7 @@ fun PadScreen(
                     selectedTint = if (isSelected) litColor(c.id) else null,
                     pressed = { c.id in pressedIds || c.id in heldSticks },
                     latched = { c.id in latchedIds },
+                    syncTint = syncTints[c.id],
                     // Values sitting in the button's middle take its label's place.
                     liveLabel = { if (valueBars != null && c.id in valueBars.centered) "" else liveLabels[c.id] },
                     widthDp = with(density) { (r * 2).toDp() },
@@ -2563,7 +2569,10 @@ fun PadScreen(
                         val canUndo = undoSteps.isNotEmpty() || (undoBase[0] != null && draft !== undoBase[0])
                         val canRedo = redoSteps.isNotEmpty()
                         val mainRows = min(panelRows, mainRowsCap(portrait))
-                        val listOpen = addOpen || presetsOpen
+                        // Select's Sync choices for the picked controls.
+                        val sync = SyncChoices(editControls(), if (selectMode) picked else emptySet())
+                        val syncShown = syncOpen && selectMode && sync.any
+                        val listOpen = addOpen || presetsOpen || syncShown
 
                         /** A row of the fixed column: ⠿ (moves the menu) and, if any, its icon. */
                         @Composable
@@ -2655,22 +2664,20 @@ fun PadScreen(
                                                 colors = pickColors,
                                                 onClick = { editWorkspace { ControlGroups.ungroup(it, picked) } }) { Text("Ungroup") }
                                         }
-                                        // Sync size: the picked ones keep their places but change size together (teal).
-                                        // A control is grouped or synced, never both: syncing takes it out of its group.
+                                        // Sync (teal), a menu: Size (the picked ones keep their places but change size
+                                        // together; a control is grouped or size-synced, never both), and for Toggle
+                                        // buttons Flip or Never both ("One at a time" for three or more).
                                         val syncColors = ButtonDefaults.filledTonalButtonColors(
                                             containerColor = SYNCED_COLOR,
                                             contentColor = Color.Black,
                                         )
-                                        val pickedHere = picked.filter { id -> controls.any { it.id == id && it.kind != TouchKind.FULLSCREEN } }
-                                        if (pickedHere.size >= 2) {
-                                            PanelPill(
-                                                colors = syncColors,
-                                                onClick = { editWorkspace { ControlGroups.syncSize(it, pickedHere) } }) { Text("Sync size") }
-                                        }
-                                        if (ControlGroups.anySynced(controls, picked)) {
-                                            PanelPill(
-                                                colors = syncColors,
-                                                onClick = { editWorkspace { ControlGroups.unsync(it, picked) } }) { Text("Unsync size") }
+                                        if (sync.any) {
+                                            if (syncShown) {
+                                                ListTab("Sync ▴", Modifier.layoutId(STRIP_LAST_ROW)) { syncOpen = false }
+                                            } else {
+                                                PanelPill(colors = syncColors, modifier = Modifier.layoutId(STRIP_LAST_ROW),
+                                                    onClick = { syncOpen = true; addOpen = false; presetsOpen = false }) { Text("Sync +") }
+                                            }
                                         }
                                         // One whole group picked: save it as a preset (Add preset).
                                         if (ControlGroups.units(controls, picked) == 1 && ControlGroups.anyGrouped(controls, picked)) {
@@ -2728,7 +2735,7 @@ fun PadScreen(
                                 } else {
                                     PanelPill(outlined = true,
                                         modifier = Modifier.layoutId(STRIP_LAST_ROW),
-                                        onClick = { addOpen = true; presetsOpen = false },
+                                        onClick = { addOpen = true; presetsOpen = false; syncOpen = false },
                                     ) { Text("Add +") }
                                 }
                                 // Your saved buttons, displays and groups, in their own row.
@@ -2737,7 +2744,7 @@ fun PadScreen(
                                 } else {
                                     PanelPill(outlined = true,
                                         modifier = Modifier.layoutId(STRIP_LAST_ROW),
-                                        onClick = { presetsOpen = true; addOpen = false },
+                                        onClick = { presetsOpen = true; addOpen = false; syncOpen = false },
                                     ) { Text("Add preset ★") }
                                 }
                                 if (snap) {
@@ -2786,7 +2793,41 @@ fun PadScreen(
                             ) {
                                 LeftColumn(listRows) { }
                                 ScrollStrip(listRows, fill = true, tab = true) {
-                                    if (addOpen) {
+                                    if (syncShown) {
+                                        // Sync: Size for any picked controls; Flip and Never both ("One at a time" for
+                                        // three or more) for picked Toggle buttons. ✓ marks their current toggle sync.
+                                        @Composable
+                                        fun SyncChip(label: String, chosen: Boolean = false, onClick: () -> Unit) {
+                                            val shape = RoundedCornerShape(50)
+                                            Text(
+                                                label,
+                                                color = if (chosen) Color.Black else Color.White,
+                                                style = MaterialTheme.typography.labelLarge,
+                                                maxLines = 1,
+                                                modifier = Modifier
+                                                    .clip(shape)
+                                                    .background(if (chosen) SYNCED_COLOR else Color.White.copy(alpha = 0.18f), shape)
+                                                    .clickable { syncOpen = false; onClick() }
+                                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                            )
+                                        }
+                                        val ids = picked
+                                        if (sync.canSize) SyncChip("Size") { editWorkspace { ControlGroups.syncSize(it, sync.sizeIds) } }
+                                        if (sync.flip) SyncChip("Flip", sync.rule == ToggleRule.FLIP) {
+                                            editWorkspace { ControlGroups.syncToggles(it, ids, ToggleRule.FLIP) }
+                                        }
+                                        if (sync.neverBoth) SyncChip(if (ids.size >= 3) "One at a time" else "Never both", sync.rule == ToggleRule.NEVER_BOTH) {
+                                            editWorkspace { ControlGroups.syncToggles(it, ids, ToggleRule.NEVER_BOTH) }
+                                        }
+                                        if (sync.sizeSynced) SyncChip("Unsync size") { editWorkspace { ControlGroups.unsync(it, ids) } }
+                                        if (sync.toggleSynced) SyncChip("Unsync toggles") { editWorkspace { ControlGroups.unsyncToggles(it, ids) } }
+                                        if (sync.flip && !sync.neverBoth) Text(
+                                            "Never both needs the same Initial state",
+                                            color = Color.White.copy(alpha = 0.7f),
+                                            style = MaterialTheme.typography.labelLarge,
+                                            modifier = Modifier.padding(horizontal = 4.dp),
+                                        )
+                                    } else if (addOpen) {
                                         /** Adds a button; [empty]: with every action it would take from the workspace cleared. */
                                         fun addButton(empty: Boolean, at: Offset?) {
                                             val d = draft ?: return
@@ -3424,6 +3465,7 @@ private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>)
         id = id,
         group = null,
         sizeSync = null,
+        toggleSync = null,
         x = toCentre(c.x, 0.05f),
         y = toCentre(c.y, 0.05f).coerceIn(lHalf, 1f - lHalf),
         portrait = Placement(toCentre(p.x, 0.05f).coerceIn(pHalf, 1f - pHalf), toCentre(p.y, 0.03f), p.size),
@@ -3477,6 +3519,8 @@ private fun LiveControl(
     selectedTint: Color?,
     pressed: () -> Boolean,
     latched: () -> Boolean,
+    /** Its toggle sync's colour ([toggleSyncTints]): its outline, and its fill while on. */
+    syncTint: Color? = null,
     liveLabel: () -> String?,
     widthDp: Dp,
     heightDp: Dp,
@@ -3490,8 +3534,8 @@ private fun LiveControl(
     val tint = when {
         selectedTint != null -> selectedTint
         isPressed -> Color(0xFF7CC4FF)
-        isLatched -> Color(0xFF8FE39A)
-        else -> Color(0x66FFFFFF)
+        isLatched -> syncTint ?: Color(0xFF8FE39A)
+        else -> syncTint?.copy(alpha = 0.8f) ?: Color(0x66FFFFFF)
     }
     PadControl(
         control = control,
@@ -3556,6 +3600,27 @@ private fun PadControl(
         )
     }
 }
+
+/**
+ * Each toggle sync's own colour ([TouchControl.toggleSync]), by control id: the syncs in order
+ * of their ids take the colours in turn ([toggleSyncTint]), never the same one twice.
+ */
+private fun toggleSyncTints(controls: List<TouchControl>): Map<String, Color> {
+    val syncs = controls.mapNotNull { it.toggleSync }.distinct().sorted()
+    if (syncs.isEmpty()) return emptyMap()
+    return controls.filter { it.toggleSync != null }.associate { c ->
+        c.id to toggleSyncTint(syncs.indexOf(c.toggleSync))
+    }
+}
+
+/** The [i]th toggle sync's colour: the base ones, then new hues spread by the golden angle so none repeats. */
+private fun toggleSyncTint(i: Int): Color =
+    TOGGLE_SYNC_COLORS.getOrNull(i) ?: Color.hsv(((i - TOGGLE_SYNC_COLORS.size) * 137.508f + 20f) % 360f, 0.55f, 1f)
+
+/** Toggle syncs' colours: purple, orange, pink, yellow, lime, lavender. */
+private val TOGGLE_SYNC_COLORS = listOf(
+    Color(0xFFB07CFF), Color(0xFFFFA14D), Color(0xFFFF6FAE), Color(0xFFFFE066), Color(0xFFC0EB75), Color(0xFFD9B8FF),
+)
 
 /** The smallest a control's label shrinks to. */
 private const val MIN_LABEL_SP = 7f
@@ -3672,6 +3737,18 @@ private fun PanelMenu(panel: Rect, onDismiss: () -> Unit, content: @Composable C
             )
         }
     }
+}
+
+/** Select's Sync choices for the [picked] controls ([ControlGroups]). */
+private class SyncChoices(controls: List<TouchControl>, picked: Set<String>) {
+    val sizeIds: List<String> = picked.filter { p -> controls.any { c -> c.id == p && c.kind != TouchKind.FULLSCREEN } }
+    val canSize: Boolean = sizeIds.size >= 2
+    val sizeSynced: Boolean = ControlGroups.anySynced(controls, picked)
+    val flip: Boolean = ControlGroups.canSyncToggles(controls, picked)
+    val neverBoth: Boolean = ControlGroups.canNeverBoth(controls, picked)
+    val toggleSynced: Boolean = ControlGroups.anyToggleSynced(controls, picked)
+    val rule: ToggleRule? = ControlGroups.toggleRuleOf(controls, picked)
+    val any: Boolean = canSize || sizeSynced || flip || toggleSynced
 }
 
 /** A capsule in a [PanelMenu]; the [chosen] one is filled. */

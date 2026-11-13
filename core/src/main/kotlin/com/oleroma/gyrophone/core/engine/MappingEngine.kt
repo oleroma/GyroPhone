@@ -30,6 +30,7 @@ import com.oleroma.gyrophone.core.model.HapticFeel
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KeyMode
 import com.oleroma.gyrophone.core.model.How
+import com.oleroma.gyrophone.core.model.ButtonHow
 import com.oleroma.gyrophone.core.model.MapOptions
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MotionAxis
@@ -42,6 +43,7 @@ import com.oleroma.gyrophone.core.model.StickDiagonal
 import com.oleroma.gyrophone.core.model.StickZones
 import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.TouchControl
+import com.oleroma.gyrophone.core.model.ToggleRule
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchShape
 import com.oleroma.gyrophone.core.model.FingerAxis
@@ -703,8 +705,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (c.gyro.isEmpty()) continue
                 c.gyroIn(sets)
             }
-            if (g.anyGyro) held = g
-            if (g.anyTouch) heldTouch = g
+            // Stacked setting by setting: the last pressed that sets one wins it, then the one before.
+            if (g.anyGyro) held = held?.under(g) ?: g
+            if (g.anyTouch) heldTouch = heldTouch?.under(g) ?: g
         }
         // Slider overrides lie over everything set, a held button's own included.
         gyroBase = (held?.over(eff.gyro) ?: eff.gyro).let { if (ws.sliders.isEmpty()) it else SliderOverrides.overGyro(it, ws.sliders) }
@@ -924,6 +927,116 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** Touch controls held, first pressed first: the last one's gyro mappings win ([gyroRoutes]). */
     private val pressOrder = LinkedHashSet<String>()
+
+    /**
+     * Buttons with How Toggle turned on by a touch (touch control ids, [PHYS] + a held button's id):
+     * they stay in [pressOrder] (their gyro cards and gyro settings on) until the next touch.
+     */
+    private val latched = HashSet<String>()
+
+    /** [id] (a touch control, or [PHYS] + a held button) has How Toggle in [w]. */
+    private fun togglesGyro(id: String, w: Workspace = ws): Boolean =
+        if (id.startsWith(PHYS)) w.heldButtons.firstOrNull { PHYS + it.id == id }?.let { ButtonHow.toggles(w, it) } == true
+        else w.touchControls.firstOrNull { it.id == id }?.how == How.TOGGLE
+
+    /**
+     * A Toggle touch button's state: on or off from its Initial state ([TouchControl.initialOn]),
+     * [shaper] (a Toggle with the button's "Also ends on") on while a touch turned it away from
+     * it. Its plain press chips ([stateChips]) press while it is on; so do its gyro cards ([latched]).
+     */
+    private class ToggleState(val c: TouchControl, val shaper: Shaper) {
+        /** [shaper] was on at the last [settleToggles]. */
+        var wasAway = false
+
+        /** What its state chips press ("Also ends on" next input and same keystroke watch them). */
+        var targets: List<OutputTarget> = emptyList()
+
+        fun on(now: Long): Boolean = c.initialOn != shaper.toggledOn(now)
+    }
+
+    /** Toggle touch buttons' states, by id. */
+    private var toggleStates: Map<String, ToggleState> = emptyMap()
+
+    /** Touch mappings that press while their Toggle button is on ([ButtonHow.stateOf]), with its id. */
+    private var stateChips: Map<Mapping, String> = emptyMap()
+
+    private fun toggleOptions(c: TouchControl) = MapOptions(
+        how = How.TOGGLE, minHoldMs = 0, endsOnLetGo = c.endsOnLetGo, endsAfterMs = c.endsAfterMs,
+        endsOnNextInput = c.endsOnNextInput, endsOnSame = c.endsOnSame,
+    )
+
+    /** Toggle buttons' states for workspace [w], keeping the ones of [same] workspace that are still Toggle. */
+    private fun toggleStatesOf(w: Workspace, same: Boolean): Map<String, ToggleState> {
+        val now = clock()
+        val out = LinkedHashMap<String, ToggleState>()
+        for (c in w.touchControls) {
+            if (c.how != How.TOGGLE || c.kind != TouchKind.BUTTON) continue
+            val o = toggleOptions(c)
+            val old = if (same) toggleStates[c.id] else null
+            val sh = if (old != null && old.shaper.options == o) old.shaper else Shaper(o).also {
+                if (old != null && old.shaper.toggledOn(now)) it.turnOn(now)
+            }
+            out[c.id] = ToggleState(c, sh).also { it.wasAway = sh.toggledOn(now) }
+        }
+        if (out.isEmpty()) return out
+        for ((m, id) in stateChips) out[id]?.let { it.targets += m.target }
+        return out
+    }
+
+    /**
+     * Toggle buttons' states after touches or endings: a toggle sync follows the button that
+     * changed (Flip: the others turn with it; Never both: one turned away turns the others back),
+     * and each button's gyro cards follow its state ([latched]).
+     */
+    private fun settleToggles(now: Long) {
+        if (toggleStates.isEmpty()) return
+        for (t in toggleStates.values) {
+            val away = t.shaper.toggledOn(now)
+            if (away == t.wasAway) continue
+            t.wasAway = away
+            val sync = t.c.toggleSync ?: continue
+            for (o in toggleStates.values) {
+                if (o === t || o.c.toggleSync != sync) continue
+                val oAway = o.shaper.toggledOn(now)
+                when (t.c.toggleRule) {
+                    ToggleRule.FLIP -> if (oAway != away) {
+                        if (away) o.shaper.turnOn(now) else o.shaper.letGo(now)
+                        o.wasAway = away
+                    }
+
+                    ToggleRule.NEVER_BOTH -> if (away && oAway) {
+                        o.shaper.letGo(now); o.wasAway = false
+                    }
+                }
+            }
+        }
+        var changed = false
+        for (t in toggleStates.values) {
+            val id = t.c.id
+            val on = t.on(now)
+            if (on == (id in latched)) continue
+            changed = true
+            if (on) {
+                latched.add(id); pressOrder.remove(id); pressOrder.add(id)
+            } else {
+                latched.remove(id); pressOrder.remove(id)
+            }
+        }
+        if (changed) updateGyroNow()
+    }
+
+    /** Button [id] went down: a Toggle one turns its latch on or off. Returns false when it isn't Toggle. */
+    private fun latchDown(id: String): Boolean {
+        toggleStates[id]?.let { t ->
+            val now = clock()
+            t.shaper.update(true, now)
+            settleToggles(now)
+            return true
+        }
+        if (!togglesGyro(id)) return false
+        if (latched.remove(id)) pressOrder.remove(id) else { latched.add(id); pressOrder.add(id) }
+        return true
+    }
 
     /** Controls held through [setTouch], with their press time. */
     private val setTouchHeld = HashMap<String, Long>()
@@ -1263,10 +1376,25 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             kept.clear(); slideBase.clear(); shown.clear()
         } else if (kept.isNotEmpty()) kept.values.removeIf { it.committed }
         // The touchpad mappings it does not set come from the Defaults.
-        val w = loaded.copy(mappings = Bindings.upgradeSwipes(Inheritance.workspace(loaded, profile.defaults)))
+        val filled = loaded.copy(mappings = Bindings.upgradeSwipes(Inheritance.workspace(loaded, profile.defaults)))
+        // Chips that don't set their own How take their button's or key's ([ButtonHow]).
+        val w = filled.copy(
+            mappings = ButtonHow.touch(filled, filled.mappings),
+            pads = if (filled.keyTimings.none { it.how != null }) filled.pads else filled.pads.map { it.copy(mappings = ButtonHow.keys(filled, it.mappings)) },
+            keyboard = ButtonHow.keys(filled, filled.keyboard), mouse = ButtonHow.keys(filled, filled.mouse), phone = ButtonHow.keys(filled, filled.phone),
+        )
+        // A Toggle button's plain press chips press while it is on.
+        stateChips = ButtonHow.stateChips(filled, filled.mappings)
+        toggleStates = toggleStatesOf(w, loaded.id == ws.id)
+        // Another workspace lets go of every latch; a button no longer Toggle lets go of its own.
+        val unlatch = if (loaded.id != ws.id) latched.toList() else latched.filter { !togglesGyro(it, w) }
+        for (id in unlatch) {
+            latched.remove(id)
+            if (id !in touches && id.removePrefix(PHYS) !in physDown) pressOrder.remove(id)
+        }
         ws = w
         heldPhys = heldOf(w)
-        for (id in physDown) pressOrder.remove(PHYS + id)
+        for (id in physDown) if (PHYS + id !in latched) pressOrder.remove(PHYS + id)
         physDown.clear()
         axisStick.fill(null); axisStickRx.fill(null); axisTrigger.fill(null)
         for ((id, axes) in PhysicalSticks.sticks) w.stickTunings[id]?.let { axisStick[axes.first] = it; axisStick[axes.second] = it }
@@ -1344,13 +1472,15 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         carried = Array(allPads.size + 1) { HashMap() }; anyCarried = false
         applyLayers()
         touchpad.cancel(clock())
+        // Toggle buttons that are on keep their gyro cards on.
+        settleToggles(clock())
     }
 
     /** Forgets every held input (keys, axes, touches, sticks, fingers, pulses, latches). */
     private fun releaseHeld() {
         for (d in deviceList) d.clear()
         anyDevice.clear()
-        touches.clear(); pressOrder.clear(); physDown.clear(); setTouchHeld.clear(); touchSticks.clear()
+        touches.clear(); pressOrder.clear(); latched.clear(); physDown.clear(); setTouchHeld.clear(); touchSticks.clear()
         fingers.clear(); fingerPointer.clear(); sensOrder.clear(); sensNow.fill(Float.NaN); touchSensNow.fill(Float.NaN); tapNow = -1
         gyroValNow.fill(Float.NaN)
         kept.clear(); slideBase.clear(); shown.clear()
@@ -1569,6 +1699,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun latchedTouches(): Set<String> = synchronized(lock) {
         val out = HashSet<String>()
         for ((id, s) in surfaces) if (s.latched) out.add(id)
+        out.addAll(latched)
         out
     }
 
@@ -1648,6 +1779,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             val zone = areas[TouchAreaKind.ZONE.ordinal]
             pressed.addAll(zone.since.keys); pressed.addAll(zone.late.keys)
             for ((id, s) in surfaces) if (s.latched) latched.add(id)
+            latched.addAll(this.latched)
         }
     }
 
@@ -2204,6 +2336,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             anyCarried = false
             gestureButtons.clear(); bpPass.fill(false); bpPassFull.fill(false); passFull = 0
             applyLayers()
+            // Toggle buttons go back to their Initial states.
+            for (t in toggleStates.values) {
+                t.shaper.reset(); t.wasAway = false
+            }
+            settleToggles(clock())
             mouseDx = 0; mouseDy = 0; wheel = 0; hwheel = 0; gyroDx = 0; gyroDy = 0
             gyroPad.fill(0f)
             touchpad.reset()
@@ -2263,6 +2400,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         if (anyCarried) pruneCarried()
         hapticNow.clear()
+        if (toggleStates.isNotEmpty()) settleToggles(now)
         forEachGroup { ms, dev -> accumulate(ms, dev) }
         // A device skipped (nothing held) holds no key mode press.
         for (i in deviceList.indices) {
@@ -2288,6 +2426,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (valueMapped && sensMapped) refreshSens()
         endOnNextInput(now)
         endOnSame(now)
+        if (toggleStates.isNotEmpty()) settleToggles(now)
         collectHaptics()
         for (i in deviceList.indices) deviceList[i].shownInSnapshot()
         anyDevice.shownInSnapshot()
@@ -2566,7 +2705,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val latch = touchpad.latchEndsOnNext || surfaceList.any { it.latchEndsOnNext }
         var anyToggle = false
         for (i in 0 until stickies.size) if (stickies.shapers[i] != null) anyToggle = true
-        if (!anyToggle && !latch) {
+        var buttons = false
+        if (toggleStates.isNotEmpty()) for (t in toggleStates.values) if (nextWatch(t, now)) buttons = true
+        if (!anyToggle && !latch && !buttons) {
             latchNextUsed = false; stickies.clear(); return
         }
         val keys = stickyKeys
@@ -2577,6 +2718,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             is OutputTarget.Key -> if (t.usage in 0..255) keys[t.usage] = true
             is OutputTarget.Pad -> pad = pad or (1 shl t.button.bit)
             is OutputTarget.Mouse -> mouse = mouse or (1 shl t.button.bit)
+            else -> Unit
+        }
+        // A Toggle button's own outputs are not another input for it.
+        if (buttons) for (t in toggleStates.values) if (nextWatch(t, now)) for (o in t.targets) when (o) {
+            is OutputTarget.Key -> if (o.usage in 0..255) keys[o.usage] = true
+            is OutputTarget.Pad -> pad = pad or (1 shl o.button.bit)
+            is OutputTarget.Mouse -> mouse = mouse or (1 shl o.button.bit)
             else -> Unit
         }
         var other = (accButtons and pad.inv()) != 0 || (accMouse and mouse.inv()) != 0 ||
@@ -2599,6 +2747,21 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
         }
         stickies.clear()
+        if (buttons) for (t in toggleStates.values) {
+            if (!nextWatch(t, now)) continue
+            val sh = t.shaper
+            if (other) sh.nextUsed = true
+            else if (sh.nextUsed) {
+                sh.letGo(now)
+                // Back off: its outputs let go in this same report.
+                if (!t.c.initialOn) for (o in t.targets) when (o) {
+                    is OutputTarget.Key -> if (o.usage in 0..255) heldKeys[o.usage] = false
+                    is OutputTarget.Pad -> accButtons = accButtons and (1 shl o.button.bit).inv()
+                    is OutputTarget.Mouse -> accMouse = accMouse and (1 shl o.button.bit).inv()
+                    else -> Unit
+                }
+            }
+        }
         if (latch) {
             if (other) latchNextUsed = true
             else if (latchNextUsed) {
@@ -2608,6 +2771,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
         }
     }
+
+    /** Toggle button [t] is away from its Initial state and ends on the next input. */
+    private fun nextWatch(t: ToggleState, now: Long) = t.c.endsOnNextInput && t.shaper.toggledOn(now)
 
     /**
      * Outputs pressed by mappings that are not toggles watching for them ([MapOptions.endsOnSame]):
@@ -2620,11 +2786,25 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private val sameWatchers = Stickies()
     private val onToggles = Stickies()
 
+    /** Outputs Toggle buttons' state chips press (with the button's id), now and at the last snapshot: a button's own presses are not "the same" for it. */
+    private var stateNow = ArrayList<Pair<String, OutputTarget>>()
+    private var stateBefore = ArrayList<Pair<String, OutputTarget>>()
+
+    /** [t] is pressed in [others] by a mapping that is not one of button [id]'s state chips ([states]). */
+    private fun pressedBesides(id: String, t: OutputTarget, others: List<OutputTarget>, states: List<Pair<String, OutputTarget>>): Boolean {
+        var n = 0
+        for (i in others.indices) if (others[i] == t) n++
+        if (n == 0) return false
+        for (i in states.indices) if (states[i].first == id && states[i].second == t) n--
+        return n > 0
+    }
+
     /** What swipe latches that end on their own output pressed elsewhere press. */
     private val latchSameTargets = ArrayList<OutputTarget>()
 
     /** Mapping [m] (of [dev]'s group) presses its output now: notes it for [endOnSame]. */
     private fun sameSeen(m: Mapping, dev: Dev?, now: Long) {
+        if (dev == null && stateChips.isNotEmpty()) stateChips[m]?.let { stateNow.add(it to m.target) }
         val o = m.options
         val toggle = o != null && o.mode == How.TOGGLE
         if (toggle && o!!.endsOnTap && latchChip(m.source)) {
@@ -2673,10 +2853,22 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 for (sf in surfaceList) sf.endLatchOnSame()
             }
         }
+        // A Toggle button away from its Initial state goes back when another mapping starts pressing one of its outputs.
+        if (toggleStates.isNotEmpty()) for (t in toggleStates.values) {
+            val sh = t.shaper
+            if (!t.c.endsOnSame || !sh.toggledOn(now)) continue
+            if (sh.sameArmed) for (o in t.targets) {
+                if (pressedBesides(t.c.id, o, othersNow, stateNow) && !pressedBesides(t.c.id, o, othersBefore, stateBefore)) {
+                    sh.letGo(now); break
+                }
+            }
+            sh.sameArmed = true
+        }
         // A toggle seen on: the next snapshot's press of its output is a new one.
         for (i in 0 until onToggles.size) onToggles.shapers[i]!!.sameArmed = true
         sameWatchers.clear(); onToggles.clear(); latchSameTargets.clear()
         val b = othersBefore; othersBefore = othersNow; othersNow = b; othersNow.clear()
+        val sb = stateBefore; stateBefore = stateNow; stateNow = sb; stateNow.clear()
     }
 
     /** Whether [ms] maps analog axis [a] or [b] to a game pad trigger. */
@@ -2765,7 +2957,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
             if (on == (b.id in physDown)) continue
             changed = true
-            if (on) { physDown.add(b.id); pressOrder.add(PHYS + b.id) } else { physDown.remove(b.id); pressOrder.remove(PHYS + b.id) }
+            val id = PHYS + b.id
+            if (on) {
+                physDown.add(b.id)
+                if (!latchDown(id)) pressOrder.add(id)
+            } else {
+                physDown.remove(b.id)
+                if (id !in latched && !togglesGyro(id)) pressOrder.remove(id)
+            }
         }
         if (changed) updateGyroNow()
     }
@@ -2943,7 +3142,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (dev == null && touchBlocked.isNotEmpty() && m in touchBlocked) return 0f
         val src = m.source
         val derived = derivedTrigger(src)
-        val v = value(src, dev, output)
+        // A Toggle button's plain press chip presses while the button is on.
+        val v = if (dev == null && stateChips.isNotEmpty()) stateChips[m]?.let { if (toggleStates[it]?.on(now) == true) 1f else 0f }
+            ?: value(src, dev, output) else value(src, dev, output)
         // Most layouts have no told-apart double taps: no lookup then.
         val split = if (splitInfo.isEmpty()) Shaper.Split.NONE else splitInfo[m] ?: Shaper.Split.NONE
         val o = m.options ?: if (derived == Trigger.HOLD && split == Shaper.Split.NONE) return v else NO_OPTIONS
@@ -3007,6 +3208,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         go(touchShapers)
         for (d in deviceList) go(d.shapers)
         go(anyDevice.shapers)
+        if (toggleStates.isNotEmpty()) {
+            for (t in toggleStates.values) if (t.c.endsOnLetGo) t.shaper.letGo(now)
+            settleToggles(now)
+        }
         touchpad.endLatch(letGo = true)
         for (sf in surfaceList) sf.endLatch(letGo = true)
         if (kept.isNotEmpty()) letGoKept()
@@ -3021,6 +3226,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (dev.shapers.isNotEmpty()) for (sh in dev.shapers.values) d = min(d, sh.deadline(now))
         }
         if (anyDevice.shapers.isNotEmpty()) for (sh in anyDevice.shapers.values) d = min(d, sh.deadline(now))
+        if (toggleStates.isNotEmpty()) for (t in toggleStates.values) d = min(d, t.shaper.deadline(now))
         return d
     }
 
@@ -3381,7 +3587,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val n = touches[id] ?: 0
         touches[id] = n + 1
         if (n == 0) {
-            pressOrder.add(id); updateGyroNow()
+            if (!latchDown(id)) pressOrder.add(id)
+            updateGyroNow()
         }
         if (n == 0 && tapList.isNotEmpty()) controlDown(id, clock())
     }
@@ -3392,7 +3599,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             touches[id] = n - 1; return
         }
         touches.remove(id)
-        pressOrder.remove(id)
+        toggleStates[id]?.shaper?.update(false, clock())
+        if (id !in latched && !togglesGyro(id)) pressOrder.remove(id)
         updateGyroNow()
         if (tapList.isNotEmpty()) controlUp(id, clock())
     }
