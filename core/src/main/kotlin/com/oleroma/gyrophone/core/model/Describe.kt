@@ -93,6 +93,13 @@ object Describe {
         is OutputTarget.GyroSens -> gyroSens(t)
         is OutputTarget.TouchSens -> touchSens(t)
         OutputTarget.TapTime -> "Tap time (how long a tap may last, and the gap of a double tap)"
+        is OutputTarget.GyroGlide -> "Gyro glide" + (if (t.axis == MotionAxis.NONE) "" else ", " + t.axis.label.lowercase()) +
+            " (how long inertia glides on after a ratchet; Inertia must be on)"
+        is OutputTarget.TiltRange -> "Tilt range" + when (t.axis) {
+            null -> ""
+            StickAxis.X -> ", sideways"
+            StickAxis.Y -> ", forward and back"
+        } + " (how far you tilt for full)"
     }
 
     /** "Gyro sensitivity" or "Gyro sensitivity, yaw". */
@@ -226,6 +233,12 @@ object Describe {
             StickAxis.Y -> " Y"
         }
         OutputTarget.TapTime -> "Tap time"
+        is OutputTarget.GyroGlide -> "Glide" + if (t.axis == MotionAxis.NONE) "" else " " + t.axis.label.lowercase()
+        is OutputTarget.TiltRange -> "Tilt range" + when (t.axis) {
+            null -> ""
+            StickAxis.X -> " X"
+            StickAxis.Y -> " Y"
+        }
     }
 
     private val keyboardOrder: List<Int> = buildList {
@@ -264,7 +277,9 @@ object Describe {
         "Gyro" to listOf(OutputTarget.GyroPause) +
             MotionAxis.shown.map { OutputTarget.GyroPauseAxis(it) } +
             OutputTarget.GyroToggle + OutputTarget.GyroSens() +
-            MotionAxis.shown.map { OutputTarget.GyroSens(it) },
+            MotionAxis.shown.map { OutputTarget.GyroSens(it) } +
+            OutputTarget.GyroGlide() + MotionAxis.shown.map { OutputTarget.GyroGlide(it) } +
+            listOf(OutputTarget.TiltRange(), OutputTarget.TiltRange(StickAxis.X), OutputTarget.TiltRange(StickAxis.Y)),
         "Touch" to listOf(OutputTarget.TouchSens(), OutputTarget.TouchSens(StickAxis.X), OutputTarget.TouchSens(StickAxis.Y), OutputTarget.TapTime),
         "Phone" to listOf(
             OutputTarget.Haptic(held = false),

@@ -1297,6 +1297,8 @@ data class GyroSettings(
     companion object {
         const val DEFAULT_SENSITIVITY = 16f
         const val DEFAULT_GLIDE_MS = 325f
+        const val MIN_GLIDE_MS = 100f
+        const val MAX_GLIDE_MS = 1000f
         const val DEFAULT_TILT_RANGE_DEG = 30f
         const val MIN_TILT_RANGE_DEG = 5f
         const val MAX_TILT_RANGE_DEG = 90f

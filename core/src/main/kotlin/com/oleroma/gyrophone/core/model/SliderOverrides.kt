@@ -30,6 +30,16 @@ object SliderOverrides {
             StickAxis.Y -> WorkspaceDefaults.moveKey(MoveSlot.Y1, MoveField.SENSITIVITY)
         }
         OutputTarget.TapTime -> WorkspaceDefaults.LONG_PRESS
+        is OutputTarget.GyroGlide -> WorkspaceDefaults.gyroKey(
+            if (t.axis == MotionAxis.NONE) "glideMs" else t.axis.name.lowercase() + "GlideMs"
+        )
+        is OutputTarget.TiltRange -> WorkspaceDefaults.gyroKey(
+            when (t.axis) {
+                null -> "tiltRangeDeg"
+                StickAxis.X -> "tiltXRangeDeg"
+                StickAxis.Y -> "tiltYRangeDeg"
+            }
+        )
         else -> null
     }
 
@@ -38,6 +48,8 @@ object SliderOverrides {
         is OutputTarget.GyroSens -> old is OutputTarget.GyroSens && (new.axis == MotionAxis.NONE || new.axis == old.axis)
         is OutputTarget.TouchSens -> old is OutputTarget.TouchSens && (new.axis == null || new.axis == old.axis)
         OutputTarget.TapTime -> old == OutputTarget.TapTime
+        is OutputTarget.GyroGlide -> old is OutputTarget.GyroGlide && (new.axis == MotionAxis.NONE || new.axis == old.axis)
+        is OutputTarget.TiltRange -> old is OutputTarget.TiltRange && (new.axis == null || new.axis == old.axis)
         else -> false
     }
 
@@ -59,6 +71,9 @@ object SliderOverrides {
     fun overGyro(g: GyroSettings, list: List<SliderOverride>): GyroSettings {
         var r = g
         for (o in list) {
+            if (o.target is OutputTarget.GyroGlide || o.target is OutputTarget.TiltRange) {
+                r = gyroValue(r, o.target, o.value); continue
+            }
             val t = o.target as? OutputTarget.GyroSens ?: continue
             val v = o.value
             r = when (t.axis) {
@@ -72,6 +87,27 @@ object SliderOverrides {
             }
         }
         return r
+    }
+
+    /**
+     * [g] with Gyro glide or Tilt range [t] set to [v] (ms, degrees), within their limits; an
+     * every-axis one clears the axes' own.
+     */
+    fun gyroValue(g: GyroSettings, t: OutputTarget, v: Float): GyroSettings = when (t) {
+        is OutputTarget.GyroGlide -> {
+            val ms = v.coerceIn(GyroSettings.MIN_GLIDE_MS, GyroSettings.MAX_GLIDE_MS)
+            if (t.axis == MotionAxis.NONE) g.copy(glideMs = ms, yawGlideMs = null, pitchGlideMs = null, rollGlideMs = null)
+            else g.withGlide(t.axis, g.ownGlide(t.axis).copy(glideMs = ms))
+        }
+        is OutputTarget.TiltRange -> {
+            val deg = v.coerceIn(GyroSettings.MIN_TILT_RANGE_DEG, GyroSettings.MAX_TILT_RANGE_DEG)
+            when (t.axis) {
+                null -> g.copy(tiltRangeDeg = deg, tiltXRangeDeg = null, tiltYRangeDeg = null)
+                StickAxis.X -> g.copy(tiltXRangeDeg = deg)
+                StickAxis.Y -> g.copy(tiltYRangeDeg = deg)
+            }
+        }
+        else -> g
     }
 
     /** [t] with the touch overrides of [list] over it. */
