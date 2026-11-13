@@ -49,7 +49,7 @@ object ButtonLibrary {
     fun save(w: Workspace, c: TouchControl, taken: Collection<String>): LibraryButton {
         val mappings = w.mappings.filter { MappingProfiles.touchId(it.source) == c.id }
         val used = setsOf(mappings)
-        return LibraryButton(newId(taken), c.copy(group = null, sizeSync = null), mappings, w.sets.filter { it.id in used }.map { it.copy(settings = null) })
+        return LibraryButton(newId(taken), c.copy(group = null, sizeSync = null, toggleSync = null), mappings, w.sets.filter { it.id in used }.map { it.copy(settings = null) })
     }
 
     /** [members] of [w] (a group, in its order) as one library item, given an id not in [taken]. */
@@ -59,10 +59,10 @@ object ButtonLibrary {
         val used = setsOf(mappings)
         return LibraryButton(
             newId(taken),
-            members.first().copy(group = null, sizeSync = null),
+            members.first().copy(group = null, sizeSync = null, toggleSync = null),
             mappings,
             w.sets.filter { it.id in used }.map { it.copy(settings = null) },
-            more = members.drop(1).map { it.copy(group = null, sizeSync = null) },
+            more = members.drop(1).map { it.copy(group = null, sizeSync = null, toggleSync = null) },
         )
     }
 
@@ -135,7 +135,7 @@ object ButtonLibrary {
         val mp = moved.portrait
         val controls = members.mapIndexed { i, c ->
             if (i == 0) {
-                moved.copy(group = group, sizeSync = null)
+                moved.copy(group = group, sizeSync = null, toggleSync = null)
             } else {
                 c.copy(
                     id = ids[i],

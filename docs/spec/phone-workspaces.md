@@ -50,7 +50,7 @@ Settings that are not keys are the workspace's alone: its layout, mappings, laye
 
 - **Defaults → workspace**: the Defaults' touchpad, gyro, tilt and shake chips fill the Base of each workspace (`Inheritance.fill`). The Defaults map nothing until the person maps something there (Settings › Defaults › Mappings, with the presets Windows touchpad and Gyro mouse).
 - **Workspace touchpad → buttons** (see-through buttons): each touch button takes the touchpad's chips (in the layers in use) it doesn't block (`toButtons`, `passedOn`). The button doesn't run them: a finger on it is passed straight to the touchpad, which runs them as if the finger were on the background, and the button's own chips run as well. A button with no own chips never shows pressed: it is a window onto the touchpad. A button that blocks everything it would take keeps its fingers. A button finger and a background finger never make one multi-finger gesture: the later one only aims (moves). While the touchpad runs a button's finger, that button's Off chips also hold back the touchpad's matching chips.
-- **Workspace gyro → held buttons**: while a button is held, each gyro axis does the workspace's mapping unless the button maps that axis itself (`gyroInherited`); this stays whole-axis. Physical buttons with a Motion tab work the same way ([Controllers](phone-controllers.md)).
+- **Workspace gyro → held buttons**: while a button is held, each gyro axis does the workspace's mapping unless the button maps that axis itself (`gyroInherited`); this stays whole-axis. Physical buttons with a Gyro tab work the same way ([Controllers](phone-controllers.md)).
 - **Tidying**: an Off whose own chip is mapped at the same level is dropped (`tidy`).
 - **Older setups**: setups saved before chip-by-chip inheritance are converted once on load (`Inheritance.chipByChip`, `Workspace.chipInherit`): wherever a card used to hide all the parent's chips, each such chip gets an Off, so they work as before. Importing a profile with other Defaults does the same against the file's Defaults.
 
@@ -71,7 +71,7 @@ All on the phone, in the app's private storage (`data/ProfileStore.kt`):
 
 - `files/profiles/<id>.json`: the workspace set, read with `ProfileJson.decode` and written atomically (`.tmp` then replace). At start only the set's own file is read (`ProfileStore.readOwnFile`); every profile file is read only for the one-time merge, or when the set's file is missing, unreadable or has a second copy. The runtime that reads it is built on a background thread from `GyroPhoneApp.onCreate`, so it overlaps the activity's start; the pad waits only for what is left. A mapping a build can't read (a newer build's action) is left out (`decodeLenient`) and the file is first copied to `<file>.newer-build.bak` before it is saved over. A file that fails to decode is skipped but never deleted or overwritten.
 - `files/button_library.json`: the button library (buttons saved with their look and mappings, shared by every workspace).
-- Shared preferences: app-wide options, the active workspace, capsule order, UI state (open sections, card order, recent targets), the gyro bias.
+- Shared preferences: app-wide options, the active workspace, capsule order, UI state (open sections, the touchpad's and physical controls' card order, recent targets; a touch control's card order is its own, in the workspace), the gyro bias.
 - The Wi-Fi pairing store and the key folders ([Connection](phone-connection.md)).
 
 The app has `allowBackup="false"`.

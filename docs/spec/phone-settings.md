@@ -22,12 +22,12 @@ Every settings page (`ui/SettingsLayout.kt`) has a low **search** field on top (
 | | Screen rotation: Auto, Landscape, Portrait, Forced portrait, Forced landscape (top left / top right) | Auto |
 | | Send input only while the pad is open; under it Hardware devices too (controllers, keyboards, volume buttons) | on; off |
 | Workspace switching | Wrap around (Next workspace on the last one goes to the first) | off |
-| Touch display | Show touches, Trail behind fingers (length, fade), Fade out after lift, Show live mappings on buttons, swipe line, Move rulers, sliders on buttons (and their colour) | see [Pad UI](phone-pad-ui.md) |
+| Touch display | Show touches, Trail behind fingers (length, fade), Fade out after lift, Show mappings on buttons, swipe line, Move rulers, sliders on buttons (and their colour) | see [Pad UI](phone-pad-ui.md) |
 | Gyro | Jitter cutoff (0–5 °/s), Smoothing below (0–10 °/s); **Slider cap**: the top of every gyro sensitivity slider and Gyro sensitivity range, in RWS for workspaces that know their game (1–50) and in counts per degree for the others (4–250) | both off; 10 RWS, 64 counts/° |
 | Gyro display | Parallax edge (Turn / Tilt); **Fade when phone rests**: the gyro displays on the pad (the kinds with a Level) fade while the phone lies within Flat within (10°) of the tilt each was last leveled at, turning slower than Still below (0.5 °/s, live speed shown), with no finger, key or controller stick in use, for Quiet for (3 s); they fade to Fade to (30 %) over Fade over (0.5 s) and come back at once. Same rules as the PC's overlays ([PC overlays](pc-overlays.md)); never in edit mode (`RestDetector`, `TouchVisuals.restFade`, `GyroDisplay.levelUp`) | parallax off; fade on |
-| Controllers | The attached game pads | — |
+| Controllers | Read USB controllers directly ([Controllers](phone-controllers.md)), the attached game pads | on |
 | Vibration | **Vibrate with game rumble**: the game's rumble on the PC's virtual controller (Xbox 360 or DualShock 4 output) vibrates the phone, as strong as the stronger motor, while a PC is connected; a haptic mapping's hold or tick plays over it. The two short buzzes and two beeps (notification volume, so silent mode mutes the beeps) when a Performance test record starts or ends on the PC play either way (`PhoneHaptics.rumble`, `buzz`) | on |
-| Debugging | Debug tools | off |
+| Debugging | Debug tools; **Ratchet timing** (see [Pad UI](phone-pad-ui.md)) | both off |
 | Backup | **Export everything**, **Import everything…** (asks first; see [Workspaces](phone-workspaces.md)) | — |
 | About | Version, gyro source and measured rate | — |
 
@@ -43,17 +43,17 @@ Opened by ⚙ in edit mode, the touchpad's Settings in its mapping editor, or th
 
 | Category | Contents | Defaults |
 |---|---|---|
-| Gyro | Gyro to mouse (Ratchet enables / Ratchet disables / Gyro off), Gyro space (Local / World / Player), Yaw axis (Screen Z / Screen Y / Screen X, Flipped, Custom after a granular Set orientation, and a Set orientation button that picks the axis pointing up now and levels the displays from it; workspace and Defaults only), Game (preset game + in-game sensitivity, or counts per 360, Measure), Sensitivity (per axis via ⚙, exact, or a 0 to 1 share of the parent's with the Scale parent switch on), Acceleration curve (Off, Light, Strong, custom; by this axis or the whole phone), Inertia (Smooth / Linear) and Glide, PC pad yaw / pitch / roll (the phone axis each DualShock 4 or DualSense axis follows, or None, and Invert; workspace and Defaults only) | Ratchet enables, Local, Screen Z, no game, 16 counts/°, Off, inertia off, 325 ms, pad yaw = Yaw, pitch = Pitch, roll = Roll |
+| Gyro | Gyro to mouse (Ratchet enables / Ratchet disables / Gyro off), Gyro space (Local / World / Player; each gyro card's ⚙ can set its own Space, see [Gyro math](phone-gyro-math.md)), Yaw axis (Screen Z / Screen Y / Screen X, Flipped, Custom after a granular Set orientation, and a Set orientation button that picks the axis pointing up now and levels the displays from it; workspace and Defaults only), Game (preset game + in-game sensitivity, or counts per 360, Measure), Sensitivity (per axis via ⚙, exact, or a 0 to 1 share of the parent's with the Scale parent switch on), Acceleration curve (Off, Light, Strong, custom; by this axis or the whole phone), Inertia (Smooth / Linear) and Glide, PC pad yaw / pitch / roll (the phone axis each DualShock 4 or DualSense axis follows, or None, and Invert; workspace and Defaults only) | Ratchet enables, Local, Screen Z, no game, 16 counts/°, Off, inertia off, 325 ms, pad yaw = Yaw, pitch = Pitch, roll = Roll |
 | | Calibration (Base only): Calibrate, Clear | not calibrated |
 | Touchpad | The workspace touch surface, in groups: Cursor & scrolling (speed, acceleration, inertia, deadzone), Move X & Y, Quick swipes, Held swipes, Length zones (lengths and pies, per direction and per Move) | see [Mapping system](phone-mapping.md) |
-| Tilt & shake | Tilt range, Tilt deadzone (per axis), Shake strength | 30°, off, 14 m/s² |
+| Tilt & shake | Tilt range, Tilt deadzone (per axis), Use compass when flat (sideways tilt lying flat; with a warning that magnets and metal bend it), Shake strength | 30°, off, off, 14 m/s² |
 | Buttons (Base only) | Control opacity (10–100 %) | 100 % |
 | Haptics | Feel (system or custom strength / length), Ticks play (On press / enter, On release / exit, Both) | system, On press |
-| Taps | Tap time (100–1000 ms): the longest tap, when a long press starts, and the double-tap gap | 300 ms |
+| Taps | Tap time (100–1000 ms): the longest tap, when a long press starts, and the double-tap gap. A Tap time slider (a mapping, see [Mapping system](phone-mapping.md#set-value-and-move-sliders)) can change it while you play | 300 ms |
 
 ## A touch control's or controller button's settings
 
-The mapping editor's ⚙ Settings (`ui/ControlSettingsScreen.kt`, `ui/ActionSettings.kt`): **Look** (label, shape, layer, size), **Layers** (when the workspace has layers), **Gyro** and **Touchpad** (the gyro's sensitivity and acceleration and the touchpad cursor's speed while it is held), then **Swipes** for a button that swipes (the same groups as the workspace Touchpad, its own over the workspace's) or **Stick** for a stick. A controller button's ⚙ has the same Gyro and Touchpad tabs.
+The mapping editor's ⚙ Settings (`ui/ControlSettingsScreen.kt`, `ui/ActionSettings.kt`): **Look** (label, shape, layer, size), **Layers** (when the workspace has layers), **Press** (the button's How its chips follow; with Toggle also its **Initial state** On / Off and **Also ends on**, see [Mapping](phone-mapping.md#when-how-and-where)), **Gyro** and **Touchpad** (the gyro's sensitivity and acceleration and the touchpad cursor's speed while it is held), then **Swipes** for a button that swipes (the same groups as the workspace Touchpad, its own over the workspace's) or **Stick** for a stick. A controller button's ⚙ has the same Gyro and Touchpad tabs.
 
 ## Connection page
 

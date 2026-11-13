@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using GyroPhone.Host.Update;
 using GyroPhone.Windows;
 
@@ -8,11 +9,18 @@ namespace GyroPhone.Tray;
 /// <summary>
 /// GyroPhoneCompanion.exe.new --finish-update &lt;pid&gt; [--tray] [--watch]: the second half of
 /// <see cref="CompanionUpdater"/>. Started from the new build waiting at "&lt;exe&gt;.new" by the instance it
-/// replaces. Waits for that instance (and a watcher told to stop) to exit, copies itself over the exe, then
-/// starts the companion and/or the watcher from the exe's usual path. The finisher only copies its own file,
-/// so nothing it reads is ever moved under it; then it moves in OpenCV's DLLs that wait beside the exe as
-/// "&lt;dll&gt;.new" (<see cref="UpdateInfo.WaitingDlls"/>), which the old instance may have held. If the copy fails, it starts the old build again with
-/// <see cref="FailedArg"/>, which then doesn't retry this .new until it is installed again.
+/// replaces. Waits for that instance (and a watcher told to stop) to exit, moves itself over the exe, then
+/// starts the companion and/or the watcher from the exe's usual path.
+/// <para>Moved, not copied: a rename keeps the file the antivirus already checked when this finisher started,
+/// so the companion starts at once from it. A copy is a new file that gets checked all over again, about 4 s
+/// for the 190 MB exe, every second of it with no companion running.</para>
+/// <para>The exe is single-file and opens itself by path to load each assembly the first time it is used. Once
+/// moved, this finisher's own path is gone, so everything after the move uses only assemblies already loaded
+/// (the runtime's own, this one, FileLog's) and starts processes through CreateProcess directly, not
+/// <see cref="Process.Start(ProcessStartInfo)"/>, which may load more.</para>
+/// <para>Then it moves in OpenCV's DLLs that wait beside the exe as "&lt;dll&gt;.new"
+/// (<see cref="UpdateInfo.WaitingDlls"/>), which the old instance may have held. If the move fails, it starts the
+/// old build again with <see cref="FailedArg"/>, which then doesn't retry this .new until it is installed again.</para>
 /// </summary>
 internal static class UpdateFinisher
 {
@@ -105,21 +113,38 @@ internal static class UpdateFinisher
         {
             WaitForExit(pid);
             WaitForWatcherExit();
-            bool copied = Copy(self, exe, log);
-            log.Write(copied
-                ? $"update: {Application.ProductVersion} copied to {exe}"
-                : $"update: couldn't replace {exe}; starting the old build again");
-            // Only with the new exe in place: the old build keeps the DLLs it came with.
-            if (copied) MoveWaitingDlls(Path.GetDirectoryName(exe) ?? "", log);
-            if (tray)
+            // Everything the steps after the move need is worked out (and its assemblies loaded) before it.
+            string version = Application.ProductVersion;
+            string dir = Path.GetDirectoryName(exe) ?? "";
+            var dlls = UpdateInfo.WaitingDlls(dir);
+            Program.IsRunning();
+            bool moved = MoveIn(self, exe, log);
+            try
             {
-                Start(exe, copied ? $"{Program.RestartedArg} {Program.UpdatedArg}" : $"{Program.RestartedArg} {FailedArg}", log);
-                // The watcher comes second, so it finds the companion running instead of starting another one.
-                var clock = Stopwatch.StartNew();
-                while (watch && !Program.IsRunning() && clock.ElapsedMilliseconds < ExitWaitMs) Thread.Sleep(100);
+                log.Write(moved
+                    ? $"update: {version} moved to {exe}"
+                    : $"update: couldn't replace {exe}; starting the old build again");
+                if (tray)
+                {
+                    Start(exe, moved ? $"{Program.RestartedArg} {Program.UpdatedArg}" : $"{Program.RestartedArg} {FailedArg}", log);
+                }
+                // Only with the new exe in place: the old build keeps the DLLs it came with. After the companion
+                // starts: it doesn't load them until the latency test opens.
+                if (moved) MoveWaitingDlls(dlls, log);
+                if (tray)
+                {
+                    // The watcher comes second, so it finds the companion running instead of starting another one.
+                    var clock = Stopwatch.StartNew();
+                    while (watch && !Program.IsRunning() && clock.ElapsedMilliseconds < ExitWaitMs) Thread.Sleep(100);
+                }
+                if (watch) Start(exe, Watcher.Arg, log);
             }
-            if (watch) Start(exe, Watcher.Arg, log);
-            return copied ? 0 : 1;
+            catch (Exception e)
+            {
+                // Not expected; logged so a missing assembly after the move shows up instead of a silent exit.
+                log.Write($"update: finishing failed: {e.GetType().Name} {e.Message}");
+            }
+            return moved ? 0 : 1;
         }
         finally
         {
@@ -147,16 +172,15 @@ internal static class UpdateFinisher
         while (Watcher.IsRunning() && clock.ElapsedMilliseconds < ExitWaitMs) Thread.Sleep(200);
     }
 
-    /// <summary>Copies the waiting build over the exe, retrying while an exiting instance still holds it.</summary>
-    private static bool Copy(string from, string to, FileLog log)
+    /// <summary>Moves the waiting build (this finisher's own file) over the exe, retrying while an exiting instance still holds it.</summary>
+    private static bool MoveIn(string from, string to, FileLog log)
     {
-        if (string.Equals(VersionOf(to), Application.ProductVersion, StringComparison.OrdinalIgnoreCase)) return true;
         Exception? last = null;
         for (int t = 0; t < CopyTries; t++)
         {
             try
             {
-                File.Copy(from, to, overwrite: true);
+                File.Move(from, to, overwrite: true);
                 return true;
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -174,9 +198,9 @@ internal static class UpdateFinisher
     /// restart path), retrying for a few seconds while an exiting instance still holds it. One that can't be
     /// moved stays waiting (logged): only the latency test uses these DLLs, and the next update tries again.
     /// </summary>
-    private static void MoveWaitingDlls(string dir, FileLog log)
+    private static void MoveWaitingDlls(IReadOnlyList<(string Waiting, string Target)> dlls, FileLog log)
     {
-        foreach (var (waiting, target) in UpdateInfo.WaitingDlls(dir))
+        foreach (var (waiting, target) in dlls)
         {
             Exception? last = null;
             for (int t = 0; t < DllMoveTries; t++)
@@ -199,19 +223,47 @@ internal static class UpdateFinisher
         }
     }
 
+    /// <summary>
+    /// Starts <paramref name="exe"/> through CreateProcess (no shell, so it keeps this process's elevation), using
+    /// nothing outside the runtime's own assembly: it runs after this finisher's file was moved.
+    /// </summary>
     private static void Start(string exe, string args, FileLog log)
     {
-        try
+        var si = new StartupInfo { cb = Marshal.SizeOf<StartupInfo>() };
+        var cmd = new System.Text.StringBuilder($"\"{exe}\" {args}");
+        if (CreateProcessW(exe, cmd, IntPtr.Zero, IntPtr.Zero, false, 0, IntPtr.Zero, Path.GetDirectoryName(exe), ref si, out var pi))
         {
-            using var p = Process.Start(new ProcessStartInfo(exe, args)
-            {
-                UseShellExecute = false,
-                WorkingDirectory = Path.GetDirectoryName(exe) ?? "",
-            });
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
         }
-        catch (Exception e) when (e is Win32Exception or IOException)
+        else
         {
-            log.Write($"update: could not start {exe} {args}: {e.GetType().Name}");
+            log.Write($"update: could not start {exe} {args}: error {Marshal.GetLastWin32Error()}");
         }
     }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct StartupInfo
+    {
+        public int cb;
+        public IntPtr lpReserved, lpDesktop, lpTitle;
+        public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+        public short wShowWindow, cbReserved2;
+        public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessInformation
+    {
+        public IntPtr hProcess, hThread;
+        public int dwProcessId, dwThreadId;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CreateProcessW(string lpApplicationName, System.Text.StringBuilder lpCommandLine,
+        IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, int dwCreationFlags,
+        IntPtr lpEnvironment, string? lpCurrentDirectory, ref StartupInfo lpStartupInfo, out ProcessInformation lpProcessInformation);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
 }

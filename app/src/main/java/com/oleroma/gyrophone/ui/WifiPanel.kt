@@ -32,7 +32,7 @@ import com.oleroma.gyrophone.runtime.GamepadRuntime
 
 /** Connect tab, Wi-Fi: the PC companion's status, paired and found PCs, and link quality. */
 @Composable
-fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Modifier) {
+fun WifiPanel(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
     val wifi = runtime.wifi
     val state by runtime.linkState.collectAsStateWithLifecycle()
     val paired by wifi.paired.collectAsStateWithLifecycle()
@@ -89,9 +89,6 @@ fun WifiPanel(runtime: GamepadRuntime, stats: LinkStats, modifier: Modifier = Mo
                 color = if (q.finished && !q.ok) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                 style = MaterialTheme.typography.bodySmall,
             )
-        }
-        if (connected) {
-            warnings(stats).forEach { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         }
 
         Text("Paired PCs", style = MaterialTheme.typography.titleSmall)
@@ -183,16 +180,6 @@ private fun statusLine(state: LinkState): String = when (state) {
     is LinkState.HostSilent -> "${state.name} is not answering, reconnecting…"
     is LinkState.Failed -> "Problem: ${state.reason}"
 }
-
-private fun warnings(stats: LinkStats): List<String> = listOfNotNull(
-    if (stats.band == 2 && !stats.usb) "2.4 GHz Wi-Fi adds lag: use the router's 5 GHz network if it has one" else null,
-    if ((stats.lossPercent ?: 0f) > 2f) "Loss above 2 %: move closer to the router or pick a lower rate" else null,
-    if (stats.vigemOk == false) {
-        "The PC has no gamepad driver (ViGEmBus): pad input is dropped, keyboard and mouse still work"
-    } else {
-        null
-    },
-)
 
 /** Connect tab, Wi-Fi: how the link does (rates, loss, latency) and whether it runs over USB. */
 @Composable

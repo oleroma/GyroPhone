@@ -32,7 +32,7 @@ internal static class FpsDrawing
             big = "–";
             sub = scene.FpsState switch
             {
-                FrameWatchState.NeedsPermission => "Needs a Windows permission: open Performance",
+                FrameWatchState.NeedsPermission => "Needs the FPS helper: open Performance",
                 FrameWatchState.Failed => "Can't watch frames: see Performance",
                 _ => "Starting…",
             };

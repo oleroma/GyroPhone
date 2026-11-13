@@ -239,6 +239,19 @@ data class GyroDisplay(
     /** LASER Snake: a ratchet press clears the Snake. */
     val laserSnakeClearOnRatchet: Boolean = false,
     /**
+     * LASER Snake: its own look, apart from Draw mode's paint. Each null until set, following the paint's
+     * setting until then ([snakeColourByWay] and the rest read them); the settings screen keeps a Snake copy
+     * of the paint's value before changing it, so changing one never changes the other.
+     */
+    val laserSnakeColourByWay: Boolean? = null,
+    val laserSnakeShade: Float? = null,
+    val laserSnakeInside: Float? = null,
+    val laserSnakeLight: Float? = null,
+    val laserSnakeLightFrom: Int? = null,
+    val laserSnakeShine: Float? = null,
+    val laserSnakeFireBrush: Int? = null,
+    val laserSnakeAimBrush: Int? = null,
+    /**
      * LASER Fire display: while GyroPhone sends this output ([com.oleroma.gyrophone.core.engine.LaserFire],
      * default the left mouse button; 0 none) the rifle flashes and Draw paints in the Fire colours,
      * [laserFireBrush] degrees round, its glow [laserFireGlow] (0 .. 3); with [laserFireOnly] only it
@@ -324,6 +337,26 @@ data class GyroDisplay(
             turnsWith = turns, trackball = false, trackballInvert = false,
         )
     }
+
+    // The Snake's own look ([laserSnakeColourByWay] and the rest), else the paint's.
+    val snakeColourByWay: Boolean get() = laserSnakeColourByWay ?: laserColourByWay
+    val snakeShade: Float get() = laserSnakeShade ?: laserShade
+    val snakeInside: Float get() = laserSnakeInside ?: laserInside
+    val snakeLight: Float get() = laserSnakeLight ?: laserLight
+    val snakeLightFrom: Int get() = laserSnakeLightFrom ?: laserLightFrom
+    val snakeShine: Float get() = laserSnakeShine ?: laserShine
+    val snakeFireBrush: Int get() = laserSnakeFireBrush ?: laserFireBrush
+    val snakeAimBrush: Int get() = laserSnakeAimBrush ?: laserAimBrush
+
+    /**
+     * This one with the paint's look changed by [change], the Snake keeping its own copy of each look
+     * setting it still shared, so the Snake stays as it was.
+     */
+    fun withPaintLook(change: GyroDisplay.() -> GyroDisplay): GyroDisplay = copy(
+        laserSnakeColourByWay = snakeColourByWay, laserSnakeShade = snakeShade, laserSnakeInside = snakeInside,
+        laserSnakeLight = snakeLight, laserSnakeLightFrom = snakeLightFrom, laserSnakeShine = snakeShine,
+        laserSnakeFireBrush = snakeFireBrush, laserSnakeAimBrush = snakeAimBrush,
+    ).change()
 
     /** It holds its pose to gravity (and so needs the accelerometer). */
     val needsGravity: Boolean get() = kind.pose && gravity && !followsCamera

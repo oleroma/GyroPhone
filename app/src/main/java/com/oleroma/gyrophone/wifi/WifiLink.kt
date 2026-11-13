@@ -504,6 +504,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             ethernet = usbActive && usbEthernet,
             vigemOk = hs?.let { it.flags and HostStatusFlags.VIGEM_OK != 0 }
                 ?: welcomeHostFlags?.let { it and HostFlags.VIGEM_OK != 0 },
+            pcSetup = hs?.flags2,
         )
     }
 

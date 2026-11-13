@@ -126,8 +126,10 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.Bindings
+import com.oleroma.gyrophone.core.model.ButtonHow
 import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.ControlGroups
+import com.oleroma.gyrophone.core.model.ToggleRule
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.FingerAxis
 import com.oleroma.gyrophone.core.model.FingerAxisSettings
@@ -135,6 +137,7 @@ import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.slides
@@ -163,6 +166,7 @@ import com.oleroma.gyrophone.core.model.heightRatio
 import com.oleroma.gyrophone.core.model.hitOrder
 import com.oleroma.gyrophone.core.model.isTouchpad
 import com.oleroma.gyrophone.core.model.layered
+import com.oleroma.gyrophone.core.model.nothing
 import com.oleroma.gyrophone.core.model.ownSurface
 import com.oleroma.gyrophone.core.model.placeSize
 import com.oleroma.gyrophone.core.model.placeX
@@ -204,10 +208,7 @@ private const val REVEAL_TAPS = 4
 private const val REVEAL_GAP_NS = 300_000_000L
 private const val PILL_MS = 1_000L
 
-/** Highlight refresh while a finger is on a button (holds and lift commits happen between events). */
-private const val HIGHLIGHT_POLL_MS = 50L
-
-/** With live mappings: refresh fast enough to catch a tap's short pulse. */
+/** Highlight and live mappings refresh: fast enough to catch a tap's short pulse. */
 private const val LIVE_POLL_MS = 16L
 
 /** How often the pad screen checks the mapping set in use (for its pill and live labels). */
@@ -507,6 +508,8 @@ fun PadScreen(
 
     /** The menu's Select: taps pick several controls ([picked], whole groups) and a drag moves them all. */
     var selectMode by remember { mutableStateOf(false) }
+    /** Select's Sync list is open (like Add's): Size, Flip, Never both. */
+    var syncOpen by remember { mutableStateOf(false) }
     var picked by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     /** The control whose Delete (in its long-press popup) is asking to be confirmed. */
@@ -610,6 +613,9 @@ fun PadScreen(
     var fingersOnButtons by remember { mutableIntStateOf(0) }
     var pressedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var latchedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    /** Controls lit as pressed: one of their mappings in use is active now (a finger on a Position or Move counts). */
+    var activeIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var cornersHeld by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     /** Counts multi-finger touches that Android cancelled (a phone gesture took them). */
@@ -672,12 +678,13 @@ fun PadScreen(
             delay(LAYER_POLL_MS)
         }
     }
-    // What each control maps in the set in use (labels), and what it really presses now (live
-    // labels: the engine's mappings in use, held inputs carrying their old set's included).
+    // What each control maps in the set in use (labels).
     val controlMappings = remember(ws.mappings, layers) {
         layered(ws.mappings, layers.set, layers.overrides).filterNot { Describe.isHaptic(it.target) }
             .groupBy { MappingProfiles.touchId(it.source) }
     }
+    // What each control really presses now, for the PC's phone overlay (live labels: the engine's
+    // mappings in use, held inputs carrying their old set's included). The pad shows it in the frames ([ValueBars]).
     val labelCache = remember { LabelCache() }
     val inUseCache = remember { arrayOfNulls<List<Mapping>>(1) }
     val inUseShown = remember { arrayOf<List<Mapping>>(emptyList()) }
@@ -689,20 +696,24 @@ fun PadScreen(
     val liveWatchUntil = remember { LongArray(1) }
     var liveWatching by remember { mutableStateOf(false) }
 
-    fun refreshLive() {
-        val now = SystemClock.uptimeMillis()
-        if (!visuals.liveMappings || editing) {
-            liveLabels.clear(); liveUntil.clear(); liveWatching = false
-            return
-        }
+    /** The touch mappings in use that light or label their control: not haptics, empty ones or gyro cards. */
+    fun shownInUse(): List<Mapping> {
         val inUse = runtime.engine.touchMappingsInUse
         if (inUse !== inUseCache[0]) {
             inUseCache[0] = inUse
             inUseShown[0] = inUse.filter { MappingProfiles.touchId(it.source) != null || it.source.isTouchpad }
                 .filterNot { Describe.isHaptic(it.target) || it.target == OutputTarget.NoOutput }
+                .filterNot { it.source is InputSource.Gyro || it.source is InputSource.Tilt || it.source is InputSource.Shake }
         }
-        // One engine call per poll; the labels are rebuilt only when what is on changes.
-        val active = runtime.engine.activeMappings(inUseShown[0])
+        return inUseShown[0]
+    }
+
+    fun refreshLive(active: List<Mapping>) {
+        val now = SystemClock.uptimeMillis()
+        if (!visuals.liveMappings || editing) {
+            liveLabels.clear(); liveUntil.clear()
+            return
+        }
         val last = activeCache[0]
         if (active.size != last.size || active.indices.any { active[it] !== last[it] }) {
             activeCache[0] = active
@@ -725,7 +736,6 @@ fun PadScreen(
                 if (id in liveLabels) liveLabels.remove(id)
             }
         }
-        if (liveWatching && now > liveWatchUntil[0] && liveLabels.isEmpty()) liveWatching = false
     }
 
     fun refreshHighlights() {
@@ -733,12 +743,19 @@ fun PadScreen(
         if (p != pressedIds) pressedIds = p
         val l = runtime.engine.latchedTouches()
         if (l != latchedIds) latchedIds = l
-        refreshLive()
+        // Lit only while something on it is active: a button with just a long press lights when it fires.
+        val shown = shownInUse()
+        val active = runtime.engine.activeMappings(shown.filterNot { it.source.slides })
+        val ids = HashSet<String>()
+        for (m in active) MappingProfiles.touchId(m.source)?.let(ids::add)
+        for (m in shown) if (m.source.slides) MappingProfiles.touchId(m.source)?.takeIf { it in p }?.let(ids::add)
+        if (ids != activeIds) activeIds = ids
+        refreshLive(active)
+        if (liveWatching && SystemClock.uptimeMillis() > liveWatchUntil[0] && liveLabels.isEmpty() && ids.isEmpty()) liveWatching = false
     }
 
-    /** A touch began or ended: watch the live mappings for a while (gestures fire after lifts). */
+    /** A touch began or ended: watch the mappings for a while (gestures fire after lifts). */
     fun watchLive() {
-        if (!visuals.liveMappings) return
         liveWatchUntil[0] = SystemClock.uptimeMillis() + ws.longPressMs + LIVE_LINGER_MS
         if (!liveWatching) liveWatching = true
     }
@@ -892,7 +909,7 @@ fun PadScreen(
         snapshotFlow { fingersOnButtons > 0 || pressedIds.isNotEmpty() || liveWatching }.collectLatest { poll ->
             if (!poll) return@collectLatest
             while (true) {
-                delay(if (visuals.liveMappings) LIVE_POLL_MS else HIGHLIGHT_POLL_MS)
+                delay(LIVE_POLL_MS)
                 refreshHighlights()
             }
         }
@@ -1976,31 +1993,49 @@ fun PadScreen(
                 modifier = Modifier.align(Alignment.TopCenter).padding(16.dp),
             )
         }
-        // The pad's value sliders, read once for the frames behind the buttons and the bars over them.
-        val valueBars = if (editing || covered) null else {
+        // The buttons' frames (their mappings active now, their Toggles, their sliders' values), read
+        // once for the frames behind the buttons and the bars and frames over them.
+        val frames = visuals.liveMappings
+        val valueBars = if (editing || covered || !(frames || visuals.positionRuler)) null else {
             // Only the buttons and mappings decide the marks: a workspace edit that changes neither (a
             // slider's saved value) keeps the overlay as it is.
-            val valueMarks = remember(ws.touchControls, ws.mappings, ws.padFingers, w, h, portrait) {
+            val valueMarks = remember(ws.touchControls, ws.mappings, ws.padFingers, ws.gyro.gameCountsPer360, w, h, portrait, frames, visuals.positionRuler) {
                 fun steps(fingers: List<FingerAxisSettings>) =
                     FingerAxis.entries.mapNotNull { a -> fingers.fingerOf(a).steps?.let { a to it } }.toMap()
                 val chips = ws.mappings.filter { m -> m.target.valueTarget && m.source.slides }
                 val ids = chips.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
                 val setIds = chips.filter { it.setValue != null }.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
+                // Every line a frame could show, in any layer, with each chip's How from its button.
+                val all = ButtonHow.touch(ws, ws.mappings)
+                val byId = ws.touchControls.associateBy { it.id }
+                fun toggles(m: Mapping): Boolean =
+                    m.options?.mode == How.TOGGLE || ButtonHow.ownerOf(m.source)?.let(byId::get)?.let { ButtonHow.stateOf(it, m) } == true
+                val counts = ws.gyro.gameCountsPer360
+                fun possible(id: String) = frameLines(id, all, ::toggles, counts, visuals.positionRuler, frames)
                 buildList {
-                    if ("" in ids) add(ValueMark("", 0f, 0f, w, h, round = false, set = "" in setIds, framed = false, steps = steps(ws.padFingers)))
+                    val pad = possible("")
+                    if ("" in ids || pad.isNotEmpty()) {
+                        add(ValueMark("", 0f, 0f, w, h, round = false, set = "" in setIds, framed = false, steps = steps(ws.padFingers), possible = pad))
+                    }
                     for (c in ws.touchControls) {
-                        if (c.id !in ids) continue
+                        if (c.kind == TouchKind.DISPLAY) continue
+                        val lines = possible(c.id)
+                        if (c.id !in ids && lines.isEmpty()) continue
                         val cx = c.placeX(portrait) * w
                         val cy = c.placeY(portrait) * h
                         val hw = c.placeSize(portrait) * minOf(w, h) / 2f
                         val round = c.shape == TouchShape.CIRCLE
                         val hh = if (round) hw else hw * c.heightRatio
-                        add(ValueMark(c.id, cx - hw, cy - hh, cx + hw, cy + hh, round, c.id in setIds, steps = steps(c.fingers)))
+                        add(ValueMark(c.id, cx - hw, cy - hh, cx + hw, cy + hh, round, c.id in setIds, steps = steps(c.fingers), possible = lines))
                     }
                 }
             }
             val padMarked = valueMarks.any { it.id.isEmpty() }
-            rememberValueBars(runtime.engine, valueMarks, { padMarked || fingersOnButtons > 0 }, bars = visuals.positionRuler)
+            rememberValueBars(
+                runtime.engine, valueMarks,
+                { padMarked || fingersOnButtons > 0 || pressedIds.isNotEmpty() || liveWatching },
+                bars = visuals.positionRuler, frames = frames,
+            )
         }
         Box(Modifier.fillMaxSize().then(touchModifier)) {
             if (editing && snap) {
@@ -2017,9 +2052,7 @@ fun PadScreen(
                 }
             }
             // A control the edit left as it was keeps its label: a drag works out only the moved one's.
-            val labels = remember(ws, editing, controlMappings) {
-                labelCache.labels(ws, editing, controlMappings)
-            }
+            val labels = remember(ws, editing, controlMappings) { labelCache.labels(ws, editing, controlMappings) }
             // The PC's phone overlay draws this layout on its phone (the last one in play stays during edit mode).
             if (!editing) {
                 val setName = if (layers.set == MappingSet.BASE && layers.overrides.isEmpty()) "" else {
@@ -2077,6 +2110,8 @@ fun PadScreen(
             valueBars?.let { ValueFramesBehind(it, Modifier.fillMaxSize()) }
             // Back first, so the front one (as touches see them) is drawn on top.
             // Gyro displays are drawn elsewhere. No return inside key {}: D8 can't take a composable inline return.
+            // Toggle-synced buttons are painted in their sync's own colour.
+            val syncTints = remember(ws.touchControls) { toggleSyncTints(ws.touchControls) }
             for (c in hitOrder(ws.touchControls, portrait).asReversed().filter { it.kind != TouchKind.DISPLAY }) key(c.id) {
                 val r = half(c)
                 val rh = halfH(c)
@@ -2088,10 +2123,11 @@ fun PadScreen(
                     editing = editing,
                     label = labels[c.id] ?: "",
                     selectedTint = if (isSelected) litColor(c.id) else null,
-                    pressed = { c.id in pressedIds || c.id in heldSticks },
+                    pressed = { c.id in activeIds || c.id in heldSticks },
                     latched = { c.id in latchedIds },
-                    // Values sitting in the button's middle take its label's place.
-                    liveLabel = { if (valueBars != null && c.id in valueBars.centered) "" else liveLabels[c.id] },
+                    syncTint = syncTints[c.id],
+                    // A frame in the button's middle takes its label's place.
+                    liveLabel = { if (valueBars != null && c.id in valueBars.centered) "" else null },
                     widthDp = with(density) { (r * 2).toDp() },
                     heightDp = with(density) { (rh * 2).toDp() },
                     knob = { stickPos[c.id] ?: Offset.Zero },
@@ -2122,8 +2158,8 @@ fun PadScreen(
                     )
                 }
             }
-            // The touchpad's label and what it sends now, at the pad's top centre (when the workspace asks).
-            if (ws.touchpadLabelShown) TouchpadLabel(ws.touchpadLabel, live = { if (editing) null else liveLabels[""] })
+            // The touchpad's label at the pad's top centre (when the workspace asks); what it sends now is in its frame.
+            if (ws.touchpadLabelShown) TouchpadLabel(ws.touchpadLabel, live = { null })
             // The corners: shared by all workspaces, drawn over the controls, always shown.
             for (c in shown.shownCorners) {
                 val r = half(c)
@@ -2213,6 +2249,9 @@ fun PadScreen(
         }
 
         if (!editing && !hidden) DebugOverlay(runtime, Modifier.align(Alignment.BottomStart), covered)
+
+        // Settings › Debugging › Ratchet timing: each ratchet press against the swing's turn-around.
+        if (!editing && !hidden && !covered) RatchetTimingPanel(runtime, Modifier.align(Alignment.TopCenter).padding(top = 48.dp))
 
         if (markersShown) LatencyMarkers { latencyHidden = true }
 
@@ -2563,7 +2602,10 @@ fun PadScreen(
                         val canUndo = undoSteps.isNotEmpty() || (undoBase[0] != null && draft !== undoBase[0])
                         val canRedo = redoSteps.isNotEmpty()
                         val mainRows = min(panelRows, mainRowsCap(portrait))
-                        val listOpen = addOpen || presetsOpen
+                        // Select's Sync choices for the picked controls.
+                        val sync = SyncChoices(editControls(), if (selectMode) picked else emptySet())
+                        val syncShown = syncOpen && selectMode && sync.any
+                        val listOpen = addOpen || presetsOpen || syncShown
 
                         /** A row of the fixed column: ⠿ (moves the menu) and, if any, its icon. */
                         @Composable
@@ -2655,22 +2697,20 @@ fun PadScreen(
                                                 colors = pickColors,
                                                 onClick = { editWorkspace { ControlGroups.ungroup(it, picked) } }) { Text("Ungroup") }
                                         }
-                                        // Sync size: the picked ones keep their places but change size together (teal).
-                                        // A control is grouped or synced, never both: syncing takes it out of its group.
+                                        // Sync (teal), a menu: Size (the picked ones keep their places but change size
+                                        // together; a control is grouped or size-synced, never both), and for Toggle
+                                        // buttons Flip or Never both ("One at a time" for three or more).
                                         val syncColors = ButtonDefaults.filledTonalButtonColors(
                                             containerColor = SYNCED_COLOR,
                                             contentColor = Color.Black,
                                         )
-                                        val pickedHere = picked.filter { id -> controls.any { it.id == id && it.kind != TouchKind.FULLSCREEN } }
-                                        if (pickedHere.size >= 2) {
-                                            PanelPill(
-                                                colors = syncColors,
-                                                onClick = { editWorkspace { ControlGroups.syncSize(it, pickedHere) } }) { Text("Sync size") }
-                                        }
-                                        if (ControlGroups.anySynced(controls, picked)) {
-                                            PanelPill(
-                                                colors = syncColors,
-                                                onClick = { editWorkspace { ControlGroups.unsync(it, picked) } }) { Text("Unsync size") }
+                                        if (sync.any) {
+                                            if (syncShown) {
+                                                ListTab("Sync ▴", Modifier.layoutId(STRIP_LAST_ROW)) { syncOpen = false }
+                                            } else {
+                                                PanelPill(colors = syncColors, modifier = Modifier.layoutId(STRIP_LAST_ROW),
+                                                    onClick = { syncOpen = true; addOpen = false; presetsOpen = false }) { Text("Sync +") }
+                                            }
                                         }
                                         // One whole group picked: save it as a preset (Add preset).
                                         if (ControlGroups.units(controls, picked) == 1 && ControlGroups.anyGrouped(controls, picked)) {
@@ -2728,7 +2768,7 @@ fun PadScreen(
                                 } else {
                                     PanelPill(outlined = true,
                                         modifier = Modifier.layoutId(STRIP_LAST_ROW),
-                                        onClick = { addOpen = true; presetsOpen = false },
+                                        onClick = { addOpen = true; presetsOpen = false; syncOpen = false },
                                     ) { Text("Add +") }
                                 }
                                 // Your saved buttons, displays and groups, in their own row.
@@ -2737,7 +2777,7 @@ fun PadScreen(
                                 } else {
                                     PanelPill(outlined = true,
                                         modifier = Modifier.layoutId(STRIP_LAST_ROW),
-                                        onClick = { presetsOpen = true; addOpen = false },
+                                        onClick = { presetsOpen = true; addOpen = false; syncOpen = false },
                                     ) { Text("Add preset ★") }
                                 }
                                 if (snap) {
@@ -2786,7 +2826,41 @@ fun PadScreen(
                             ) {
                                 LeftColumn(listRows) { }
                                 ScrollStrip(listRows, fill = true, tab = true) {
-                                    if (addOpen) {
+                                    if (syncShown) {
+                                        // Sync: Size for any picked controls; Flip and Never both ("One at a time" for
+                                        // three or more) for picked Toggle buttons. ✓ marks their current toggle sync.
+                                        @Composable
+                                        fun SyncChip(label: String, chosen: Boolean = false, onClick: () -> Unit) {
+                                            val shape = RoundedCornerShape(50)
+                                            Text(
+                                                label,
+                                                color = if (chosen) Color.Black else Color.White,
+                                                style = MaterialTheme.typography.labelLarge,
+                                                maxLines = 1,
+                                                modifier = Modifier
+                                                    .clip(shape)
+                                                    .background(if (chosen) SYNCED_COLOR else Color.White.copy(alpha = 0.18f), shape)
+                                                    .clickable { syncOpen = false; onClick() }
+                                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                            )
+                                        }
+                                        val ids = picked
+                                        if (sync.canSize) SyncChip("Size") { editWorkspace { ControlGroups.syncSize(it, sync.sizeIds) } }
+                                        if (sync.flip) SyncChip("Flip", sync.rule == ToggleRule.FLIP) {
+                                            editWorkspace { ControlGroups.syncToggles(it, ids, ToggleRule.FLIP) }
+                                        }
+                                        if (sync.neverBoth) SyncChip(if (ids.size >= 3) "One at a time" else "Never both", sync.rule == ToggleRule.NEVER_BOTH) {
+                                            editWorkspace { ControlGroups.syncToggles(it, ids, ToggleRule.NEVER_BOTH) }
+                                        }
+                                        if (sync.sizeSynced) SyncChip("Unsync size") { editWorkspace { ControlGroups.unsync(it, ids) } }
+                                        if (sync.toggleSynced) SyncChip("Unsync toggles") { editWorkspace { ControlGroups.unsyncToggles(it, ids) } }
+                                        if (sync.flip && !sync.neverBoth) Text(
+                                            "Never both needs the same Initial state",
+                                            color = Color.White.copy(alpha = 0.7f),
+                                            style = MaterialTheme.typography.labelLarge,
+                                            modifier = Modifier.padding(horizontal = 4.dp),
+                                        )
+                                    } else if (addOpen) {
                                         /** Adds a button; [empty]: with every action it would take from the workspace cleared. */
                                         fun addButton(empty: Boolean, at: Offset?) {
                                             val d = draft ?: return
@@ -3338,20 +3412,21 @@ private class LabelCache {
 }
 
 /**
- * Label shown on a control: its own, else its first mapping's short name: in play mode from
- * [inUse] (its mappings in the set in use), while editing from Base.
+ * Label shown on a control: its own, else every mapping of its first card with any, its cards
+ * taken in the order the mapping editor shows them ([cardsInOrder]), joined by " + ": in play
+ * mode from [inUse] (its mappings in the set in use), while editing from Base ("?" for none).
  */
 private fun controlLabel(workspace: Workspace, c: TouchControl, editing: Boolean, inUse: List<Mapping>?): String {
     if (c.label.isNotBlank()) return c.label
-    val first = if (editing) {
-        Bindings.touchInputs(c).firstNotNullOfOrNull { Bindings.targets(workspace.mappings, it).firstOrNull() }
+    val targets = if (editing) {
+        cardsInOrder(c).firstNotNullOfOrNull { input -> Bindings.targets(workspace.mappings, input).takeIf { it.isNotEmpty() } }
     } else {
-        val ms = inUse.orEmpty().filter { it.target != OutputTarget.NoOutput }
-        Bindings.touchInputs(c).firstNotNullOfOrNull { input ->
-            ms.firstOrNull { m -> input.sources.any { Bindings.sameSource(it, m.source) } }?.target
+        val ms = inUse.orEmpty().filter { !it.target.nothing }
+        cardsInOrder(c).firstNotNullOfOrNull { input ->
+            ms.filter { m -> input.sources.any { Bindings.sameSource(it, m.source) } }.map { it.target }.distinct().takeIf { it.isNotEmpty() }
         }
     }
-    return first?.let { Describe.shortTarget(it) } ?: if (editing) "?" else ""
+    return targets?.joinToString(" + ") { Describe.shortTarget(it) } ?: if (editing) "?" else ""
 }
 
 private fun shapeOf(c: TouchControl): Shape =
@@ -3423,6 +3498,7 @@ private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>)
         id = id,
         group = null,
         sizeSync = null,
+        toggleSync = null,
         x = toCentre(c.x, 0.05f),
         y = toCentre(c.y, 0.05f).coerceIn(lHalf, 1f - lHalf),
         portrait = Placement(toCentre(p.x, 0.05f).coerceIn(pHalf, 1f - pHalf), toCentre(p.y, 0.03f), p.size),
@@ -3476,6 +3552,8 @@ private fun LiveControl(
     selectedTint: Color?,
     pressed: () -> Boolean,
     latched: () -> Boolean,
+    /** Its toggle sync's colour ([toggleSyncTints]): its outline, and its fill while on. */
+    syncTint: Color? = null,
     liveLabel: () -> String?,
     widthDp: Dp,
     heightDp: Dp,
@@ -3489,8 +3567,8 @@ private fun LiveControl(
     val tint = when {
         selectedTint != null -> selectedTint
         isPressed -> Color(0xFF7CC4FF)
-        isLatched -> Color(0xFF8FE39A)
-        else -> Color(0x66FFFFFF)
+        isLatched -> syncTint ?: Color(0xFF8FE39A)
+        else -> syncTint?.copy(alpha = 0.8f) ?: Color(0x66FFFFFF)
     }
     PadControl(
         control = control,
@@ -3555,6 +3633,27 @@ private fun PadControl(
         )
     }
 }
+
+/**
+ * Each toggle sync's own colour ([TouchControl.toggleSync]), by control id: the syncs in order
+ * of their ids take the colours in turn ([toggleSyncTint]), never the same one twice.
+ */
+private fun toggleSyncTints(controls: List<TouchControl>): Map<String, Color> {
+    val syncs = controls.mapNotNull { it.toggleSync }.distinct().sorted()
+    if (syncs.isEmpty()) return emptyMap()
+    return controls.filter { it.toggleSync != null }.associate { c ->
+        c.id to toggleSyncTint(syncs.indexOf(c.toggleSync))
+    }
+}
+
+/** The [i]th toggle sync's colour: the base ones, then new hues spread by the golden angle so none repeats. */
+private fun toggleSyncTint(i: Int): Color =
+    TOGGLE_SYNC_COLORS.getOrNull(i) ?: Color.hsv(((i - TOGGLE_SYNC_COLORS.size) * 137.508f + 20f) % 360f, 0.55f, 1f)
+
+/** Toggle syncs' colours: purple, orange, pink, yellow, lime, lavender. */
+private val TOGGLE_SYNC_COLORS = listOf(
+    Color(0xFFB07CFF), Color(0xFFFFA14D), Color(0xFFFF6FAE), Color(0xFFFFE066), Color(0xFFC0EB75), Color(0xFFD9B8FF),
+)
 
 /** The smallest a control's label shrinks to. */
 private const val MIN_LABEL_SP = 7f
@@ -3671,6 +3770,18 @@ private fun PanelMenu(panel: Rect, onDismiss: () -> Unit, content: @Composable C
             )
         }
     }
+}
+
+/** Select's Sync choices for the [picked] controls ([ControlGroups]). */
+private class SyncChoices(controls: List<TouchControl>, picked: Set<String>) {
+    val sizeIds: List<String> = picked.filter { p -> controls.any { c -> c.id == p && c.kind != TouchKind.FULLSCREEN } }
+    val canSize: Boolean = sizeIds.size >= 2
+    val sizeSynced: Boolean = ControlGroups.anySynced(controls, picked)
+    val flip: Boolean = ControlGroups.canSyncToggles(controls, picked)
+    val neverBoth: Boolean = ControlGroups.canNeverBoth(controls, picked)
+    val toggleSynced: Boolean = ControlGroups.anyToggleSynced(controls, picked)
+    val rule: ToggleRule? = ControlGroups.toggleRuleOf(controls, picked)
+    val any: Boolean = canSize || sizeSynced || flip || toggleSynced
 }
 
 /** A capsule in a [PanelMenu]; the [chosen] one is filled. */

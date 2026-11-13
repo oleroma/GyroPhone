@@ -2,6 +2,19 @@ package com.oleroma.gyrophone.ui
 
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.graphics.SurfaceTexture
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Process
+import android.view.Choreographer
+import android.view.Surface
+import android.view.TextureView
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -64,6 +77,11 @@ class DisplayBox(val control: TouchControl, val box: Rect)
  * The gyro displays placed on the pad ([com.oleroma.gyrophone.core.model.TouchKind.DISPLAY]), each
  * drawn flat in its [DisplayBox] (no 3D library) from the runtime's data for it, once per screen
  * frame. In edit mode each also gets its box, the [selected] ones lit in their [selectedColor].
+ *
+ * They are drawn on a thread of their own ([GyroDisplaysRenderer]) into a [TextureView], never on
+ * the screen thread: Android hands touches and controller keys to the app only on the screen
+ * thread, so a heavy frame (Paint and Snake on a fast swing took up to 300 ms) would hold every
+ * press, a ratchet's too, until it was drawn.
  */
 @Composable
 fun GyroDisplaysLayer(
@@ -74,138 +92,255 @@ fun GyroDisplaysLayer(
     selectedColor: (String) -> Color,
     modifier: Modifier = Modifier,
 ) {
-    var frame by remember { mutableLongStateOf(0L) }
-    val shown by rememberUpdatedState(boxes)
-    val inEdit by rememberUpdatedState(editing)
+    val density = LocalDensity.current
+    val renderer = remember { GyroDisplaysRenderer(runtime) }
+    renderer.density = density
+    SideEffect { renderer.input = GyroDisplaysRenderer.Input(boxes, editing, selected, selectedColor) }
+    DisposableEffect(renderer) { onDispose { renderer.dispose() } }
+    AndroidView(
+        factory = { ctx ->
+            TextureView(ctx).apply {
+                isOpaque = false
+                // Never takes focus or touches: keys stay with the pad, fingers reach the controls over it.
+                isFocusable = false
+                isClickable = false
+                surfaceTextureListener = renderer
+            }
+        },
+        modifier = modifier,
+    )
+}
+
+/**
+ * Draws [GyroDisplaysLayer] on its own thread ("gp-displays"), paced by that thread's own
+ * [Choreographer]: every frame it steps the displays' fades, aim, kicks and gun raise, and redraws
+ * only while some display's data changes (and a moment after, so ghost trails catch up): a still
+ * pose, as in edit mode, with the gyro off or the phone lying still (its sensor noise moves the
+ * pose by less than shows), draws nothing new. Drawing goes through a [CanvasDrawScope] onto the
+ * texture's surface ([Surface.lockHardwareCanvas]), the same drawing code as before.
+ */
+internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : TextureView.SurfaceTextureListener {
+    /** What the pad shows now, set from the screen thread. */
+    class Input(val boxes: List<DisplayBox>, val editing: Boolean, val selected: Set<String>, val selectedColor: (String) -> Color)
+
+    @Volatile var input = Input(emptyList(), false, emptySet()) { Color.White }
+        set(v) {
+            field = v
+            dirty = true
+        }
+
+    @Volatile var density: Density = Density(1f)
+
+    @Volatile private var dirty = true
+
+    private val thread = HandlerThread("gp-displays", Process.THREAD_PRIORITY_DISPLAY).also { it.start() }
+    private val handler = Handler(thread.looper)
+
+    // Only on the render thread from here on.
+    private var surface: Surface? = null
+    private var texture: SurfaceTexture? = null
+    private var width = 0
+    private var height = 0
+    private var running = false
+    private var choreographer: Choreographer? = null
+    private val drawScope = CanvasDrawScope()
+    private val st = VisState()
+
     // "Fade when phone rests": each display's share of its opacity now (1 = not faded).
-    val fades = remember { HashMap<String, Float>() }
+    private val fades = HashMap<String, Float>()
     // Each pointer's Aim display now, eased (0 .. 1): the crosshair shrinks and the rifle shoulders by it.
-    val aims = remember { HashMap<String, Float>() }
+    private val aims = HashMap<String, Float>()
     // Each crosshair's fire kick (CrosshairKick), stepped once a frame.
-    val kicks = remember { HashMap<String, CrosshairKick.State>() }
+    private val kicks = HashMap<String, CrosshairKick.State>()
     // Each gun's raise now, eased (0 lowered .. 1 up): with Lowered when idle it comes up while aiming or firing.
-    val raises = remember { HashMap<String, Float>() }
+    private val raises = HashMap<String, Float>()
     // Each gun's hip fire now, eased (0 .. 1): firing without aiming pulls it back toward you.
-    val hips = remember { HashMap<String, Float>() }
+    private val hips = HashMap<String, Float>()
     // The pose each display showed when it last moved visibly ([VISIBLE_TURN]).
-    val seen = remember { HashMap<String, FloatArray>() }
-    // Redraws only while some display's data changes (and a moment after, so ghost trails catch up):
-    // a still pose, as in edit mode, with the gyro off or the phone lying still (its sensor noise
-    // moves the pose by less than shows), draws nothing new.
-    LaunchedEffect(Unit) {
-        val pose = FloatArray(9)
-        var last = 0L
-        var until = 0L
-        var lastT = 0L
-        while (true) withFrameMillis { t ->
-            val dt = if (lastT == 0L) 0f else (t - lastT).coerceIn(0L, 100L).toFloat()
-            lastT = t
-            val rf = runtime.touchVisuals.value.restFade
-            val nowNs = System.nanoTime()
-            for (b in shown) {
-                val id = b.control.id
-                val was = fades[id] ?: 1f
-                val next = RestDetector.step(was, !inEdit && runtime.restDetector.resting(id, nowNs), dt, rf)
-                if (next != was) {
-                    fades[id] = next
-                    until = maxOf(until, t)
-                }
-            }
-            var sig = runtime.gyroLiveAxes.toLong()
-            var moved = false
-            for (b in shown) {
-                val f = runtime.gyroFeed(b.control.id)
-                sig = sig * 31 + System.identityHashCode(f)
-                sig = sig * 31 + (f?.trace?.version ?: 0L)
-                sig = sig * 31 + (f?.laser?.version ?: 0L)
-                if (f == null) continue
-                // Held, firing or aiming change what a pointer paints even on a still phone.
-                sig = sig * 31 + (if (f.ratchetHeld) 1 else 0) + (if (f.firing) 2 else 0) + (if (f.aiming) 4 else 0)
-                val d = f.display
-                if (d.isTrackball) sig = sig * 31 + f.trackballActive()
-                if (!d.kind.pose) continue
-                // The pose as shown: redrawn once it moved by a visible amount since it last did.
-                f.shown(pose)
-                val was = seen[b.control.id]
-                if (was == null || movedVisibly(was, pose)) {
-                    seen[b.control.id] = pose.copyInto(was ?: FloatArray(9))
-                    moved = true
-                }
-            }
-            if (moved || sig != last || frame == 0L) {
-                last = sig
-                until = t + (GHOSTS + 2) * GHOST_MS
-            }
-            // Aiming eases in and out over AIM_EASE_MS.
-            for (b in shown) {
-                val id = b.control.id
-                val was = aims[id] ?: 0f
-                val goal = if (runtime.gyroFeed(id)?.aiming == true) 1f else 0f
-                if (was == goal) continue
-                val step = if (dt <= 0f) 1f else dt / AIM_EASE_MS
-                aims[id] = if (goal > was) minOf(goal, was + step) else maxOf(goal, was - step)
-                until = maxOf(until, t + 20)
-            }
-            // A crosshair or rifle kicks on each shot and bounces back, its muzzle flash in time.
-            for (b in shown) {
-                val d = b.control.display ?: continue
-                // Draw each shot counts the shots on the Sphere look too.
-                if (d.kind != GyroDisplayKind.LASER || !(d.laserCrosshair || d.laserRifle || (d.laserShotDraw && d.laserDraw))) continue
-                val k = kicks.getOrPut(b.control.id) { CrosshairKick.State() }
-                val firing = runtime.gyroFeed(b.control.id)?.firing == true
-                val gun = d.gun()
-                if (k.step(t, firing, d.crosshairKick, CrosshairKick.periodMs(d.rpmOf(gun)), d.countsShots, gun.recoil, gun.pellets)) until = maxOf(until, t + 20)
-                // A gun lowered when idle comes up while aiming or firing.
-                val up = if (!d.laserRifle || !d.gunLowered) 1f
-                else if (firing || runtime.gyroFeed(b.control.id)?.aiming == true) 1f else 0f
-                val was = raises[b.control.id] ?: up
-                if (was != up) {
-                    // Up quickly; down (straight from hip fire, as you let go) over Hip fire recovery, in step with it.
-                    val ms = if (up > was) AIM_EASE_MS else d.gunHipRecoverMs.coerceIn(0, 2000).toFloat()
-                    val step = if (dt <= 0f || ms <= 0f) 1f else dt / ms
-                    raises[b.control.id] = if (up > was) minOf(up, was + step) else maxOf(up, was - step)
-                    until = maxOf(until, t + 20)
-                } else raises[b.control.id] = up
-                // Hip fire: firing without aiming; letting go starts the recovery at once (the last kick plays out on top).
-                val hipGoal = if (d.laserRifle && firing && runtime.gyroFeed(b.control.id)?.aiming != true) 1f else 0f
-                val hipWas = hips[b.control.id] ?: hipGoal
-                if (hipWas != hipGoal) {
-                    // Into hip fire quickly; back out over Hip fire recovery.
-                    val ms = if (hipGoal > hipWas) AIM_EASE_MS else d.gunHipRecoverMs.coerceIn(0, 2000).toFloat()
-                    val step = if (dt <= 0f || ms <= 0f) 1f else dt / ms
-                    hips[b.control.id] = if (hipGoal > hipWas) minOf(hipGoal, hipWas + step) else maxOf(hipGoal, hipWas - step)
-                    until = maxOf(until, t + 20)
-                } else hips[b.control.id] = hipGoal
-            }
-            if (t <= until) frame = t
+    private val seen = HashMap<String, FloatArray>()
+    private val pose = FloatArray(9)
+    private var last = 0L
+    private var until = 0L
+    private var lastT = 0L
+    private var frame = 0L
+
+    private val callback = object : Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            if (!running) return
+            step(frameTimeNanos / 1_000_000L)
+            choreographer?.postFrameCallback(this)
         }
     }
-    val st = remember { VisState() }
-    // Its own layer: the overlays drawn over it redraw without drawing the displays again.
-    Canvas(modifier.graphicsLayer()) {
-        st.now = frame
-        for (b in boxes) {
-            val shownAs = b.control.display ?: continue
-            val k = fades[b.control.id] ?: 1f
-            val d = if (k < 1f) shownAs.copy(opacity = shownAs.opacity * k) else shownAs
-            st.aim = aims[b.control.id] ?: 0f
-            st.kick = kicks[b.control.id]?.value ?: 0f
-            st.shotAt = kicks[b.control.id]?.shotAt ?: -1L
-            st.shots = kicks[b.control.id]
-            st.lower = 1f - (raises[b.control.id] ?: 1f)
-            st.hip = (hips[b.control.id] ?: 0f) * shownAs.gunHipPull.coerceIn(0f, 1f)
-            st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
-            if (editing) {
-                val sel = b.control.id in selected
-                drawRect(
-                    (if (sel) selectedColor(b.control.id) else Color.White.copy(alpha = 0.45f)),
-                    b.box.topLeft, b.box.size,
-                    style = Stroke(
-                        (if (sel) 2.5f else 1.5f) * density,
-                        pathEffect = if (sel) null else PathEffect.dashPathEffect(floatArrayOf(8 * density, 6 * density)),
-                    ),
-                )
+
+    override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
+        handler.post {
+            texture = st
+            surface = Surface(st)
+            width = w; height = h
+            dirty = true
+            if (!running) {
+                running = true
+                val c = choreographer ?: Choreographer.getInstance().also { choreographer = it }
+                c.postFrameCallback(callback)
             }
+        }
+    }
+
+    override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
+        handler.post { width = w; height = h; dirty = true }
+    }
+
+    override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
+        // Released on the render thread, after any frame it is drawing.
+        handler.post { releaseSurface() }
+        return false
+    }
+
+    override fun onSurfaceTextureUpdated(st: SurfaceTexture) = Unit
+
+    /** The layer left the pad: stop and let the thread go. */
+    fun dispose() {
+        handler.post {
+            releaseSurface()
+            thread.quitSafely()
+        }
+    }
+
+    private fun releaseSurface() {
+        running = false
+        choreographer?.removeFrameCallback(callback)
+        surface?.release(); surface = null
+        texture?.release(); texture = null
+    }
+
+    private fun step(t: Long) {
+        val inp = input
+        val shown = inp.boxes
+        val inEdit = inp.editing
+        val dt = if (lastT == 0L) 0f else (t - lastT).coerceIn(0L, 100L).toFloat()
+        lastT = t
+        val rf = runtime.touchVisuals.value.restFade
+        val nowNs = System.nanoTime()
+        for (b in shown) {
+            val id = b.control.id
+            val was = fades[id] ?: 1f
+            val next = RestDetector.step(was, !inEdit && runtime.restDetector.resting(id, nowNs), dt, rf)
+            if (next != was) {
+                fades[id] = next
+                until = maxOf(until, t)
+            }
+        }
+        var sig = runtime.gyroLiveAxes.toLong()
+        var moved = false
+        for (b in shown) {
+            val f = runtime.gyroFeed(b.control.id)
+            sig = sig * 31 + System.identityHashCode(f)
+            sig = sig * 31 + (f?.trace?.version ?: 0L)
+            sig = sig * 31 + (f?.laser?.version ?: 0L)
+            if (f == null) continue
+            // Held, firing or aiming change what a pointer paints even on a still phone.
+            sig = sig * 31 + (if (f.ratchetHeld) 1 else 0) + (if (f.firing) 2 else 0) + (if (f.aiming) 4 else 0)
+            val d = f.display
+            if (d.isTrackball) sig = sig * 31 + f.trackballActive()
+            if (!d.kind.pose) continue
+            // The pose as shown: redrawn once it moved by a visible amount since it last did.
+            f.shown(pose)
+            val was = seen[b.control.id]
+            if (was == null || movedVisibly(was, pose)) {
+                seen[b.control.id] = pose.copyInto(was ?: FloatArray(9))
+                moved = true
+            }
+        }
+        if (moved || sig != last || frame == 0L) {
+            last = sig
+            until = t + (GHOSTS + 2) * GHOST_MS
+        }
+        // Aiming eases in and out over AIM_EASE_MS.
+        for (b in shown) {
+            val id = b.control.id
+            val was = aims[id] ?: 0f
+            val goal = if (runtime.gyroFeed(id)?.aiming == true) 1f else 0f
+            if (was == goal) continue
+            val step = if (dt <= 0f) 1f else dt / AIM_EASE_MS
+            aims[id] = if (goal > was) minOf(goal, was + step) else maxOf(goal, was - step)
+            until = maxOf(until, t + 20)
+        }
+        // A crosshair or rifle kicks on each shot and bounces back, its muzzle flash in time.
+        for (b in shown) {
+            val d = b.control.display ?: continue
+            // Draw each shot counts the shots on the Sphere look too.
+            if (d.kind != GyroDisplayKind.LASER || !(d.laserCrosshair || d.laserRifle || (d.laserShotDraw && d.laserDraw))) continue
+            val k = kicks.getOrPut(b.control.id) { CrosshairKick.State() }
+            val firing = runtime.gyroFeed(b.control.id)?.firing == true
+            val gun = d.gun()
+            if (k.step(t, firing, d.crosshairKick, CrosshairKick.periodMs(d.rpmOf(gun)), d.countsShots, gun.recoil, gun.pellets)) until = maxOf(until, t + 20)
+            // A gun lowered when idle comes up while aiming or firing.
+            val up = if (!d.laserRifle || !d.gunLowered) 1f
+            else if (firing || runtime.gyroFeed(b.control.id)?.aiming == true) 1f else 0f
+            val was = raises[b.control.id] ?: up
+            if (was != up) {
+                // Up quickly; down (straight from hip fire, as you let go) over Hip fire recovery, in step with it.
+                val ms = if (up > was) AIM_EASE_MS else d.gunHipRecoverMs.coerceIn(0, 2000).toFloat()
+                val step = if (dt <= 0f || ms <= 0f) 1f else dt / ms
+                raises[b.control.id] = if (up > was) minOf(up, was + step) else maxOf(up, was - step)
+                until = maxOf(until, t + 20)
+            } else raises[b.control.id] = up
+            // Hip fire: firing without aiming; letting go starts the recovery at once (the last kick plays out on top).
+            val hipGoal = if (d.laserRifle && firing && runtime.gyroFeed(b.control.id)?.aiming != true) 1f else 0f
+            val hipWas = hips[b.control.id] ?: hipGoal
+            if (hipWas != hipGoal) {
+                // Into hip fire quickly; back out over Hip fire recovery.
+                val ms = if (hipGoal > hipWas) AIM_EASE_MS else d.gunHipRecoverMs.coerceIn(0, 2000).toFloat()
+                val step = if (dt <= 0f || ms <= 0f) 1f else dt / ms
+                hips[b.control.id] = if (hipGoal > hipWas) minOf(hipGoal, hipWas + step) else maxOf(hipGoal, hipWas - step)
+                until = maxOf(until, t + 20)
+            } else hips[b.control.id] = hipGoal
+        }
+        if (t <= until || dirty) {
+            frame = t
+            dirty = false
+            draw(inp)
+        }
+    }
+
+    private fun draw(inp: Input) {
+        val s = surface ?: return
+        if (width <= 0 || height <= 0) return
+        val canvas = try {
+            s.lockHardwareCanvas()
+        } catch (e: Exception) {
+            return
+        }
+        try {
+            canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+            drawScope.draw(density, LayoutDirection.Ltr, androidx.compose.ui.graphics.Canvas(canvas), Size(width.toFloat(), height.toFloat())) {
+                st.now = frame
+                for (b in inp.boxes) {
+                    val shownAs = b.control.display ?: continue
+                    val k = fades[b.control.id] ?: 1f
+                    val d = if (k < 1f) shownAs.copy(opacity = shownAs.opacity * k) else shownAs
+                    st.aim = aims[b.control.id] ?: 0f
+                    st.kick = kicks[b.control.id]?.value ?: 0f
+                    st.shotAt = kicks[b.control.id]?.shotAt ?: -1L
+                    st.shots = kicks[b.control.id]
+                    st.lower = 1f - (raises[b.control.id] ?: 1f)
+                    st.hip = (hips[b.control.id] ?: 0f) * shownAs.gunHipPull.coerceIn(0f, 1f)
+                    st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
+                    if (inp.editing) {
+                        val sel = b.control.id in inp.selected
+                        drawRect(
+                            (if (sel) inp.selectedColor(b.control.id) else Color.White.copy(alpha = 0.45f)),
+                            b.box.topLeft, b.box.size,
+                            style = Stroke(
+                                (if (sel) 2.5f else 1.5f) * density,
+                                pathEffect = if (sel) null else PathEffect.dashPathEffect(floatArrayOf(8 * density, 6 * density)),
+                            ),
+                        )
+                    }
+                }
+            }
+        } finally {
+            s.unlockCanvasAndPost(canvas)
         }
     }
 }
@@ -615,7 +750,7 @@ private class VisState {
      * [GyroDisplay.laserSnakeBrush] wide at the head (shots and aiming their own brushes), thinning by
      * [GyroDisplay.laserSnakeTaper] and fading by [GyroDisplay.laserSnakeFade] toward its tail, with a soft
      * [GyroDisplay.laserSnakeGlow]; coloured as the paint (the Moving colours by where it is in the scene, or by
-     * the way it moved; shots in the Fire colours), shaded as the paint. It follows a smooth curve through the
+     * the way it moved; shots in the Fire colours), shaded as the paint, each by its own settings ([GyroDisplay.snakeShade] and the rest). It follows a smooth curve through the
      * stroke points ([LaserTrace.curve]), cut into steps of at most [LaserTrace.CURVE_STEP_DEG] with the colour,
      * width and fade blended along each, so a fast turn (points far apart) stays round and the joints don't show.
      * The pieces go newest first into one layer, each only where the layer is still empty (DST_OVER), so
@@ -628,14 +763,14 @@ private class VisState {
         val len = d.laserSnakeDeg.toFloat().coerceAtLeast(1f)
         snakeFire[0] = col(GyroDisplayColor.LASER_FIRE).toArgb(); snakeFire[1] = col(GyroDisplayColor.LASER_FIRE_BEHIND).toArgb()
         snakeFire[2] = col(GyroDisplayColor.LASER_AIM).toArgb(); snakeFire[3] = col(GyroDisplayColor.LASER_AIM_BEHIND).toArgb()
-        val ld = PointerPaintShader.lightDir(d.laserLightFrom)
+        val ld = PointerPaintShader.lightDir(d.snakeLightFrom)
         val reach = if (d.laserSmoothColours) LaserTrace.SMOOTH_REACH else 0
         val taper = d.laserSnakeTaper.coerceIn(0f, 1f)
         val fade = d.laserSnakeFade.coerceIn(0f, 1f)
         fun brushPx(deg: Int) = maxOf(1.5f * density, r * Math.toRadians(deg.coerceIn(1, 20).toDouble()).toFloat() * BRUSH_WIDTH)
         val paintPx = brushPx(d.laserSnakeBrush)
-        val firePx = brushPx(d.laserFireBrush)
-        val aimPx = brushPx(d.laserAimBrush)
+        val firePx = brushPx(d.snakeFireBrush)
+        val aimPx = brushPx(d.snakeAimBrush)
         // The pieces of this half, oldest first: from, to, width, colour, opacity.
         var m = 0
         var hasPrev = false
@@ -655,7 +790,7 @@ private class VisState {
             val headPx = when (kind) { LaserPaint.FIRE -> firePx; LaserPaint.AIM -> aimPx; else -> paintPx }
             val tailA = 1f - s.behindNewest(i - 1) / len
             val tailB = 1f - s.behindNewest(i) / len
-            val byWay = kind == LaserPaint.PAINT && d.laserColourByWay
+            val byWay = kind == LaserPaint.PAINT && d.snakeColourByWay
             if (byWay) {
                 // The way blends from the span before's to this span's.
                 s.direction(i, reach, wayB)
@@ -761,15 +896,15 @@ private class VisState {
             cr = (argb shr 16 and 0xFF) / 255f; cg = (argb shr 8 and 0xFF) / 255f; cb = (argb and 0xFF) / 255f
         }
         val facing = kotlin.math.abs(z).coerceAtMost(1f)
-        var k = (1f + (0.25f + 0.75f * facing - 1f) * d.laserShade) * (if (front) 1f else d.laserInside)
+        var k = (1f + (0.25f + 0.75f * facing - 1f) * d.snakeShade) * (if (front) 1f else d.snakeInside)
         // The scene's light (as the paint's shader): the side you see, outside near, inside far.
         LaserTrace.view(la[0], la[1], la[2], nv, axon = laserAxon, turned = turned)
         if (!front) for (q in 0..2) nv[q] = -nv[q]
         val diffuse = (nv[0] * ld[0] + nv[1] * ld[1] + nv[2] * ld[2]).coerceAtLeast(0f)
-        k *= 1f + (0.3f + 0.9f * diffuse - 1f) * d.laserLight
+        k *= 1f + (0.3f + 0.9f * diffuse - 1f) * d.snakeLight
         hv[0] = ld[0]; hv[1] = ld[1]; hv[2] = ld[2] + 1f
         LaserTrace.unit(hv)
-        val spec = d.laserShine * Math.pow((nv[0] * hv[0] + nv[1] * hv[1] + nv[2] * hv[2]).coerceAtLeast(0f).toDouble(), 24.0).toFloat()
+        val spec = d.snakeShine * Math.pow((nv[0] * hv[0] + nv[1] * hv[1] + nv[2] * hv[2]).coerceAtLeast(0f).toDouble(), 24.0).toFloat()
         fun b(v: Float) = ((v * k + spec).coerceIn(0f, 1f) * 255f + 0.5f).toInt()
         return (0xFF shl 24) or (b(cr) shl 16) or (b(cg) shl 8) or b(cb)
     }

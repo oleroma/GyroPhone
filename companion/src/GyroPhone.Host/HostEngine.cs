@@ -194,6 +194,8 @@ public sealed class HostEngine
     private bool _paused, _locked;
     private bool _releasedForSilence;
     private bool _elevatedForeground, _networkPublic;
+    /// <summary>HOST_STATUS flags2's setup bits (<see cref="HostStatusFlags2.SetupMask"/>): how the PC's side could be better.</summary>
+    private byte _pcSetup;
     /// <summary>The sink took fewer events than given (UIPI or the secure desktop): resynced once it takes them again.</summary>
     private bool _injectFailed;
 
@@ -1278,6 +1280,13 @@ public sealed class HostEngine
             if (wasBlocked && !Blocked) ResyncAfterBlock();
             _events.StateChanged();
         }
+    }
+
+    /// <summary>The PC's setup bits from the watchdog's probe (<see cref="HostStatusFlags2.SetupMask"/>); sent with the next HOST_STATUS.</summary>
+    public void SetPcSetup(byte bits)
+    {
+        bits &= HostStatusFlags2.SetupMask;
+        using (Lock(ByProbes)) _pcSetup = bits;
     }
 
     /// <summary>The injected held set and its version, for the held-keys marker. Read without the engine lock.</summary>
@@ -2501,7 +2510,7 @@ public sealed class HostEngine
         Span<byte> p = stackalloc byte[Wire.HostStatusPlain];
         WireCodec.EncodeHostStatus(new HostStatus(s.HighestRxSeq, _stats.RxPerSec, _stats.LossPermille,
             _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs, (byte)_settings.OutputMode, flags,
-            _settings.UsbDirect ? HostStatusFlags2.UsbDirect : (byte)0), p);
+            (byte)((_settings.UsbDirect ? HostStatusFlags2.UsbDirect : 0) | _pcSetup)), p);
         // TEST_MODE first, so HOST_STATUS stays the newest status the phone holds. While no test
         // runs it goes only with the few statuses after one ended (a lost "off" comes again).
         if (TestModeFlagsNow() != 0 || _testModeOffRepeats > 0)
