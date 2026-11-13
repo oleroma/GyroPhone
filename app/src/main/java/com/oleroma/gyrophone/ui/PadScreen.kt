@@ -2809,7 +2809,7 @@ fun PadScreen(
                                             )
                                         }
                                         val ids = picked
-                                        if (sync.size) SyncChip("Size") { editWorkspace { ControlGroups.syncSize(it, sync.sizeIds) } }
+                                        if (sync.canSize) SyncChip("Size") { editWorkspace { ControlGroups.syncSize(it, sync.sizeIds) } }
                                         if (sync.flip) SyncChip("Flip", sync.rule == ToggleRule.FLIP) {
                                             editWorkspace { ControlGroups.syncToggles(it, ids, ToggleRule.FLIP) }
                                         }
@@ -3716,13 +3716,13 @@ private fun PanelMenu(panel: Rect, onDismiss: () -> Unit, content: @Composable C
 /** Select's Sync choices for the [picked] controls ([ControlGroups]). */
 private class SyncChoices(controls: List<TouchControl>, picked: Set<String>) {
     val sizeIds = picked.filter { id -> controls.any { it.id == id && it.kind != TouchKind.FULLSCREEN } }
-    val size = sizeIds.size >= 2
+    val canSize = sizeIds.count() >= 2
     val sizeSynced = ControlGroups.anySynced(controls, picked)
     val flip = ControlGroups.canSyncToggles(controls, picked)
     val neverBoth = ControlGroups.canNeverBoth(controls, picked)
     val toggleSynced = ControlGroups.anyToggleSynced(controls, picked)
     val rule = ControlGroups.toggleRuleOf(controls, picked)
-    val any = size || sizeSynced || flip || toggleSynced
+    val any = canSize || sizeSynced || flip || toggleSynced
 }
 
 /** A capsule in a [PanelMenu]; the [chosen] one is filled. */
