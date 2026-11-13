@@ -139,7 +139,7 @@ and Windows PC. No per-install approval is needed. This covers:
 
 - **Phone**: the debug APK built on the PC in `build/` (or, when the PC is offline, the APK from a
   `fallback.yml` run), installed over adb as an in-place update (`adb install -r`). Settings and pairings must survive, so never uninstall, clear app data
-  or change the signing key (`keystore/debug.keystore`).
+  or change the signing key (`~/.android-keys/gyrophone.jks` on the PC, the repo's secrets in CI).
 - **PC**: the companion from the same build, installed to `%LOCALAPPDATA%\Programs\GyroPhone` by
   `.agents/hooks/install` (which `agent-build pc` runs after each PC build), plus the key file
   exchange that hook does.

@@ -80,12 +80,19 @@ jobs:
       - name: Quick tests
         run: bash .agents/hooks/quick-test apk
 
+      # The signing key comes from the repo's secrets, decoded for this step only.
       - name: Build
         id: build
         env:
           BUILD_NUMBER: ${{ needs.number.outputs.n }}
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -o pipefail
+          export ANDROID_KEYSTORE="$RUNNER_TEMP/signing.jks"
+          printf '%s' "$ANDROID_KEYSTORE_B64" | base64 -d >"$ANDROID_KEYSTORE"
           bash .agents/hooks/build apk | tee "$RUNNER_TEMP/build.out"
           file="$(sed -n 's/^build-file: \([^ ]*\) .*/\1/p' "$RUNNER_TEMP/build.out" | head -n 1)"
           echo "file=$file" >> "$GITHUB_OUTPUT"
