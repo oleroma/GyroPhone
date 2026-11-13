@@ -147,6 +147,7 @@ private fun AppTab(runtime: GamepadRuntime) {
     }
     val debugOn by runtime.debug.enabled.collectAsStateWithLifecycle()
     val ratchetTimingOn by runtime.ratchetTimingOn.collectAsStateWithLifecycle()
+    val usbDirect by runtime.usbDirectOn.collectAsStateWithLifecycle()
     val tight by runtime.gyroTightening.collectAsStateWithLifecycle()
     val smooth by runtime.gyroSmoothing.collectAsStateWithLifecycle()
     val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
@@ -214,7 +215,8 @@ private fun AppTab(runtime: GamepadRuntime) {
                     "Hardware devices too", padOnlyHardware,
                     hint = if (padOnlyHardware) "Controllers, keyboards and the volume buttons also reach the PC only on the pad."
                     else "Controllers, keyboards and the volume buttons reach the PC with the pad closed too, while GP is on screen " +
-                        "(Android gives an app in the background no buttons). A keyboard still types into GP's boxes.",
+                        "(Android gives an app in the background no buttons; a USB controller read directly works in the background too). " +
+                        "A keyboard still types into GP's boxes.",
                 ) { runtime.setPadOnlyHardware(it) }
             }
         },
@@ -329,7 +331,14 @@ private fun AppTab(runtime: GamepadRuntime) {
         category(runtime, "gyroDisplay", "Gyro display", "The parallax edge; other gyro displays are placed in edit mode") {
             GyroVisualsSettings(visuals, runtime::restStillnessDps) { runtime.setTouchVisuals(it) }
         },
-        category(runtime, "controllers", "Controllers", "Gamepads attached to the phone") {
+        category(runtime, "controllers", "Controllers", "Gamepads attached to the phone, reading USB ones directly") {
+            SwitchRow(
+                "Read USB controllers directly", usbDirect,
+                hint = if (usbDirect) "A gamepad plugged into the phone's USB port is read by GP itself on its own thread, the fastest " +
+                    "way: the screen and Android's input queue never hold a press. Android asks once per plug-in. While GP holds it " +
+                    "(when input is sent, see Screen), other apps get nothing from it, and its buttons reach the PC from the background too."
+                else "USB gamepads go through Android like any other: only while GP is on screen.",
+            ) { runtime.setUsbDirect(it) }
             Searchable("Controllers on phone", "gamepad attached", *controllers.map { it.name }.toTypedArray()) {
                 Column {
                     if (controllers.isEmpty()) Text("None. Attach any gamepad.")

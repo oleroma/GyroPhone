@@ -661,6 +661,24 @@ class GamepadRuntime(context: Context) {
         _ratchetTimingOn.value = on
     }
 
+    /**
+     * Settings › "Read USB controllers directly" (on by default): a game pad on the phone's USB port
+     * is read by GP itself on its own thread, not through Android's input ([UsbPads]).
+     */
+    private val _usbDirectOn = MutableStateFlow(prefs.getBoolean(KEY_USB_DIRECT, true))
+    val usbDirectOn: StateFlow<Boolean> = _usbDirectOn
+
+    fun setUsbDirect(on: Boolean) {
+        prefs.edit().putBoolean(KEY_USB_DIRECT, on).apply()
+        _usbDirectOn.value = on
+        usbPads.update()
+    }
+
+    private val usbPadsLazy = lazy { com.oleroma.gyrophone.input.UsbPads(appContext, this) }
+
+    /** USB game pads GP reads itself ([usbDirectOn]). */
+    val usbPads by usbPadsLazy
+
     private val _gameRumble = MutableStateFlow(prefs.getBoolean(KEY_GAME_RUMBLE, true))
 
     /** When on (the default), the game's rumble on the PC's virtual controller vibrates the phone. */
@@ -686,6 +704,9 @@ class GamepadRuntime(context: Context) {
 
     @Volatile
     private var running = false
+
+    /** Whether the runtime runs (the service is up). */
+    val isRunning: Boolean get() = running
 
     private val active: OutputLink get() = link(_transport.value)
 
@@ -1100,6 +1121,7 @@ class GamepadRuntime(context: Context) {
             if (!allowed) engine.reset()
         } else if (was && !hardware) engine.reset()
         updateGyro()
+        if (usbPadsLazy.isInitialized()) usbPads.update()
     }
 
     /**
@@ -1125,6 +1147,7 @@ class GamepadRuntime(context: Context) {
         // Nothing polls the engine while no link runs: drop touchpad taps queued meanwhile.
         engine.touchpadCancel()
         active.start()
+        usbPads.update()
         avoidDirect = directSilent
         updateGyro()
     }
@@ -1142,6 +1165,7 @@ class GamepadRuntime(context: Context) {
         active.stop()
         engine.reset()
         running = false
+        if (usbPadsLazy.isInitialized()) usbPads.update()
     }
 
     fun setDisplayRotation(degrees: Int) {
@@ -1749,6 +1773,7 @@ class GamepadRuntime(context: Context) {
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         private const val KEY_GAME_RUMBLE = "game_rumble"
         private const val KEY_RATCHET_TIMING = "ratchet_timing"
+        private const val KEY_USB_DIRECT = "usb_direct"
         private const val KEY_BLACK_SCREEN_IDLE = "black_screen_idle"
         private const val KEY_BLACK_SCREEN_SECONDS = "black_screen_seconds"
         const val DEFAULT_BLACK_SCREEN_SECONDS = 60
