@@ -20,8 +20,6 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -510,7 +508,8 @@ fun PadScreen(
 
     /** The menu's Select: taps pick several controls ([picked], whole groups) and a drag moves them all. */
     var selectMode by remember { mutableStateOf(false) }
-    var syncMenu by remember { mutableStateOf(false) }
+    /** Select's Sync list is open (like Add's): Size, Flip, Never both. */
+    var syncOpen by remember { mutableStateOf(false) }
     var picked by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     /** The control whose Delete (in its long-press popup) is asking to be confirmed. */
@@ -2567,7 +2566,10 @@ fun PadScreen(
                         val canUndo = undoSteps.isNotEmpty() || (undoBase[0] != null && draft !== undoBase[0])
                         val canRedo = redoSteps.isNotEmpty()
                         val mainRows = min(panelRows, mainRowsCap(portrait))
-                        val listOpen = addOpen || presetsOpen
+                        // Select's Sync choices for the picked controls.
+                        val sync = SyncChoices(editControls(), if (selectMode) picked else emptySet())
+                        val syncShown = syncOpen && selectMode && sync.any
+                        val listOpen = addOpen || presetsOpen || syncShown
 
                         /** A row of the fixed column: ⠿ (moves the menu) and, if any, its icon. */
                         @Composable
@@ -2666,32 +2668,12 @@ fun PadScreen(
                                             containerColor = SYNCED_COLOR,
                                             contentColor = Color.Black,
                                         )
-                                        val pickedHere = picked.filter { id -> controls.any { it.id == id && it.kind != TouchKind.FULLSCREEN } }
-                                        val canSize = pickedHere.size >= 2
-                                        val sizeSynced = ControlGroups.anySynced(controls, picked)
-                                        val canFlip = ControlGroups.canSyncToggles(controls, picked)
-                                        val canNever = ControlGroups.canNeverBoth(controls, picked)
-                                        val toggleSynced = ControlGroups.anyToggleSynced(controls, picked)
-                                        val rule = ControlGroups.toggleRuleOf(controls, picked)
-                                        if (canSize || sizeSynced || canFlip || toggleSynced) Box {
-                                            PanelPill(colors = syncColors, onClick = { syncMenu = true }) { Text("Sync") }
-                                            DropdownMenu(expanded = syncMenu, onDismissRequest = { syncMenu = false }) {
-                                                @Composable
-                                                fun item(label: String, onClick: () -> Unit) = DropdownMenuItem(
-                                                    text = { Text(label) }, onClick = { syncMenu = false; onClick() },
-                                                )
-                                                if (canSize) item("Size") { editWorkspace { ControlGroups.syncSize(it, pickedHere) } }
-                                                if (canFlip) item(if (rule == ToggleRule.FLIP) "Flip ✓" else "Flip") {
-                                                    editWorkspace { ControlGroups.syncToggles(it, picked, ToggleRule.FLIP) }
-                                                }
-                                                if (canNever) {
-                                                    val label = if (picked.size >= 3) "One at a time" else "Never both"
-                                                    item(if (rule == ToggleRule.NEVER_BOTH) "$label ✓" else label) {
-                                                        editWorkspace { ControlGroups.syncToggles(it, picked, ToggleRule.NEVER_BOTH) }
-                                                    }
-                                                }
-                                                if (sizeSynced) item("Unsync size") { editWorkspace { ControlGroups.unsync(it, picked) } }
-                                                if (toggleSynced) item("Unsync toggles") { editWorkspace { ControlGroups.unsyncToggles(it, picked) } }
+                                        if (sync.any) {
+                                            if (syncShown) {
+                                                ListTab("Sync ▴", Modifier.layoutId(STRIP_LAST_ROW)) { syncOpen = false }
+                                            } else {
+                                                PanelPill(colors = syncColors, modifier = Modifier.layoutId(STRIP_LAST_ROW),
+                                                    onClick = { syncOpen = true; addOpen = false; presetsOpen = false }) { Text("Sync +") }
                                             }
                                         }
                                         // One whole group picked: save it as a preset (Add preset).
@@ -2750,7 +2732,7 @@ fun PadScreen(
                                 } else {
                                     PanelPill(outlined = true,
                                         modifier = Modifier.layoutId(STRIP_LAST_ROW),
-                                        onClick = { addOpen = true; presetsOpen = false },
+                                        onClick = { addOpen = true; presetsOpen = false; syncOpen = false },
                                     ) { Text("Add +") }
                                 }
                                 // Your saved buttons, displays and groups, in their own row.
@@ -2759,7 +2741,7 @@ fun PadScreen(
                                 } else {
                                     PanelPill(outlined = true,
                                         modifier = Modifier.layoutId(STRIP_LAST_ROW),
-                                        onClick = { presetsOpen = true; addOpen = false },
+                                        onClick = { presetsOpen = true; addOpen = false; syncOpen = false },
                                     ) { Text("Add preset ★") }
                                 }
                                 if (snap) {
@@ -2808,7 +2790,41 @@ fun PadScreen(
                             ) {
                                 LeftColumn(listRows) { }
                                 ScrollStrip(listRows, fill = true, tab = true) {
-                                    if (addOpen) {
+                                    if (syncShown) {
+                                        // Sync: Size for any picked controls; Flip and Never both ("One at a time" for
+                                        // three or more) for picked Toggle buttons. ✓ marks their current toggle sync.
+                                        @Composable
+                                        fun SyncChip(label: String, chosen: Boolean = false, onClick: () -> Unit) {
+                                            val shape = RoundedCornerShape(50)
+                                            Text(
+                                                label,
+                                                color = if (chosen) Color.Black else Color.White,
+                                                style = MaterialTheme.typography.labelLarge,
+                                                maxLines = 1,
+                                                modifier = Modifier
+                                                    .clip(shape)
+                                                    .background(if (chosen) SYNCED_COLOR else Color.White.copy(alpha = 0.18f), shape)
+                                                    .clickable { syncOpen = false; onClick() }
+                                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                            )
+                                        }
+                                        val ids = picked
+                                        if (sync.size) SyncChip("Size") { editWorkspace { ControlGroups.syncSize(it, sync.sizeIds) } }
+                                        if (sync.flip) SyncChip("Flip", sync.rule == ToggleRule.FLIP) {
+                                            editWorkspace { ControlGroups.syncToggles(it, ids, ToggleRule.FLIP) }
+                                        }
+                                        if (sync.neverBoth) SyncChip(if (ids.size >= 3) "One at a time" else "Never both", sync.rule == ToggleRule.NEVER_BOTH) {
+                                            editWorkspace { ControlGroups.syncToggles(it, ids, ToggleRule.NEVER_BOTH) }
+                                        }
+                                        if (sync.sizeSynced) SyncChip("Unsync size") { editWorkspace { ControlGroups.unsync(it, ids) } }
+                                        if (sync.toggleSynced) SyncChip("Unsync toggles") { editWorkspace { ControlGroups.unsyncToggles(it, ids) } }
+                                        if (sync.flip && !sync.neverBoth) Text(
+                                            "Never both needs the same Initial state",
+                                            color = Color.White.copy(alpha = 0.7f),
+                                            style = MaterialTheme.typography.labelLarge,
+                                            modifier = Modifier.padding(horizontal = 4.dp),
+                                        )
+                                    } else if (addOpen) {
                                         /** Adds a button; [empty]: with every action it would take from the workspace cleared. */
                                         fun addButton(empty: Boolean, at: Offset?) {
                                             val d = draft ?: return
@@ -3695,6 +3711,18 @@ private fun PanelMenu(panel: Rect, onDismiss: () -> Unit, content: @Composable C
             )
         }
     }
+}
+
+/** Select's Sync choices for the [picked] controls ([ControlGroups]). */
+private class SyncChoices(controls: List<TouchControl>, picked: Set<String>) {
+    val sizeIds = picked.filter { id -> controls.any { it.id == id && it.kind != TouchKind.FULLSCREEN } }
+    val size = sizeIds.size >= 2
+    val sizeSynced = ControlGroups.anySynced(controls, picked)
+    val flip = ControlGroups.canSyncToggles(controls, picked)
+    val neverBoth = ControlGroups.canNeverBoth(controls, picked)
+    val toggleSynced = ControlGroups.anyToggleSynced(controls, picked)
+    val rule = ControlGroups.toggleRuleOf(controls, picked)
+    val any = size || sizeSynced || flip || toggleSynced
 }
 
 /** A capsule in a [PanelMenu]; the [chosen] one is filled. */
