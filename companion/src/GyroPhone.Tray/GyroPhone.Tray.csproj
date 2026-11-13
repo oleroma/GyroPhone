@@ -49,4 +49,19 @@
     </ItemGroup>
     <WriteLinesToFile File="$(PublishDir)side-files.txt" Lines="@(_GpSideFile)" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
+  <!-- The FPS helper (GyroPhone.FrameHelper) rides inside the published exe; "Set up FPS helper" copies it to
+       Program Files. Published on its own first (native AOT, a few MB), with its own settings, not the companion's:
+       the publish's self-extract, ReadyToRun and output folder must not reach it. Plain builds (tests) skip it. -->
+  <Target Name="EmbedFpsHelper" BeforeTargets="PrepareForBuild" Condition="'$(PublishSingleFile)' == 'true'">
+    <PropertyGroup>
+      <_GpHelperProject>$(MSBuildProjectDirectory)/../GyroPhone.FrameHelper/GyroPhone.FrameHelper.csproj</_GpHelperProject>
+      <_GpHelperDir>$(MSBuildProjectDirectory)/$(BaseIntermediateOutputPath)fps-helper/</_GpHelperDir>
+      <_GpHelperProps>Configuration=Release;RuntimeIdentifier=win-x64;SelfContained=true;PublishAot=true;PublishSingleFile=false;IncludeNativeLibrariesForSelfExtract=false;PublishReadyToRun=false;DebugType=none;PublishDir=$(_GpHelperDir)</_GpHelperProps>
+    </PropertyGroup>
+    <MSBuild Projects="$(_GpHelperProject)" Targets="Restore" Properties="$(_GpHelperProps);MSBuildRestoreSessionId=$([System.Guid]::NewGuid())" />
+    <MSBuild Projects="$(_GpHelperProject)" Targets="Publish" Properties="$(_GpHelperProps)" />
+    <ItemGroup>
+      <EmbeddedResource Include="$(_GpHelperDir)GyroPhoneFpsHelper.exe" LogicalName="GyroPhoneFpsHelper.exe" />
+    </ItemGroup>
+  </Target>
 </Project>
