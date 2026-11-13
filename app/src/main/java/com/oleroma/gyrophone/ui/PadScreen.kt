@@ -2080,6 +2080,8 @@ fun PadScreen(
             valueBars?.let { ValueFramesBehind(it, Modifier.fillMaxSize()) }
             // Back first, so the front one (as touches see them) is drawn on top.
             // Gyro displays are drawn elsewhere. No return inside key {}: D8 can't take a composable inline return.
+            // Toggle-synced buttons are painted in their sync's own colour.
+            val syncTints = remember(ws.touchControls) { toggleSyncTints(ws.touchControls) }
             for (c in hitOrder(ws.touchControls, portrait).asReversed().filter { it.kind != TouchKind.DISPLAY }) key(c.id) {
                 val r = half(c)
                 val rh = halfH(c)
@@ -2093,6 +2095,7 @@ fun PadScreen(
                     selectedTint = if (isSelected) litColor(c.id) else null,
                     pressed = { c.id in pressedIds || c.id in heldSticks },
                     latched = { c.id in latchedIds },
+                    syncTint = syncTints[c.id],
                     // Values sitting in the button's middle take its label's place.
                     liveLabel = { if (valueBars != null && c.id in valueBars.centered) "" else liveLabels[c.id] },
                     widthDp = with(density) { (r * 2).toDp() },
@@ -3516,6 +3519,8 @@ private fun LiveControl(
     selectedTint: Color?,
     pressed: () -> Boolean,
     latched: () -> Boolean,
+    /** Its toggle sync's colour ([toggleSyncTints]): its outline, and its fill while on. */
+    syncTint: Color? = null,
     liveLabel: () -> String?,
     widthDp: Dp,
     heightDp: Dp,
@@ -3529,8 +3534,8 @@ private fun LiveControl(
     val tint = when {
         selectedTint != null -> selectedTint
         isPressed -> Color(0xFF7CC4FF)
-        isLatched -> Color(0xFF8FE39A)
-        else -> Color(0x66FFFFFF)
+        isLatched -> syncTint ?: Color(0xFF8FE39A)
+        else -> syncTint?.copy(alpha = 0.8f) ?: Color(0x66FFFFFF)
     }
     PadControl(
         control = control,
@@ -3595,6 +3600,23 @@ private fun PadControl(
         )
     }
 }
+
+/**
+ * Each toggle sync's own colour ([TouchControl.toggleSync]), by control id: the syncs in order
+ * of their ids take the colours in turn, none of them the pressed, latched or edit-mode colours.
+ */
+private fun toggleSyncTints(controls: List<TouchControl>): Map<String, Color> {
+    val syncs = controls.mapNotNull { it.toggleSync }.distinct().sorted()
+    if (syncs.isEmpty()) return emptyMap()
+    return controls.filter { it.toggleSync != null }.associate { c ->
+        c.id to TOGGLE_SYNC_COLORS[syncs.indexOf(c.toggleSync) % TOGGLE_SYNC_COLORS.size]
+    }
+}
+
+/** Toggle syncs' colours: purple, orange, pink, yellow, lime, lavender. */
+private val TOGGLE_SYNC_COLORS = listOf(
+    Color(0xFFB07CFF), Color(0xFFFFA14D), Color(0xFFFF6FAE), Color(0xFFFFE066), Color(0xFFC0EB75), Color(0xFFD9B8FF),
+)
 
 /** The smallest a control's label shrinks to. */
 private const val MIN_LABEL_SP = 7f
