@@ -184,7 +184,7 @@ internal sealed class GpuSurface : IDisposable
         try
         {
             _dc = _shared.Device.CreateDeviceContext(DeviceContextOptions.None);
-            _canvas = new D2DCanvas(_shared.Factory, _shared.Device, _dc, _shared.Write);
+            _canvas = new D2DCanvas(_shared.Factory, _shared.Device, _dc, _shared.Write) { Gpu = _shared };
             if (hwnd == IntPtr.Zero) return;
             // Bit-block transfer model: the one a layered window takes. Its alpha reaches the screen
             // through the window's redirection surface (the extended frame), premultiplied.
@@ -399,6 +399,12 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
     // Drawing text into a bitmap failed once: text is drawn directly from then on.
     private bool _noTextCache;
     private ID2D1PathGeometry? _lastGeo;
+
+    /// <summary>The shared device this canvas draws on (for <see cref="GpuPaint"/>), or null.</summary>
+    public GpuDevice? Gpu { get; init; }
+
+    /// <summary>The device context drawn on (for <see cref="GpuPaint"/>'s pictures).</summary>
+    public ID2D1DeviceContext Dc => _dc;
 
     private readonly record struct TextKey(string Text, float Px, bool Bold, int Argb, float W, float H, TextAlign Hz, TextAlign Vt, int Scale8);
     // What each Push did, so Pop undoes it: a transform to restore, or a layer (with its geometry) to pop.
