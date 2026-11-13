@@ -31,8 +31,7 @@ internal static class PaintRenderer
         public float[] Cov = [], GlowCov = [];
         public int[] CovCol = [], GlowCol = [];
         // The Snake's pieces this drawing, oldest first (drawn newest first, see Snake).
-        public Piece[] Pieces = new Piece[256];
-        public int PieceCount;
+        public readonly PaintRendererPieces Pieces = new();
     }
 
     private static readonly ConditionalWeakTable<LaserTrace, State> States = new();
@@ -55,6 +54,7 @@ internal static class PaintRenderer
         {
             // Nothing to show: let go of the paint's tables until there is.
             if (States.TryGetValue(trace, out var idle)) { idle.NearPaint.DropTables(); idle.FarPaint.DropTables(); }
+            GpuPaint.Idle(trace);
             return;
         }
         var st = States.GetOrCreateValue(trace);
@@ -63,6 +63,14 @@ internal static class PaintRenderer
         var colX = LaserTrace.ToView(1f, 0f, 0f, s.LaserAxonometric, turned);
         var colY = LaserTrace.ToView(0f, 1f, 0f, s.LaserAxonometric, turned);
         var colZ = LaserTrace.ToView(0f, 0f, 1f, s.LaserAxonometric, turned);
+        // On the graphics card when it can: the CPU then only works out the Snake's pieces.
+        if (g is D2DCanvas d2 && GpuPaint.Draw(d2, trace, lp, snake, s, front, new RectangleF(c.X - e, c.Y - e, 2 * e, 2 * e), size, r, e, turned,
+            moveColors, colX, colY, colZ, (sz, ee, rr) => BuildPieces(st, sz, ee, trace, s, front, rr, turned, moveColors), st.Pieces))
+        {
+            // The CPU's pictures aren't needed meanwhile.
+            st.NearPaint.DropTables(); st.FarPaint.DropTables();
+            return;
+        }
         // The paint: only what changed is drawn again (PaintPicture).
         var paint = front ? st.NearPaint : st.FarPaint;
         if (lp != null)
@@ -104,12 +112,6 @@ internal static class PaintRenderer
 
     private static int Pack(float r, float g, float b, float a) => PaintPicture.Pack(r, g, b, a);
 
-    /// <summary>One piece of the Snake: from (Ax, Ay) to (Bx, By), Half pixels each side, colour Col at opacity Op.</summary>
-    private struct Piece
-    {
-        public float Ax, Ay, Bx, By, Half, Op;
-        public int Col;
-    }
 
     /// <summary>
     /// Snake: the line along the newest stretch of the strokes, its near or far pieces, LaserSnakeBrush wide at its head
@@ -123,9 +125,11 @@ internal static class PaintRenderer
     private static void Snake(State st, int[] buf, int size, float e, LaserTrace trace, OverlaySettings s, bool front, float r,
         float[]? turned, uint[] moves)
     {
-        var strokes = trace.Strokes;
-        int n = strokes.Count;
+        if (!BuildPieces(st, size, e, trace, s, front, r, turned, moves)) return;
         float glow = Math.Clamp(s.LaserSnakeGlow, 0f, 1f);
+        float alpha = 0f;
+        foreach (var m in moves) alpha += (m >> 24) / 255f;
+        alpha /= 6f;
         if (st.Cov.Length != size * size)
         {
             st.Cov = new float[size * size];
@@ -138,14 +142,43 @@ internal static class PaintRenderer
             Array.Clear(st.Cov);
             if (glow > 0f) Array.Clear(st.GlowCov);
         }
+        var pieces = st.Pieces;
+        // Each pixel keeps its strongest cover, the oldest piece's colour where pieces tie. Drawn newest first (the
+        // strongest, as the tail fades), so an older piece can skip the pixels a newer one already covers more than it
+        // ever could; ties go to the later drawn, older piece: the same picture as drawing oldest first.
+        // The picture's rows are shared out in bands over the cores: each band runs every piece in the same order,
+        // clipped to its rows, so the picture is the same as drawn in one go (a long Snake is hundreds of pieces).
+        int bands = size >= 128 ? Math.Clamp(Environment.ProcessorCount, 1, 8) : 1;
+        void Band(int b)
+        {
+            int ya = size * b / bands, yb = size * (b + 1) / bands - 1;
+            for (int i = pieces.Count - 1; i >= 0; i--)
+            {
+                ref var c = ref pieces.Items[i];
+                Capsule(st, size, c.Ax, c.Ay, c.Bx, c.By, c.Half, c.Col, c.Op, glow, ya, yb);
+            }
+            // The glow, then the line, over the paint at the colours' opacity.
+            if (glow > 0f) Over(buf, st.GlowCov, st.GlowCol, alpha, ya * size, (yb + 1) * size);
+            Over(buf, st.Cov, st.CovCol, alpha, ya * size, (yb + 1) * size);
+        }
+        if (bands > 1) Parallel.For(0, bands, Band);
+        else Band(0);
+    }
+
+    /// <summary>
+    /// Works out the Snake's pieces on the <paramref name="front"/> or far half into <paramref name="st"/>, in the
+    /// picture's pixels (<paramref name="size"/> across, <paramref name="e"/> from the middle to an edge); false when
+    /// none shows on this half.
+    /// </summary>
+    private static bool BuildPieces(State st, int size, float e, LaserTrace trace, OverlaySettings s, bool front, float r, float[]? turned, uint[] moves)
+    {
+        var strokes = trace.Strokes;
+        int n = strokes.Count;
         float toBuf = size / (2f * e);
         float Px(int deg) => Math.Max(1.5f, r * Math.Clamp(deg, 1, 20) * MathF.PI / 180f * 0.6f) * toBuf;
         float paintPx = Px(s.LaserSnakeBrush), firePx = Px(s.LaserFireBrush), aimPx = Px(s.LaserAimBrush);
         float taper = Math.Clamp(s.LaserSnakeTaper, 0f, 1f), fade = Math.Clamp(s.LaserSnakeFade, 0f, 1f);
         float len = Math.Max(1f, s.LaserSnakeDeg);
-        float alpha = 0f;
-        foreach (var m in moves) alpha += (m >> 24) / 255f;
-        alpha /= 6f;
         var fa = Color.FromArgb(s.Color("fire"));
         var fb = Color.FromArgb(s.Color("fire_behind"));
         var aa = Color.FromArgb(s.Color("aim"));
@@ -182,7 +215,8 @@ internal static class PaintRenderer
             float spec = s.LaserShine * MathF.Pow(Math.Max(nx * hv.X + ny * hv.Y + nz * hv.Z, 0f), 24f);
             return Pack(Math.Min(cr * kk + spec, 1f), Math.Min(cg * kk + spec, 1f), Math.Min(cb * kk + spec, 1f), 1f);
         }
-        st.PieceCount = 0;
+        var pieces = st.Pieces;
+        pieces.Count = 0;
         bool any = false, hasPrev = false, prevFront = false;
         float bx0 = 0, by0 = 0;
         for (int i = 1; i < n; i++)
@@ -229,34 +263,14 @@ internal static class PaintRenderer
                     int col = ColourAt(p, v, kind, way, byWay);
                     float tail = Math.Clamp(tailA + (tailB - tailA) * f, 0f, 1f);
                     float half = headPx * (1f - taper * (1f - tail)) * k / 2f;
-                    if (st.PieceCount == st.Pieces.Length) Array.Resize(ref st.Pieces, st.Pieces.Length * 2);
-                    st.Pieces[st.PieceCount++] = new Piece { Ax = bx0, Ay = by0, Bx = bx, By = by, Half = half, Col = col, Op = 1f - fade * (1f - tail) };
+                    if (pieces.Count == pieces.Items.Length) Array.Resize(ref pieces.Items, pieces.Items.Length * 2);
+                    pieces.Items[pieces.Count++] = new SnakePiece { Ax = bx0, Ay = by0, Bx = bx, By = by, Half = half, Col = col, Op = 1f - fade * (1f - tail) };
                     any = true;
                 }
                 bx0 = bx; by0 = by; prevFront = isFront;
             }
         }
-        if (!any) return;
-        // Each pixel keeps its strongest cover, the oldest piece's colour where pieces tie. Drawn newest first (the
-        // strongest, as the tail fades), so an older piece can skip the pixels a newer one already covers more than it
-        // ever could; ties go to the later drawn, older piece: the same picture as drawing oldest first.
-        // The picture's rows are shared out in bands over the cores: each band runs every piece in the same order,
-        // clipped to its rows, so the picture is the same as drawn in one go (a long Snake is hundreds of pieces).
-        int bands = size >= 128 ? Math.Clamp(Environment.ProcessorCount, 1, 8) : 1;
-        void Band(int b)
-        {
-            int ya = size * b / bands, yb = size * (b + 1) / bands - 1;
-            for (int i = st.PieceCount - 1; i >= 0; i--)
-            {
-                ref var c = ref st.Pieces[i];
-                Capsule(st, size, c.Ax, c.Ay, c.Bx, c.By, c.Half, c.Col, c.Op, glow, ya, yb);
-            }
-            // The glow, then the line, over the paint at the colours' opacity.
-            if (glow > 0f) Over(buf, st.GlowCov, st.GlowCol, alpha, ya * size, (yb + 1) * size);
-            Over(buf, st.Cov, st.CovCol, alpha, ya * size, (yb + 1) * size);
-        }
-        if (bands > 1) Parallel.For(0, bands, Band);
-        else Band(0);
+        return any;
     }
 
     private static void Over(int[] buf, float[] cov, int[] covCol, float alpha, int from, int to)
@@ -361,4 +375,18 @@ internal static class PaintRenderer
             }
         }
     }
+}
+
+/// <summary>One piece of the Snake: from (Ax, Ay) to (Bx, By), Half pixels each side, colour Col at opacity Op (picture pixels).</summary>
+internal struct SnakePiece
+{
+    public float Ax, Ay, Bx, By, Half, Op;
+    public int Col;
+}
+
+/// <summary>A half's Snake pieces, oldest first.</summary>
+internal sealed class PaintRendererPieces
+{
+    public SnakePiece[] Items = new SnakePiece[256];
+    public int Count;
 }

@@ -11,6 +11,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>GyroPhone.ico</ApplicationIcon>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- update.cmd reads this (file properties, Comments) to know the exe takes the flag before it runs it. -->
     <Description>GyroPhone Companion; supports --init-keys</Description>
   </PropertyGroup>
@@ -27,6 +28,7 @@
     <!-- Overlay windows drawn by the graphics card: Direct2D into a GDI-compatible texture. -->
     <PackageReference Include="Vortice.Direct2D1" Version="3.6.2" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.6.2" />
     <!-- OpenCV's native library for the latency test's video analyser (GyroPhone.Latency). -->
     <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20260627" />
   </ItemGroup>
