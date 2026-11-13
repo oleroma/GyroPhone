@@ -407,10 +407,10 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
     public ID2D1DeviceContext Dc => _dc;
 
     // The 3D overlay's pictures on the card (<see cref="Gpu3D"/>), let go with this canvas.
-    private IDisposable? _scene;
+    private readonly HashSet<IDisposable> _scenes = [];
 
     /// <summary>Lets go of <paramref name="scene"/> (<see cref="Gpu3D"/>'s pictures for this canvas) when this canvas goes.</summary>
-    public void OwnScene(IDisposable scene) => _scene = scene;
+    public void OwnScene(IDisposable scene) => _scenes.Add(scene);
 
     /// <summary>The picture's size in pixels (<see cref="Gpu3D"/>'s pictures are as big).</summary>
     public float Width => _dc.PixelSize.Width;
@@ -812,8 +812,8 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
         ForgetLast();
         ForgetLineSets();
         _ball?.Dispose();
-        _scene?.Dispose();
-        _scene = null;
+        foreach (var scene in _scenes) scene.Dispose();
+        _scenes.Clear();
         _textBrush.Dispose();
         _textDc.Dispose();
         _round.Dispose();

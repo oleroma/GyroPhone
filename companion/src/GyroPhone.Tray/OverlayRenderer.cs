@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using GyroPhone.Host;
 using GyroPhone.Host.Settings;
@@ -66,6 +67,9 @@ internal sealed class DrawBuffers
     public readonly (float X, float Y)[] Round24 = new (float, float)[24], Round16 = new (float, float)[16];
     public readonly List<(float X, float Y)> ClipOut = new(64), ClipScratch = new(64);
     public readonly Rounded Outline = new(), IslandShape = new(), ScreenShape = new(), ScreenInset = new();
+    /// <summary>The 3D phone's screen picture on the card (<see cref="Gpu3D"/>), and the canvas its body is listed with.</summary>
+    public Gpu3D.Panel? ScreenPanel;
+    public FlatCanvas? Flat;
 
     /// <summary>A rounded rectangle (<see cref="OverlayRenderer.RoundedRect"/>) made again only when its size changes.</summary>
     public sealed class Rounded
@@ -351,18 +355,76 @@ internal static class OverlayRenderer
 
         // The handles and the phone, back to front: a handle nearer than the phone goes after it.
         var view = handles ? new HandleDrawing.View(Project, Faces, Shade) : default;
+        float zs = Thickness / 2f + 0.001f;
+        (float X, float Y, float Z) OnScreen(float u, float v) => ((u - 0.5f) * sw, (0.5f - v) * sh, zs);
+        if (DrawPhoneOnCard()) return;
         if (handles)
             for (int side = -1; side <= 1; side += 2)
-                if (!HandleDrawing.InFront(view, side, bw)) DrawHandle(side);
-        DrawBody();
+                if (!HandleDrawing.InFront(view, side, bw)) DrawHandle(g, side);
+        if (DrawBody(g)) DrawScreen(g, Project, 1f);
         if (handles)
             for (int side = -1; side <= 1; side += 2)
-                if (HandleDrawing.InFront(view, side, bw)) DrawHandle(side);
+                if (HandleDrawing.InFront(view, side, bw)) DrawHandle(g, side);
 
-        void DrawHandle(int side) => HandleDrawing.Draw(g, view, side, bw, hw, hh, Thickness, live ? f : null,
+        // Through the graphics card: the body and handles worked out here (a few dozen polygons) and drawn there; the
+        // screen drawn flat into a picture only when what is on it changes, then laid on the turned screen there.
+        bool DrawPhoneOnCard()
+        {
+            if (g is not D2DCanvas d2 || d2.Gpu is not { } gpu || PhoneOnCpu) return false;
+            var buf = scene.Buffers;
+            // The screen's picture: about as many pixels as the screen shows face on, a quarter more for sharp labels.
+            float tScale = Math.Clamp(k * 1.25f, 8f, 2048f / Math.Max(sw, sh));
+            int tw = Math.Max(8, (int)MathF.Ceiling(sw * tScale)), th = Math.Max(8, (int)MathF.Ceiling(sh * tScale));
+            try
+            {
+                var screenKey = ScreenKey(scene, settings, live, tw, th);
+                var panel = buf.ScreenPanel ??= new Gpu3D.Panel();
+                d2.OwnScene(panel);
+                if (!Equals(panel.Shown, screenKey))
+                {
+                    panel.Paint(gpu, tw, th, settings.Quality, 0, (cv, _) =>
+                        DrawScreen(cv, p => new PointF((p.X / sw + 0.5f) * tw, (0.5f - p.Y / sh) * th), tScale / Math.Max(k, 1f)));
+                    panel.Shown = screenKey;
+                }
+                int look = HashCode.Combine(HashCode.Combine(settings.Color("body"), settings.Color("handles"), settings.Color("handlesLit"), aspect, handles),
+                    k, cx, cy, live ? HashCode.Combine(f.PadButtons, f.PadL2Pull, f.PadR2Pull) : 0);
+                var key = new Gpu3D.Key(look, Gpu3D.TurnOf(m), area, panel.Shown.GetHashCode());
+                return Gpu3D.Draw(g, area, "phone", key, 0, (fr, _) =>
+                {
+                    var fc = buf.Flat ??= new FlatCanvas();
+                    fc.List.Clear();
+                    if (handles)
+                        for (int side = -1; side <= 1; side += 2)
+                            if (!HandleDrawing.InFront(view, side, bw)) DrawHandle(fc, side);
+                    bool front = DrawBody(fc);
+                    fr.Flat(fc.List);
+                    if (front)
+                    {
+                        var tl = OnScreen(0f, 0f);
+                        var br = OnScreen(1f, 1f);
+                        fr.Panel(panel, new(tl.X, tl.Y, zs), new(br.X, tl.Y, zs), new(br.X, br.Y, zs), new(tl.X, br.Y, zs), m, new PointF(cx, cy), k, CameraZ);
+                    }
+                    fc.List.Clear();
+                    if (handles)
+                        for (int side = -1; side <= 1; side += 2)
+                            if (HandleDrawing.InFront(view, side, bw)) DrawHandle(fc, side);
+                    fr.Flat(fc.List);
+                });
+            }
+            catch (NotSupportedException)
+            {
+                // Something only the CPU path can draw: phones keep to it.
+                PhoneOnCpu = true;
+                return false;
+            }
+        }
+
+        void DrawHandle(ICanvas cv, int side) => HandleDrawing.Draw(cv, view, side, bw, hw, hh, Thickness, live ? f : null,
             Opaque(settings.Color("handles")), Opaque(settings.Color("handlesLit")), Idle, Math.Clamp(k * 0.008f, 1f, 3f));
 
-        void DrawBody()
+        // The slab: its sides, and its back (with the camera island) or its front with the bezel's camera. True when
+        // its front (the screen) faces the viewer.
+        bool DrawBody(ICanvas cv)
         {
             var buf = scene.Buffers;
             // The slab's outline (rounded rectangle) in the screen's plane.
@@ -388,14 +450,14 @@ internal static class OverlayRenderer
                 if (!Faces(mid, n)) continue;
                 var side = Tint(BodyColor, Shade(n) * 0.85f);
                 (quad[0], quad[1], quad[2], quad[3]) = (front[i], front[j], back[j], back[i]);
-                g.FillPolygon(side, quad);
-                g.DrawPolygon(side, 1f, quad); // hides hairline gaps between neighbours
+                cv.FillPolygon(side, quad);
+                cv.DrawPolygon(side, 1f, quad); // hides hairline gaps between neighbours
             }
 
             if (!Faces((0, 0, zf), (0, 0, 1)))
             {
                 // The back: the body and a camera island.
-                g.FillPolygon(Tint(BodyColor, Shade((0, 0, -1))), back);
+                cv.FillPolygon(Tint(BodyColor, Shade((0, 0, -1))), back);
                 float cs = Math.Min(bw, bh) * 0.32f;
                 // Top left as seen from behind the phone held upright.
                 float ix = bw / 2 - cs * 0.8f;
@@ -403,14 +465,23 @@ internal static class OverlayRenderer
                 var islandShape = buf.IslandShape.Get(cs, cs, cs * 0.3f, 4);
                 var island = DrawBuffers.Sized(ref buf.Island, islandShape.Length);
                 for (int i = 0; i < islandShape.Length; i++) island[i] = Project((islandShape[i].X + ix, islandShape[i].Y + iy, zb - 0.002f));
-                g.FillPolygon(Tint(Color.FromArgb(0x3A, 0x3F, 0x48), Shade((0, 0, -1))), island);
-                return;
+                cv.FillPolygon(Tint(Color.FromArgb(0x3A, 0x3F, 0x48), Shade((0, 0, -1))), island);
+                return false;
             }
 
-            g.FillPolygon(Tint(BodyColor, Shade((0, 0, 1))), front);
+            cv.FillPolygon(Tint(BodyColor, Shade((0, 0, 1))), front);
+            // The front camera: in the top bezel's middle (portrait) or the left one (landscape).
+            var camP = Project(portrait ? OnScreen(0.5f, -Bezel / 2 / sh) : OnScreen(-Bezel / 2 / sw, 0.5f));
+            float camR = Math.Max(1.2f, k * 0.012f);
+            cv.FillEllipse(Color.FromArgb(0x05, 0x06, 0x08), new RectangleF(camP.X - camR, camP.Y - camR, camR * 2, camR * 2));
+            return true;
+        }
 
-            float zs = zf + 0.001f;
-            (float X, float Y, float Z) OnScreen(float u, float v) => ((u - 0.5f) * sw, (0.5f - v) * sh, zs);
+        // The screen and what is on it, drawn on g through Project (a point of the screen in the phone's frame to the
+        // picture), its strokes q times as wide as on the window (the card's screen picture is drawn finer).
+        void DrawScreen(ICanvas g, Func<(float X, float Y, float Z), PointF> Project, float q)
+        {
+            var buf = scene.Buffers;
             PointF P(float u, float v) => Project(OnScreen(u, v));
             // One delegate for every label this picture.
             Func<float, float, PointF> project = P;
@@ -419,16 +490,13 @@ internal static class OverlayRenderer
             var screen = DrawBuffers.Sized(ref buf.Screen, screenShape.Length);
             for (int i = 0; i < screenShape.Length; i++) screen[i] = Project((screenShape[i].X, screenShape[i].Y, zs));
             g.FillPolygon(ScreenColor, screen);
-            // The front camera: in the top bezel's middle (portrait) or the left one (landscape).
-            var camP = Project(portrait ? OnScreen(0.5f, -Bezel / 2 / sh) : OnScreen(-Bezel / 2 / sw, 0.5f));
-            float camR = Math.Max(1.2f, k * 0.012f);
-            g.FillEllipse(Color.FromArgb(0x05, 0x06, 0x08), new RectangleF(camP.X - camR, camP.Y - camR, camR * 2, camR * 2));
 
             // Control shapes are cut to the screen here, in pad coordinates, before projecting: a
             // whole-pixel clip made outlines along the screen's edge flicker as its projected edge moved
             // by fractions of a pixel. Cut a little inside the edge, so a whole stroke fits on the screen.
             float penWidth = Math.Clamp(k * 0.008f, 1f, 3f);
             float inset = (penWidth / 2f + 1.5f) / Math.Max(k, 1f);
+            penWidth *= q;
             var screenUv = buf.ScreenUv(sw, sh, inset);
             // Pad-space points (u, v) projected into an array of their own length, kept in buffers.
             PointF[] ProjectInto(ref PointF[]? into, ReadOnlySpan<(float X, float Y)> pad)
@@ -495,7 +563,7 @@ internal static class OverlayRenderer
             if (live && scene.Trails is { } trails)
             {
                 // Each trail fades along its length: older points fainter and thinner.
-                float width = Math.Clamp(k * 0.02f, 1.5f, 6f);
+                float width = Math.Clamp(k * 0.02f, 1.5f, 6f) * q;
                 foreach (var t in trails.All)
                 {
                     var pts = t.Points;
@@ -531,6 +599,34 @@ internal static class OverlayRenderer
             }
             g.Pop();
         }
+    }
+
+    // A phone drawing the card can't do (FlatCanvas threw): phones are drawn on the CPU from then on.
+    private static bool PhoneOnCpu;
+
+    /// <summary>What the 3D phone's screen shows now, to draw its picture again only when that changes.</summary>
+    private static object ScreenKey(OverlayScene scene, OverlaySettings s, bool live, int tw, int th)
+    {
+        var f = scene.Frame;
+        var h = new HashCode();
+        h.Add(tw); h.Add(th); h.Add(live); h.Add(scene.Connected);
+        h.Add(s.Color("screen")); h.Add(s.Color("lit")); h.Add(s.Color("latched")); h.Add(s.Color("fingers")); h.Add(s.FingerDots);
+        var layout = scene.Layout;
+        h.Add(layout == null ? 0 : RuntimeHelpers.GetHashCode(layout));
+        if (live)
+        {
+            h.Add(f.PadShown);
+            if (layout != null)
+                for (int i = 0; i < layout.Controls.Count; i++) h.Add((f.IsPressed(i) ? 1 : 0) | (f.IsLatched(i) ? 2 : 0));
+            for (int i = 0; i < f.StickCount; i++) { h.Add(f.StickIndex[i]); h.Add(f.StickXY[i * 2]); h.Add(f.StickXY[i * 2 + 1]); }
+            if (s.FingerDots)
+                for (int i = 0; i < f.FingerCount * 2; i++) h.Add(f.Fingers[i]);
+            // Trails fade with time: while any shows, every frame differs.
+            if (scene.Trails is { } trails)
+                foreach (var t in trails.All)
+                    if (t.Points.Count > 0 && scene.NowTicks - t.Points[^1].T < FingerTrails.LifeMs) { h.Add(scene.NowTicks); break; }
+        }
+        return h.ToHashCode();
     }
 
     /// <summary>The pose shown as a row-major matrix (phone frame to the player's view), as <see cref="Draw"/> shows it.</summary>

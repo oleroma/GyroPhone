@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using GyroPhone.Host.Settings;
 using Vortice.D3DCompiler;
 using Vortice.Direct2D1;
 using Vortice.Direct3D;
@@ -120,17 +121,90 @@ internal static class Gpu3D
             return new Vector4(c.R / 255f * a, c.G / 255f * a, c.B / 255f * a, a);
         }
 
-        /// <summary>A convex polygon filled (as a fan from its first corner).</summary>
+        /// <summary>A simple polygon filled: a convex one as a fan from its first corner, any other cut into triangles by its ears.</summary>
         public void Fill(ReadOnlySpan<PointF> pts, Color color)
         {
             if (pts.Length < 3 || color.A == 0) return;
             var c = Pre(color);
-            for (int i = 1; i + 1 < pts.Length; i++)
+            void T(PointF a, PointF b, PointF d)
             {
-                Items.Add(new FlatVertex { P = new Vector4(pts[0].X, pts[0].Y, 0f, 0f), C = c });
-                Items.Add(new FlatVertex { P = new Vector4(pts[i].X, pts[i].Y, 0f, 0f), C = c });
-                Items.Add(new FlatVertex { P = new Vector4(pts[i + 1].X, pts[i + 1].Y, 0f, 0f), C = c });
+                Items.Add(new FlatVertex { P = new Vector4(a.X, a.Y, 0f, 0f), C = c });
+                Items.Add(new FlatVertex { P = new Vector4(b.X, b.Y, 0f, 0f), C = c });
+                Items.Add(new FlatVertex { P = new Vector4(d.X, d.Y, 0f, 0f), C = c });
             }
+            if (Convex(pts))
+            {
+                for (int i = 1; i + 1 < pts.Length; i++) T(pts[0], pts[i], pts[i + 1]);
+                return;
+            }
+            // Ear clipping: each corner that bulges the polygon's way with no other corner inside its triangle is cut off.
+            var idx = _ears;
+            idx.Clear();
+            for (int i = 0; i < pts.Length; i++) idx.Add(i);
+            float area = 0f;
+            for (int i = 0; i < pts.Length; i++)
+            {
+                var a = pts[i];
+                var b = pts[(i + 1) % pts.Length];
+                area += a.X * b.Y - b.X * a.Y;
+            }
+            float turn = area >= 0f ? 1f : -1f;
+            int at = 0, misses = 0;
+            while (idx.Count > 3)
+            {
+                int n = idx.Count;
+                at %= n;
+                int i0 = idx[(at + n - 1) % n], i1 = idx[at], i2 = idx[(at + 1) % n];
+                PointF a = pts[i0], b = pts[i1], d = pts[i2];
+                bool ear = ((b.X - a.X) * (d.Y - a.Y) - (b.Y - a.Y) * (d.X - a.X)) * turn > 0f;
+                for (int j = 0; j < n && ear; j++)
+                {
+                    int q = idx[j];
+                    if (q != i0 && q != i1 && q != i2 && Inside(pts[q], a, b, d)) ear = false;
+                }
+                if (ear)
+                {
+                    T(a, b, d);
+                    idx.RemoveAt(at);
+                    misses = 0;
+                }
+                else
+                {
+                    at++;
+                    // No ear left (a polygon crossing itself): the rest as a fan.
+                    if (++misses > n) break;
+                }
+            }
+            if (idx.Count >= 3)
+                for (int i = 1; i + 1 < idx.Count; i++) T(pts[idx[0]], pts[idx[i]], pts[idx[i + 1]]);
+        }
+
+        private readonly List<int> _ears = [];
+
+        private static bool Convex(ReadOnlySpan<PointF> p)
+        {
+            int sign = 0;
+            for (int i = 0; i < p.Length; i++)
+            {
+                var a = p[i];
+                var b = p[(i + 1) % p.Length];
+                var d = p[(i + 2) % p.Length];
+                float cross = (b.X - a.X) * (d.Y - b.Y) - (b.Y - a.Y) * (d.X - b.X);
+                if (MathF.Abs(cross) < 1e-6f) continue;
+                int s = cross > 0f ? 1 : -1;
+                if (sign == 0) sign = s;
+                else if (s != sign) return false;
+            }
+            return true;
+        }
+
+        private static bool Inside(PointF p, PointF a, PointF b, PointF c)
+        {
+            float d1 = (p.X - b.X) * (a.Y - b.Y) - (a.X - b.X) * (p.Y - b.Y);
+            float d2 = (p.X - c.X) * (b.Y - c.Y) - (b.X - c.X) * (p.Y - c.Y);
+            float d3 = (p.X - a.X) * (c.Y - a.Y) - (c.X - a.X) * (p.Y - a.Y);
+            bool neg = d1 < 0 || d2 < 0 || d3 < 0, pos = d1 > 0 || d2 > 0 || d3 > 0;
+            return !(neg && pos);
         }
 
         /// <summary>A line from a to b, <paramref name="width"/> wide, round-ended.</summary>
@@ -159,11 +233,66 @@ internal static class Gpu3D
         }
     }
 
+    /// <summary>
+    /// A flat picture drawn with Direct2D (<see cref="Paint"/>) and kept on the card, then laid on a quad in 3D
+    /// (<see cref="Frame.Panel"/>), such as the phone's screen: drawn again only when what is on it changes.
+    /// </summary>
+    public sealed class Panel : IDisposable
+    {
+        internal Target? Picture;
+        private ID2D1DeviceContext? _dc;
+        private D2DCanvas? _canvas;
+        private GpuDevice? _gpu;
+        public object? Shown;
+
+        /// <summary>Its size in pixels now.</summary>
+        public int W => Picture?.W ?? 0;
+
+        public int H => Picture?.H ?? 0;
+
+        /// <summary>Draws it anew, <paramref name="w"/> × <paramref name="h"/> pixels, with <paramref name="draw"/> (a canvas on a clear picture).</summary>
+        public void Paint<T>(GpuDevice gpu, int w, int h, OverlayQuality quality, T state, Action<ICanvas, T> draw)
+        {
+            if (_gpu != gpu || Picture == null || Picture.W != w || Picture.H != h)
+            {
+                Dispose();
+                _gpu = gpu;
+                _dc = gpu.Device.CreateDeviceContext(DeviceContextOptions.None);
+                _canvas = new D2DCanvas(gpu.Factory, gpu.Device, _dc, gpu.Write) { Gpu = gpu };
+                Picture = new Target(gpu.D3D, _dc, w, h, drawable: true);
+            }
+            _dc!.Target = Picture.Bitmap;
+            _dc.BeginDraw();
+            try
+            {
+                _canvas!.Begin(quality);
+                _canvas.Clear(Color.Transparent);
+                draw(_canvas, state);
+                _canvas.End();
+            }
+            finally
+            {
+                _dc.EndDraw();
+                _dc.Target = null;
+            }
+        }
+
+        public void Dispose()
+        {
+            _canvas?.Dispose();
+            Picture?.Dispose();
+            _dc?.Dispose();
+            _canvas = null; Picture = null; _dc = null; _gpu = null;
+            Shown = null;
+        }
+    }
+
     /// <summary>The device-wide parts: shaders, states, the draw constants and the geometry (made once per device).</summary>
     internal sealed class Kit
     {
-        public ID3D11VertexShader LineVs = null!, FaceVs = null!, DiskVs = null!, FullVs = null!, FlatVs = null!;
-        public ID3D11PixelShader LinePs = null!, FacePs = null!, DiskPs = null!, CopyPs = null!, FlatPs = null!;
+        public ID3D11VertexShader LineVs = null!, FaceVs = null!, DiskVs = null!, FullVs = null!, FlatVs = null!, PanelVs = null!;
+        public ID3D11PixelShader LinePs = null!, FacePs = null!, DiskPs = null!, CopyPs = null!, FlatPs = null!, PanelPs = null!;
+        public ID3D11SamplerState Smooth = null!;
         public ID3D11BlendState Max = null!, Over = null!;
         public ID3D11DepthStencilState DepthWrite = null!, DepthTest = null!, DepthOff = null!;
         public ID3D11RasterizerState Raster = null!;
@@ -174,8 +303,9 @@ internal static class Gpu3D
         {
             foreach (var g in Geos.Values) g.Dispose();
             Geos.Clear();
-            LineVs?.Dispose(); FaceVs?.Dispose(); DiskVs?.Dispose(); FullVs?.Dispose(); FlatVs?.Dispose();
-            LinePs?.Dispose(); FacePs?.Dispose(); DiskPs?.Dispose(); CopyPs?.Dispose(); FlatPs?.Dispose();
+            LineVs?.Dispose(); FaceVs?.Dispose(); DiskVs?.Dispose(); FullVs?.Dispose(); FlatVs?.Dispose(); PanelVs?.Dispose();
+            LinePs?.Dispose(); FacePs?.Dispose(); DiskPs?.Dispose(); CopyPs?.Dispose(); FlatPs?.Dispose(); PanelPs?.Dispose();
+            Smooth?.Dispose();
             Max?.Dispose(); Over?.Dispose(); DepthWrite?.Dispose(); DepthTest?.Dispose(); DepthOff?.Dispose();
             Raster?.Dispose(); Cb?.Dispose();
         }
@@ -189,15 +319,20 @@ internal static class Gpu3D
         public readonly ID3D11ShaderResourceView Read;
         public readonly ID2D1Bitmap1 Bitmap;
 
-        public Target(ID3D11Device d3d, ID2D1DeviceContext dc, int w, int h)
+        public readonly int W, H;
+
+        public Target(ID3D11Device d3d, ID2D1DeviceContext dc, int w, int h, bool drawable = false)
         {
+            W = w;
+            H = h;
             Texture = d3d.CreateTexture2D(new Texture2DDescription(Format.B8G8R8A8_UNorm, (uint)w, (uint)h, 1, 1,
                 BindFlags.RenderTarget | BindFlags.ShaderResource));
             View = d3d.CreateRenderTargetView(Texture);
             Read = d3d.CreateShaderResourceView(Texture);
             using var surface = Texture.QueryInterface<IDXGISurface>();
             Bitmap = dc.CreateBitmapFromDxgiSurface(surface,
-                new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied), 96, 96, BitmapOptions.None));
+                new BitmapProperties1(new D2DPixelFormat(Format.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied), 96, 96,
+                    drawable ? BitmapOptions.Target : BitmapOptions.None));
         }
 
         public void Dispose()
@@ -524,6 +659,32 @@ internal static class Gpu3D
         /// <summary>A plain disk.</summary>
         public void Disk(PointF c, float r, Color color) => Ball(c, r, c, color, color);
 
+        /// <summary>
+        /// <paramref name="panel"/>'s picture laid on the quad <paramref name="q0"/>..<paramref name="q3"/> (its top left,
+        /// top right, bottom right, bottom left, in 3D), turned by <paramref name="m"/> and seen in perspective from
+        /// <paramref name="camera"/> (the 3D phone's: scaled <paramref name="k"/> × camera / (camera − z)), over the picture.
+        /// </summary>
+        public void Panel(Panel panel, Vector3 q0, Vector3 q1, Vector3 q2, Vector3 q3, float[] m, PointF c, float k, float camera)
+        {
+            if (panel.Picture == null) return;
+            var ctx = Ctx;
+            Set(m, c, k);
+            _d.Persp = camera;
+            _d.Q0 = new Vector4(q0, 0f); _d.Q1 = new Vector4(q1, 0f); _d.Q2 = new Vector4(q2, 0f); _d.Q3 = new Vector4(q3, 0f);
+            Push();
+            ctx.OMSetRenderTargets(_picture.View, null);
+            ctx.OMSetDepthStencilState(_kit.DepthOff, 0);
+            ctx.OMSetBlendState(_kit.Over);
+            ctx.VSSetShader(_kit.PanelVs);
+            ctx.VSSetConstantBuffer(0, _kit.Cb);
+            ctx.PSSetShader(_kit.PanelPs);
+            ctx.PSSetShaderResource(2, panel.Picture.Read);
+            ctx.PSSetSampler(0, _kit.Smooth);
+            ctx.Draw(6, 0);
+            ctx.PSSetShaderResource(2, null!);
+            _d.Persp = 0f;
+        }
+
         /// <summary><paramref name="list"/>'s items over the picture, in order.</summary>
         public unsafe void Flat(FlatList list)
         {
@@ -630,6 +791,9 @@ internal static class Gpu3D
             kit.CopyPs = d3d.CreatePixelShader(CompileShader("CopyPs", "ps_5_0"));
             kit.FlatVs = d3d.CreateVertexShader(CompileShader("FlatVs", "vs_5_0"));
             kit.FlatPs = d3d.CreatePixelShader(CompileShader("FlatPs", "ps_5_0"));
+            kit.PanelVs = d3d.CreateVertexShader(CompileShader("PanelVs", "vs_5_0"));
+            kit.PanelPs = d3d.CreatePixelShader(CompileShader("PanelPs", "ps_5_0"));
+            kit.Smooth = d3d.CreateSamplerState(new SamplerDescription(Vortice.Direct3D11.Filter.MinMagMipLinear, TextureAddressMode.Clamp, TextureAddressMode.Clamp, TextureAddressMode.Clamp));
             kit.Max = MakeBlend(d3d, Blend.One, Blend.One, BlendOperation.Max);
             // Premultiplied "over".
             kit.Over = MakeBlend(d3d, Blend.One, Blend.InverseSourceAlpha, BlendOperation.Add);
@@ -683,6 +847,7 @@ internal static class Gpu3D
         public float Side, TwoSided;
         public Vector2 Lit;
         public float Persp, Pad1;
+        public Vector4 Q0, Q1, Q2, Q3;
     }
 
     /// <summary>The shaders (HLSL, shader model 5). Positions are in the picture's pixels (y down); the view has z toward the viewer.</summary>
@@ -694,6 +859,7 @@ internal static class Gpu3D
             float2 Centre; float Radius; float HalfW;
             float2 TargetSize; float Side; float TwoSided;
             float2 LitAt; float Persp; float Pad;
+            float4 Q[4];
         };
 
         struct Seg { float4 A; float4 B; float4 N1; float4 N2; };
@@ -850,6 +1016,30 @@ internal static class Gpu3D
             float cover = saturate(i.Kind.y - length(q - d * t) + 0.5);
             clip(cover - 0.001);
             return i.C * cover;
+        }
+
+        SamplerState Smooth : register(s0);
+        struct PanelOut { float4 Pos : SV_Position; float2 Uv : TEXCOORD0; };
+
+        // The quad's corners Q[0..3] (top left, top right, bottom right, bottom left), in perspective so the picture
+        // on it is laid evenly (w is the distance from the camera).
+        PanelOut PanelVs(uint v : SV_VertexID)
+        {
+            static const uint corner[6] = { 0, 1, 2, 0, 2, 3 };
+            static const float2 uvs[4] = { float2(0.0, 0.0), float2(1.0, 0.0), float2(1.0, 1.0), float2(0.0, 1.0) };
+            uint c = corner[v % 6];
+            float3 p = Turn(Q[c].xyz);
+            float2 s = OnScreen(p);
+            float w = max(Persp - p.z, 0.5);
+            PanelOut o;
+            o.Pos = float4((s.x / TargetSize.x * 2.0 - 1.0) * w, (1.0 - s.y / TargetSize.y * 2.0) * w, 0.0, w);
+            o.Uv = uvs[c];
+            return o;
+        }
+
+        float4 PanelPs(PanelOut i) : SV_Target
+        {
+            return Layer.Sample(Smooth, i.Uv);
         }
 
         float4 FullVs(uint v : SV_VertexID) : SV_Position
