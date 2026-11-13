@@ -3603,15 +3603,19 @@ private fun PadControl(
 
 /**
  * Each toggle sync's own colour ([TouchControl.toggleSync]), by control id: the syncs in order
- * of their ids take the colours in turn, none of them the pressed, latched or edit-mode colours.
+ * of their ids take the colours in turn ([toggleSyncTint]), never the same one twice.
  */
 private fun toggleSyncTints(controls: List<TouchControl>): Map<String, Color> {
     val syncs = controls.mapNotNull { it.toggleSync }.distinct().sorted()
     if (syncs.isEmpty()) return emptyMap()
     return controls.filter { it.toggleSync != null }.associate { c ->
-        c.id to TOGGLE_SYNC_COLORS[syncs.indexOf(c.toggleSync) % TOGGLE_SYNC_COLORS.size]
+        c.id to toggleSyncTint(syncs.indexOf(c.toggleSync))
     }
 }
+
+/** The [i]th toggle sync's colour: the base ones, then new hues spread by the golden angle so none repeats. */
+private fun toggleSyncTint(i: Int): Color =
+    TOGGLE_SYNC_COLORS.getOrNull(i) ?: Color.hsv(((i - TOGGLE_SYNC_COLORS.size) * 137.508f + 20f) % 360f, 0.55f, 1f)
 
 /** Toggle syncs' colours: purple, orange, pink, yellow, lime, lavender. */
 private val TOGGLE_SYNC_COLORS = listOf(
