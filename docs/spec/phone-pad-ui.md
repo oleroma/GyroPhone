@@ -84,6 +84,8 @@ A layer in use other than Base shows a pill for a second.
 
 Touch controls of kind DISPLAY (`core/.../model/GyroDisplay.kt`, drawn by `ui/GyroVisuals.kt` in plain 2D, no 3D library), placed in edit mode, each with its own settings (`ui/GyroVisualsSettings.kt`). Its **label** is edited in place in the settings' title (as a button's in the mapping editor, with the ☺ symbol picker); empty, the title shows the kind's name greyed. The label only names it there, in the delete question and as a preset: the display never draws it, and the PC's phone overlay gets no label for it. **Save as preset** (beside Duplicate) asks a name (the label, else the kind's name) and saves the display's look, settings and size to Add preset, not its place.
 
+The displays are drawn on a thread of their own (`GyroDisplaysRenderer`, "gp-displays", paced by its own Choreographer) into a `TextureView` under the pad's controls, never on the screen thread: Android hands touches and controller keys to the app only on the screen thread, so a heavy frame (Paint and Snake on a fast swing took up to 300 ms) would hold every press until it was drawn. A display's frame may lag behind; presses never wait for it.
+
 - **3D phone** (the phone turned by the gyro);
 - **Ratchet ring** (yaw/pitch/roll arcs, lit while that axis moves the mouse, dim while ratcheted);
 - **Speed graph** (scrolling yaw/pitch/roll speed, ratchets shaded);
