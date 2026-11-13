@@ -14,7 +14,7 @@ A pad's axes are read by `PhysicalSticks`: sticks `ls` / `rs`, triggers `lt` / `
 
 - **controller**: any game pad's buttons, sticks (with their directions, Outer ring and click) and triggers (Press and Full pull);
 - **keyboard**: keys;
-- **mouse**: buttons, wheel and movement;
+- **mouse**: buttons, wheel and movement. On the pad, while the workspace maps the mouse, a mouse attached to the phone is captured (no phone cursor; raw moves and buttons). A captured mouse still counts as attached (Android lists it as a relative mouse then), so the capture stays put; many game pads also list a mouse of their own (the 8BitDo Ultimate Mobile's second USB interface), which is captured the same way and sends nothing;
 - **phone**: the volume rocker ([Volume rocker](phone-volume-black-screen.md));
 - **timings**: a key's own long-press and double-tap times (`KeyTiming`; none = the workspace's);
 - **sticks** / **triggers**: tuning (below);

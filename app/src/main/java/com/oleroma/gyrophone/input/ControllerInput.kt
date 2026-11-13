@@ -107,11 +107,12 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         if (isRocker(event, device)) return onRocker(event)
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) return true
         runtime.wifi.pressStamp.note(event.eventTime * 1_000_000L) // KeyEvent has no public ns time; uptime is the nanoTime clock
+        if (event.action == KeyEvent.ACTION_DOWN) runtime.ratchetTiming.inputDown(event.eventTime * 1_000_000L)
         // The PC's phone overlay draws the controller's presses on its handles.
         if (isPad(device)) runtime.wifi.overlay.padKey(event.keyCode, event.action == KeyEvent.ACTION_DOWN)
         // A captured mouse's back / forward buttons come as keys too: they are its buttons already.
         // A game pad that also says it is a mouse (many do) keeps its keys: they are its buttons.
-        if (runtime.mouseCaptured && device.supportsSource(InputDevice.SOURCE_MOUSE) &&
+        if (runtime.mouseCaptured && mouseSource(device) &&
             device.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC && !isPad(device)
         ) return true
         val pressed = event.action == KeyEvent.ACTION_DOWN
@@ -167,6 +168,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         }
         if (pressed && event.repeatCount > 0) return true
         runtime.wifi.pressStamp.note(event.eventTime * 1_000_000L)
+        if (pressed) runtime.ratchetTiming.inputDown(event.eventTime * 1_000_000L)
         runtime.engine.setKey(PHONE_PAD, event.keyCode, pressed)
         return true
     }
@@ -300,7 +302,17 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
 
     /** A mouse (not a game pad that also says it is one, nor a keyboard with a touchpad). */
     private fun isMouse(d: InputDevice): Boolean =
-        d.supportsSource(InputDevice.SOURCE_MOUSE) && !isPad(d) && d.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC
+        mouseSource(d) && !isPad(d) && d.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC
+
+    /**
+     * [d] is a mouse, captured or not: pointer capture turns a mouse's SOURCE_MOUSE into
+     * SOURCE_MOUSE_RELATIVE. Counting only SOURCE_MOUSE made the capture let the mouse go, which
+     * brought it back and captured it again, some 30 times a second: each switch resets the
+     * device in Android's input system and delays every controller key (a pad's hidden mouse
+     * interface, such as the 8BitDo Ultimate Mobile's, did it).
+     */
+    private fun mouseSource(d: InputDevice): Boolean =
+        d.supportsSource(InputDevice.SOURCE_MOUSE) || d.supportsSource(InputDevice.SOURCE_MOUSE_RELATIVE)
 
     /**
      * Sends [v] (the [AndroidAxis.polled] axes) to the PC's phone overlay, for its handles; [zStick]:
@@ -392,7 +404,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         val mouse = ids.any { id ->
             val d = inputManager.getInputDevice(id)
             // A game pad saying it is a mouse too is not one: it would capture the pointer and lose its keys.
-            d != null && !d.isVirtual && d.supportsSource(InputDevice.SOURCE_MOUSE) && !isPad(d)
+            d != null && !d.isVirtual && mouseSource(d) && !isPad(d)
         }
         val list = ids.mapNotNull { id ->
             val d = inputManager.getInputDevice(id) ?: return@mapNotNull null
