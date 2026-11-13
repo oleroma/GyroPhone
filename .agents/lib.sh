@@ -182,10 +182,57 @@ mark_checked() {
 # its PR, so the comment wakes it even when the Remote Control report never reaches it.
 report_pr() {
   local sha pr
-  sha="$(git -C "$WORKTREE" rev-parse HEAD)"
+  sha="${SHA:-$(git -C "$WORKTREE" rev-parse HEAD)}"
   pr="$(gh api "repos/$SLUG/pulls?state=open&per_page=100" --jq ".[] | select(.head.sha == \"$sha\") | .number" | head -n 1)"
   [ -n "$pr" ] || return 0
   gh api -X POST "repos/$SLUG/issues/$pr/comments" -f body="$(printf '%s of %s finished:\n\n```\n%s\n```\n\n_Posted by %s._' "$1" "${sha:0:7}" "$2" "$SCRIPT_NAME pc")" >/dev/null
+}
+
+# One PC build or check at a time, across all repos: the lock is a file in D:\dev, next to the
+# repos, holding "<PID> <repo> <branch>" of the run that has it. A run waits while another one has
+# it, and takes it over when that process is gone.
+LOCK="$(dirname "$MAIN_REPO")/.build-lock"
+
+# take_lock <branch>: waits for the lock and takes it. When agent-build pc <branch> or
+# agent-check pc <branch> already took it before checking out build/src, the run there takes it over.
+take_lock() {
+  local owner pid shown=""
+  if [ -n "${AGENT_LOCKED:-}" ]; then
+    echo "$$ ${MAIN_REPO##*/} $AGENT_LOCKED" >"$LOCK"
+    return 0
+  fi
+  until (set -C; echo "$$ ${MAIN_REPO##*/} $1" >"$LOCK") 2>/dev/null; do
+    owner="$(cat "$LOCK" 2>/dev/null || true)"
+    pid="${owner%% *}"
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+      rm -f "$LOCK"
+      continue
+    fi
+    if [ -n "$owner" ] && [ "$owner" != "$shown" ]; then
+      echo "Waiting: another build is running (${owner#* })." >&3
+      shown="$owner"
+    fi
+    sleep 5
+  done
+}
+
+# release_lock: removes the lock if this run has it.
+release_lock() {
+  if [ "$(cut -d' ' -f1 "$LOCK" 2>/dev/null)" = "$$" ]; then rm -f "$LOCK"; fi
+}
+
+# checkout_src <branch>: takes the lock, then brings the build/src worktree (made the first time)
+# to <branch>. The run in build/src takes the lock over.
+checkout_src() {
+  local src="$MAIN_REPO/build/src"
+  take_lock "$1"
+  cleanup() { release_lock; }
+  export AGENT_LOCKED="$1"
+  if [ -e "$src/.git" ]; then
+    git -C "$src" checkout --detach "origin/$1" || die "Couldn't check out $1 in build/src."
+  else
+    git -C "$MAIN_REPO" worktree add --detach "$src" "origin/$1" || die "Couldn't make build/src."
+  fi
 }
 
 # Olex tests changes to the pipeline himself (AGENTS.md, "Scripts and hooks"), so a branch that

@@ -2,7 +2,7 @@
 
 ## Where it lives
 
-The companion is one self-contained exe at a fixed path, **`%LOCALAPPDATA%\Programs\GyroPhone\GyroPhoneCompanion.exe`**, with OpenCV's two native DLLs beside it (used only by the latency test, so kept out of the exe), so its firewall rule and Run entries stay valid across updates. Settings and keys are in `%APPDATA%\GyroPhone` and survive updates ([Companion](pc-companion.md)). No installer, no admin rights needed except for the firewall rule.
+The companion is one self-contained exe at a fixed path, **`%LOCALAPPDATA%\Programs\GyroPhone\GyroPhoneCompanion.exe`**, with OpenCV's two native DLLs beside it (used only by the latency test, so kept out of the exe), so its firewall rule and Run entries stay valid across updates. Settings and keys are in `%APPDATA%\GyroPhone` and survive updates ([Companion](pc-companion.md)). No installer, no admin rights needed except for the firewall rule and, for the FPS overlay, setting up the FPS helper once ([Companion](pc-companion.md), Performance).
 
 ## Installing a build
 
