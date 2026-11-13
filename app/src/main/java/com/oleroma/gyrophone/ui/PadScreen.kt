@@ -20,6 +20,8 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -128,6 +130,7 @@ import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.ControlGroups
+import com.oleroma.gyrophone.core.model.ToggleRule
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.FingerAxis
 import com.oleroma.gyrophone.core.model.FingerAxisSettings
@@ -507,6 +510,7 @@ fun PadScreen(
 
     /** The menu's Select: taps pick several controls ([picked], whole groups) and a drag moves them all. */
     var selectMode by remember { mutableStateOf(false) }
+    var syncMenu by remember { mutableStateOf(false) }
     var picked by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     /** The control whose Delete (in its long-press popup) is asking to be confirmed. */
@@ -2655,22 +2659,40 @@ fun PadScreen(
                                                 colors = pickColors,
                                                 onClick = { editWorkspace { ControlGroups.ungroup(it, picked) } }) { Text("Ungroup") }
                                         }
-                                        // Sync size: the picked ones keep their places but change size together (teal).
-                                        // A control is grouped or synced, never both: syncing takes it out of its group.
+                                        // Sync (teal), a menu: Size (the picked ones keep their places but change size
+                                        // together; a control is grouped or size-synced, never both), and for Toggle
+                                        // buttons Flip or Never both ("One at a time" for three or more).
                                         val syncColors = ButtonDefaults.filledTonalButtonColors(
                                             containerColor = SYNCED_COLOR,
                                             contentColor = Color.Black,
                                         )
                                         val pickedHere = picked.filter { id -> controls.any { it.id == id && it.kind != TouchKind.FULLSCREEN } }
-                                        if (pickedHere.size >= 2) {
-                                            PanelPill(
-                                                colors = syncColors,
-                                                onClick = { editWorkspace { ControlGroups.syncSize(it, pickedHere) } }) { Text("Sync size") }
-                                        }
-                                        if (ControlGroups.anySynced(controls, picked)) {
-                                            PanelPill(
-                                                colors = syncColors,
-                                                onClick = { editWorkspace { ControlGroups.unsync(it, picked) } }) { Text("Unsync size") }
+                                        val canSize = pickedHere.size >= 2
+                                        val sizeSynced = ControlGroups.anySynced(controls, picked)
+                                        val canFlip = ControlGroups.canSyncToggles(controls, picked)
+                                        val canNever = ControlGroups.canNeverBoth(controls, picked)
+                                        val toggleSynced = ControlGroups.anyToggleSynced(controls, picked)
+                                        val rule = ControlGroups.toggleRuleOf(controls, picked)
+                                        if (canSize || sizeSynced || canFlip || toggleSynced) Box {
+                                            PanelPill(colors = syncColors, onClick = { syncMenu = true }) { Text("Sync") }
+                                            DropdownMenu(expanded = syncMenu, onDismissRequest = { syncMenu = false }) {
+                                                @Composable
+                                                fun item(label: String, onClick: () -> Unit) = DropdownMenuItem(
+                                                    text = { Text(label) }, onClick = { syncMenu = false; onClick() },
+                                                )
+                                                if (canSize) item("Size") { editWorkspace { ControlGroups.syncSize(it, pickedHere) } }
+                                                if (canFlip) item(if (rule == ToggleRule.FLIP) "Flip ✓" else "Flip") {
+                                                    editWorkspace { ControlGroups.syncToggles(it, picked, ToggleRule.FLIP) }
+                                                }
+                                                if (canNever) {
+                                                    val label = if (picked.size >= 3) "One at a time" else "Never both"
+                                                    item(if (rule == ToggleRule.NEVER_BOTH) "$label ✓" else label) {
+                                                        editWorkspace { ControlGroups.syncToggles(it, picked, ToggleRule.NEVER_BOTH) }
+                                                    }
+                                                }
+                                                if (sizeSynced) item("Unsync size") { editWorkspace { ControlGroups.unsync(it, picked) } }
+                                                if (toggleSynced) item("Unsync toggles") { editWorkspace { ControlGroups.unsyncToggles(it, picked) } }
+                                            }
                                         }
                                         // One whole group picked: save it as a preset (Add preset).
                                         if (ControlGroups.units(controls, picked) == 1 && ControlGroups.anyGrouped(controls, picked)) {
@@ -3424,6 +3446,7 @@ private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>)
         id = id,
         group = null,
         sizeSync = null,
+        toggleSync = null,
         x = toCentre(c.x, 0.05f),
         y = toCentre(c.y, 0.05f).coerceIn(lHalf, 1f - lHalf),
         portrait = Placement(toCentre(p.x, 0.05f).coerceIn(pHalf, 1f - pHalf), toCentre(p.y, 0.03f), p.size),

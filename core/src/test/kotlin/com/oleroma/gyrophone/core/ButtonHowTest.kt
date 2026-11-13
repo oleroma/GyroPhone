@@ -26,8 +26,12 @@ class ButtonHowTest {
     )
 
     @Test fun chipsWithoutTheirOwnFollowTheButton() {
-        val out = ButtonHow.touch(ws(How.TOGGLE), listOf(Mapping(press, click)))
+        val tap = Mapping(InputSource.TouchTap("b"), click)
+        val out = ButtonHow.touch(ws(How.TOGGLE), listOf(tap))
         assertEquals(How.TOGGLE, out[0].options!!.mode)
+        // On its plain press a chip follows the button's own state instead (the engine presses it while the button is on).
+        assertNull(ButtonHow.touch(ws(How.TOGGLE), listOf(Mapping(press, click)))[0].options)
+        assertEquals(mapOf(Mapping(press, click) to "b"), ButtonHow.stateChips(ws(How.TOGGLE), listOf(Mapping(press, click), tap)))
         val rep = ButtonHow.touch(ws(How.REPEAT), listOf(Mapping(press, click)))
         assertEquals(How.REPEAT, rep[0].options!!.mode)
         assertEquals(3, rep[0].options!!.repeat)
@@ -41,7 +45,7 @@ class ButtonHowTest {
     @Test fun heldButtonsAndOtherButtonsChangeNothing() {
         val m = Mapping(press, click)
         assertNull(ButtonHow.touch(ws(null), listOf(m))[0].options)
-        val other = Mapping(InputSource.Touch("x"), click)
+        val other = Mapping(InputSource.TouchTap("x"), click)
         assertNull(ButtonHow.touch(ws(How.TOGGLE), listOf(other))[0].options)
     }
 

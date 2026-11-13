@@ -39,6 +39,19 @@ enum class StickZones(val label: String) {
 @Serializable
 data class Placement(val x: Float, val y: Float, val size: Float)
 
+/** How toggle-synced buttons' states go together ([TouchControl.toggleSync]). */
+@Serializable
+enum class ToggleRule {
+    /** A touch on any of them turns them all: they stay as their initial states are to each other (same or opposite). */
+    FLIP,
+
+    /**
+     * "Never both" ("One at a time" for three or more): at most one of them is away from its
+     * initial state; turning one turns the one turned before back.
+     */
+    NEVER_BOTH,
+}
+
 /**
  * A control drawn on the touchscreen. Position is the centre, normalised to the pad area (0..1);
  * size is the diameter (circle) or width (square) as a fraction of the pad area's shorter
@@ -97,6 +110,26 @@ data class TouchControl(
     val how: How? = null,
     /** BUTTON: [how] Repeat's count. */
     val repeat: Int = 2,
+    /**
+     * BUTTON with [how] Toggle, its "Initial state": on (true) or off when the workspace opens. A
+     * touch turns it to the other state; ending ("Also ends on" below) turns it back to this one.
+     */
+    val initialOn: Boolean = false,
+    /** BUTTON with [how] Toggle: a Let go mapping turns it back to [initialOn]. */
+    val endsOnLetGo: Boolean = false,
+    /** BUTTON with [how] Toggle: this long (ms) after a touch turned it, it goes back to [initialOn]; 0 = never. */
+    val endsAfterMs: Int = 0,
+    /** BUTTON with [how] Toggle: the next other input (pressed and let go) turns it back to [initialOn]. */
+    val endsOnNextInput: Boolean = false,
+    /** BUTTON with [how] Toggle: another mapping pressing one of its outputs turns it back to [initialOn]. */
+    val endsOnSame: Boolean = false,
+    /**
+     * BUTTON with [how] Toggle: buttons sharing a toggle sync id change state together by
+     * [toggleRule] ([ToggleSyncs]); null = none.
+     */
+    val toggleSync: String? = null,
+    /** With [toggleSync]: how its buttons' states go together (the same for all of them). */
+    val toggleRule: ToggleRule = ToggleRule.FLIP,
     /**
      * Zone mapping ([TouchAreaKind.ZONE]): a finger that slides in from elsewhere stops what it
      * was doing (cursor, stick, another button) while it is in the zone, and one that lands on

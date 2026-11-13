@@ -53,7 +53,7 @@ Opened by ⚙ in edit mode, the touchpad's Settings in its mapping editor, or th
 
 ## A touch control's or controller button's settings
 
-The mapping editor's ⚙ Settings (`ui/ControlSettingsScreen.kt`, `ui/ActionSettings.kt`): **Look** (label, shape, layer, size), **Layers** (when the workspace has layers), **Press** (the button's How its chips follow, see [Mapping](phone-mapping.md#when-how-and-where)), **Gyro** and **Touchpad** (the gyro's sensitivity and acceleration and the touchpad cursor's speed while it is held), then **Swipes** for a button that swipes (the same groups as the workspace Touchpad, its own over the workspace's) or **Stick** for a stick. A controller button's ⚙ has the same Gyro and Touchpad tabs.
+The mapping editor's ⚙ Settings (`ui/ControlSettingsScreen.kt`, `ui/ActionSettings.kt`): **Look** (label, shape, layer, size), **Layers** (when the workspace has layers), **Press** (the button's How its chips follow; with Toggle also its **Initial state** On / Off and **Also ends on**, see [Mapping](phone-mapping.md#when-how-and-where)), **Gyro** and **Touchpad** (the gyro's sensitivity and acceleration and the touchpad cursor's speed while it is held), then **Swipes** for a button that swipes (the same groups as the workspace Touchpad, its own over the workspace's) or **Stick** for a stick. A controller button's ⚙ has the same Gyro and Touchpad tabs.
 
 ## Connection page
 

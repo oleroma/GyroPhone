@@ -3,7 +3,9 @@ package com.oleroma.gyrophone.ui
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
+import androidx.compose.ui.Alignment
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -310,6 +312,7 @@ internal fun touchControlSettings(
         listOf(
             category(runtime, "buttonHow", "Press", "How its chips press: Held, Once, Toggle or Repeat", prefKey = "button.How") {
                 ButtonHowRow(control.how, control.repeat) { h, n -> update { it.copy(how = h, repeat = n) } }
+                if (control.how == How.TOGGLE) ButtonToggleRows(control, key, update)
             },
             category(runtime, "buttonGyro", "Gyro", "Gyro sensitivity and acceleration while held", prefKey = "button.Gyro") {
                 ButtonGyroSensitivity(g, key)
@@ -640,6 +643,49 @@ private fun ButtonHowRow(how: How?, repeat: Int, onSet: (How?, Int) -> Unit) {
                 selected = repeat == n, onClick = { onSet(How.REPEAT, n) }, label = { Text("×$n") },
             )
         }
+    }
+}
+
+/**
+ * A Toggle button's Initial state (On / Off, what it is when the workspace opens and goes back
+ * to) and "Also ends on" (what turns it back besides a touch).
+ */
+@Composable
+private fun ButtonToggleRows(control: TouchControl, key: String, update: ((TouchControl) -> TouchControl) -> Unit) {
+    OverrideRow(
+        "Initial state", control.initialOn, { update { it.copy(initialOn = false) } },
+        "On or Off when the workspace opens. Each touch turns it to the other state; an ending below turns it back to this one. " +
+            "While it is On, its chips on its press press and its gyro cards and gyro settings are on.",
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(selected = !control.initialOn, onClick = { update { it.copy(initialOn = false) } }, label = { Text("Off") })
+            FilterChip(selected = control.initialOn, onClick = { update { it.copy(initialOn = true) } }, label = { Text("On") })
+        }
+    }
+    val any = control.endsOnLetGo || control.endsOnNextInput || control.endsOnSame || control.endsAfterMs > 0
+    OverrideRow(
+        "Also ends on", any,
+        { update { it.copy(endsOnLetGo = false, endsOnNextInput = false, endsOnSame = false, endsAfterMs = 0) } },
+        "Besides a touch, what turns the button back to its Initial state. Chips that follow its Toggle go back with it.",
+    ) {
+        @Composable
+        fun check(label: String, on: Boolean, set: (TouchControl, Boolean) -> TouchControl) =
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = on, onCheckedChange = { v -> update { set(it, v) } })
+                Text(label, style = MaterialTheme.typography.bodyMedium)
+            }
+        check("\"Let go\" mapping (any button mapped to (Let go))", control.endsOnLetGo) { c, v -> c.copy(endsOnLetGo = v) }
+        check("Next input (another key or button pressed and let go)", control.endsOnNextInput) { c, v -> c.copy(endsOnNextInput = v) }
+        check("Same keystroke (one of its keys pressed by another mapping)", control.endsOnSame) { c, v -> c.copy(endsOnSame = v) }
+        var timer by remember(key, control.endsAfterMs) { mutableStateOf(control.endsAfterMs / 1000f) }
+        Text("Timer: " + if (timer <= 0f) "off" else "%.1f s".format(timer), style = MaterialTheme.typography.labelLarge)
+        Slider(
+            value = timer,
+            onValueChange = { timer = (it * 10f).roundToInt() / 10f },
+            valueRange = 0f..MapOptions.MAX_TOGGLE_MS / 1000f,
+            onValueChangeFinished = { update { it.copy(endsAfterMs = (timer * 1000f).roundToInt()) } },
+            typedTitle = "Timer (s)",
+        )
     }
 }
 

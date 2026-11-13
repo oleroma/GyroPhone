@@ -44,11 +44,51 @@ object ButtonHow {
         return if (o === m.options) m else m.copy(options = o)
     }
 
-    /** [w]'s touch mappings with each button's How where its chips follow it. */
+    /**
+     * [w]'s touch mappings with each button's How where its chips follow it. A Toggle button's
+     * chips on its plain press ([stateOf]) are left Held: the engine presses them while the button
+     * is on. Its other following chips (tap, long press, ...) toggle by themselves and end as the
+     * button's "Also ends on" says.
+     */
     fun touch(w: Workspace, ms: List<Mapping>): List<Mapping> {
         val hows = w.touchControls.filter { it.how != null && it.how != How.HELD }.associateBy { it.id }
         if (hows.isEmpty()) return ms
-        return ms.map { m -> ownerOf(m.source)?.let(hows::get)?.let { c -> apply(m, c.how, c.repeat) } ?: m }
+        return ms.map { m ->
+            val c = ownerOf(m.source)?.let(hows::get) ?: return@map m
+            if (stateOf(c, m)) return@map m
+            val a = apply(m, c.how, c.repeat)
+            if (a === m || c.how != How.TOGGLE) a
+            else a.copy(options = a.options!!.copy(
+                endsOnLetGo = c.endsOnLetGo, endsAfterMs = c.endsAfterMs, endsOnNextInput = c.endsOnNextInput, endsOnSame = c.endsOnSame,
+            ))
+        }
+    }
+
+    /**
+     * Mapping [m] follows Toggle button [c]'s state: on [c]'s plain press, with no How of its own,
+     * an output that can toggle. It is pressed while [c] is on (its Initial state, turned by each
+     * touch, back on an ending, by its toggle sync).
+     */
+    fun stateOf(c: TouchControl, m: Mapping): Boolean {
+        if (c.how != How.TOGGLE || c.kind != TouchKind.BUTTON) return false
+        val s = m.source
+        if (s !is InputSource.Touch || s.id != c.id) return false
+        val o = m.options
+        if (o != null && (o.how != null || o.toggle)) return false
+        return takes(m.target, s, How.TOGGLE)
+    }
+
+    /** [w]'s touch mappings that follow a Toggle button's state ([stateOf]), by that button's id. */
+    fun stateChips(w: Workspace, ms: List<Mapping>): Map<Mapping, String> {
+        val toggles = w.touchControls.filter { it.how == How.TOGGLE && it.kind == TouchKind.BUTTON }.associateBy { it.id }
+        if (toggles.isEmpty()) return emptyMap()
+        val out = HashMap<Mapping, String>()
+        for (m in ms) {
+            val s = m.source as? InputSource.Touch ?: continue
+            val c = toggles[s.id] ?: continue
+            if (stateOf(c, m)) out[m] = c.id
+        }
+        return out
     }
 
     /** A device's mappings [ms] with each physical key's How ([Workspace.keyTimings]) where its chips follow it. */

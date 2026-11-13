@@ -334,7 +334,10 @@ internal fun MappingChipDialog(
                 if (t == Trigger.DOUBLE_TAP) {
                     hint("With a Held chip and others on Double tap, the second touch decides: a quick lift fires the others, staying down or moving fires the Held one.")
                 }
-                if (shown == How.TOGGLE) {
+                if (shown == How.TOGGLE && !ownHow) {
+                    hint("It follows the button's Toggle: on its press it is on while the button is on, and it ends as the button's Also ends on says (the button's Press settings).")
+                }
+                if (shown == How.TOGGLE && ownHow) {
                     Text("Also ends on", style = MaterialTheme.typography.titleSmall)
                     // A value chip: a tap on a Position input sets the value, so only Move ends on one; no keystroke to match.
                     if (if (value != null) value.move else !position) checkRow(
@@ -379,7 +382,8 @@ internal fun MappingChipDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                val toggle = how == How.TOGGLE
+                // A chip following its button's Toggle ends as the button does: no endings of its own.
+                val toggle = how == How.TOGGLE && ownHow
                 val o = MapOptions(
                     // At a lift Held and Once are the same short press: kept as Held (no options).
                     how = (if (how == How.ONCE && !t.holds) How.HELD else how).takeIf { ownHow && (buttonHow != null || it != How.HELD) },
