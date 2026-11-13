@@ -1167,6 +1167,8 @@ private class VisState {
                 lt.fedVersion = v
                 addBeam(beam[0], beam[1], beam[2], now)
             }
+            // The paint goes in runs: what is left of this frame's run is painted now, so it reaches the beam.
+            lt.flushPaint()
             DrawProbe.add(DrawProbe.FEED, System.nanoTime() - feedT0)
         }
         val rifle = d.laserRifle

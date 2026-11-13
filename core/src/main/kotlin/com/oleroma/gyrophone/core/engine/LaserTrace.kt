@@ -174,6 +174,8 @@ class LaserTrace {
         val l = sqrt(x * x + y * y + z * z)
         if (l > 1e-6f && !l.isNaN()) follow(x / l, y / l, z / l, nowMs, smooth)
         if (!(draw || snake) || l < 1e-6f || held || l.isNaN() || (fireOnly && !fire && !aim)) {
+            // The line ends: its last run is painted up to where it stopped.
+            if (draw && !strokeGap) flushPaint()
             strokeGap = true
             return
         }
@@ -188,8 +190,30 @@ class LaserTrace {
         val brush = when (kind) { LaserPaint.FIRE -> fireBrushDeg; LaserPaint.AIM -> aimBrushDeg; else -> brushDeg }
         // A new point once the beam moved a little (or the firing or aiming started or stopped): a still beam adds nothing.
         if (!strokeGap && kind == lastKind && lastX * dx + lastY * dy + lastZ * dz > STROKE_STEP_COS) return
+        val painting = draw && brush > 0f
+        // A new line, or new colours: what is left of the run so far is painted first, as it was.
+        if (painting && (strokeGap || kind != runKind)) flushPaint()
+        val hadPoint = strokes.count > 0 && !strokeGap
+        if (painting && hadPoint && kind != runKind) {
+            // The run in the new colours starts at the point before (the line to this one is theirs).
+            strokes.point(strokes.count - 1, runFrom)
+            runAlong = strokes.along(strokes.count - 1)
+        }
         strokes.add(dx, dy, dz, nowMs, strokeGap, kind)
-        if (draw && brush > 0f) stampNewest(brush / 2f, kind, wayColors, if (smooth) SMOOTH_REACH else 0, mapWidth, soft)
+        if (painting) {
+            runHalf = brush / 2f; runKind = kind; runWays = wayColors; runReach = if (smooth) SMOOTH_REACH else 0
+            runWidth = mapWidth; runSoft = soft
+            val b = strokes.count - 1
+            if (strokeGap || !runOpen) {
+                // A line starts: a dot here, and the run from it.
+                stampRun(b, dot = true)
+            } else if (strokes.along(b) - runAlong >= maxOf(RUN_MIN_DEG, runHalf.toDouble())) {
+                // Painted in runs of about half the brush's width, not every 0.5° step: each stamp
+                // paints the brush and its glow all round, so short steps would paint the same
+                // texels many times over (a fast turn then took hundreds of milliseconds a frame).
+                stampRun(b, dot = false)
+            }
+        }
         if (snake) strokes.cut(snakeDeg)
         strokeGap = false
         lastKind = kind
@@ -230,11 +254,13 @@ class LaserTrace {
     /** Clears the strokes (the Snake; the paint stays). */
     private fun clearStrokes() {
         strokes.clear()
+        runOpen = false
         strokeGap = true
         version++
     }
 
     private fun clearPaint() {
+        runOpen = false
         paint?.clear()
         paintUsed = false
         hitCount = 0
@@ -271,21 +297,47 @@ class LaserTrace {
     private val pa = FloatArray(3)
     private val pb = FloatArray(3)
 
-    /** Paints the newest stroke point into [paint], from the point before it unless it starts a line. */
-    private fun stampNewest(halfDeg: Float, kind: Int, wayColors: LongArray?, reach: Int, mapWidth: Int, soft: Float) {
+    // The paint's run not painted yet: from [runFrom] ([runAlong] degrees along) to the newest stroke point, with these settings.
+    private val runFrom = FloatArray(3)
+    private var runAlong = 0.0
+    private var runOpen = false
+    private var runHalf = 0f
+    private var runKind = LaserPaint.PAINT
+    private var runWays: LongArray? = null
+    private var runReach = 0
+    private var runWidth = LaserPaint.WIDTH
+    private var runSoft = 0.5f
+
+    /**
+     * Paints what is left of the current run up to the newest stroke point, so the paint reaches
+     * the beam. Called once a frame after the frame's points are in (and by [add] before a new line
+     * or new colours).
+     */
+    fun flushPaint() {
+        if (!runOpen || strokes.count == 0) return
+        val b = strokes.count - 1
+        if (strokes.along(b) > runAlong) stampRun(b, dot = false)
+    }
+
+    /** Paints the run from [runFrom] to stroke point [b] (a dot at [b] that starts a line with [dot]); the run then starts at [b]. */
+    private fun stampRun(b: Int, dot: Boolean) {
         // A new map when the detail changed (the paint so far goes).
-        val p = paint?.takeIf { it.width == mapWidth } ?: LaserPaint(mapWidth, mapWidth / 2).also { paint = it }
-        val n = strokes.count
-        val b = n - 1
-        val a = if (strokes.gap(b) || n < 2) b else b - 1
-        strokes.point(a, pa)
+        val p = paint?.takeIf { it.width == runWidth } ?: LaserPaint(runWidth, runWidth / 2).also { paint = it }
         strokes.point(b, pb)
-        val rgb = if (wayColors == null) null else {
-            if (a == b) wayDir.fill(0f) else strokes.direction(b, reach, wayDir)
-            (directionColor(wayDir, wayColors) and 0xFFFFFF).toInt()
+        val ways = runWays
+        val rgb = if (ways == null) null else {
+            if (dot) wayDir.fill(0f) else strokes.direction(b, runReach, wayDir)
+            (directionColor(wayDir, ways) and 0xFFFFFF).toInt()
         }
-        if (a == b) p.newLine()
-        p.stamp(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2], strokes.along(b), halfDeg, kind, soft, rgb)
+        if (dot) {
+            p.newLine()
+            p.stamp(pb[0], pb[1], pb[2], pb[0], pb[1], pb[2], strokes.along(b), runHalf, runKind, runSoft, rgb)
+        } else {
+            p.stamp(runFrom[0], runFrom[1], runFrom[2], pb[0], pb[1], pb[2], strokes.along(b), runHalf, runKind, runSoft, rgb)
+        }
+        pb.copyInto(runFrom)
+        runAlong = strokes.along(b)
+        runOpen = true
         paintUsed = true
     }
 
@@ -309,6 +361,7 @@ class LaserTrace {
     /** Clears the strokes. */
     fun clear() {
         strokes.clear()
+        runOpen = false
         paint?.clear()
         paintUsed = false
         hitCount = 0
@@ -421,6 +474,9 @@ class LaserTrace {
             return argb
         }
         const val STROKE_STEP_DEG = 0.5f
+
+        /** The shortest run of paint painted at once (degrees); runs are about half the brush's width. */
+        const val RUN_MIN_DEG = 1.0
 
         /** Snake: its curve is cut into steps of at most this many degrees. */
         const val CURVE_STEP_DEG = 0.5f

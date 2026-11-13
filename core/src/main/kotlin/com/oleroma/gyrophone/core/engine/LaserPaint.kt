@@ -123,7 +123,9 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         val brush = Brush(half, soft.coerceIn(0f, 1f))
         // Long hops in pieces of up to PIECE_DEG, so each piece's straight chord stays on the sphere.
         val hop = acos((ax * bx + ay * by + az * bz).toDouble().coerceIn(-1.0, 1.0))
-        val pieces = maxOf(1, kotlin.math.ceil(Math.toDegrees(hop) / PIECE_DEG).toInt())
+        // A wide brush takes longer pieces (as long as half its width): each piece paints the brush and its
+        // glow all round, so short pieces of a wide one would paint the same texels many times.
+        val pieces = maxOf(1, kotlin.math.ceil(Math.toDegrees(hop) / maxOf(PIECE_DEG, halfDeg.toDouble())).toInt())
         val a = FloatArray(3)
         val b = FloatArray(3)
         val along = (Math.round(alongDeg / ALONG_UNIT) and 0xFFFF).toInt()
