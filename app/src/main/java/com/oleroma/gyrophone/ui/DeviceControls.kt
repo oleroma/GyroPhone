@@ -83,8 +83,8 @@ internal data class Element(
 )
 
 /**
- * The controls of the device on screen and what is being done to them: a tap selects one (and
- * shows what it does), a hold buzzes and lifts it, letting go in place opens its editor, letting go
+ * The controls of the device on screen and what is being done to them: a tap opens a control's
+ * editor, a hold buzzes, lifts it and shows what it does (kept when let go in place), letting go
  * on another control swaps what the two do.
  */
 internal class ControlBoard {
@@ -110,12 +110,13 @@ internal class ControlBoard {
     var onSwap: (Element, Element) -> Unit = { _, _ -> }
 
     fun tap(e: Element) {
-        selected = if (selected == e.id) null else e.id
+        selected = null
+        onOpen(e)
     }
 
     fun holdStart(e: Element) {
         haptic?.performHapticFeedback(HapticFeedbackType.LongPress)
-        selected = null
+        selected = e.id
         dragging = e.id
         dragBy = Offset.Zero
         target = null
@@ -125,7 +126,10 @@ internal class ControlBoard {
     fun moveBy(d: Offset) {
         val from = elements[dragging ?: return] ?: return
         dragBy += d
-        if (dragBy.getDistance() > slop) moved = true
+        if (!moved && dragBy.getDistance() > slop) {
+            moved = true
+            selected = null
+        }
         val at = (bounds[from.id] ?: return).center + dragBy
         val next = elements.values.firstOrNull { e ->
             e.id != from.id && e.id !in disabled && bounds[e.id]?.contains(at) == true && DevicePresets.canSwap(from.inputs, e.inputs)
@@ -144,8 +148,6 @@ internal class ControlBoard {
         if (to != null) {
             haptic?.performHapticFeedback(HapticFeedbackType.LongPress)
             onSwap(from, to)
-        } else if (!moved) {
-            onOpen(from)
         }
     }
 
@@ -437,12 +439,6 @@ internal fun BoxScope.BoardOverlay(
                                 Text(to, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                         }
-                        Text(
-                            "Hold to edit, or drag onto another to swap",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp),
-                        )
                     }
                 }
             },
