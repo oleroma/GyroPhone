@@ -16,15 +16,8 @@ import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -42,7 +35,6 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.lerp
@@ -94,12 +86,13 @@ fun GyroDisplaysLayer(
     editing: Boolean,
     selected: Set<String>,
     selectedColor: (String) -> Color,
+    edge: TouchVisuals?,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
     val renderer = remember { GyroDisplaysRenderer(runtime) }
     renderer.density = density
-    SideEffect { renderer.input = GyroDisplaysRenderer.Input(boxes, editing, selected, selectedColor) }
+    SideEffect { renderer.input = GyroDisplaysRenderer.Input(boxes, editing, selected, selectedColor, edge) }
     DisposableEffect(renderer) { onDispose { renderer.dispose() } }
     AndroidView(
         factory = { ctx ->
@@ -124,10 +117,13 @@ fun GyroDisplaysLayer(
  * SurfaceView's surface ([Surface.lockHardwareCanvas]), the same drawing code as before.
  */
 internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : SurfaceHolder.Callback {
-    /** What the pad shows now, set from the screen thread. */
-    class Input(val boxes: List<DisplayBox>, val editing: Boolean, val selected: Set<String>, val selectedColor: (String) -> Color)
+    /** What the pad shows now, set from the screen thread; [edge]: the parallax edge's settings, or null when it isn't shown. */
+    class Input(
+        val boxes: List<DisplayBox>, val editing: Boolean, val selected: Set<String>, val selectedColor: (String) -> Color,
+        val edge: TouchVisuals? = null,
+    )
 
-    @Volatile var input = Input(emptyList(), false, emptySet()) { Color.White }
+    @Volatile var input = Input(emptyList(), false, emptySet(), { Color.White })
         set(v) {
             field = v
             dirty = true
@@ -162,6 +158,9 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
     // The pose each display showed when it last moved visibly ([VISIBLE_TURN]).
     private val seen = HashMap<String, FloatArray>()
     private val pose = FloatArray(9)
+    // The parallax edge where it was last drawn, and where it would be now ([VisState.edgeState]).
+    private val edgeDrawn = FloatArray(EDGE_STATE)
+    private val edgeNow = FloatArray(EDGE_STATE)
     private var last = 0L
     private var until = 0L
     private var lastT = 0L
@@ -263,6 +262,16 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
                 moved = true
             }
         }
+        // The parallax edge: redrawn once where it is drawn moved by a visible amount (or its tint changed).
+        val edge = inp.edge
+        if (edge != null) {
+            st.edgeState(runtime, edge, density.density, edgeNow)
+            for (i in 0 until EDGE_STATE) if (kotlin.math.abs(edgeNow[i] - edgeDrawn[i]) > EDGE_STEP[i]) {
+                edgeNow.copyInto(edgeDrawn)
+                until = maxOf(until, t)
+                break
+            }
+        }
         if (moved || sig != last || frame == 0L) {
             last = sig
             until = t + (GHOSTS + 2) * GHOST_MS
@@ -355,6 +364,9 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
                         )
                     }
                 }
+                // The parallax edge, over the displays.
+                val edge = inp.edge
+                if (edge != null) st.drawEdge(this, runtime, edge)
             }
         } finally {
             val p0 = System.nanoTime()
@@ -457,34 +469,6 @@ private const val HINT_TARGET_NS = 4_000_000L
 private fun movedVisibly(was: FloatArray, now: FloatArray): Boolean {
     for (i in 0..8) if (kotlin.math.abs(now[i] - was[i]) > VISIBLE_TURN) return true
     return false
-}
-
-/** The parallax edge ([TouchVisuals.gyroEdge]): outlines just inside the screen's edge that sway as the phone turns. */
-@Composable
-fun GyroEdgeLayer(runtime: GamepadRuntime, v: TouchVisuals, modifier: Modifier = Modifier) {
-    var frame by remember { mutableLongStateOf(0L) }
-    val st = remember { VisState() }
-    val visuals by rememberUpdatedState(v)
-    val density = LocalDensity.current.density
-    // Redrawn only when where it is drawn moved by a visible amount (or its tint changed): a still phone draws nothing new.
-    LaunchedEffect(Unit) {
-        val drawn = FloatArray(EDGE_STATE)
-        val now = FloatArray(EDGE_STATE)
-        while (true) withFrameMillis { t ->
-            st.edgeState(runtime, visuals, density, now)
-            var moved = frame == 0L
-            for (i in 0 until EDGE_STATE) if (kotlin.math.abs(now[i] - drawn[i]) > EDGE_STEP[i]) moved = true
-            if (moved) {
-                now.copyInto(drawn)
-                frame = t
-            }
-        }
-    }
-    // Its own layer: its redraws leave the gyro displays alone.
-    Canvas(modifier.graphicsLayer()) {
-        @Suppress("UNUSED_EXPRESSION") frame // redrawn when it moved
-        st.drawEdge(this, runtime, v)
-    }
 }
 
 /** Buffers reused from frame to frame, so drawing allocates little. */
@@ -1570,7 +1554,7 @@ private class VisState {
                 if (!d.fillFaces) {
                     drawPath(path, lines, style = stroke)
                 } else if (mesh.convex) {
-                    for (f in mesh.faces.indices) if (mesh.faceFront[f]) drawFace(mesh, f, c, r, body)
+                    drawFrontFaces(mesh, c, r, body)
                     drawPath(path, lines, style = stroke)
                 } else {
                     // Far to near, each face with its own outline, so near ones cover far ones.
@@ -1589,10 +1573,61 @@ private class VisState {
         if (d.axonometric) worldAxes(c, r * 1.22f, true, d.opacity.coerceIn(0.05f, 1f), d.perspective)
     }
 
-    /** A smooth ball's fill: one disk, lit from the top left. */
+    /** A smooth ball's fill: one disk, lit from the top left (its gradient made again only when its colour or place changes). */
     private fun DrawScope.drawBody(c: Offset, r: Float, body: Color) {
-        val lit = Color(body.red + (1 - body.red) * 0.35f, body.green + (1 - body.green) * 0.35f, body.blue + (1 - body.blue) * 0.35f, body.alpha)
-        drawCircle(Brush.radialGradient(listOf(lit, body), Offset(c.x - r * 0.35f, c.y - r * 0.4f), r * 1.3f), r, c)
+        val k = bodyKey
+        var b = bodyFill
+        if (b == null || body != bodyKeyColor || k[0] != c.x || k[1] != c.y || k[2] != r) {
+            val lit = Color(body.red + (1 - body.red) * 0.35f, body.green + (1 - body.green) * 0.35f, body.blue + (1 - body.blue) * 0.35f, body.alpha)
+            b = Brush.radialGradient(listOf(lit, body), Offset(c.x - r * 0.35f, c.y - r * 0.4f), r * 1.3f)
+            bodyFill = b; bodyKeyColor = body; k[0] = c.x; k[1] = c.y; k[2] = r
+        }
+        drawCircle(b, r, c)
+    }
+
+    private var bodyFill: Brush? = null
+    private var bodyKeyColor = Color.Unspecified
+    private val bodyKey = FloatArray(3)
+
+    // The front faces as flat-coloured triangles, for [drawFrontFaces]: one draw for the whole shape.
+    private var triXY = FloatArray(0)
+    private var triCol = IntArray(0)
+    private val triPaint = Paint()
+
+    /**
+     * Every front face of a convex [mesh] (projected) filled with [body], darker the more it turns
+     * away, as one batch of triangles: a finely cut icosphere has hundreds of faces, and one path
+     * each was hundreds of draws a frame. Front faces of a convex shape never overlap, so their order
+     * doesn't matter; the edges stroked over them hide the triangles' unsmoothed borders.
+     */
+    private fun DrawScope.drawFrontFaces(mesh: Mesh, c: Offset, r: Float, body: Color) {
+        var tris = 0
+        for (f in mesh.faces.indices) if (mesh.faceFront[f]) tris += mesh.faces[f].size - 2
+        if (tris <= 0) return
+        val verts = tris * 3
+        if (triCol.size < verts) {
+            triCol = IntArray(verts)
+            triXY = FloatArray(verts * 2)
+        }
+        var v = 0
+        fun put(i: Int, argb: Int) {
+            triXY[v * 2] = c.x + mesh.tx[i] * r
+            triXY[v * 2 + 1] = c.y - mesh.ty[i] * r
+            triCol[v] = argb
+            v++
+        }
+        for (f in mesh.faces.indices) {
+            if (!mesh.faceFront[f]) continue
+            val face = mesh.faces[f]
+            val k = 0.45f + 0.55f * mesh.faceShade[f]
+            val argb = Color(body.red * k, body.green * k, body.blue * k, body.alpha).toArgb()
+            for (t in 1 until face.size - 1) {
+                put(face[0], argb); put(face[t], argb); put(face[t + 1], argb)
+            }
+        }
+        drawContext.canvas.nativeCanvas.drawVertices(
+            android.graphics.Canvas.VertexMode.TRIANGLES, v * 2, triXY, 0, null, 0, triCol, 0, null, 0, 0, triPaint,
+        )
     }
 
     /** Face [f] of [mesh] (projected) filled with [body], darker the more it turns away; its outline left in [facePath]. */
@@ -1838,7 +1873,7 @@ private class VisState {
                     Offset(x, tRect.bottom), Offset(x, tRect.bottom - tape * (if (big) 0.35f else 0.2f)), density,
                 )
                 if (big) {
-                    drawContext.canvas.nativeCanvas.drawText("${((deg % 360) + 360) % 360}", x, tRect.top + tape * 0.5f, text)
+                    drawContext.canvas.nativeCanvas.drawText(HEADING_LABELS[(((deg % 360) + 360) % 360) / 10], x, tRect.top + tape * 0.5f, text)
                 }
                 deg += 10
             }
@@ -2157,6 +2192,9 @@ private const val VISIBLE_TURN = 0.0009f
 private val AXIS_COLORS = arrayOf(Color(0xFFFF5A5A), Color(0xFF5ADB6E), Color(0xFF5AA8FF))
 private val RING_AXES = MotionAxis.shown.toTypedArray()
 private val RING_LETTERS = arrayOf("Y", "P", "R")
+
+/** The horizon tape's heading numbers, every 10° (made once, not each frame). */
+private val HEADING_LABELS = Array(36) { "${it * 10}" }
 
 /** The laser pointer's axis letters, X, Y, Z: pitch, yaw, roll as it aims (facing −Z). */
 private val LASER_AXIS_LETTERS = arrayOf("P", "Y", "R")

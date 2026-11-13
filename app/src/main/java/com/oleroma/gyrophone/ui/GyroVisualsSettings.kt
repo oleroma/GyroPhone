@@ -77,7 +77,7 @@ import kotlin.math.sqrt
 import kotlin.math.roundToInt
 
 /**
- * Settings of the parallax edge ([GyroEdgeLayer]) and "Fade when phone rests" for every gyro display
+ * Settings of the parallax edge ([GyroDisplaysLayer], on its thread) and "Fade when phone rests" for every gyro display
  * ([stillness] the phone's turning speed now, for its live line); [set] saves a changed [v]. The
  * other gyro displays are placed in edit mode.
  */

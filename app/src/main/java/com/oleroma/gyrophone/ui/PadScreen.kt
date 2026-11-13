@@ -1962,14 +1962,15 @@ fun PadScreen(
         LaunchedEffect(displays, hidden) { runtime.setGyroDisplays(if (hidden) emptyList() else displays) }
         DisposableEffect(Unit) { onDispose { runtime.setGyroDisplays(emptyList()) } }
         // Covered or hidden, the per-frame layers stop (nothing would show them).
-        if (displays.isNotEmpty() && !covered && !hidden) {
+        // The parallax edge is drawn by the displays' layer too, on its thread, never on the screen thread.
+        val edgeShown = !editing && visuals.gyroEdge
+        if ((displays.isNotEmpty() || edgeShown) && !covered && !hidden) {
             val boxes = displays.map { c ->
                 val o = center(c)
                 DisplayBox(c, Rect(o.x - half(c), o.y - halfH(c), o.x + half(c), o.y + halfH(c)))
             }
-            GyroDisplaysLayer(runtime, boxes, editing, lit, litColor, Modifier.fillMaxSize())
+            GyroDisplaysLayer(runtime, boxes, editing, lit, litColor, if (edgeShown) visuals else null, Modifier.fillMaxSize())
         }
-        if (!editing && !covered && !hidden && visuals.gyroEdge) GyroEdgeLayer(runtime, visuals, Modifier.fillMaxSize())
         val noButtons = ws.touchControls.all { it.kind == TouchKind.DISPLAY }
         if (!editing && ws.touchpad.enabled && (noButtons || portrait)) {
             Text(
