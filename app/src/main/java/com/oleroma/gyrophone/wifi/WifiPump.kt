@@ -95,6 +95,17 @@ class WifiPump(private val engine: MappingEngine) {
     private var failedCount = 0
     private var statsWindowStart = 0L
 
+    // For [LinkLog], pump thread only: this second's packets, bytes and time in send, and wake-ups.
+    private var logPackets = 0
+    private var logFailed = 0
+    private var logBytes = 0L
+    private var logSendNs = 0L
+    private var logSendMaxNs = 0L
+    private var logWakeLateMaxNs = 0L
+    private var lastStateNs = 0L
+    /** When the loop asked to wake (0 = it didn't park on a time). */
+    private var parkedUntil = 0L
+
     /** Set as `engine.onChange`: wakes the loop as soon as input changes. */
     val wake = Runnable { LockSupport.unpark(thread) }
 
@@ -193,11 +204,19 @@ class WifiPump(private val engine: MappingEngine) {
             if (cur != null && target.session === cur) {
                 val wait = scheduler.sendableAt() - System.nanoTime()
                 if (wait > 0) {
+                    parkedUntil = scheduler.sendableAt()
                     LockSupport.parkNanos(wait)
                     continue
                 }
             }
             val passStart = System.nanoTime()
+            if (parkedUntil != 0L) {
+                // Woken early by input is fine; waking late means the thread wasn't run on time.
+                val late = passStart - parkedUntil
+                if (late > logWakeLateMaxNs) logWakeLateMaxNs = late
+                if (late >= LinkLog.LATE_WAKE_NS) LinkLog.lateWake(passStart, late)
+                parkedUntil = 0L
+            }
             // Switch first: switchTo resets the gyro's samples, so the tail below starts from the new session's.
             val t = target
             if (t.session !== cur) {
@@ -238,6 +257,8 @@ class WifiPump(private val engine: MappingEngine) {
                 frame.flags = frame.flags or SendScheduler.flagsFor(kind)
                 frame.phoneTimeUs = phoneUs().toInt()
                 val stateLen = WireCodec.encodeStatePlain(frame, plain, 0)
+                if (lastStateNs != 0L && now - lastStateNs >= LinkLog.STATE_GAP_NS) LinkLog.stateGap(now, now - lastStateNs)
+                lastStateNs = now
                 if (sendSealed(c, WireCodec.stateType(frame), stateLen)) sentCount++ else failedCount++
                 if (discrete && pressStamp.enabled) sendPressTime(c, frame.phoneTimeUs, now)
                 lastSent.copyFrom(frame)
@@ -269,7 +290,10 @@ class WifiPump(private val engine: MappingEngine) {
             // The pass is done: how long it took goes to the performance hint.
             hint?.done(end - passStart, end)
             val wait = wakeAt - end
-            if (wait > 0) LockSupport.parkNanos(wait)
+            if (wait > 0) {
+                parkedUntil = wakeAt
+                LockSupport.parkNanos(wait)
+            }
         }
         hint?.close()
         cur?.let { goodbye(it, exitByeReason) }
@@ -319,6 +343,7 @@ class WifiPump(private val engine: MappingEngine) {
         motionSentVersion = -1
         cipher = session?.let { SessionCipher(it.kPH, Wire.DIR_P2H) }
         seq = 0
+        lastStateNs = 0L
         totals.reset()
         lastSent.clear()
         scheduler.reset()
@@ -367,10 +392,17 @@ class WifiPump(private val engine: MappingEngine) {
         if (direct?.sendDirect(c.hostAddr, out, 0, len) == true) return true
         packet.setData(out, 0, len)
         packet.socketAddress = c.hostAddr
+        val t0 = System.nanoTime()
         return try {
             s.send(packet)
+            val d = System.nanoTime() - t0
+            logPackets++; logBytes += len; logSendNs += d
+            if (d > logSendMaxNs) logSendMaxNs = d
+            if (d >= LinkLog.SLOW_SEND_NS) LinkLog.slowSend(t0, d, type, len)
             true
         } catch (e: IOException) {
+            logFailed++
+            LinkLog.failedSend(t0, System.nanoTime() - t0, type, e)
             false // no route while Wi-Fi changes; the next packet carries the full state anyway
         }
     }
@@ -378,7 +410,11 @@ class WifiPump(private val engine: MappingEngine) {
     private fun updateStats(now: Long) {
         if (now - statsWindowStart >= SECOND_NS) {
             sentPerSecond = sentCount; failedPerSecond = failedCount
+            if (statsWindowStart != 0L) {
+                LinkLog.second(now, sentCount, logPackets, logFailed, logBytes, logSendNs, logSendMaxNs, logWakeLateMaxNs)
+            }
             sentCount = 0; failedCount = 0; statsWindowStart = now
+            logPackets = 0; logFailed = 0; logBytes = 0L; logSendNs = 0L; logSendMaxNs = 0L; logWakeLateMaxNs = 0L
         }
     }
 
