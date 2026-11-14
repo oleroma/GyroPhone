@@ -52,10 +52,10 @@ internal static class Program
         GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
         using var log = new FileLog(echo: Console.WriteLine);
         var clock = StopwatchClock.Instance;
-        var keyMouse = new SendInputSink(log.Write);
 
         var store = new SettingsStore(SettingsStore.DefaultPath());
         var settings = store.Load(Environment.MachineName, log.Write);
+        using var keyMouse = new KeyMouseRouter(new SendInputSink(log.Write), settings.UseSendInput, log.Write);
 
         IPadSink pad = NullPadSink.Instance;
         if (!noVigem)
@@ -103,8 +103,9 @@ internal static class Program
         }
         // Owning the port is the single-instance guard: only now is the marker ours to recover.
         var markerPath = HeldKeysMarker.DefaultPath();
-        int recovered = HeldKeysMarker.Recover(markerPath, keyMouse);
+        int recovered = HeldKeysMarker.Recover(markerPath, keyMouse.SendInput);
         if (recovered > 0) log.Write($"released {recovered} inputs left held by a previous run");
+        engine.ChangeKeyMouseRoute(() => keyMouse.Retry(), "looked for the input driver");
         var marker = new HeldKeysMarker(markerPath);
         var watchdog = new Watchdog(engine, clock, marker, store,
             networkPublicProbe: NetworkCategory.IsAnyConnectedPublic, log: log.Write,

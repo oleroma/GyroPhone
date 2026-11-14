@@ -91,6 +91,7 @@ internal sealed class LatencyTestWindow : Window
             _rest.Stop();
             Register(IntPtr.Zero, RidevRemove);
             _source?.RemoveHook(Hook);
+            GyroPhone.Host.Abstractions.RawInputShared.RawMouseReleased();
         };
         Place();
     }
@@ -105,8 +106,8 @@ internal sealed class LatencyTestWindow : Window
         {
             if (GetRawInputData(lParam, RidInput, h.AddrOfPinnedObject(), ref size, (uint)header) == unchecked((uint)-1)) return IntPtr.Zero;
             var hdr = Marshal.PtrToStructure<RawInputHeader>(h.AddrOfPinnedObject());
-            // Mouse (type 0), from SendInput (no device), relative.
-            if (hdr.Type != 0 || hdr.Device != IntPtr.Zero) return IntPtr.Zero;
+            // Mouse (type 0), from GyroPhone (SendInput: no device; or the input driver's own mouse), relative.
+            if (hdr.Type != 0 || (hdr.Device != IntPtr.Zero && !GyroPhone.Host.Abstractions.RawInputShared.IsOwnDevice(hdr.Device))) return IntPtr.Zero;
             ushort flags = BitConverter.ToUInt16(_buffer, header);
             if ((flags & 1) != 0) return IntPtr.Zero;
             int dx = BitConverter.ToInt32(_buffer, header + 12);

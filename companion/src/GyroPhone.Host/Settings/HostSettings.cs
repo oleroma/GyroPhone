@@ -39,6 +39,11 @@ public sealed class HostSettings
     /// <summary>"Keep" under Diagnostics: the minutes kept and saved, <see cref="MinKeepMinutes"/> to <see cref="DebugTrace.MaxKeepMinutes"/>.</summary>
     public int DiagnosticsMinutes { get; set; } = DefaultKeepMinutes;
     public const int MinKeepMinutes = 1, DefaultKeepMinutes = 3;
+    /// <summary>
+    /// "Use SendInput" (Performance › Keyboard and mouse): keys and mouse through SendInput even when the optional input
+    /// driver (a virtual USB mouse and keyboard) is installed, for A/B latency tests. Without the driver it changes nothing.
+    /// </summary>
+    public bool UseSendInput { get; set; }
     /// <summary>"Use this PC's keys for Press a key" on the App page: off, the PC's keyboard, mouse and controller are never read for it.</summary>
     public bool PressKeyListen { get; set; } = true;
     /// <summary>"Notify when the phone listens for a key" on the App page: a tray notification each time the phone's "Press a key" opens.</summary>
