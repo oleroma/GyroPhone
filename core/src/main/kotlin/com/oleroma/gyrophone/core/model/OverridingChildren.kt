@@ -202,6 +202,7 @@ object OverridingChildren {
                 }
                 MotionAxis.NONE -> {}
             }
+            add(k(GyroSettings.spaceProp(a)!!), g.ownSpace(a)) { it.withSpace(a, null) }
             val p = a.name.lowercase()
             add(k(p + "Inertia"), glide.inertia) { it.withGlide(a, it.ownGlide(a).copy(inertia = null)) }
             add(k(p + "GlideMs"), glide.glideMs) { it.withGlide(a, it.ownGlide(a).copy(glideMs = null)) }

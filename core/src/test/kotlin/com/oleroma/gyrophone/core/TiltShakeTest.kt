@@ -116,6 +116,123 @@ class TiltShakeTest {
         }
     }
 
+    /** Gravity with the screen leaning back [back]° from upright, turned [deg] clockwise in its plane. */
+    private fun held(deg: Double, back: Double): FloatArray {
+        val r = Math.toRadians(deg); val b = Math.toRadians(back)
+        val inPlane = G * cos(b)
+        return floatArrayOf((-inPlane * sin(r)).toFloat(), (inPlane * cos(r)).toFloat(), (G * sin(b)).toFloat())
+    }
+
+    /**
+     * Turns the phone clockwise about the axis through its screen at [dps] for [ms], gyro at 1 kHz and
+     * the accelerometer at 200 Hz reading [gravity] (deg turned so far), from [startMs].
+     */
+    private fun turn(t: TiltShake, startMs: Long, ms: Long, dps: Double, gravity: (Double) -> FloatArray): Long {
+        var now = startMs
+        var deg = 0.0
+        while (now < startMs + ms) {
+            now += 1
+            deg += dps / 1000
+            t.gyro(0f, 0f, (-Math.toRadians(dps)).toFloat(), now * MS)
+            if (now % 5 == 0L) { val g = gravity(deg); t.update(g[0], g[1], g[2], now * MS) }
+        }
+        return now
+    }
+
+    @Test fun withTheGyroSidewaysTiltFollowsAtOnce() {
+        // Turning 30° in 100 ms reads the whole 30° at the end; the accelerometer alone would lag behind.
+        val t = TiltShake().apply { displayRotation = 0 }
+        val g = upright(0.0)
+        t.update(g[0], g[1], g[2], 0)
+        t.gyro(0f, 0f, 0f, 0)
+        turn(t, 0, 100, 300.0) { upright(it) }
+        assertEquals(1f, t.x, 0.02f)
+    }
+
+    @Test fun aTapOnTheScreenDoesNotJerkTheWheel() {
+        val t = TiltShake().apply { displayRotation = 0 }
+        val g = upright(10.0)
+        t.update(g[0], g[1], g[2], 0)
+        t.gyro(0f, 0f, 0f, 0)
+        var now = turn(t, 0, 200, 0.0) { upright(10.0) }
+        val before = t.x
+        // A jolt sideways from a thumb: the accelerometer jumps, the phone doesn't turn.
+        now += 5
+        t.update(g[0] - 12f, g[1], g[2], now * MS)
+        t.gyro(0f, 0f, 0f, now * MS)
+        assertEquals(before, t.x, 0.01f)
+    }
+
+    @Test fun onTheLapTheGyroSteersAndGravityCanNotTell() {
+        // Screen up, 5° from flat: turning 20° clockwise steers 20°, though gravity barely moves.
+        val t = TiltShake().apply { displayRotation = 0 }
+        var g = held(0.0, 85.0)
+        t.update(g[0], g[1], g[2], 0)
+        t.gyro(0f, 0f, 0f, 0)
+        assertEquals(0f, t.x, 1e-3f)
+        val now = turn(t, 0, 200, 100.0) { held(it, 85.0) }
+        assertEquals(20f / 30f, t.x, 0.03f)
+        // Held still there, it stays.
+        g = held(20.0, 85.0)
+        turn(t, now, 1000, 0.0) { g }
+        assertEquals(20f / 30f, t.x, 0.03f)
+    }
+
+    @Test fun lyingFlatItStartsStraightAndSetOrientationStraightens() {
+        val t = TiltShake().apply { displayRotation = 0 }
+        val g = held(40.0, 89.0)
+        t.update(g[0], g[1], g[2], 0)
+        assertEquals(0f, t.x, 1e-3f)
+        t.gyro(0f, 0f, 0f, 0)
+        turn(t, 0, 100, 100.0) { held(40.0 + it, 89.0) }
+        assertTrue(t.x > 0.2f)
+        t.straighten()
+        assertEquals(0f, t.x, 1e-3f)
+    }
+
+    @Test fun setOrientationLeavesAnUprightWheelToGravity() {
+        val t = TiltShake().apply { displayRotation = 0 }
+        val g = upright(15.0)
+        t.update(g[0], g[1], g[2], 0)
+        t.straighten()
+        assertEquals(0.5f, t.x, 0.02f)
+    }
+
+    @Test fun lyingFlatTheCompassHoldsStraightAgainstDrift() {
+        val t = TiltShake().apply {
+            displayRotation = 0
+            settings = com.oleroma.gyrophone.core.model.GyroSettings(tiltCompass = true)
+        }
+        val g = held(0.0, 89.0)
+        t.update(g[0], g[1], g[2], 0)
+        t.gyro(0f, 0f, 0f, 0)
+        // North straight ahead along the screen's up, level.
+        t.north(0f, 20f, 0f)
+        // The gyro drifts 1°/s clockwise while the phone lies still: the compass keeps it straight.
+        var now = 0L
+        repeat(10_000) {
+            now += 1
+            t.gyro(0f, 0f, (-Math.toRadians(1.0)).toFloat(), now * MS)
+            if (now % 5 == 0L) t.update(g[0], g[1], g[2], now * MS)
+            if (now % 20 == 0L) t.north(0f, 20f, 0f)
+        }
+        assertEquals(0f, t.x, 0.06f)
+    }
+
+    @Test fun lyingFlatWithoutTheGyroTiltHoldsStill() {
+        // Gravity's turn is noise lying flat: without the gyro the wheel doesn't spin with it.
+        val t = TiltShake().apply { displayRotation = 0 }
+        var g = upright(10.0)
+        t.update(g[0], g[1], g[2], 0)
+        var ts = 0L
+        g = held(10.0, 89.5)
+        repeat(100) { ts += 5 * MS; t.update(g[0], g[1], g[2], ts) }
+        val held = t.x
+        g = held(120.0, 89.5)
+        repeat(100) { ts += 5 * MS; t.update(g[0], g[1], g[2], ts) }
+        assertEquals(held, t.x, 1e-3f)
+    }
+
     @Test fun mappedTiltAndShake() {
         var now = 0L
         val ws = Workspace(

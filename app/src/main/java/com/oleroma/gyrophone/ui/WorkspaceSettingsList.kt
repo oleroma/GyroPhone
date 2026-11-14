@@ -336,7 +336,7 @@ internal fun WorkspaceSettings(
     items += SectionItem("tilt", "Tilt & shake") { card, header ->
         RememberedSection(
             runtime, "workspace.Tilt", "Tilt & shake", card,
-            subtitle = "How far a full tilt leans, its deadzone, how hard a shake is", headerModifier = header,
+            subtitle = "How far a full tilt leans, its deadzone, the compass lying flat, how hard a shake is", headerModifier = header,
         ) {
             OverrideSlider(
                 key + "tiltRange", "Tilt range %.0f°", ws.gyro.tiltRangeDeg,
@@ -348,6 +348,10 @@ internal fun WorkspaceSettings(
                 0f..GyroSettings.MAX_TILT_DEADZONE_DEG, 1f, own(g("tiltDeadzoneDeg")), reset(g("tiltDeadzoneDeg")), children = kids(g("tiltDeadzoneDeg")),
                 hint = "Leaning less than this counts as level.",
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(tiltDeadzoneDeg = v)) } }
+            OverrideSwitch(
+                "Use compass when flat", "Lying flat, sideways tilt (a steering wheel) has no gravity to say where straight is. On, the compass holds straight where the phone went flat; off, the gyro alone carries it, drifting very slowly (Set orientation makes the way it points straight). Laptops, speakers, metal and magnetic cases can bend the compass, so straight may wander.",
+                ws.gyro.tiltCompass, own(g("tiltCompass")), reset(g("tiltCompass")), children = kids(g("tiltCompass")),
+            ) { v -> editWs { it.copy(gyro = it.gyro.copy(tiltCompass = v)) } }
             OverrideSlider(
                 key + "shake", "Shake at %.0f m/s²", ws.gyro.shakeStrength,
                 GyroSettings.MIN_SHAKE_STRENGTH..GyroSettings.MAX_SHAKE_STRENGTH, 1f, own(g("shakeStrength")), reset(g("shakeStrength")), children = kids(g("shakeStrength")),

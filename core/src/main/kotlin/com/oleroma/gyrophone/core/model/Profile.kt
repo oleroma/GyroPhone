@@ -39,6 +39,19 @@ enum class StickZones(val label: String) {
 @Serializable
 data class Placement(val x: Float, val y: Float, val size: Float)
 
+/** How toggle-synced buttons' states go together ([TouchControl.toggleSync]). */
+@Serializable
+enum class ToggleRule {
+    /** A touch on any of them turns them all: they stay as their initial states are to each other (same or opposite). */
+    FLIP,
+
+    /**
+     * "Never both" ("One at a time" for three or more): at most one of them is away from its
+     * initial state; turning one turns the one turned before back.
+     */
+    NEVER_BOTH,
+}
+
 /**
  * A control drawn on the touchscreen. Position is the centre, normalised to the pad area (0..1);
  * size is the diameter (circle) or width (square) as a fraction of the pad area's shorter
@@ -91,6 +104,33 @@ data class TouchControl(
     /** BUTTON: the longest gap between the taps of a double tap (ms); null = the workspace's. */
     val doubleTapMs: Int? = null,
     /**
+     * BUTTON: how its chips press when they don't set their own ([ButtonHow]); null = Held. Toggle
+     * also keeps its own gyro cards and gyro settings on from one touch to the next.
+     */
+    val how: How? = null,
+    /** BUTTON: [how] Repeat's count. */
+    val repeat: Int = 2,
+    /**
+     * BUTTON with [how] Toggle, its "Initial state": on (true) or off when the workspace opens. A
+     * touch turns it to the other state; ending ("Also ends on" below) turns it back to this one.
+     */
+    val initialOn: Boolean = false,
+    /** BUTTON with [how] Toggle: a Let go mapping turns it back to [initialOn]. */
+    val endsOnLetGo: Boolean = false,
+    /** BUTTON with [how] Toggle: this long (ms) after a touch turned it, it goes back to [initialOn]; 0 = never. */
+    val endsAfterMs: Int = 0,
+    /** BUTTON with [how] Toggle: the next other input (pressed and let go) turns it back to [initialOn]. */
+    val endsOnNextInput: Boolean = false,
+    /** BUTTON with [how] Toggle: another mapping pressing one of its outputs turns it back to [initialOn]. */
+    val endsOnSame: Boolean = false,
+    /**
+     * BUTTON with [how] Toggle: buttons sharing a toggle sync id change state together by
+     * [toggleRule] ([ToggleSyncs]); null = none.
+     */
+    val toggleSync: String? = null,
+    /** With [toggleSync]: how its buttons' states go together (the same for all of them). */
+    val toggleRule: ToggleRule = ToggleRule.FLIP,
+    /**
      * Zone mapping ([TouchAreaKind.ZONE]): a finger that slides in from elsewhere stops what it
      * was doing (cursor, stick, another button) while it is in the zone, and one that lands on
      * the zone but on no other control starts no cursor.
@@ -137,6 +177,13 @@ data class TouchControl(
      * in each, a change to one made to all.
      */
     val global: Boolean = false,
+    /**
+     * The mapping editor's card order for this control, as card keys (the editor's own); empty =
+     * the default order. The first card's first mapping names a control with no label of its own.
+     */
+    val cardOrder: List<String> = emptyList(),
+    /** The card order last arranged by hand ([cardOrder] after a drag): the editor's Sort > Custom brings it back. */
+    val customOrder: List<String> = emptyList(),
 ) {
     /** Finger position input [axis]'s settings. */
     fun fingerOf(axis: FingerAxis): FingerAxisSettings = fingers.fingerOf(axis)
@@ -652,7 +699,16 @@ fun touchedControls(
 enum class GyroSpace(val label: String) {
     LOCAL("Local"),
     WORLD("World"),
-    PLAYER("Player"),
+    PLAYER("Player");
+
+    /** The card title of gyro axis [a] ([MotionAxis.label]) measured in this space: "World yaw", "Local pitch" (Player off yaw is Local: it changes nothing there). */
+    fun title(a: MotionAxis): String =
+        (if (this == PLAYER && a != MotionAxis.ROLL) LOCAL else this).label + " " + a.label.lowercase()
+
+    companion object {
+        /** The spaces axis [a] can be measured in: Player only changes yaw (stored [MotionAxis.ROLL]). */
+        fun choicesFor(a: MotionAxis): List<GyroSpace> = if (a == MotionAxis.ROLL) entries else listOf(LOCAL, WORLD)
+    }
 }
 
 /**
@@ -764,6 +820,10 @@ data class ButtonGyro(
     val rollScale: Float? = null,
     /** The touchpad cursor's factor while held (× the workspace's exact sensitivities), instead of [touchSensitivity]. */
     val touchScale: Float? = null,
+    /** Yaw's, pitch's and roll's space while held ([GyroSettings.spaceOf]); null = the workspace's. */
+    val yawSpace: GyroSpace? = null,
+    val pitchSpace: GyroSpace? = null,
+    val rollSpace: GyroSpace? = null,
 ) {
     /** It sets something. */
     val any: Boolean get() = anyGyro || anyTouch
@@ -772,7 +832,24 @@ data class ButtonGyro(
     val anyGyro: Boolean get() = sensitivity != null || yaw != null || pitch != null || roll != null ||
         yawScale != null || pitchScale != null || rollScale != null ||
         yawMode != null || pitchMode != null || rollMode != null || yawGlide != null || pitchGlide != null || rollGlide != null ||
-        accel != null || yawAccel != null || pitchAccel != null || rollAccel != null
+        accel != null || yawAccel != null || pitchAccel != null || rollAccel != null ||
+        yawSpace != null || pitchSpace != null || rollSpace != null
+
+    /** Axis [a]'s own space while held. */
+    fun ownSpace(a: MotionAxis): GyroSpace? = when (a) {
+        MotionAxis.YAW -> yawSpace
+        MotionAxis.PITCH -> pitchSpace
+        MotionAxis.ROLL -> rollSpace
+        MotionAxis.NONE -> null
+    }
+
+    /** Copy with axis [a]'s own space [s] while held (null: the workspace's). */
+    fun withSpace(a: MotionAxis, s: GyroSpace?): ButtonGyro = when (a) {
+        MotionAxis.YAW -> copy(yawSpace = s)
+        MotionAxis.PITCH -> copy(pitchSpace = s)
+        MotionAxis.ROLL -> copy(rollSpace = s)
+        MotionAxis.NONE -> this
+    }
 
     /** It sets something of the touchpad's. */
     val anyTouch: Boolean get() = touchSensitivity != null || touchAcceleration != null || touchScale != null
@@ -908,6 +985,7 @@ data class ButtonGyro(
             yawScale = scale(yawScale, o.yawScale, o.yaw), pitchScale = scale(pitchScale, o.pitchScale, o.pitch),
             rollScale = scale(rollScale, o.rollScale, o.roll),
             touchScale = scale(touchScale, o.touchScale, o.touchSensitivity),
+            yawSpace = o.yawSpace ?: yawSpace, pitchSpace = o.pitchSpace ?: pitchSpace, rollSpace = o.rollSpace ?: rollSpace,
         )
     }
 
@@ -926,6 +1004,7 @@ data class ButtonGyro(
         yawMode = yawMode ?: g.yawMode, pitchMode = pitchMode ?: g.pitchMode, rollMode = rollMode ?: g.rollMode,
         accel = accel ?: g.accel,
         yawAccel = accelOf(MotionAxis.YAW, g), pitchAccel = accelOf(MotionAxis.PITCH, g), rollAccel = accelOf(MotionAxis.ROLL, g),
+        yawSpace = yawSpace ?: g.yawSpace, pitchSpace = pitchSpace ?: g.pitchSpace, rollSpace = rollSpace ?: g.rollSpace,
     ).let { r ->
         listOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL).fold(r) { acc, a -> acc.withGlide(a, g.ownGlide(a).under(ownGlide(a))) }
     }
@@ -1125,6 +1204,11 @@ data class GyroSettings(
     val tiltYRangeDeg: Float? = null,
     val tiltXDeadzoneDeg: Float? = null,
     val tiltYDeadzoneDeg: Float? = null,
+    /**
+     * Lying flat, the compass holds sideways tilt's straight ([com.oleroma.gyrophone.core.engine.TiltShake]);
+     * off, the gyro alone carries it there. Magnets and metal nearby can bend the compass.
+     */
+    val tiltCompass: Boolean = false,
     /** How hard a jolt (m/s² off gravity) counts as a shake. */
     val shakeStrength: Float = DEFAULT_SHAKE_STRENGTH,
     /**
@@ -1136,6 +1220,13 @@ data class GyroSettings(
     val gameName: String = "",
     /** Which axes yaw, pitch and roll are measured about ([GyroSpace]); the workspace's (and Defaults') only. */
     val gyroSpace: GyroSpace = GyroSpace.LOCAL,
+    /**
+     * Yaw's, pitch's and roll's own space for the gyro's mappings (their cards' Space); null =
+     * [gyroSpace]. The gyro displays and the PC overlays keep [gyroSpace].
+     */
+    val yawSpace: GyroSpace? = null,
+    val pitchSpace: GyroSpace? = null,
+    val rollSpace: GyroSpace? = null,
     /** Which screen axis is yaw ([YawAxis]): the phone's frame for everything gyro; the workspace's (and Defaults') only. */
     val yawAxis: YawAxis = YawAxis.SCREEN_Z,
     /** [YawAxis.CUSTOM]'s tilt back (degrees, 0 = Screen Z, 90 = Screen Y), from a granular Set orientation; the workspace's (and Defaults') only. */
@@ -1186,6 +1277,28 @@ data class GyroSettings(
 
     /** Axis [a]'s acceleration in effect ([GyroCurve.OFF] for none). */
     fun accelOf(a: MotionAxis): GyroCurve = ownAccel(a) ?: accel ?: GyroCurve.OFF
+
+    /** Axis [a]'s own space for its mappings, null when it follows [gyroSpace]. */
+    fun ownSpace(a: MotionAxis): GyroSpace? = when (a) {
+        MotionAxis.YAW -> yawSpace
+        MotionAxis.PITCH -> pitchSpace
+        MotionAxis.ROLL -> rollSpace
+        MotionAxis.NONE -> null
+    }
+
+    /** Axis [a]'s space in effect for its mappings. */
+    fun spaceOf(a: MotionAxis): GyroSpace = ownSpace(a) ?: gyroSpace
+
+    /** Copy with axis [a]'s own space [s] (null: it follows [gyroSpace]). */
+    fun withSpace(a: MotionAxis, s: GyroSpace?): GyroSettings = when (a) {
+        MotionAxis.YAW -> copy(yawSpace = s)
+        MotionAxis.PITCH -> copy(pitchSpace = s)
+        MotionAxis.ROLL -> copy(rollSpace = s)
+        MotionAxis.NONE -> this
+    }
+
+    /** Some axis's mappings are measured against gravity (World or Player): the accelerometer is needed. */
+    val anySpaced: Boolean get() = MotionAxis.shown.any { spaceOf(it) != GyroSpace.LOCAL }
 
     /** Copy with axis [a]'s own acceleration [c] (null: it follows [accel]). */
     fun withAccel(a: MotionAxis, c: GyroCurve?): GyroSettings = when (a) {
@@ -1292,6 +1405,8 @@ data class GyroSettings(
     companion object {
         const val DEFAULT_SENSITIVITY = 16f
         const val DEFAULT_GLIDE_MS = 325f
+        const val MIN_GLIDE_MS = 100f
+        const val MAX_GLIDE_MS = 1000f
         const val DEFAULT_TILT_RANGE_DEG = 30f
         const val MIN_TILT_RANGE_DEG = 5f
         const val MAX_TILT_RANGE_DEG = 90f
@@ -1325,6 +1440,14 @@ data class GyroSettings(
             MotionAxis.YAW -> "yawAccel"
             MotionAxis.PITCH -> "pitchAccel"
             MotionAxis.ROLL -> "rollAccel"
+            MotionAxis.NONE -> null
+        }
+
+        /** The property of axis [a]'s own space ([WorkspaceDefaults.gyroKey]). */
+        fun spaceProp(a: MotionAxis): String? = when (a) {
+            MotionAxis.YAW -> "yawSpace"
+            MotionAxis.PITCH -> "pitchSpace"
+            MotionAxis.ROLL -> "rollSpace"
             MotionAxis.NONE -> null
         }
     }

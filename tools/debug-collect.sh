@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Collects GyroPhone debug recordings and merges the phone's and the PC's into one file.
+# Collects GyroPhone Diagnostics saves and merges the phone's and the PC's into one file.
 # Runs on the PC (Git Bash) with the phone on adb. Never touches the phone's screen or inputs.
 #
-#   tools/debug-collect.sh            merge the newest phone recording with the PC's of the same moment
-#   tools/debug-collect.sh record     make a recording now (the phone's debug tools must be on), then merge
+#   tools/debug-collect.sh            merge the newest phone save with the PC's of the same moment
+#   tools/debug-collect.sh save       save both sides now (Diagnostics must be on), then merge
 #   tools/debug-collect.sh dump [n]   print the phone's live status and its newest n events (default 60)
 #   tools/debug-collect.sh merge <phone.txt> <pc.txt>   merge two files you already have
 #
@@ -64,9 +64,9 @@ phone_dir=/sdcard/Android/data/$pkg/files/debug
 
 pull_newest_phone() {
   local name
-  name="$(adb exec-out ls "$phone_dir" 2>/dev/null | tr -d '\r' | grep '^phone-.*\.txt$' | sort | tail -1 || true)"
+  name="$(adb exec-out ls -1 "$phone_dir" 2>/dev/null | tr -d '\r' | grep '^phone-.*\.txt$' | sort | tail -1 || true)"
   if [ -z "$name" ]; then
-    echo "No phone recording yet. Turn on Settings > Debug tools and tap Record on the pad, or run: $0 record" >&2
+    echo "No phone save yet. Turn on Performance > Diagnostics and tap Save, or run: $0 save" >&2
     exit 1
   fi
   adb exec-out cat "$phone_dir/$name" >"$out/$name"
@@ -98,8 +98,8 @@ case "${1:-}" in
     echo "merged: $dest"
     exit 0
     ;;
-  record)
-    adb shell dumpsys activity service "$svc" record | tr -d '\r' | grep -E '^(recording|debug tools)' || true
+  save)
+    adb shell dumpsys activity service "$svc" save | tr -d '\r' | grep -E '^(saved|diagnostics)' || true
     sleep 2 # the PC saves its side when the phone's next LINK_INFO arrives
     ;;
   "") ;;
@@ -110,7 +110,7 @@ phone="$(pull_newest_phone)"
 echo "phone: $phone"
 pc="$(newest_pc_near "$(saved_ms "$phone")")"
 if [ -z "$pc" ]; then
-  echo "No PC recording within a minute of it in $(pc_dir) (the PC saves one only over Wi-Fi or USB)."
+  echo "No PC save within a minute of it in $(pc_dir) (the PC saves one only over Wi-Fi or USB)."
   exit 0
 fi
 echo "pc:    $pc"

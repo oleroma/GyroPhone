@@ -16,8 +16,16 @@ export GP_BUILD GP_COMMIT
 version="0.1.$GP_BUILD"
 
 if grep -qw apk <<<"$parts"; then
+  # The signing key, kept outside the repo: CI passes it from the repo's secrets; on the PC it comes
+  # from ~/.android-keys/gyrophone.env. Without it the APK couldn't update the installed app, so stop.
+  if [ -z "${ANDROID_KEYSTORE:-}" ] && [ -f "$HOME/.android-keys/gyrophone.env" ]; then
+    { set +x; } 2>/dev/null
+    . "$HOME/.android-keys/gyrophone.env"
+  fi
+  [ -n "${ANDROID_KEYSTORE:-}" ] && [ -f "$ANDROID_KEYSTORE" ] ||
+    { echo "No signing key: put it in ~/.android-keys/gyrophone.jks and gyrophone.env (see app/build.gradle.kts)." >&2; exit 1; }
   # The release build type: not debuggable (Android runs debuggable apps with most speed-ups off),
-  # no R8, signed with keystore/debug.keystore like every build, so adb install -r keeps app data.
+  # no R8, signed with that key like every build, so adb install -r keeps app data.
   ./gradlew :app:assembleRelease
   apk="app/build/outputs/apk/release/gyrophone-$version.apk"
   cp app/build/outputs/apk/release/app-release.apk "$apk"

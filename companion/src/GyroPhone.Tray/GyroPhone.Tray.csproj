@@ -11,6 +11,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>GyroPhone.ico</ApplicationIcon>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- update.cmd reads this (file properties, Comments) to know the exe takes the flag before it runs it. -->
     <Description>GyroPhone Companion; supports --init-keys</Description>
   </PropertyGroup>
@@ -27,6 +28,7 @@
     <!-- Overlay windows drawn by the graphics card: Direct2D into a GDI-compatible texture. -->
     <PackageReference Include="Vortice.Direct2D1" Version="3.6.2" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.6.2" />
     <!-- OpenCV's native library for the latency test's video analyser (GyroPhone.Latency). -->
     <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20260627" />
   </ItemGroup>
@@ -48,5 +50,24 @@
       <_GpSideFile Include="@(ResolvedFileToPublish->'%(RelativePath)')" Condition="'%(ResolvedFileToPublish.ExcludeFromSingleFile)' == 'true' And '%(Extension)' == '.dll'" />
     </ItemGroup>
     <WriteLinesToFile File="$(PublishDir)side-files.txt" Lines="@(_GpSideFile)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+  <!-- The FPS helper (GyroPhone.FrameHelper) rides inside the published exe; "Set up FPS helper" copies it to
+       Program Files. Published on its own first (native AOT, a few MB) by a separate dotnet, so none of the
+       companion's publish settings (self-extract, ReadyToRun, output folder) reach it. Native AOT finds the C++
+       linker with vswhere.exe, which Visual Studio keeps in its Installer folder, not on the PATH: that folder
+       is put first on the PATH for this step. Plain builds (tests) skip it. -->
+  <Target Name="EmbedFpsHelper" BeforeTargets="PrepareForBuild" Condition="'$(PublishSingleFile)' == 'true'">
+    <PropertyGroup>
+      <_GpHelperProject>$(MSBuildProjectDirectory)/../GyroPhone.FrameHelper/GyroPhone.FrameHelper.csproj</_GpHelperProject>
+      <_GpHelperDir>$(MSBuildProjectDirectory)/$(BaseIntermediateOutputPath)fps-helper/</_GpHelperDir>
+      <_GpDotnet>$(DOTNET_HOST_PATH)</_GpDotnet>
+      <_GpDotnet Condition="'$(_GpDotnet)' == ''">dotnet</_GpDotnet>
+      <_GpVsInstaller>$([System.Environment]::GetFolderPath(SpecialFolder.ProgramFilesX86))\Microsoft Visual Studio\Installer</_GpVsInstaller>
+    </PropertyGroup>
+    <Exec Command="&quot;$(_GpDotnet)&quot; publish &quot;$(_GpHelperProject)&quot; -c Release -r win-x64 --self-contained true -p:PublishAot=true -p:DebugType=none -o &quot;$(_GpHelperDir)&quot;"
+          EnvironmentVariables="PATH=$([MSBuild]::Escape('$(_GpVsInstaller);$(PATH)'))" />
+    <ItemGroup>
+      <EmbeddedResource Include="$(_GpHelperDir)GyroPhoneFpsHelper.exe" LogicalName="GyroPhoneFpsHelper.exe" />
+    </ItemGroup>
   </Target>
 </Project>

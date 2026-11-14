@@ -194,6 +194,8 @@ public sealed class HostEngine
     private bool _paused, _locked;
     private bool _releasedForSilence;
     private bool _elevatedForeground, _networkPublic;
+    /// <summary>HOST_STATUS flags2's setup bits (<see cref="HostStatusFlags2.SetupMask"/>): how the PC's side could be better.</summary>
+    private byte _pcSetup;
     /// <summary>The sink took fewer events than given (UIPI or the secure desktop): resynced once it takes them again.</summary>
     private bool _injectFailed;
 
@@ -208,6 +210,11 @@ public sealed class HostEngine
     /// <summary>HOST_STATUSes still to carry a TEST_MODE of 0 after the last test ended.</summary>
     private int _testModeOffRepeats;
     private readonly OverlayFrame _overlayFrame = new();
+    /// <summary>The newest OVERLAY_SAMPLES (each gyro sample's turn in the OVERLAY after it), and a frame to feed them in.</summary>
+    private readonly OverlaySamples _overlaySamples = new();
+    /// <summary>The Speed graph overlays' yaw, pitch and roll speeds (fed while one is shown).</summary>
+    private readonly SpeedTrace _speeds = new();
+    private readonly OverlayFrame _overlaySub = new();
     /// <summary>The last OVERLAY totals of this session, for the motion since then.</summary>
     private readonly OverlayTotals _overlayTotals = new();
     private readonly OverlayLayoutAssembler _overlayLayout = new();
@@ -244,7 +251,7 @@ public sealed class HostEngine
         Func<int, byte[]>? random = null, Func<P256>? newPairKey = null, P256? hostKey = null)
     {
         _settings = settings;
-        _settings.Normalize();
+        if (_settings.Normalize()) _settingsDirty = true;
         _catchUp.MaxUs = _settings.CatchUpMs * 1000L;
         _hostKey = hostKey;
         _hostKeyId = hostKey == null ? null : KeyPairing.KeyId(hostKey.PublicKey);
@@ -255,6 +262,7 @@ public sealed class HostEngine
         _clock = clock ?? StopwatchClock.Instance;
         _pcHeldAt = us => _pcPad.HeldAt(us);
         Debug = new DebugTrace(() => _clock.NowUs);
+        Debug.SetOn(settings.Diagnostics, "on since the last run");
         _events = new TracedEvents(events ?? NullHostEvents.Instance, Debug);
         _sessions = new SessionManager(random);
         _pairing = new PairingManager(prompt, () => (_settings.HostId, _settings.HostName), OnPaired, random, newPairKey);
@@ -276,20 +284,27 @@ public sealed class HostEngine
     public DebugTrace Debug { get; }
 
     /// <summary>
-    /// The phone asked for a debug recording (LINK_INFO's save counter changed). Called on the rx
-    /// thread, under the engine lock: hand the work to another thread.
+    /// Diagnostics: save now (Save on the PC or the phone, or tools/gp-log.sh). Called on the thread that asked, maybe
+    /// the rx thread under the engine lock: hand the work to another thread.
     /// </summary>
     public Action? DebugSaveRequested { get; set; }
 
+    /// <summary>Diagnostics switched (true on); on the thread that switched it, maybe under the engine lock.</summary>
+    public Action<bool>? DiagnosticsChanged { get; set; }
+
     /// <summary>The save counter of the last LINK_INFO with the debug flag; -1 until one in this session.</summary>
     private int _debugSaves = -1;
+    /// <summary>The phone's Diagnostics bit in the last LINK_INFO this session, or null before the first.</summary>
+    private bool? _phoneDiagSeen;
+    /// <summary>Counts the PC's Saves (3 bits in TEST_MODE): the phone saves its side when it changes.</summary>
+    private int _diagSaves;
 
     /// <summary>Optional hook for the headless latency log; called on the rx thread after injection.</summary>
     public Action<LatencySample>? LatencySampleHook { get; set; }
 
     public HostSettings Settings => _settings;
 
-    /// <summary>The input log (docs/spec/pc-companion.md, "Input log"); null = none. Set before Start. Written only while <see cref="HostSettings.InputLog"/>.</summary>
+    /// <summary>The input log (docs/spec/pc-companion.md, "Input log"); null = none. Set before Start. Its lines go to Diagnostics' log, only while <see cref="HostSettings.Diagnostics"/>.</summary>
     public InputRecorder? Recorder
     {
         get => _recorder;
@@ -297,27 +312,100 @@ public sealed class HostEngine
         {
             _recorder = value;
             // Its lines are written once the engine lock is free (Unlock), never under it.
-            if (value != null) value.Deferred = true;
+            if (value != null)
+            {
+                value.Deferred = true;
+                value.WriteLines = Writing;
+            }
         }
     }
 
     private InputRecorder? _recorder;
-    private InputRecorder? Rec => _settings.InputLog ? Recorder : null;
+    /// <summary>
+    /// The recorder counts the link's seconds only when something needs them: Diagnostics (<see cref="SetDiagnostics"/>),
+    /// or the Performance page or an FPS overlay showing the link (<see cref="SetLinkWatch"/>).
+    /// </summary>
+    private InputRecorder? Rec => RecOn ? Recorder : null;
+    private bool RecOn => Writing || _linkWatch;
+    /// <summary>The input log's lines are made: for Diagnostics, or for a Link test's input.log (<see cref="LinkTestRunning"/>).</summary>
+    private bool Writing => _settings.Diagnostics || _linkTestUntilUs != long.MinValue;
+
+    /// <summary>A Link test runs: the input log's lines go to input.log for tools/link-test.sh. Lock-free.</summary>
+    public bool LinkTestRunning => Volatile.Read(ref _linkTestUntilUs) != long.MinValue;
+    private bool _linkWatch;
+
+    /// <summary>After a switch that feeds <see cref="RecOn"/> changed: starts or ends the recorder's session, and writes lines only with the input log.</summary>
+    private void RecorderSwitched(bool wasOn, bool wasWriting, string why)
+    {
+        var r = Recorder;
+        if (r == null) return;
+        long now = _clock.NowUs;
+        bool on = RecOn;
+        if (wasOn && (!on || wasWriting != Writing)) r.SessionEnded(why, now);
+        r.WriteLines = Writing;
+        if (on && (!wasOn || wasWriting != Writing) && _sessions.Active is { } a) r.SessionStarted(a.PhoneName, now);
+    }
+
+    /// <summary>The Performance page is shown or an FPS overlay is on: the link's seconds are counted for them (nothing is written without the input log).</summary>
+    public void SetLinkWatch(bool on)
+    {
+        using (Lock(ByUi))
+        {
+            if (on == _linkWatch) return;
+            bool was = RecOn;
+            _linkWatch = on;
+            RecorderSwitched(was, Writing, on ? "link shown" : "link no longer shown");
+        }
+    }
 
     /// <summary>Runs a pad plug or unplug job; null: on a new "gp-pad" thread. Tests run it at once.</summary>
     internal Action<Action>? PadWorker { get; init; }
 
-    /// <summary>"Record input log": on, a session already up starts its log now; off, it ends it.</summary>
-    public void SetInputLog(bool on)
+    /// <summary>
+    /// "Diagnostics": every log at once (<see cref="Debug"/>, the input log's lines, PHONE_STATS, the overlays' draw
+    /// times), told to the phone (HOST_STATUS <see cref="HostStatusFlags2.PcLogging"/>, whose switch follows) and
+    /// started at once for a session already up. Off, all of it stops.
+    /// </summary>
+    public void SetDiagnostics(bool on, string why = "switched on the PC")
     {
         using (Lock(ByUi))
         {
-            if (on == _settings.InputLog) return;
-            if (!on) Recorder?.SessionEnded("input log turned off", _clock.NowUs);
-            _settings.InputLog = on;
+            if (on == _settings.Diagnostics) return;
+            bool was = RecOn, wasWriting = Writing;
+            _settings.Diagnostics = on;
             _settingsDirty = true;
-            if (on && _sessions.Active is { } a) Recorder?.SessionStarted(a.PhoneName, _clock.NowUs);
+            Debug.SetOn(on, why);
+            RecorderSwitched(was, wasWriting, on ? "diagnostics on" : "diagnostics off");
+            _events.Log("diagnostics " + (on ? "on" : "off") + " (" + why + ")");
+            _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
+            if (_sessions.Active is { } a) SendTestMode(a);
         }
+        try { DiagnosticsChanged?.Invoke(on); }
+        catch (Exception e) { _events.Log($"diagnostics notice failed: {e.GetType().Name}"); }
+    }
+
+    /// <summary>"Keep" under Diagnostics: how many minutes it keeps and a Save writes.</summary>
+    public void SetDiagnosticsMinutes(int minutes)
+    {
+        using (Lock(ByUi))
+        {
+            minutes = Math.Clamp(minutes, HostSettings.MinKeepMinutes, DebugTrace.MaxKeepMinutes);
+            if (minutes == _settings.DiagnosticsMinutes) return;
+            _settings.DiagnosticsMinutes = minutes;
+            _settingsDirty = true;
+        }
+    }
+
+    /// <summary>Diagnostics' Save on the PC: tells the phone to save its side (TEST_MODE counter) and saves this side.</summary>
+    public void SaveDiagnostics()
+    {
+        using (Lock(ByUi))
+        {
+            if (!_settings.Diagnostics) return;
+            _diagSaves = (_diagSaves + 1) & 7;
+            if (_sessions.Active is { } a) SendTestMode(a);
+        }
+        DebugSaveRequested?.Invoke();
     }
     /// <summary>Saves <see cref="HostSettings.PressKeyListen"/>; turned off while the phone listens, the PC stops being read at once.</summary>
     public void SetPressKeyListen(bool on)
@@ -504,6 +592,17 @@ public sealed class HostEngine
                 if (from.Family == AddressFamily.InterNetwork && from[4] == 127) SetLinkTest(Le.U16(d, Wire.Header), "asked on this PC");
                 else _dropped++;
                 return;
+            case PacketType.LogCtl:
+                // Performance › Debug's log switches, for an agent on this PC (tools/gp-log.sh); loopback only.
+                if (from.Family != AddressFamily.InterNetwork || from[4] != 127) { _dropped++; return; }
+                switch (d[12])
+                {
+                    case Wire.LogCtlDiagnostics: SetDiagnostics(d[13] != 0, "tools/gp-log.sh on this PC"); break;
+                    case Wire.LogCtlSave: SaveDiagnostics(); break;
+                    case Wire.LogCtlKeep: SetDiagnosticsMinutes(d[13]); break;
+                    default: _dropped++; break;
+                }
+                return;
             case PacketType.KeyEnroll:
                 if (WireCodec.TryDecodeKeyEnroll(d, out var ke)) OnKeyEnroll(d, ke, from, nowUs);
                 else _dropped++;
@@ -575,12 +674,18 @@ public sealed class HostEngine
                 _overlayFrame.Decode(plain);
                 _overlayTotals.ToDeltas(_overlayFrame);
                 if (_padGyro.Enabled) GateOverlay(_overlayFrame);
+                long rxMs = Environment.TickCount64;
+                bool graph = false;
                 foreach (var o in _settings.Overlays)
                 {
                     if (!o.Shown) continue;
+                    if (o.Kind == OverlayKind.Graph) graph = true;
                     if (!_overlayPoses.TryGetValue(o.Id, out var pose)) _overlayPoses[o.Id] = pose = new OverlayPose();
-                    pose.Feed(_overlayFrame, o);
+                    // A pointer that paints follows every gyro sample (the samples sent just before this frame).
+                    if (o.FollowsSamples && _overlaySamples.Matches(_overlayFrame)) pose.FeedSamples(_overlayFrame, o, _overlaySamples, _overlaySub, rxMs);
+                    else pose.Feed(_overlayFrame, o);
                 }
+                if (graph) FeedSpeeds(_overlayFrame);
                 // Set orientation on the phone: every overlay shown starts again from its new base orientation.
                 if (_levelPresses >= 0 && _overlayFrame.LevelPresses != _levelPresses)
                     foreach (var o in _settings.Overlays)
@@ -589,6 +694,9 @@ public sealed class HostEngine
                 _overlayRest.Feed(_overlayFrame, nowUs, _settings);
                 _overlayRxUs = nowUs;
                 _overlayDirty = true;
+                break;
+            case PacketType.OverlaySamples:
+                if (_overlayOn) _overlaySamples.Decode(plain);
                 break;
             case PacketType.OverlayLayout:
                 if (_overlayOn)
@@ -607,6 +715,9 @@ public sealed class HostEngine
             case PacketType.PressTime:
                 if (MeasuringButtons)
                     _press.OnPressTime(WireCodec.DecodePressTime(plain), nowUs, ClockOffsetUs, _stats.LastLinkInfo != null);
+                break;
+            case PacketType.PhoneStats:
+                if (_settings.Diagnostics && PhoneTimeline is { } pt) pt.Add(ToPhoneSecond(WireCodec.DecodePhoneStats(plain), nowUs));
                 break;
             case PacketType.Bye:
                 _events.Log($"phone said bye (reason {plain[0]})");
@@ -749,13 +860,19 @@ public sealed class HostEngine
 
     private void OnDebugFlags(byte flags, long nowUs)
     {
-        if ((flags & LinkInfoFlags.DebugTrace) == 0) return;
-        Debug.PhoneAsked(nowUs);
+        // The PC's switch follows the phone's when it changes; at a session's start, on wins on either side
+        // (the phone follows HOST_STATUS the same way), so a misfire right at the start is logged.
+        bool phoneOn = (flags & LinkInfoFlags.DebugTrace) != 0;
+        var seen = _phoneDiagSeen;
+        _phoneDiagSeen = phoneOn;
+        if ((seen == null && phoneOn && !_settings.Diagnostics) || (seen != null && seen != phoneOn))
+            SetDiagnostics(phoneOn, "switched on the phone");
+        if (!phoneOn) { _debugSaves = -1; return; }
         int saves = (flags & LinkInfoFlags.DebugSaveMask) >> LinkInfoFlags.DebugSaveShift;
         bool asked = _debugSaves >= 0 && saves != _debugSaves;
         _debugSaves = saves;
         if (!asked) return;
-        Debug.Add(DebugTrace.Kind.Note, "the phone asked for a recording", nowUs);
+        Debug.Add(DebugTrace.Kind.Note, "saved (the phone asked)", nowUs);
         DebugSaveRequested?.Invoke();
     }
 
@@ -862,6 +979,7 @@ public sealed class HostEngine
     private void Promote(HostSession s, long nowUs)
     {
         _debugSaves = -1;
+        _phoneDiagSeen = null;
         var old = _sessions.Promote(s);
         // A new session's OVERLAY totals start from a new base.
         _overlayTotals.Reset();
@@ -1280,6 +1398,13 @@ public sealed class HostEngine
         }
     }
 
+    /// <summary>The PC's setup bits from the watchdog's probe (<see cref="HostStatusFlags2.SetupMask"/>); sent with the next HOST_STATUS.</summary>
+    public void SetPcSetup(byte bits)
+    {
+        bits &= HostStatusFlags2.SetupMask;
+        using (Lock(ByProbes)) _pcSetup = bits;
+    }
+
     /// <summary>The injected held set and its version, for the held-keys marker. Read without the engine lock.</summary>
     public int HeldSnapshot(Span<byte> keys, out byte mouseButtons) => _view.Injected(keys, out mouseButtons);
 
@@ -1427,14 +1552,14 @@ public sealed class HostEngine
         {
             var o = _settings.Overlays.Find(x => x.Id == id);
             if (o == null) return false;
-            bool compass = OverlayCompassLocked();
+            int asks = OverlayAsks();
             var kind = o.Kind;
             change(o);
             o.Id = id;
             if (o.Kind != kind) _overlayPoses.Remove(id);
             _settingsDirty = true;
             _overlayDirty = true;
-            OverlayCompassChanged(compass);
+            OverlayAsksChanged(asks);
             return true;
         }
     }
@@ -1444,7 +1569,7 @@ public sealed class HostEngine
     {
         using (Lock(ByUi))
         {
-            bool compass = OverlayCompassLocked();
+            int asks = OverlayAsks();
             var o = new OverlaySettings { Kind = kind, Shown = true };
             if (_settings.Overlays.Count > 0)
             {
@@ -1460,11 +1585,14 @@ public sealed class HostEngine
                         if (f.Colors.TryGetValue(key, out var c)) o.Colors[key] = c;
                 }
             }
-            if (kind != OverlayKind.Phone) o.Width = o.Height = 260;
+            // As the phone's new displays: the ring small, the graph wide and low.
+            if (kind == OverlayKind.Ring) o.Width = o.Height = 120;
+            else if (kind == OverlayKind.Graph) (o.Width, o.Height) = (420, 115);
+            else if (kind != OverlayKind.Phone) o.Width = o.Height = 260;
             _settings.Overlays.Add(o);
             _settingsDirty = true;
             _overlayDirty = true;
-            OverlayCompassChanged(compass);
+            OverlayAsksChanged(asks);
             return o.Id;
         }
     }
@@ -1493,14 +1621,14 @@ public sealed class HostEngine
         {
             var p = _settings.OverlayPresets.Find(x => x.Id == presetId);
             if (p == null) return null;
-            bool compass = OverlayCompassLocked();
+            int asks = OverlayAsks();
             var o = p.Copy();
             o.Shown = true;
             o.X = o.Y = -1;
             _settings.Overlays.Add(o);
             _settingsDirty = true;
             _overlayDirty = true;
-            OverlayCompassChanged(compass);
+            OverlayAsksChanged(asks);
             return o.Id;
         }
     }
@@ -1528,12 +1656,12 @@ public sealed class HostEngine
     {
         using (Lock(ByUi))
         {
-            bool compass = OverlayCompassLocked();
+            int asks = OverlayAsks();
             if (_settings.Overlays.RemoveAll(x => x.Id == id) == 0) return;
             _overlayPoses.Remove(id);
             _settingsDirty = true;
             _overlayDirty = true;
-            OverlayCompassChanged(compass);
+            OverlayAsksChanged(asks);
         }
     }
 
@@ -1543,10 +1671,20 @@ public sealed class HostEngine
         return false;
     }
 
-    // The phone sends compass readings only while asked.
-    private void OverlayCompassChanged(bool before)
+    /// <summary>A shown pointer paints or has a Snake: it follows every gyro sample, so the phone sends OVERLAY_SAMPLES.</summary>
+    private bool OverlayWantsSamples()
     {
-        if (_overlayOn && before != OverlayCompassLocked() && _sessions.Active is { } a) SendStatus(a, _clock.NowUs);
+        foreach (var o in _settings.Overlays) if (o.Shown && o.WantsSamples) return true;
+        return false;
+    }
+
+    /// <summary>What the overlays ask the phone for besides OVERLAY: 1 compass readings, 2 each gyro sample.</summary>
+    private int OverlayAsks() => (OverlayCompassLocked() ? 1 : 0) | (OverlayWantsSamples() ? 2 : 0);
+
+    // The phone sends compass readings and samples only while asked.
+    private void OverlayAsksChanged(int before)
+    {
+        if (_overlayOn && before != OverlayAsks() && _sessions.Active is { } a) SendStatus(a, _clock.NowUs);
     }
 
     /// <summary>"Catch-up time" (ms; 0 = off): the longest a lost or late stretch of mouse motion is spread over.</summary>
@@ -1785,6 +1923,23 @@ public sealed class HostEngine
         }
     }
 
+    /// <summary>Where PHONE_STATS go (the Performance monitor's), or null.</summary>
+    public Perf.PhoneTimeline? PhoneTimeline { get; set; }
+
+    /// <summary>PHONE_STATS on the engine's clock: its end is placed by the phone's time when the clock offset is known, so a late report keeps its second.</summary>
+    private Perf.PhoneSecond ToPhoneSecond(in PhoneStats p, long nowUs)
+    {
+        long at = nowUs;
+        if (_stats.LastLinkInfo != null)
+        {
+            // How long ago the phone ended that second (its clock's low 32 bits wrap every ~71 min).
+            uint age = unchecked((uint)(nowUs - ClockOffsetUs) - p.TimeUs);
+            if (age < 10_000_000) at = nowUs - age;
+        }
+        return new Perf.PhoneSecond(at, p.States, p.Packets, p.Failed, p.SlowSends, p.SendMaxUs / 1000f, p.WakeLateMaxUs / 1000f,
+            p.StateGapMaxUs / 1000f, p.PhoneTxPackets);
+    }
+
     /// <summary>A Link test runs (<see cref="SetLinkTest"/>).</summary>
     public bool LinkTesting
     {
@@ -1801,7 +1956,9 @@ public sealed class HostEngine
         {
             long now = _clock.NowUs;
             bool was = _linkTestUntilUs != long.MinValue;
-            _linkTestUntilUs = seconds > 0 ? now + Math.Min(seconds, 3600) * 1_000_000L : long.MinValue;
+            bool recWas = RecOn, wasWriting = Writing;
+            Volatile.Write(ref _linkTestUntilUs, seconds > 0 ? now + Math.Min(seconds, 3600) * 1_000_000L : long.MinValue);
+            if (was != (seconds > 0)) RecorderSwitched(recWas, wasWriting, seconds > 0 ? "link test started" : "link test ended");
             if (seconds > 0)
             {
                 _events.Log($"link test started for {Math.Min(seconds, 3600)} s" + (why.Length > 0 ? $" ({why})" : ""));
@@ -1922,6 +2079,25 @@ public sealed class HostEngine
     }
 
     /// <summary>Overlay window <paramref name="id"/>'s pose now (w, x, y, z), or null before it has one.</summary>
+    /// <summary>Overlay window <paramref name="id"/>'s poses sample by sample, or null while it has none (read without the engine lock).</summary>
+    public PoseHistory? OverlayHistory(string id) => _view.HistoryOf(id);
+
+    /// <summary>The Speed graph's yaw, pitch and roll speeds (read without the engine lock).</summary>
+    public SpeedTrace OverlaySpeeds => _speeds;
+
+    /// <summary>The Speed graph: each gyro sample's speed (the samples sent with <paramref name="f"/>), or the frame's when they didn't come.</summary>
+    private void FeedSpeeds(OverlayFrame f)
+    {
+        bool held = f.RatchetHeld;
+        if (_overlaySamples.Matches(f))
+        {
+            var t = _overlaySamples.Turns;
+            for (int k = 0; k < _overlaySamples.Count; k++)
+                _speeds.Add(t[k * 4], t[k * 4 + 1], t[k * 4 + 2], t[k * 4 + 3], held);
+        }
+        else _speeds.Add(f.TurnYaw, f.TurnPitch, f.TurnRoll, f.TurnSeconds, held);
+    }
+
     public float[]? OverlayPoseOf(string id)
     {
         return _view.PoseOf(id);
@@ -2501,7 +2677,9 @@ public sealed class HostEngine
         Span<byte> p = stackalloc byte[Wire.HostStatusPlain];
         WireCodec.EncodeHostStatus(new HostStatus(s.HighestRxSeq, _stats.RxPerSec, _stats.LossPermille,
             _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs, (byte)_settings.OutputMode, flags,
-            _settings.UsbDirect ? HostStatusFlags2.UsbDirect : (byte)0), p);
+            (byte)((_settings.UsbDirect ? HostStatusFlags2.UsbDirect : 0) | _pcSetup
+                | (_overlayOn && OverlayWantsSamples() ? HostStatusFlags2.OverlaySamples : 0)
+                | (_settings.Diagnostics ? HostStatusFlags2.PcLogging : 0))), p);
         // TEST_MODE first, so HOST_STATUS stays the newest status the phone holds. While no test
         // runs it goes only with the few statuses after one ended (a lost "off" comes again).
         if (TestModeFlagsNow() != 0 || _testModeOffRepeats > 0)
@@ -2524,6 +2702,7 @@ public sealed class HostEngine
         if (MeasuringButtons) flags |= TestModeFlags.PressTimes;
         if (_latencyScreen) flags |= TestModeFlags.LatencyScreen;
         if (_linkTestUntilUs != long.MinValue) flags |= TestModeFlags.LinkTest;
+        if (_settings.Diagnostics) flags |= (byte)(TestModeFlags.PhoneStats | (_diagSaves << TestModeFlags.DiagSaveShift));
         return flags;
     }
 

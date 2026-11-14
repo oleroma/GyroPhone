@@ -5,57 +5,180 @@ using GyroPhone.Protocol;
 namespace GyroPhone.Host;
 
 /// <summary>
-/// The companion's debug log: what was injected (keys, mouse, the virtual pad), link lines and
-/// session events, in a ring of the newest events. Logs only while <see cref="Enabled"/> (the
-/// Debug window is open, or the phone's debug tools asked for it within the last few seconds),
-/// so the input path costs one bool check otherwise. Thread-safe.
+/// Diagnostics' log on the PC (Performance › Diagnostics): what was injected (keys, mouse, the virtual pad),
+/// the input log's lines, overlay draw times, link lines and session events, in a ring of the newest events.
+/// Logs only while <see cref="Enabled"/>, so the input path costs one bool check otherwise.
+/// <para>
+/// The input path never formats text: <see cref="OnInject"/>, <see cref="OnX360"/> and <see cref="OnDs4"/>
+/// only copy the raw events into a ready-made slot; <see cref="Drain"/> (the gp-diag thread, every 50 ms)
+/// turns them into lines. Thread-safe.
+/// </para>
 /// </summary>
 public sealed class DebugTrace
 {
-    /// <summary>Move: stick and trigger moves and summed mouse motion, which the window can hide.</summary>
+    /// <summary>Move: stick and trigger moves and summed mouse motion.</summary>
     public enum Kind { In, Out, Move, State, Link, Note }
 
     public readonly record struct Event(long Us, Kind Kind, string Text);
 
-    public const long RecordUs = 30_000_000;
+    /// <summary>The longest a Save covers (the Keep slider's top).</summary>
+    public const int MaxKeepMinutes = 30;
     private const long AxisEveryUs = 100_000;
     private const long MotionEveryUs = 100_000;
     private const int AxisStepPct = 5;
-    private const long PhoneAskHoldUs = 5_000_000;
+    /// <summary>Raw events the input path may queue between two drains.</summary>
+    public const int Queue = 16_384;
 
     private readonly object _lock = new();
     private readonly Event[] _ring;
     private int _head, _count;
     private readonly Func<long> _nowUs;
 
-    private bool _windowOpen;
-    private long _phoneAskedUntilUs = long.MinValue;
+    private volatile bool _on;
 
-    public DebugTrace(Func<long> nowUs, int capacity = 16_384)
+    public DebugTrace(Func<long> nowUs, int capacity = 200_000)
     {
         _nowUs = nowUs;
         _ring = new Event[capacity];
     }
 
-    /// <summary>Bumped on every event, so a view redraws only when something happened.</summary>
+    /// <summary>Bumped on every event.</summary>
     public long Version { get; private set; }
 
-    /// <summary>Logging now: the Debug window is open or the phone asked within the last 5 s.</summary>
-    public bool Enabled => _windowOpen || _nowUs() < Volatile.Read(ref _phoneAskedUntilUs);
+    /// <summary>Logging now: Diagnostics is on.</summary>
+    public bool Enabled => _on;
 
-    /// <summary>The Debug window opened or closed.</summary>
-    public void SetWindowOpen(bool open)
+    /// <summary>Diagnostics switched; off clears the log and the queue.</summary>
+    public void SetOn(bool on, string why)
     {
-        _windowOpen = open;
-        if (open) Add(Kind.Note, "debug window opened");
+        lock (_switchLock)
+        {
+            if (on == _on) return;
+            if (on)
+            {
+                lock (_lock) { _head = _count = 0; Version++; }
+                lock (_qLock) _qCount = 0;
+                _on = true;
+                Add(Kind.Note, "diagnostics on (" + why + ")");
+                // gp-diag: makes the queued events into lines every 50 ms, off the input path and the engine lock.
+                _timer = new Timer(_ => Tick(), null, DrainMs, DrainMs);
+            }
+            else
+            {
+                _on = false;
+                _timer?.Dispose();
+                _timer = null;
+                lock (_qLock) _qCount = 0;
+            }
+        }
     }
 
-    /// <summary>A LINK_INFO with the phone's debug flag: keep logging for the next few seconds.</summary>
-    public void PhoneAsked(long nowUs)
+    private const int DrainMs = 50;
+    private readonly object _switchLock = new();
+    private Timer? _timer;
+    private long _lastFlushUs;
+
+    private void Tick()
     {
-        if (nowUs >= Volatile.Read(ref _phoneAskedUntilUs)) Add(Kind.Note, "the phone's debug tools are on", nowUs);
-        Volatile.Write(ref _phoneAskedUntilUs, nowUs + PhoneAskHoldUs);
+        try
+        {
+            Drain();
+            long now = _nowUs();
+            if (now - _lastFlushUs < 1_000_000) return;
+            _lastFlushUs = now;
+            lock (_drainLock)
+                if (!IsIdle()) FlushMotion(now);
+        }
+        catch (Exception)
+        {
+            // A bad line must not stop the log; the next tick goes on.
+        }
     }
+
+    // ---- the input path's queue ---------------------------------------------------------------
+
+    private enum Raw : byte { Inject, X360, Ds4 }
+
+    private struct Pending
+    {
+        public long Us;
+        public Raw Type;
+        public InjectEvent Inject;
+        public X360Frame X360;
+        public Ds4Frame Ds4;
+    }
+
+    private readonly object _qLock = new();
+    private readonly Pending[] _q = new Pending[Queue];
+    private int _qHead, _qCount;
+
+    /// <summary>Raw events dropped because the queue was full (the diagnostics thread fell behind).</summary>
+    public long Dropped { get; private set; }
+
+    private ref Pending Slot()
+    {
+        // Under _qLock: the next free slot, or the last one (overwritten and counted) when full.
+        if (_qCount == Queue) { Dropped++; return ref _q[(_qHead + Queue - 1) % Queue]; }
+        return ref _q[(_qHead + _qCount++) % Queue];
+    }
+
+    /// <summary>The keyboard and mouse events one flush injected (copied; made into lines by <see cref="Drain"/>).</summary>
+    public void OnInject(ReadOnlySpan<InjectEvent> events, long nowUs)
+    {
+        lock (_qLock)
+            foreach (var e in events)
+            {
+                ref var p = ref Slot();
+                p.Us = nowUs; p.Type = Raw.Inject; p.Inject = e;
+            }
+    }
+
+    /// <summary>The virtual Xbox 360 pad was given <paramref name="f"/> (copied).</summary>
+    public void OnX360(in X360Frame f, long nowUs)
+    {
+        lock (_qLock)
+        {
+            ref var p = ref Slot();
+            p.Us = nowUs; p.Type = Raw.X360; p.X360 = f;
+        }
+    }
+
+    /// <summary>The virtual DualShock 4 was given <paramref name="f"/> (copied).</summary>
+    public void OnDs4(in Ds4Frame f, long nowUs)
+    {
+        lock (_qLock)
+        {
+            ref var p = ref Slot();
+            p.Us = nowUs; p.Type = Raw.Ds4; p.Ds4 = f;
+        }
+    }
+
+    private readonly InjectEvent[] _one = new InjectEvent[1];
+
+    /// <summary>Turns the queued raw events into lines, oldest first (one thread at a time).</summary>
+    public void Drain()
+    {
+        lock (_drainLock)
+            while (true)
+            {
+                Pending p;
+                lock (_qLock)
+                {
+                    if (_qCount == 0) return;
+                    p = _q[_qHead];
+                    _qHead = (_qHead + 1) % Queue;
+                    _qCount--;
+                }
+                switch (p.Type)
+                {
+                    case Raw.Inject: _one[0] = p.Inject; FormatInject(_one, p.Us); break;
+                    case Raw.X360: FormatX360(p.X360, p.Us); break;
+                    case Raw.Ds4: FormatDs4(p.Ds4, p.Us); break;
+                }
+            }
+    }
+
+    private readonly object _drainLock = new();
 
     public void Add(Kind kind, string text, long us = long.MinValue)
     {
@@ -122,8 +245,7 @@ public sealed class DebugTrace
     private readonly int[] _shownAxis = new int[6];
     private readonly long[] _axisAtUs = new long[6];
 
-    /// <summary>The keyboard and mouse events one flush injected.</summary>
-    public void OnInject(ReadOnlySpan<InjectEvent> events, long nowUs)
+    private void FormatInject(ReadOnlySpan<InjectEvent> events, long nowUs)
     {
         foreach (var e in events)
         {
@@ -181,11 +303,10 @@ public sealed class DebugTrace
         (XusbButtons.DpadLeft, "Left"), (XusbButtons.DpadRight, "Right"),
     ];
 
-    /// <summary>What the virtual pad was last given, for the Debug window.</summary>
+    /// <summary>What the virtual pad was last given (as drained), for a save's header.</summary>
     public string CurrentPad { get; private set; } = "nothing yet";
 
-    /// <summary>The virtual Xbox 360 pad was given <paramref name="f"/>.</summary>
-    public void OnX360(in X360Frame f, long nowUs)
+    private void FormatX360(in X360Frame f, long nowUs)
     {
         var held = new List<string>();
         foreach (var (bit, name) in XusbNames) if ((f.Buttons & bit) != 0) held.Add(name);
@@ -203,8 +324,7 @@ public sealed class DebugTrace
         _lastX360 = f;
     }
 
-    /// <summary>The virtual DualShock 4 was given <paramref name="f"/>.</summary>
-    public void OnDs4(in Ds4Frame f, long nowUs)
+    private void FormatDs4(in Ds4Frame f, long nowUs)
     {
         CurrentPad = $"ds4 buttons 0x{f.Buttons:X4} hat {f.Hat} · L {f.Lx},{f.Ly} · R {f.Rx},{f.Ry} · LT {f.Lt} · RT {f.Rt}";
         if (f.Buttons != _lastDs4.Buttons || f.Special != _lastDs4.Special || f.Hat != _lastDs4.Hat)
@@ -228,29 +348,30 @@ public sealed class DebugTrace
         Add(Kind.Move, $"pad {name} {pct}%", nowUs);
     }
 
-    /// <summary>Once a second: flushes summed motion and logs <paramref name="linkLine"/>.</summary>
+    /// <summary>Once a second: logs <paramref name="linkLine"/> (summed motion is flushed by the diagnostics timer).</summary>
     public void SecondTick(string? linkLine, long nowUs)
     {
-        if (!IsIdle()) FlushMotion(nowUs);
         if (linkLine != null) Add(Kind.Link, linkLine, nowUs);
     }
 
     // ---- saving ----------------------------------------------------------------------------
 
     /// <summary>
-    /// The last 30 s as text: '#' header lines, then <c>wall ms \t pc \t kind \t text</c> per event,
-    /// the same format as the phone's recordings so both sort together.
+    /// The last <paramref name="minutes"/> as text: '#' header lines, then <c>wall ms \t pc \t kind \t text</c> per event,
+    /// the same format as the phone's saves so both sort together.
     /// </summary>
-    public string Save(IEnumerable<string> header)
+    public string Save(IEnumerable<string> header, int minutes)
     {
+        Drain();
         long nowUs = _nowUs();
         long wallMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var sb = new StringBuilder();
-        sb.Append("# GyroPhone debug recording, side pc\n");
+        sb.Append("# GyroPhone diagnostics, side pc\n");
         sb.Append("# saved at wall ms ").Append(wallMs).Append('\n');
         foreach (var h in header) sb.Append("# ").Append(h.Replace('\n', ' ')).Append('\n');
         sb.Append("# clock-pair: wall_ms=").Append(wallMs).Append(" host_us=").Append(nowUs).Append('\n');
-        foreach (var e in Since(nowUs - RecordUs))
+        if (Dropped > 0) sb.Append("# raw events dropped (the diagnostics thread fell behind): ").Append(Dropped).Append('\n');
+        foreach (var e in Since(nowUs - minutes * 60_000_000L))
         {
             long ms = wallMs - (nowUs - e.Us) / 1000;
             sb.Append(ms).Append("\tpc\t").Append(Tag(e.Kind)).Append('\t').Append(e.Text).Append('\n');

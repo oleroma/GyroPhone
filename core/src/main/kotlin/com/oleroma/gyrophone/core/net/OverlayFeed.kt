@@ -106,6 +106,9 @@ class OverlayFeed {
     /** The PC takes running totals ([HostStatusFlags.OVERLAY_TOTALS]): OVERLAY carries [FLAG_TOTALS]. */
     @Volatile var totalsWanted = false
 
+    /** The PC follows every gyro sample ([HostStatusFlags2.OVERLAY_SAMPLES]): OVERLAY_SAMPLES goes before each OVERLAY. */
+    @Volatile var samplesWanted = false
+
     /** Runs (on the link's thread) when [wanted] or [compassWanted] changes, so the runtime can start or stop the sensors. */
     @Volatile var onWantedChange: Runnable? = null
 
@@ -129,6 +132,14 @@ class OverlayFeed {
     private val fingerXY = FloatArray(MAX_FINGERS * 2)
     private var fingerCount = 0
     private val sticks = LinkedHashMap<String, FloatArray>()
+
+    // Each gyro sample's turn since the last OVERLAY_SAMPLES (under lock, while [samplesWanted]): yaw, pitch, roll
+    // (degrees) and seconds; the last takes on any over [MAX_SAMPLES].
+    private val samples = FloatArray(MAX_SAMPLES * 4)
+    private var sampleCount = 0
+    // OVERLAY_SAMPLES was sent: the turn up to then is held for the OVERLAY that follows, so the two match.
+    private var held = false
+    private val heldTurn = FloatArray(4)
 
     // Motion since the last OVERLAY (under lock).
     private var turnYaw = 0f
@@ -196,6 +207,9 @@ class OverlayFeed {
 
     private fun clearMotion() {
         turnYaw = 0f; turnPitch = 0f; turnRoll = 0f; turnSeconds = 0f
+        held = false
+        sampleCount = 0
+        samples.fill(0f)
         cameraDeg.fill(0f)
         totalTurn.fill(0.0); totalCamera.fill(0.0); totalSeconds = 0.0
         gyroAtNs = Long.MIN_VALUE
@@ -213,6 +227,12 @@ class OverlayFeed {
             turnPitch += pitch * dtSeconds
             turnRoll += roll * dtSeconds
             turnSeconds += dtSeconds
+            if (samplesWanted) {
+                val i = minOf(sampleCount, MAX_SAMPLES - 1) * 4
+                samples[i] += yaw * dtSeconds; samples[i + 1] += pitch * dtSeconds; samples[i + 2] += roll * dtSeconds
+                samples[i + 3] += dtSeconds
+                if (sampleCount < MAX_SAMPLES) sampleCount++
+            }
             gyroAtNs = System.nanoTime()
             axes = axesMoving
             if (ratchet && !ratchetHeld) ratchetPresses = (ratchetPresses + 1) and 0xFF
@@ -298,10 +318,46 @@ class OverlayFeed {
     fun layoutSnapshot(): Pair<Int, ByteArray>? = synchronized(lock) { if (layout == null) null else version to blob }
 
     /** Encodes OVERLAY into [out] at [off] and returns its length ([Wire.OVERLAY_PLAIN]); the motion since the last one starts again from 0. */
+    /**
+     * OVERLAY_SAMPLES (plaintext [Wire.OVERLAY_SAMPLES_PLAIN] bytes, little endian), sent just before the OVERLAY of the
+     * same [phoneTimeUs]: u32 that phone time; u8 sample count (up to [MAX_SAMPLES]); 3 bytes 0; then per sample i16
+     * yaw, pitch, roll turned (thousandths of a degree) and u16 its time (10 us units), oldest first. They add up to
+     * that OVERLAY's turn (its motion is held from here to it). The PC turns the pose sample by sample, so a pointer
+     * paints and its Snake follows every gyro sample, as on the phone.
+     */
+    fun encodeSamples(out: ByteArray, off: Int, phoneTimeUs: Int): Int {
+        out.fill(0, off, off + Wire.OVERLAY_SAMPLES_PLAIN)
+        out.putU32(off, phoneTimeUs)
+        synchronized(lock) {
+            val n = sampleCount
+            out.putU8(off + 4, n)
+            for (k in 0 until n) {
+                val p = off + 8 + k * 8
+                for (a in 0 until 3) out.putI16(p + a * 2, (samples[k * 4 + a] * 1000f).roundToInt().coerceIn(-32767, 32767))
+                out.putU16(p + 6, (samples[k * 4 + 3] * 100_000f).roundToInt().coerceIn(0, 0xFFFF))
+            }
+            sampleCount = 0
+            samples.fill(0f)
+            // The turn so far goes with the OVERLAY that follows; what comes meanwhile waits for the next.
+            heldTurn[0] += turnYaw; heldTurn[1] += turnPitch; heldTurn[2] += turnRoll; heldTurn[3] += turnSeconds
+            turnYaw = 0f; turnPitch = 0f; turnRoll = 0f; turnSeconds = 0f
+            held = true
+        }
+        return Wire.OVERLAY_SAMPLES_PLAIN
+    }
+
     fun encodeFrame(out: ByteArray, off: Int, phoneTimeUs: Int, pressed: Set<String>, latched: Set<String>): Int {
         out.fill(0, off, off + Wire.OVERLAY_PLAIN)
         out.putU32(off, phoneTimeUs)
         synchronized(lock) {
+            // After OVERLAY_SAMPLES: this frame's turn is the one held then (what came since goes in the next).
+            var keepYaw = 0f; var keepPitch = 0f; var keepRoll = 0f; var keepSeconds = 0f
+            if (held) {
+                keepYaw = turnYaw; keepPitch = turnPitch; keepRoll = turnRoll; keepSeconds = turnSeconds
+                turnYaw = heldTurn[0]; turnPitch = heldTurn[1]; turnRoll = heldTurn[2]; turnSeconds = heldTurn[3]
+                heldTurn.fill(0f)
+                held = false
+            }
             val at = gyroAtNs
             val live = at != Long.MIN_VALUE && System.nanoTime() - at < POSE_STALE_NS
             val totals = totalsWanted
@@ -319,7 +375,7 @@ class OverlayFeed {
                 out.putU32(off + 12, java.lang.Float.floatToRawIntBits(turnRoll))
                 out.putU16(off + 16, (turnSeconds * 100_000f).roundToInt().coerceIn(0, 0xFFFF))
             }
-            turnYaw = 0f; turnPitch = 0f; turnRoll = 0f; turnSeconds = 0f
+            turnYaw = keepYaw; turnPitch = keepPitch; turnRoll = keepRoll; turnSeconds = keepSeconds
             for (i in 0 until 3) {
                 out.putI16(off + 18 + i * 2, (upXYZ[i] * G_SCALE).roundToInt().coerceIn(-32767, 32767))
                 out.putI16(off + 24 + i * 2, (northXYZ[i] * 32767f).roundToInt().coerceIn(-32767, 32767))
@@ -396,6 +452,9 @@ class OverlayFeed {
     }
 
     companion object {
+        /** OVERLAY_SAMPLES holds at most this many samples (the phone's ~950 Hz over a 60 Hz frame is about 16). */
+        const val MAX_SAMPLES = 32
+
         const val FLAG_POSE = 1
         const val FLAG_PAD_SHOWN = 2
         const val FLAG_GYRO_ACTIVE = 4
