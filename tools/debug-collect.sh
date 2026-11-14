@@ -64,7 +64,7 @@ phone_dir=/sdcard/Android/data/$pkg/files/debug
 
 pull_newest_phone() {
   local name
-  name="$(adb exec-out ls "$phone_dir" 2>/dev/null | tr -d '\r' | grep '^phone-.*\.txt$' | sort | tail -1 || true)"
+  name="$(adb exec-out ls -1 "$phone_dir" 2>/dev/null | tr -d '\r' | grep '^phone-.*\.txt$' | sort | tail -1 || true)"
   if [ -z "$name" ]; then
     echo "No phone save yet. Turn on Performance > Diagnostics and tap Save, or run: $0 save" >&2
     exit 1
