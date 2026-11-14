@@ -884,7 +884,7 @@ private class VisState {
     private fun DrawScope.buildSnake(t: LaserTrace, d: GyroDisplay, c: Offset, r: Float, col: (GyroDisplayColor) -> Color): Int {
         val s = t.strokes
         val n = s.count
-        if (n < 2) return 0
+        if (n < 1) return 0
         val len = d.laserSnakeDeg.toFloat().coerceAtLeast(1f)
         snakeFire[0] = col(GyroDisplayColor.LASER_FIRE).toArgb(); snakeFire[1] = col(GyroDisplayColor.LASER_FIRE_BEHIND).toArgb()
         snakeFire[2] = col(GyroDisplayColor.LASER_AIM).toArgb(); snakeFire[3] = col(GyroDisplayColor.LASER_AIM_BEHIND).toArgb()
@@ -949,6 +949,24 @@ private class VisState {
                 }
                 prevX = p.x; prevY = p.y; prevFront = isFront
             }
+        }
+        // Zipped all the way (or a line just starting): the head alone, a dot as wide as the head, so it never vanishes.
+        val last = n - 1
+        if (n == 1 || s.gap(last)) {
+            s.point(last, la, 0)
+            val p = laserAt(c, r, la[0], la[1], la[2])
+            val z = pv[2]
+            val kind = s.kind(last)
+            val byWay = kind == LaserPaint.PAINT && d.snakeColourByWay
+            if (byWay) t.moving.copyInto(way)
+            if (m == snakeCol.size) growSnake()
+            snakeXY[m * 4] = p.x; snakeXY[m * 4 + 1] = p.y; snakeXY[m * 4 + 2] = p.x + 0.01f; snakeXY[m * 4 + 3] = p.y
+            snakeW[m] = (when (kind) { LaserPaint.FIRE -> firePx; LaserPaint.AIM -> aimPx; else -> paintPx }) *
+                (if (laserPersp) LaserTrace.perspective(z) else 1f)
+            snakeA[m] = 1f
+            snakeCol[m] = snakeShade(d, kind, byWay, z, z > 0f, ld)
+            snakeFront[m] = z > 0f
+            m++
         }
         return m
     }

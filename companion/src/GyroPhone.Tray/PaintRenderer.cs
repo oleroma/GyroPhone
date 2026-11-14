@@ -49,7 +49,7 @@ internal static class PaintRenderer
     public static void Draw(ICanvas g, LaserTrace trace, OverlaySettings s, bool front, PointF c, float r, float[]? turned, uint[] moveColors)
     {
         var lp = s.LaserDraw ? trace.Paint : null;
-        bool snake = s.LaserSnake && trace.Strokes.Count >= 2;
+        bool snake = s.LaserSnake && trace.Strokes.Count >= 1;
         if (lp == null && !snake)
         {
             // Nothing to show: let go of the paint's tables until there is.
@@ -268,6 +268,26 @@ internal static class PaintRenderer
                     any = true;
                 }
                 bx0 = bx; by0 = by; prevFront = isFront;
+            }
+        }
+        // Zipped all the way (or a line just starting): the head alone, a dot as wide as the head, so it never vanishes.
+        int last = n - 1;
+        if (n >= 1 && (n == 1 || strokes.Gap(last)))
+        {
+            var q = strokes.Point(last);
+            var p = (q.X, q.Y, q.Z);
+            var v = Pic(p.Item1, p.Item2, p.Item3);
+            if (v.Z > 0f == front)
+            {
+                float k = s.Perspective ? LaserTrace.Perspective(v.Z) : 1f;
+                float bx = (v.X * k * r + e) * toBuf, by = (e - v.Y * k * r) * toBuf;
+                int kind = strokes.Kind(last);
+                float headPx = kind == LaserPaint.FireKind ? firePx : kind == LaserPaint.AimKind ? aimPx : paintPx;
+                bool byWay = kind == LaserPaint.PaintKind && s.SnakeColourByWay;
+                var way = byWay ? trace.Moving : default;
+                if (pieces.Count == pieces.Items.Length) Array.Resize(ref pieces.Items, pieces.Items.Length * 2);
+                pieces.Items[pieces.Count++] = new SnakePiece { Ax = bx, Ay = by, Bx = bx, By = by, Half = headPx * k / 2f, Col = ColourAt(p, v, kind, way, byWay), Op = 1f };
+                any = true;
             }
         }
         return any;
