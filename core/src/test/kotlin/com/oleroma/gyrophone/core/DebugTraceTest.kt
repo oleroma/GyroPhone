@@ -82,6 +82,21 @@ class DebugTraceTest {
         assertTrue(log.toString(), log.any { it.startsWith("layer: Base") })
     }
 
+    @Test fun everyMappingThatPressesIsLoggedOnAndOff() {
+        val e = MappingEngine(controllerProfile)
+        val t = trace()
+        e.trace = t
+        e.setKey(AndroidKey.BUTTON_A, true)
+        e.snapshot()
+        e.snapshot() // still pressing: no second line
+        e.setKey(AndroidKey.BUTTON_A, false)
+        e.snapshot()
+        t.drain()
+        val log = texts(t)
+        assertEquals(log.toString(), 1, log.count { it.startsWith("on: ") && "A" in it && "Gamepad A" in it })
+        assertEquals(log.toString(), 1, log.count { it.startsWith("off: ") && "Gamepad A" in it })
+    }
+
     @Test fun heldInputsListsKeysHeld() {
         val e = MappingEngine(controllerProfile)
         e.setKey(AndroidKey.BUTTON_A, true)
