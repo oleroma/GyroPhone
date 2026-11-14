@@ -1348,6 +1348,64 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
     }
 
+    // Every mapping that presses a key, mouse or pad button, whatever its input (touch stick, finger, area, tilt,
+    // swipe, key), while Diagnostics is on: the snapshot notes which press now in fixed arrays (no allocation),
+    // and only a change queues a line. So a key that goes out always has the mapping that pressed it in the log.
+    private var firing = false
+    private val firedNow = arrayOfNulls<Mapping>(MAX_FIRED)
+    private val firedNowDev = arrayOfNulls<Dev>(MAX_FIRED)
+    private var firedN = 0
+    private val firedWas = arrayOfNulls<Mapping>(MAX_FIRED)
+    private val firedWasDev = arrayOfNulls<Dev>(MAX_FIRED)
+    private var firedWasN = 0
+
+    private fun noteFired(m: Mapping, dev: Dev?) {
+        when (m.target) {
+            is OutputTarget.Key, is OutputTarget.Mouse, is OutputTarget.Pad -> Unit
+            else -> return
+        }
+        if (firedN < MAX_FIRED) { firedNow[firedN] = m; firedNowDev[firedN] = dev; firedN++ }
+    }
+
+    private fun firedIn(m: Mapping?, dev: Dev?, ms: Array<Mapping?>, devs: Array<Dev?>, n: Int): Boolean {
+        for (i in 0 until n) if (ms[i] === m && devs[i] === dev) return true
+        return false
+    }
+
+    /** Queues "on:" / "off:" for the mappings that started or stopped pressing since the last snapshot. */
+    private fun traceFired(t: DebugTrace) {
+        for (i in 0 until firedN) {
+            val m = firedNow[i]!!; val d = firedNowDev[i]
+            if (!firedIn(m, d, firedWas, firedWasDev, firedWasN)) traceFiredLine(t, true, m, d)
+        }
+        for (i in 0 until firedWasN) {
+            val m = firedWas[i]!!; val d = firedWasDev[i]
+            if (!firedIn(m, d, firedNow, firedNowDev, firedN)) traceFiredLine(t, false, m, d)
+        }
+        for (i in 0 until firedN) { firedWas[i] = firedNow[i]; firedWasDev[i] = firedNowDev[i]; firedNow[i] = null; firedNowDev[i] = null }
+        for (i in firedN until firedWasN) { firedWas[i] = null; firedWasDev[i] = null }
+        firedWasN = firedN
+    }
+
+    private fun traceFiredLine(t: DebugTrace, on: Boolean, m: Mapping, d: Dev?) {
+        val w = ws
+        val who = d?.device?.name
+        t.queue(DebugTrace.Kind.IN) {
+            (if (on) "on: " else "off: ") + traceSource(w, m.source) + (if (who != null) " ($who)" else "") + " → " + Describe.target(m.target)
+        }
+    }
+
+    /** [s] for the log, with a touch control's label after its id. */
+    private fun traceSource(w: Workspace, s: InputSource): String {
+        var text = Describe.source(s)
+        for (c in w.touchControls) {
+            if (c.label.isBlank()) continue
+            val at = Regex("(?<=\\s)" + Regex.escape(c.id) + "(?=\\s|$)")
+            text = at.replace(text, Regex.escapeReplacement(c.id + " \"" + c.label + "\""))
+        }
+        return text
+    }
+
     // The trace* helpers run on input paths: they only queue a lambda (no text made here); the diagnostics thread
     // makes the line from what the lambda captured ([DebugTrace.queue]).
 
@@ -2437,7 +2495,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (anyCarried) pruneCarried()
         hapticNow.clear()
         if (toggleStates.isNotEmpty()) settleToggles(now)
+        val tr = trace
+        firing = tr != null
+        firedN = 0
         forEachGroup { ms, dev -> accumulate(ms, dev) }
+        if (tr != null) traceFired(tr)
         // A device skipped (nothing held) holds no key mode press.
         for (i in deviceList.indices) {
             val d = deviceList[i]
@@ -2606,6 +2668,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (m.range == null) raw else ranged(m, dev, raw)
             }
             if (v >= PRESS_THRESHOLD) {
+                if (firing) noteFired(m, dev)
                 if (m.options?.endsOnNextInput == true) {
                     val sh = shaperOf(m, dev)
                     if (sh.options.mode == How.TOGGLE && sh.toggledOn(now)) stickies.add(sh, m.target)
@@ -3797,6 +3860,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     companion object {
         const val PRESS_THRESHOLD = 0.5f
+
+        /** The most mappings pressing at once that Diagnostics follows (more are left out of its on/off lines). */
+        private const val MAX_FIRED = 128
 
         /** An input whose value is past this is off its rest, so a chip's range applies ([activeOf]). */
         const val RANGE_ACTIVE = 1e-4f
