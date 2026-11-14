@@ -56,6 +56,8 @@ public static class Wire
     public const int OverlayPlain = 152;
     /// <summary>OVERLAY_LAYOUT: one piece of the layout the overlay draws on the phone's screen.</summary>
     public const int OverlayLayoutPlain = 200;
+    /// <summary>OVERLAY_SAMPLES: each gyro sample's turn in the OVERLAY that follows (<see cref="OverlaySamples"/>).</summary>
+    public const int OverlaySamplesPlain = 264;
     /// <summary>MOTION: the phone's raw gyro and accelerometer samples for the DualShock 4 (<see cref="MotionFrame"/>).</summary>
     public const int MotionPlain = MotionFrame.Size;
     /// <summary>PRESS_TIME: u32 STATE time, u32 input event time (low 32 bits of the phone's µs clock).</summary>
@@ -276,6 +278,11 @@ public static class HostStatusFlags2
 {
     /// <summary>"Use the phone over the USB cable" is on: the phone tries the cable now (else it leaves a cable nobody answers on alone).</summary>
     public const byte UsbDirect = 1 << 0;
+    /// <summary>
+    /// With <see cref="HostStatusFlags.Overlay"/>: a pointer overlay follows every gyro sample (it paints or has a Snake), so
+    /// the phone sends OVERLAY_SAMPLES before each OVERLAY. Older phones ignore it.
+    /// </summary>
+    public const byte OverlaySamples = 1 << 6;
     /// <summary>The PC reaches the phone through its own Wi-Fi as a client (of a router or the phone's hotspot), not by cable or as the hotspot.</summary>
     public const byte PcWifi = 1 << 1;
     /// <summary>With <see cref="PcWifi"/>: the PC's Wi-Fi is on 2.4 GHz.</summary>

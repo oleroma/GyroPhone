@@ -380,7 +380,7 @@ internal fun GyroDisplaySettingsScreen(
             }
             TextButton(onClick = { runtime.clearLaser(control.id) }) { Text("Clear") }
         }
-        val snake = if (!laser) null else category(runtime, "gyroDisplaySnake", "Snake", "Snake, length, brush, taper, tail fade, glow, Clear on ratchet, colour by, shade, light, shine") {
+        val snake = if (!laser) null else category(runtime, "gyroDisplaySnake", "Snake", "Snake, length, brush, taper, tail fade, glow, Clear on ratchet, zip back, colour by, shade, light, shine") {
             SwitchRow("Snake", d.laserSnake, "A line following the beam along the newest stretch of its path, thinning and fading toward its tail as set. With or without Draw mode.") { set(d.copy(laserSnake = it)) }
             // Length 10° to 720°, finer toward the short ones: the slider's square, in 5° steps.
             if (d.laserSnake) Indented {
@@ -395,6 +395,17 @@ internal fun GyroDisplaySettingsScreen(
                 PercentSlider("Snake glow", d.laserSnakeGlow, 0f..1f) { set(d.copy(laserSnakeGlow = it)) }
                 SwitchRow("Clear on ratchet", d.laserSnakeClearOnRatchet, "A ratchet press clears the Snake.") { set(d.copy(laserSnakeClearOnRatchet = it)) }
                 Hint("Snake brush: how wide its head is. Taper: how much it thins toward its tail (0 keeps it the same width). Tail fade: how see-through it gets toward its tail (0 none). Snake glow: a soft glow round it (0 none).")
+            }
+            if (d.laserSnake) {
+                GroupTitle("Zip back")
+                SwitchRow("When the beam stops", d.laserSnakeZipStops, "Once the beam holds still, the tail runs back into the head.") { set(d.copy(laserSnakeZipStops = it)) }
+                SwitchRow("On ratchet", d.laserSnakeZipRatchet, "A ratchet press runs the tail back into the head.") { set(d.copy(laserSnakeZipRatchet = it)) }
+                if (d.laserSnakeZipStops || d.laserSnakeZipRatchet) Indented {
+                    Chips(listOf("By time" to false, "By speed" to true), d.laserSnakeZipBySpeed) { set(d.copy(laserSnakeZipBySpeed = it)) }
+                    if (d.laserSnakeZipBySpeed) IntSlider("Zip speed %d °/s", d.laserSnakeZipSpeed, 30..2000, step = 10) { set(d.copy(laserSnakeZipSpeed = it)) }
+                    else FloatSlider("Zip back in %.2f s", d.laserSnakeZipSeconds, 0.05f..2f, 0.05f) { set(d.copy(laserSnakeZipSeconds = it)) }
+                }
+                Hint("The tail runs back into the head, then the Snake grows again as the beam moves on. By time: the whole Snake goes in that long, however long it is. By speed: the tail runs at that many degrees a second. Clear on ratchet, when on, wins over On ratchet.")
             }
             if (d.laserSnake && (d.laserFire != LaserFire.NONE || d.laserAim != LaserFire.NONE)) {
                 GroupTitle("Shots and aiming")

@@ -219,11 +219,14 @@ internal class SideOutbox(
         // A frame still waiting means the pump is behind (busy with input): skip this one. The motion
         // stays in the feed and the next frame's running totals carry it.
         if (!overlayWaiting) {
+            // Each gyro sample's turn first, for a PC that follows them: they go with the OVERLAY right after.
+            val at = WifiPump.phoneUs().toInt()
+            if (ov.samplesWanted) queue({ p -> ov.encodeSamples(p.plain, 0, at) }, PacketType.OVERLAY_SAMPLES)
             queued = queue({ p ->
                 // Set before it is queued: the pump may take it at once.
                 overlayWaiting = true
                 engine.touchesInto(pressed, latched)
-                ov.encodeFrame(p.plain, 0, WifiPump.phoneUs().toInt(), pressed, latched)
+                ov.encodeFrame(p.plain, 0, at, pressed, latched)
             }, PacketType.OVERLAY)
         }
         if (layoutPiece < 0) {

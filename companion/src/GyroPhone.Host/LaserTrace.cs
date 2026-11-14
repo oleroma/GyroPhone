@@ -70,6 +70,39 @@ public sealed class LaserTrace
         }
 
         /// <summary>Degrees of painted line from point <paramref name="i"/> to the newest.</summary>
+        /// <summary>
+        /// Shortens the line to <paramref name="deg"/> degrees behind the newest point (zip back): the oldest points past it
+        /// go and the oldest kept one moves along its span to exactly there; at 0 only the newest point is left.
+        /// </summary>
+        public void TrimTo(float deg)
+        {
+            if (Count < 2) return;
+            double newest = _along[(_head + Count - 1) % capacity];
+            double goal = newest - Math.Max(deg, 0f);
+            if (_along[_head] >= goal) return;
+            // Whole points (and line breaks) past the new tail go.
+            while (Count > 1)
+            {
+                int nx = (_head + 1) % capacity;
+                if (_along[nx] > goal && !_gap[nx]) break;
+                _head = nx;
+                Count--;
+            }
+            _gap[_head] = true;
+            if (Count < 2) return;
+            // The oldest left moves along the great circle toward the next, to the new tail.
+            int next = (_head + 1) % capacity;
+            double span = _along[next] - _along[_head];
+            if (span <= 1e-9) return;
+            float f = (float)Math.Clamp((goal - _along[_head]) / span, 0.0, 1.0);
+            float ax = _x[_head], ay = _y[_head], az = _z[_head];
+            float dot = Math.Clamp(ax * _x[next] + ay * _y[next] + az * _z[next], -1f, 1f);
+            float w = MathF.Acos(dot), sw = MathF.Sin(w);
+            float ka = sw < 1e-5f ? 1f - f : MathF.Sin((1f - f) * w) / sw, kb = sw < 1e-5f ? f : MathF.Sin(f * w) / sw;
+            _x[_head] = ax * ka + _x[next] * kb; _y[_head] = ay * ka + _y[next] * kb; _z[_head] = az * ka + _z[next] * kb;
+            _along[_head] = goal;
+        }
+
         public float BehindNewest(int i) =>
             Count == 0 ? 0f : (float)(_along[(_head + Count - 1) % capacity] - _along[(_head + i) % capacity]);
 
@@ -216,7 +249,7 @@ public sealed class LaserTrace
     public void Add(float x, float y, float z, long nowMs, bool draw, bool held, bool clearOnPress = false, bool fire = false, bool fireOnly = false,
         bool smooth = true, float lineSmoothing = 0f, float brushDeg = 0f, float snakeDeg = 0f, uint[]? wayColors = null,
         int mapWidth = LaserPaint.DefaultWidth, float soft = 0.5f, bool aim = false, float? fireBrushDeg = null, float? aimBrushDeg = null,
-        bool clearSnakeOnPress = false)
+        bool clearSnakeOnPress = false, Zip? zip = null)
     {
         bool pressed = held && !_wasHeld;
         _wasHeld = held;
@@ -227,6 +260,8 @@ public sealed class LaserTrace
         // (Without Snake the strokes aren't shown: they go with the paint.)
         if (pressed && clearOnPress && (_paintUsed || !snake && Strokes.Count > 0)) { ClearPaint(); if (!snake) ClearStrokes(); }
         if (pressed && clearSnakeOnPress && snake && Strokes.Count > 0) ClearStrokes();
+        if (snake && zip is { } zp) ZipBack(nowMs, pressed, zp);
+        else { _zipping = false; ZipWants = false; }
         float l = MathF.Sqrt(x * x + y * y + z * z);
         if (l > 1e-6f && float.IsFinite(l)) Follow(x / l, y / l, z / l, nowMs, smooth);
         if (!(draw || snake) || l < 1e-6f || held || !float.IsFinite(l) || (fireOnly && !fire && !aim))
@@ -243,9 +278,70 @@ public sealed class LaserTrace
         Strokes.Add(dx, dy, dz, nowMs, _strokeGap, kind);
         if (draw && brush > 0f) StampNewest(brush / 2f, kind, wayColors, smooth ? SmoothReach : 0, mapWidth, soft);
         if (snake) Strokes.Cut(snakeDeg);
+        // The beam moves again: a zip back ends and the Snake grows from its head.
+        _lastPointMs = nowMs;
+        _zipping = false;
         _strokeGap = false;
         _lastKind = kind;
         _lastX = dx; _lastY = dy; _lastZ = dz;
+    }
+
+    /// <summary>Snake zip back: the beam added no point for this long (it stopped), and the tail starts running into the head.</summary>
+    public const long ZipStillMs = 150;
+
+    // Snake zip back: the tail running into the head, the length it started from, the time it last moved and when the
+    // beam last added a point.
+    private bool _zipping;
+    private float _zipFrom;
+    private long _zipMs, _lastPointMs = long.MinValue;
+
+    /// <summary>A zip back runs or may start soon (the beam stopped): the overlay keeps drawing meanwhile.</summary>
+    public bool ZipWants { get; private set; }
+
+    /// <summary>
+    /// Snake zip back settings (OverlaySettings.LaserSnakeZipStops and the rest): when the beam stops, on a ratchet press;
+    /// the whole Snake in Seconds, or with BySpeed at Speed degrees a second. As the phone's LaserTrace.Zip.
+    /// </summary>
+    public readonly record struct Zip(bool Stops, bool Ratchet, bool BySpeed, float Seconds, float Speed);
+
+    /// <summary>
+    /// Snake zip back as <paramref name="zip"/> sets: starts when the beam has added no point for <see cref="ZipStillMs"/>
+    /// (Stops) or on a ratchet press (Ratchet), then runs the tail into the head, the whole Snake in Seconds or at Speed
+    /// degrees a second (BySpeed), until it is gone or the beam moves on. As the phone's.
+    /// </summary>
+    private void ZipBack(long nowMs, bool pressed, Zip zip)
+    {
+        if (Strokes.Count < 2)
+        {
+            _zipping = false;
+            ZipWants = false;
+            return;
+        }
+        if (!_zipping)
+        {
+            bool still = zip.Stops && _lastPointMs != long.MinValue && nowMs - _lastPointMs >= ZipStillMs;
+            if (still || zip.Ratchet && pressed)
+            {
+                _zipping = true;
+                _zipMs = nowMs;
+                _zipFrom = Strokes.BehindNewest(0);
+            }
+            ZipWants = _zipping || zip.Stops;
+            return;
+        }
+        ZipWants = true;
+        long dt = Math.Clamp(nowMs - _zipMs, 0L, 100L);
+        if (dt == 0) return;
+        _zipMs = nowMs;
+        float rate = zip.BySpeed ? Math.Max(zip.Speed, 1f) : _zipFrom / Math.Max(zip.Seconds, 0.01f);
+        float left = Strokes.BehindNewest(0) - rate * dt / 1000f;
+        Strokes.TrimTo(left);
+        Version++;
+        if (left <= 0f)
+        {
+            _zipping = false;
+            ZipWants = false;
+        }
     }
 
     /// <summary>The paint map (Draw mode), made at the first painted point.</summary>

@@ -69,6 +69,38 @@ class LaserTrace {
             if (dropped) gap[head] = true
         }
 
+        /**
+         * Shortens the line to [deg] degrees behind the newest point (zip back): the oldest points past it go and the
+         * oldest kept one moves along its span to exactly there; at 0 only the newest point is left.
+         */
+        fun trimTo(deg: Float) {
+            if (count < 2) return
+            val newest = along[(head + count - 1) % capacity]
+            val goal = newest - deg.coerceAtLeast(0f)
+            if (along[head] >= goal) return
+            // Whole points (and line breaks) past the new tail go.
+            while (count > 1) {
+                val next = (head + 1) % capacity
+                if (along[next] > goal && !gap[next]) break
+                head = next
+                count--
+            }
+            gap[head] = true
+            if (count < 2) return
+            // The oldest left moves along the great circle toward the next, to the new tail.
+            val next = (head + 1) % capacity
+            val span = along[next] - along[head]
+            if (span <= 1e-9) return
+            val f = ((goal - along[head]) / span).coerceIn(0.0, 1.0).toFloat()
+            val ax = x[head]; val ay = y[head]; val az = z[head]
+            val dot = (ax * x[next] + ay * y[next] + az * z[next]).coerceIn(-1f, 1f)
+            val w = kotlin.math.acos(dot)
+            val s = sin(w)
+            val (ka, kb) = if (s < 1e-5f) (1f - f) to f else (sin((1f - f) * w) / s) to (sin(f * w) / s)
+            x[head] = ax * ka + x[next] * kb; y[head] = ay * ka + y[next] * kb; z[head] = az * ka + z[next] * kb
+            along[head] = goal
+        }
+
         /** Degrees of line from point [i] to the newest. */
         fun behindNewest(i: Int): Float =
             if (count == 0) 0f else (along[(head + count - 1) % capacity] - along[(head + i) % capacity]).toFloat()
@@ -136,8 +168,19 @@ class LaserTrace {
      */
     val moving = FloatArray(3)
 
-    /** Goes up when the strokes are cleared. */
+    /** Goes up when the strokes are cleared (or zipped back). */
     var version = 0L
+        private set
+
+    // Snake zip back: the tail running into the head, the length it started from, the time it last moved and when
+    // the beam last added a point.
+    private var zipping = false
+    private var zipFrom = 0f
+    private var zipMs = 0L
+    private var lastPointMs = Long.MIN_VALUE
+
+    /** A zip back runs or may start soon (the beam stopped): the display keeps drawing meanwhile. */
+    var zipWants = false
         private set
 
     /** The pose version last fed (the UI feeds once per new pose). */
@@ -163,7 +206,7 @@ class LaserTrace {
         fire: Boolean = false, fireOnly: Boolean = false, smooth: Boolean = true, lineSmoothing: Float = 0f,
         brushDeg: Float = 0f, snakeDeg: Float = 0f, wayColors: LongArray? = null, mapWidth: Int = LaserPaint.WIDTH, soft: Float = 0.5f,
         aim: Boolean = false, fireBrushDeg: Float = brushDeg, aimBrushDeg: Float = brushDeg,
-        clearSnakeOnPress: Boolean = false,
+        clearSnakeOnPress: Boolean = false, zip: Zip? = null,
     ) {
         val pressed = held && !wasHeld
         wasHeld = held
@@ -173,6 +216,7 @@ class LaserTrace {
         // A ratchet press: the paint and the Snake each as set (without Snake the strokes aren't shown: they go with the paint).
         if (pressed && clearOnPress && (paintUsed || !snake && strokes.count > 0)) { clearPaint(); if (!snake) clearStrokes() }
         if (pressed && clearSnakeOnPress && snake && strokes.count > 0) clearStrokes()
+        if (snake && zip != null) zipBack(nowMs, pressed, zip) else { zipping = false; zipWants = false }
         val l = sqrt(x * x + y * y + z * z)
         if (l > 1e-6f && !l.isNaN()) follow(x / l, y / l, z / l, nowMs, smooth)
         if (!(draw || snake) || l < 1e-6f || held || l.isNaN() || (fireOnly && !fire && !aim)) {
@@ -219,9 +263,55 @@ class LaserTrace {
             }
         }
         if (snake) strokes.cut(snakeDeg)
+        // The beam moves again: a zip back ends and the Snake grows from its head.
+        lastPointMs = nowMs
+        zipping = false
         strokeGap = false
         lastKind = kind
         lastX = dx; lastY = dy; lastZ = dz
+    }
+
+    /**
+     * Snake zip back as [zip] sets: starts when the beam has added no point for [ZIP_STILL_MS] ([Zip.stops]) or on a
+     * ratchet press ([Zip.ratchet]), then runs the tail into the head, the whole Snake in [Zip.seconds] or at
+     * [Zip.speed] degrees a second ([Zip.bySpeed]), until it is gone or the beam moves on.
+     */
+    private fun zipBack(nowMs: Long, pressed: Boolean, zip: Zip) {
+        if (strokes.count < 2) {
+            zipping = false
+            zipWants = false
+            return
+        }
+        if (!zipping) {
+            val still = zip.stops && lastPointMs != Long.MIN_VALUE && nowMs - lastPointMs >= ZIP_STILL_MS
+            if (still || zip.ratchet && pressed) {
+                zipping = true
+                zipMs = nowMs
+                zipFrom = strokes.behindNewest(0)
+            }
+            zipWants = zipping || zip.stops
+            return
+        }
+        zipWants = true
+        val dt = (nowMs - zipMs).coerceIn(0L, 100L)
+        if (dt == 0L) return
+        zipMs = nowMs
+        val rate = if (zip.bySpeed) zip.speed.coerceAtLeast(1f) else zipFrom / zip.seconds.coerceAtLeast(0.01f)
+        val left = strokes.behindNewest(0) - rate * dt / 1000f
+        strokes.trimTo(left)
+        version++
+        if (left <= 0f) {
+            zipping = false
+            zipWants = false
+        }
+    }
+
+    /**
+     * Snake zip back settings ([com.oleroma.gyrophone.core.model.GyroDisplay.laserSnakeZipStops] and the rest): when
+     * the beam [stops], on a [ratchet] press; the whole Snake in [seconds], or with [bySpeed] at [speed] degrees a second.
+     */
+    data class Zip(val stops: Boolean, val ratchet: Boolean, val bySpeed: Boolean, val seconds: Float, val speed: Float) {
+        val on: Boolean get() = stops || ratchet
     }
 
     /**
@@ -510,6 +600,8 @@ class LaserTrace {
             return argb
         }
         const val STROKE_STEP_DEG = 0.5f
+        /** Snake zip back: the beam added no point for this long (it stopped), and the tail starts running into the head. */
+        const val ZIP_STILL_MS = 150L
 
         /** The shortest run of paint painted at once (degrees); runs are about half the brush's width. */
         const val RUN_MIN_DEG = 1.0

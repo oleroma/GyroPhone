@@ -286,6 +286,8 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
             aims[id] = if (goal > was) minOf(goal, was + step) else maxOf(goal, was - step)
             until = maxOf(until, t + 20)
         }
+        // A Snake zipping back (or about to, the beam just stopped) runs on a still phone too.
+        for (b in shown) if (runtime.gyroFeed(b.control.id)?.laser?.zipWants == true) until = maxOf(until, t + 20)
         // A crosshair or rifle kicks on each shot and bounces back, its muzzle flash in time.
         for (b in shown) {
             val d = b.control.display ?: continue
@@ -1142,6 +1144,7 @@ private class VisState {
         if (lt != null) {
             if (!lt.deferPaint) PaintWorker.adopt(lt)
             val v = feed?.pose?.version ?: 0L
+            val zip = d.snakeZip
             fun addBeam(bx: Float, by: Float, bz: Float, ms: Long) {
                 lt.add(
                     // Draw each shot: firing paints its hits, not a Fire line.
@@ -1157,6 +1160,7 @@ private class VisState {
                     fireBrushDeg = d.laserFireBrush.coerceIn(1, 20) * BRUSH_WIDTH,
                     aimBrushDeg = d.laserAimBrush.coerceIn(1, 20) * BRUSH_WIDTH,
                     clearSnakeOnPress = d.laserSnakeClearOnRatchet,
+                    zip = zip,
                 )
             }
             // Every pose the gyro made since the last frame, so a fast turn draws a smooth curve

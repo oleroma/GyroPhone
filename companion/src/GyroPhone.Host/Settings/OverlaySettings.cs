@@ -331,6 +331,26 @@ public sealed class OverlaySettings
     /// <summary>Snake: a ratchet press clears the Snake.</summary>
     public bool LaserSnakeClearOnRatchet { get; set; }
     /// <summary>
+    /// Snake zip back: the tail runs back into the head when the beam stops (LaserSnakeZipStops) and on a ratchet press
+    /// (LaserSnakeZipRatchet), the whole Snake in LaserSnakeZipSeconds or, LaserSnakeZipBySpeed, at LaserSnakeZipSpeed
+    /// degrees a second; it grows again as the beam moves on. As the phone's GyroDisplay.laserSnakeZip*.
+    /// </summary>
+    public bool LaserSnakeZipStops { get; set; } = true;
+    public bool LaserSnakeZipRatchet { get; set; }
+    public bool LaserSnakeZipBySpeed { get; set; }
+    public float LaserSnakeZipSeconds { get; set; } = 0.4f;
+    public int LaserSnakeZipSpeed { get; set; } = 360;
+
+    /// <summary>A pointer that paints or has a Snake: it follows every gyro sample (OVERLAY_SAMPLES), as the phone's does.</summary>
+    [JsonIgnore]
+    public bool FollowsSamples => Kind == OverlayKind.Laser && (LaserDraw || LaserSnake);
+
+    /// <summary>The Snake's zip back as LaserTrace.Add takes it, or null when off.</summary>
+    [JsonIgnore]
+    public LaserTrace.Zip? SnakeZip => !LaserSnakeZipStops && !LaserSnakeZipRatchet ? null
+        : new LaserTrace.Zip(LaserSnakeZipStops, LaserSnakeZipRatchet, LaserSnakeZipBySpeed,
+            Math.Clamp(LaserSnakeZipSeconds, 0.05f, 2f), Math.Clamp(LaserSnakeZipSpeed, 30, 2000));
+    /// <summary>
     /// Laser pointer Draw mode: while this output is held (LaserFire numbers, default the left mouse button), from the
     /// phone or, with "Use PC controller for gyro ratchet", the PC's controller, it paints in the Fire colours; with
     /// LaserFireOnly only then. As the phone's GyroDisplay.laserFire.
@@ -374,6 +394,46 @@ public sealed class OverlaySettings
     public int LaserLightFrom { get; set; }
     public float LaserShine { get; set; } = 0.3f;
     public bool LaserColourByWay { get; set; }
+
+    /// <summary>
+    /// Snake: its own look, apart from Draw mode's paint. Each null until set, following the paint's setting until then
+    /// (<see cref="SnakeColourByWay"/> and the rest read them); the settings page keeps a Snake copy of the paint's value
+    /// before changing it (<see cref="KeepSnakeLook"/>), so changing one never changes the other. As the phone's
+    /// GyroDisplay.laserSnakeColourByWay and the rest.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? LaserSnakeColourByWay { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? LaserSnakeShade { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? LaserSnakeInside { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? LaserSnakeLight { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? LaserSnakeLightFrom { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? LaserSnakeShine { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? LaserSnakeFireBrush { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? LaserSnakeAimBrush { get; set; }
+
+    [JsonIgnore] public bool SnakeColourByWay => LaserSnakeColourByWay ?? LaserColourByWay;
+    [JsonIgnore] public float SnakeShade => LaserSnakeShade ?? LaserShade;
+    [JsonIgnore] public float SnakeInside => LaserSnakeInside ?? LaserInside;
+    [JsonIgnore] public float SnakeLight => LaserSnakeLight ?? LaserLight;
+    [JsonIgnore] public int SnakeLightFrom => LaserSnakeLightFrom ?? LaserLightFrom;
+    [JsonIgnore] public float SnakeShine => LaserSnakeShine ?? LaserShine;
+    [JsonIgnore] public int SnakeFireBrush => LaserSnakeFireBrush ?? LaserFireBrush;
+    [JsonIgnore] public int SnakeAimBrush => LaserSnakeAimBrush ?? LaserAimBrush;
+
+    /// <summary>Before a paint look setting changes: the Snake keeps its own copy of each one it still shares, so it stays as it was.</summary>
+    public void KeepSnakeLook()
+    {
+        LaserSnakeColourByWay = SnakeColourByWay; LaserSnakeShade = SnakeShade; LaserSnakeInside = SnakeInside;
+        LaserSnakeLight = SnakeLight; LaserSnakeLightFrom = SnakeLightFrom; LaserSnakeShine = SnakeShine;
+        LaserSnakeFireBrush = SnakeFireBrush; LaserSnakeAimBrush = SnakeAimBrush;
+    }
 
     // The pose, made on the PC (the phone's own gyro display settings are separate).
     /// <summary>
