@@ -335,10 +335,10 @@ object LinkInfoFlags {
     /** With [USB]: the cable runs in accessory mode (direct USB), not tethering. */
     const val USB_DIRECT = 4
 
-    /** Debugging is on in the phone: the PC keeps its debug log while LINK_INFOs carry this. */
+    /** Diagnostics is on in the phone: the companion's switch follows it when it changes. */
     const val DEBUG_TRACE = 8
 
-    /** With [DEBUG_TRACE]: a 3-bit counter; the PC saves its last 3 minutes of debug log when it changes. */
+    /** With [DEBUG_TRACE]: a 3-bit counter; the PC saves its Diagnostics when it changes (a Save on the phone). */
     const val DEBUG_SAVE_MASK = 0x70
     const val DEBUG_SAVE_SHIFT = 4
 
@@ -368,7 +368,7 @@ object HostStatusFlags2 {
      * phone sends OVERLAY_SAMPLES before each OVERLAY. Older PCs never set it; older phones ignore it.
      */
     const val OVERLAY_SAMPLES = 64
-    /** A Performance log is on in the companion (Record input log or Overlay timing log): the pad shows its red dot. */
+    /** Diagnostics is on in the companion: the phone's switch follows it when it changes, and the pad shows its red dot. */
     const val PC_LOGGING = 128
 }
 
@@ -404,8 +404,12 @@ object TestModeFlags {
     /** The PC runs a Link test: the phone sends fake moving input at its full rate, marked [StateFlags.LINK_TEST]. */
     const val LINK_TEST = 4
 
-    /** A Performance record runs: the phone measures its side of the link and sends PHONE_STATS once a second. */
+    /** Diagnostics is on in the companion: the phone measures its side of the link and sends PHONE_STATS once a second. */
     const val PHONE_STATS = 8
+
+    /** With [PHONE_STATS]: a 3-bit counter; the phone saves its Diagnostics when it changes (a Save on the PC). */
+    const val DIAG_SAVE_MASK = 0x70
+    const val DIAG_SAVE_SHIFT = 4
 }
 
 /** BYE reason (phone). */

@@ -175,7 +175,7 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
                 val t1 = System.nanoTime()
                 val h = hint ?: com.oleroma.gyrophone.runtime.WorkHint.forThisThread(HINT_TARGET_NS).also { hint = it }
                 h?.done(t1 - t0, t1)
-                timing.frame(t1 - t0, t1, runtime.drawTimingLogOn.value)
+                timing.frame(t1 - t0, t1, runtime.debug.trace)
             }
             choreographer?.postFrameCallback(this)
         }
@@ -379,9 +379,9 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
 }
 
 /**
- * The gyro displays' drawing times, logged once a second while they draw (logcat tag GPDraw):
- * frames drawn, the average and the longest, and how many took longer than [SLOW_NS]. Read over
- * adb (`adb logcat -s GPDraw`) to check the displays keep up, a fast turn included.
+ * The gyro displays' drawing times, part of Diagnostics: once a second while they draw, a "draw" line in its
+ * log with the frames drawn, the average and the longest, and how many took longer than [SLOW_NS], so a slow
+ * display shows, a fast turn included. On the drawing thread, not the screen's.
  */
 private class DrawTiming {
     private var since = 0L
@@ -390,9 +390,10 @@ private class DrawTiming {
     private var longest = 0L
     private var slow = 0
 
-    /** Counts a frame of [ns]; once a second logs the line if [log] (Settings › Performance › Display timing log), else only starts over. */
-    fun frame(ns: Long, now: Long, log: Boolean) {
+    /** Counts a frame of [ns]; once a second logs the line into [trace] (Diagnostics on), else only starts over. */
+    fun frame(ns: Long, now: Long, trace: com.oleroma.gyrophone.core.debug.DebugTrace?) {
         // Off, nothing is measured: the probes stop too.
+        val log = trace != null
         DrawProbe.on = log
         if (!log) {
             since = 0L; frames = 0; sum = 0L; longest = 0L; slow = 0
@@ -405,10 +406,7 @@ private class DrawTiming {
         if (ns > SLOW_NS) slow++
         if (now - since < 1_000_000_000L) return
         val probe = DrawProbe.take(frames)
-        if (log) android.util.Log.i(
-            "GPDraw",
-            "frames=$frames avg=${"%.2f".format(sum / frames / 1e6)}ms max=${"%.2f".format(longest / 1e6)}ms slow=$slow " + probe,
-        )
+        trace?.note("draw: frames=$frames avg=${"%.2f".format(sum / frames / 1e6)}ms max=${"%.2f".format(longest / 1e6)}ms slow=$slow " + probe)
         since = now; frames = 0; sum = 0L; longest = 0L; slow = 0
     }
 

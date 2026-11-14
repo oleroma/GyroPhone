@@ -1348,15 +1348,28 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
     }
 
-    private fun traceKey(t: DebugTrace, who: String, keyCode: Int, pressed: Boolean, ms: List<Mapping>?) {
+    // The trace* helpers run on input paths: they only queue a lambda (no text made here); the diagnostics thread
+    // makes the line from what the lambda captured ([DebugTrace.queue]).
+
+    private fun traceKey(t: DebugTrace, who: String, keyCode: Int, pressed: Boolean, ms: List<Mapping>?) = t.queue(DebugTrace.Kind.IN) {
         val name = AndroidKey.names[keyCode] ?: "key $keyCode"
-        t.input("$who $name " + (if (pressed) "down" else "up") +
-                if (pressed) traceTargets(ms) { mapsKey(it, keyCode) } else "")
+        "$who $name " + (if (pressed) "down" else "up") + if (pressed) traceTargets(ms) { mapsKey(it, keyCode) } else ""
     }
 
-    private fun traceTouch(t: DebugTrace, id: String, what: String, withTargets: Boolean) {
-        val label = ws.touchControls.firstOrNull { it.id == id }?.label?.takeIf { it.isNotBlank() } ?: id
-        t.input("touch \"$label\" $what" + if (withTargets) traceTargets(touchMappings) { src ->
+    private fun traceKeyAny(t: DebugTrace, keyCode: Int, pressed: Boolean, all: Array<List<Mapping>>) = t.queue(DebugTrace.Kind.IN) {
+        val name = AndroidKey.names[keyCode] ?: "key $keyCode"
+        "any device: $name " + (if (pressed) "down" else "up") + if (pressed) traceTargets(all.flatMap { it }) { mapsKey(it, keyCode) } else ""
+    }
+
+    private inline fun traceTouch(t: DebugTrace, id: String, withTargets: Boolean, crossinline what: () -> String) {
+        val w = ws
+        val tm = touchMappings
+        t.queue(DebugTrace.Kind.IN) { traceTouchLine(w, tm, id, what(), withTargets) }
+    }
+
+    private fun traceTouchLine(w: Workspace, tm: List<Mapping>, id: String, what: String, withTargets: Boolean): String {
+        val label = w.touchControls.firstOrNull { it.id == id }?.label?.takeIf { it.isNotBlank() } ?: id
+        return "touch \"$label\" $what" + if (withTargets) traceTargets(tm) { src ->
             when (src) {
                 is InputSource.Touch -> src.id == id
                 is InputSource.TouchTap -> src.id == id
@@ -1365,7 +1378,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 is InputSource.TouchRelease -> src.id == id
                 else -> false
             }
-        } else "")
+        } else ""
     }
 
     /** Loads the active workspace and releases everything held. Under the lock. */
@@ -1403,7 +1416,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         // A physical button's gyro mappings while held (its Motion tab) route with the touch buttons' ([gyroRoutes]).
         val physGyro = physGyroOf(w)
         allTouch = if (physGyro.isEmpty()) w.mappings else w.mappings + physGyro
-        trace?.state("workspace: ${w.name}")
+        trace?.queue(DebugTrace.Kind.STATE) { "workspace: ${w.name}" }
         motionMapped = w.mappings.any { it.source is InputSource.Tilt || it.source is InputSource.Shake }
         allPads = Array(w.pads.size + 3) {
             when {
@@ -1611,7 +1624,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (slot < 0) return@firingEvents
                 bpPointer[slot] = pointer; bpControl[slot] = id
                 bpDownX[slot] = x; bpDownY[slot] = y; bpDownNs[slot] = now
-                trace?.let { traceTouch(it, id, "down at ${x.toInt()},${y.toInt()}", withTargets = true) }
+                trace?.let { val px = x.toInt(); val py = y.toInt(); traceTouch(it, id, withTargets = true) { "down at $px,$py" } }
                 press(id)
                 fingerTrack(id, pointer, x, y, 0)
                 val surface = surfaces[id]
@@ -1660,7 +1673,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val slot = slotOf(pointer)
                 if (slot < 0) return@firingEvents
                 val id = bpControl[slot]!!
-                trace?.let { traceTouch(it, id, "up after ${(now - bpDownNs[slot]) / 1_000_000} ms", withTargets = false) }
+                trace?.let { val heldMs = (now - bpDownNs[slot]) / 1_000_000; traceTouch(it, id, withTargets = false) { "up after $heldMs ms" } }
                 fingerTrack(id, pointer, 0f, 0f, 2)
                 if (bpState[slot] == BP_SWIPE) surfaces[id]?.up(pointer, now)
                 if (bpPass[slot]) { touchpad.up(pointer, now); unpass(slot); settleTouchpad() }
@@ -1684,7 +1697,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val slot = slotOf(pointer)
                 if (slot < 0) return@firingEvents
                 val id = bpControl[slot]!!
-                trace?.let { traceTouch(it, id, "cancelled by the system", withTargets = false) }
+                trace?.let { traceTouch(it, id, withTargets = false) { "cancelled by the system" } }
                 fingerTrack(id, pointer, 0f, 0f, 2)
                 if (bpState[slot] == BP_SWIPE) surfaces[id]?.cancelFinger(pointer, now)
                 if (bpPass[slot]) { touchpad.cancelFinger(pointer, now); unpass(slot); settleTouchpad() }
@@ -1817,7 +1830,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val was = anyDevice.key(keyCode)
                 anyDevice.setKey(keyCode, pressed)
                 if (was != pressed) keyEdge(anyDevice, keyCode, pressed, now)
-                if (was != pressed) trace?.let { traceKey(it, "any device:", keyCode, pressed, padMappings.flatMap { ms -> ms }) }
+                if (was != pressed) trace?.let { traceKeyAny(it, keyCode, pressed, padMappings) }
             }
             allPads.any { ms -> ms.any { mapsKey(it.source, keyCode) } }
         }
@@ -1840,12 +1853,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             firingEvents(now) {
                 if (pressed) {
                     if (setTouchHeld.put(id, now) == null) {
-                        trace?.let { traceTouch(it, id, "down", withTargets = true) }
+                        trace?.let { traceTouch(it, id, withTargets = true) { "down" } }
                         press(id)
                     }
                 } else {
                     setTouchHeld.remove(id) ?: return@firingEvents
-                    trace?.let { traceTouch(it, id, "up", withTargets = false) }
+                    trace?.let { traceTouch(it, id, withTargets = false) { "up" } }
                     release(id)
                 }
             }
@@ -2067,7 +2080,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             // A shake still pressing ends first, so this one is a new press of its events.
             if (shakeOn) firingEvents(now) { shakeOn = false }
             firingEvents(now) { shakeOn = true; shakeAt = now; shakeShown = false }
-            trace?.input("shake")
+            trace?.queue(DebugTrace.Kind.IN) { "shake" }
         }
         onChange?.run()
     }
@@ -2092,7 +2105,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         synchronized(lock) {
             val now = clock()
             resolveIfDue(now)
-            trace?.input("touchpad finger $pointer down at ${x.toInt()},${y.toInt()}")
+            trace?.let { t -> val px = x.toInt(); val py = y.toInt(); t.queue(DebugTrace.Kind.IN) { "touchpad finger $pointer down at $px,$py" } }
             // While button fingers hold the touchpad's gesture, a background finger only aims ([bpPassFull]).
             if (touchpad.fingers == 0 && gestureButtons.isNotEmpty()) { gestureButtons.clear(); blockTouchpad() }
             touchpad.down(pointer, x, y, now, aiming = passFull > 0, eventNs = eventNanos)
@@ -2115,7 +2128,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         synchronized(lock) {
             val now = clock()
             resolveIfDue(now)
-            trace?.input("touchpad finger $pointer up")
+            trace?.queue(DebugTrace.Kind.IN) { "touchpad finger $pointer up" }
             touchpad.up(pointer, now)
             settleTouchpad()
             if ("" in fingerMapped) { fingerTrack("", pointer, 0f, 0f, 2); refreshSens() }
@@ -2137,7 +2150,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         synchronized(lock) {
             val now = clock()
             resolveIfDue(now)
-            trace?.input("touchpad finger $pointer cancelled by the system")
+            trace?.queue(DebugTrace.Kind.IN) { "touchpad finger $pointer cancelled by the system" }
             touchpad.cancelFinger(pointer, now)
             if ("" in fingerMapped) { fingerTrack("", pointer, 0f, 0f, 2); refreshSens() }
         }
@@ -2352,7 +2365,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     fun reset() {
         synchronized(lock) {
-            trace?.state("reset: everything released")
+            trace?.queue(DebugTrace.Kind.STATE) { "reset: everything released" }
             releaseHeld()
             layerSet = MappingSet.BASE; layerOverrides.clear(); layerHolds.clear(); backLayers = null
             for (c in carried) c.clear()
@@ -2391,7 +2404,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         lastOutput = s
         // The gyro's part of the motion is what the camera moves did not make.
-        trace?.output(s, s.mouse.dx - dx, s.mouse.dy - dy)
+        trace?.queueOutput(s, s.mouse.dx - dx, s.mouse.dy - dy)
         if (hapticDue) {
             hapticDue = false
             hapticSink?.haptics(hapticTicks, hapticHeld, hapticLevel)

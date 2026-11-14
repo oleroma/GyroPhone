@@ -40,11 +40,12 @@ public sealed record CompanionView(
     IReadOnlyList<Problem> Problems,
     bool MeasureButtons = false,
     ButtonLatency? Buttons = null,
-    bool InputLog = true,
+    bool Diagnostics = false,
     int CatchUpMs = 16,
     bool PressKeyNotice = true,
     bool PressKeyListen = true,
-    bool OverlayTimingLog = true);
+    int DiagnosticsMinutes = 3,
+    int DiagnosticsSaved = 0);
 
 /// <summary>
 /// The tray app as the windows see it. Every setter saves the setting and refreshes the open windows,
@@ -90,10 +91,13 @@ public interface ICompanion
     void ToggleWatcher();
     void SetTrayClick(TrayClickAction action);
     void OpenLogFolder();
-    void ShowDebugWindow();
-    void ToggleInputLog();
-    /// <summary>"Overlay timing log" (Performance › Debug).</summary>
-    void ToggleOverlayTimingLog();
+    /// <summary>"Diagnostics" (Performance): everything logs into a ring of the last Keep minutes, here and on the phone.</summary>
+    void ToggleDiagnostics();
+    /// <summary>Diagnostics' "Keep" slider, 1 to 30 minutes.</summary>
+    void SetDiagnosticsMinutes(int minutes);
+    /// <summary>Diagnostics' "Save": both sides' kept minutes; the PC's side also becomes a record in Results.</summary>
+    void SaveDiagnostics();
+    void OpenDebugFolder();
     /// <summary>"Use this PC's keys for Press a key".</summary>
     void TogglePressKeyListen();
     /// <summary>"Notify when the phone listens for a key".</summary>

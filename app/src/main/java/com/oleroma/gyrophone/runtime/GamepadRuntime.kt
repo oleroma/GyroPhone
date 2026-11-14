@@ -629,48 +629,26 @@ class GamepadRuntime(context: Context) {
     /** State of the active link. */
     val linkState: StateFlow<LinkState> = _linkState
 
-    /** Debug tools: the Settings switch, the debug log, recordings ([PhoneDebug]). */
+    /** Diagnostics: the Performance switch, the event ring, saves ([PhoneDebug]). */
     val debug = PhoneDebug(appContext, this, scope)
 
     /** Plays the engine's haptic mappings while a PC is connected. */
     private val haptics = PhoneHaptics(appContext) { _linkState.value is LinkState.Connected }.also { h ->
-        h.log = { line -> debug.trace?.add(com.oleroma.gyrophone.core.debug.DebugTrace.Kind.OUT, line) }
+        h.log = { line -> debug.trace?.queue(com.oleroma.gyrophone.core.debug.DebugTrace.Kind.OUT) { line } }
     }
 
     /**
-     * Settings › Performance › "Ratchet timing": each ratchet press during a swing is measured
-     * against the swing's turn-around ([RatchetTiming]) and shown on the pad.
+     * Ratchet timing, part of Diagnostics: each ratchet press during a swing is measured against the swing's
+     * turn-around ([RatchetTiming]); on only while Diagnostics is ([PhoneDebug]), each result a line in its log.
      */
     val ratchetTiming = RatchetTiming().also { rt ->
-        rt.enabled = prefs.getBoolean(KEY_RATCHET_TIMING, false)
-        // Each result to logcat too (tag GPRatchet), so it can be read over adb: `adb logcat -d -s GPRatchet`.
+        // On the gyro thread: only queued; the diagnostics thread makes the line.
         rt.onResult = { r ->
-            fun f(v: Float?) = v?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: "-"
-            android.util.Log.i(
-                "GPRatchet",
-                "swing=${r.swing} you_ms=${f(r.playerMs)} app_ms=${f(r.appMs)} back_counts=${r.backCounts ?: "-"} back_deg=${f(r.backDeg)}",
-            )
+            debug.trace?.queue(com.oleroma.gyrophone.core.debug.DebugTrace.Kind.NOTE) {
+                fun f(v: Float?) = v?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: "-"
+                "ratchet: swing ${r.swing} · you ${f(r.playerMs)} ms · app ${f(r.appMs)} ms · back ${r.backCounts ?: "-"} counts, ${f(r.backDeg)}°"
+            }
         }
-    }
-    private val _ratchetTimingOn = MutableStateFlow(ratchetTiming.enabled)
-    val ratchetTimingOn: StateFlow<Boolean> = _ratchetTimingOn
-
-    fun setRatchetTiming(on: Boolean) {
-        prefs.edit().putBoolean(KEY_RATCHET_TIMING, on).apply()
-        ratchetTiming.enabled = on
-        _ratchetTimingOn.value = on
-    }
-
-    /**
-     * Settings › Performance › "Display timing log" (off by default): the gyro displays' drawing times,
-     * one logcat line a second while they draw (tag GPDraw), read over adb to find a slow display.
-     */
-    private val _drawTimingLogOn = MutableStateFlow(prefs.getBoolean(KEY_DRAW_TIMING_LOG, false))
-    val drawTimingLogOn: StateFlow<Boolean> = _drawTimingLogOn
-
-    fun setDrawTimingLog(on: Boolean) {
-        prefs.edit().putBoolean(KEY_DRAW_TIMING_LOG, on).apply()
-        _drawTimingLogOn.value = on
     }
 
     /**
@@ -1784,8 +1762,6 @@ class GamepadRuntime(context: Context) {
         private const val KEY_START_FULLSCREEN = "start_fullscreen"
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         private const val KEY_GAME_RUMBLE = "game_rumble"
-        private const val KEY_RATCHET_TIMING = "ratchet_timing"
-        private const val KEY_DRAW_TIMING_LOG = "draw_timing_log"
         private const val KEY_USB_DIRECT = "usb_direct"
         private const val KEY_BLACK_SCREEN_IDLE = "black_screen_idle"
         private const val KEY_BLACK_SCREEN_SECONDS = "black_screen_seconds"
@@ -1964,7 +1940,7 @@ class GamepadRuntime(context: Context) {
         syncYawAxis(wsGyro)
         val dt = if (lastGyroTs == 0L) 0f else ((ts - lastGyroTs) / 1e9f).coerceIn(0f, 0.05f)
         lastGyroTs = ts
-        debug.trace?.gyro((x - biasX) * RAD_TO_DEG, (y - biasY) * RAD_TO_DEG, (z - biasZ) * RAD_TO_DEG)
+        debug.trace?.gyroSample()
         calibration?.let { cal ->
             when (val r = cal.add(x, y, z, ts)) {
                 null -> Unit

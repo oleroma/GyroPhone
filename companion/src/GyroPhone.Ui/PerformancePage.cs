@@ -1,7 +1,9 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using GyroPhone.Host;
 using GyroPhone.Host.Perf;
+using GyroPhone.Host.Settings;
 using GyroPhone.Protocol;
 using Frame = GyroPhone.Host.Perf.Frame;
 
@@ -10,7 +12,8 @@ namespace GyroPhone.Ui;
 /// <summary>
 /// Performance (docs/spec/pc-companion.md, "Performance"): everything measured, and only while this page is on
 /// screen. The phone link live (the way its packets go, packets, latency with a graph, trouble marks, Measure
-/// buttons), link tests ("Record test", compared in Results, link first), and the video Latency test. The
+/// buttons), Diagnostics (one switch for every log, here and on the phone; a Save adds a record to Results), and the
+/// video Latency test. The
 /// game's frames show only while an FPS overlay is on: it is the only thing that watches them.
 /// </summary>
 internal sealed class PerformancePage : Page
@@ -25,20 +28,17 @@ internal sealed class PerformancePage : Page
     private readonly Sparkline _latGraph = new() { Margin = new Thickness(0, 8, 0, 0) };
     private readonly FrameGraph _graph = new() { Margin = new Thickness(0, 10, 0, 4) };
     private readonly CheckBox _measureButtons;
-    private readonly CheckBox _inputLog, _overlayLog;
+    private readonly CheckBox _diag;
+    private readonly SliderRow _keep;
+    private readonly Button _save;
     private readonly Seg<int> _catchUp;
     private readonly TextBlock _logPath;
     private readonly TextBlock _buttonsSub;
-    private readonly TextBox _name;
-    private readonly Seg<string> _picks;
-    private readonly Seg<int> _length;
-    private int _seconds = 180;
-    private readonly Button _record;
-    private readonly TextBlock _pathLine, _busyLine, _recordSub;
+    private readonly TextBlock _busyLine, _diagSub;
+    private int _savedShown;
     private readonly StackPanel _results = new();
     private string _resultsKey = "\0";
-    private string? _setup;
-    private bool _nameEdited, _settingName, _setUpFailed, _wasRecording, _wasConnected, _shown;
+    private bool _setUpFailed, _wasConnected, _shown;
     private long _sampledAt;
 
     public override FrameworkElement View => _root;
@@ -47,8 +47,8 @@ internal sealed class PerformancePage : Page
     {
         _app = app;
         _root.Children.Add(Parts.Text("Performance", "H1"));
-        var intro = Parts.Text("The phone link live, link tests to compare ways of connecting, the video latency test, and the debug logs and tools. " +
-            "Measured only while this page is open (and while a test records).", "Sub");
+        var intro = Parts.Text("The phone link live, Diagnostics, and the video latency test. " +
+            "Measured only while this page is open (and while Diagnostics is on).", "Sub");
         intro.Margin = new Thickness(0, 0, 0, 14);
         _root.Children.Add(intro);
 
@@ -104,45 +104,27 @@ internal sealed class PerformancePage : Page
         lb.Children.Add(_buttonsSub);
         _root.Children.Add(link);
 
-        // Record test
-        var (rec, rb) = Parts.Card("Record test");
-        _name = new TextBox { MaxLength = 40, Padding = new Thickness(4, 2, 4, 2), MinWidth = 260, HorizontalAlignment = HorizontalAlignment.Left,
-            ToolTip = "What you're testing. Starts as the setup the phone is on now; type your own, such as \"Overlays off\"." };
-        _name.TextChanged += (_, _) =>
-        {
-            if (!_settingName) _nameEdited = true;
-        };
-        _picks = new Seg<string>(n =>
-        {
-            _name.Text = n;
-            _nameEdited = true;
-        }, true, [.. LinkPaths.Setups.Select(x => (x, x))]);
-        rb.Children.Add(Parts.Labelled("Setup", _picks.View, 90));
-        rb.Children.Add(Parts.Labelled("Name", _name, 90));
-        _length = new Seg<int>(s =>
-        {
-            _seconds = s;
-            _length!.Set(s);
-        }, false, ("3 min", 180), ("5 min", 300), ("10 min", 600), ("Until I stop", 0));
-        _length.Set(_seconds);
-        rb.Children.Add(Parts.Labelled("Length", _length.View, 90));
-        _pathLine = Parts.Text("", "Sub");
-        _pathLine.Margin = new Thickness(0, 6, 0, 0);
-        rb.Children.Add(_pathLine);
+        // Diagnostics: one switch for every log, on both sides
+        var (diag, gb) = Parts.Card("Diagnostics");
+        _diag = Parts.Toggle("Diagnostics", app.ToggleDiagnostics,
+            "Logs everything at once, here and on the phone (they switch together): each press and what it sent, the link each second, " +
+            "the PC's load, the ratchet and the overlays' draw times. Kept in memory for the last Keep minutes; nothing is written until you Save. " +
+            "The input path only stores numbers, the text is made on a side thread, so it doesn't change what it measures. A red dot on the phone's pad shows it's on.");
+        gb.Children.Add(_diag);
+        _keep = new SliderRow("Keep", HostSettings.MinKeepMinutes, DebugTrace.MaxKeepMinutes, 1, v => $"{v:0} min", v => app.SetDiagnosticsMinutes((int)v));
+        gb.Children.Add(_keep.View);
         _busyLine = Parts.Text("", "Sub");
         _busyLine.SetResourceReference(TextBlock.ForegroundProperty, "WarnTextBrush");
         _busyLine.Margin = new Thickness(0, 6, 0, 0);
-        rb.Children.Add(_busyLine);
-        _record = Parts.Button("Record", Record, "Accent", "");
-        _record.Margin = new Thickness(0, 10, 0, 0);
-        _record.HorizontalAlignment = HorizontalAlignment.Left;
-        rb.Children.Add(_record);
-        _recordSub = Parts.Text("Record closes this window so it costs nothing while you play; the phone buzzes when the test ends. " +
-            "Opening the window again ends it early. The record keeps the link's every second and the way its packets went; " +
-            "the game's frames too while the FPS overlay is on.", "Sub");
-        _recordSub.Margin = new Thickness(0, 6, 0, 0);
-        rb.Children.Add(_recordSub);
-        _root.Children.Add(rec);
+        gb.Children.Add(_busyLine);
+        _save = Parts.Button("Save", app.SaveDiagnostics, "Accent", "");
+        var saveRow = Parts.Row(_save, Parts.Button("Open debug folder", app.OpenDebugFolder, glyph: ""));
+        saveRow.Margin = new Thickness(0, 10, 0, 0);
+        gb.Children.Add(saveRow);
+        _diagSub = Parts.Text("", "Sub");
+        _diagSub.Margin = new Thickness(0, 6, 0, 0);
+        gb.Children.Add(_diagSub);
+        _root.Children.Add(diag);
 
         // Results
         var (res, sb) = Parts.Card("Results");
@@ -168,21 +150,11 @@ internal sealed class PerformancePage : Page
         mb.Children.Add(Parts.Text("When Wi-Fi loses or holds up a stretch of gyro or mouse movement, it is played out over up to this long instead of landing as one jump. New movement always goes out at once. Off: the old one-step jump.", "Hint"));
         _root.Children.Add(mouse);
 
-        // Debug: every log and debug tool, each switchable
-        var (debug, db) = Parts.Card("Debug");
-        _inputLog = Parts.Toggle("Record input log", app.ToggleInputLog,
-            "Notes lost, late and stalled input in input.log in the log folder, so a stutter can be traced after you play. Costs almost nothing.");
-        db.Children.Add(_inputLog);
-        db.Children.Add(Parts.Divider());
-        _overlayLog = Parts.Toggle("Overlay timing log", app.ToggleOverlayTimingLog,
-            "Writes each open overlay's draw times to companion.log once a second while they draw, so a slow overlay can be found. Costs almost nothing.");
-        db.Children.Add(_overlayLog);
-        db.Children.Add(Parts.Divider());
+        // The companion's own log
+        var (debug, db) = Parts.Card("Log");
         _logPath = Parts.Text("", "Sub");
         db.Children.Add(_logPath);
-        db.Children.Add(Parts.Row(
-            Parts.Button("Open log folder", app.OpenLogFolder, glyph: ""),
-            Parts.Button("Debug window…", app.ShowDebugWindow, glyph: "")));
+        db.Children.Add(Parts.Row(Parts.Button("Open log folder", app.OpenLogFolder, glyph: "")));
         _root.Children.Add(debug);
     }
 
@@ -201,23 +173,10 @@ internal sealed class PerformancePage : Page
         _app.Log($"performance page: FPS helper set up {(done ? "done" : "not done")}");
     }
 
-    private void Record()
-    {
-        var p = _app.Perf;
-        if (p.Recording != null) p.StopRecording();
-        else
-        {
-            p.StartRecording(_name.Text, _app.LinkPath()?.Text ?? LinkName(_app.View()), _seconds);
-            _nameEdited = false;
-            // A fair test runs without this window drawing: it closes, and the record goes on in the tray.
-            if (p.Recording != null) Window.GetWindow(_root)?.Close();
-        }
-    }
-
     public override void Refresh(CompanionView v)
     {
-        Parts.SetChecked(_inputLog, v.InputLog);
-        Parts.SetChecked(_overlayLog, v.OverlayTimingLog);
+        Parts.SetChecked(_diag, v.Diagnostics);
+        _keep.Set(v.DiagnosticsMinutes);
         _catchUp.Set(v.CatchUpMs);
         _logPath.Text = $"Log: {v.LogPath}";
         var p = _app.Perf;
@@ -298,37 +257,21 @@ internal sealed class PerformancePage : Page
         long now = f.Recent.Length > 0 ? Math.Max(f.Recent[^1].AtUs, NowUs()) : NowUs();
         _graph.Set(p.Watching ? f.Recent : Array.Empty<Frame>(), p.Link.Between(now - FrameStats.GraphUs - 1_000_000, now + 1_000_000), now);
 
-        // Record
+        // Diagnostics
         var r = p.Recording;
-        _setup = path?.Setup;
-        if (!_nameEdited && r == null)
-        {
-            var want = _setup ?? (path?.Text ?? LinkName(v));
-            if (_name.Text != want)
-            {
-                _settingName = true;
-                _name.Text = want;
-                _settingName = false;
-            }
-        }
-        _name.IsEnabled = _length.View.IsEnabled = _picks.View.IsEnabled = r == null;
-        _picks.Set(_name.Text);
-        bool picked = LinkPaths.Setups.Contains(_name.Text);
-        _pathLine.Text = path == null ? "The phone isn't connected: a record now has no link to measure."
-            : picked && _setup != null && _setup != _name.Text ? $"⚠ The phone's packets go by {path.Value.Text}, not {_name.Text}. The record keeps the real path either way."
-            : $"Detected: {path.Value.Text}.";
-        _pathLine.SetResourceReference(TextBlock.ForegroundProperty, picked && _setup != null && _setup != _name.Text ? "WarnTextBrush" : "DimBrush");
-        // Other programs busy (a build, a scan, an update) spoil a test: say so before recording.
-        var busy = r == null ? p.Busy : null;
+        _save.IsEnabled = v.Diagnostics;
+        if (!v.Diagnostics)
+            _diagSub.Text = "Off: nothing is logged.";
+        else if (v.DiagnosticsSaved != _savedShown)
+            _diagSub.Text = "Saved: this PC's side is at the top of Results and in the debug folder, the phone's in its Download folder.";
+        else if (r != null && !_diagSub.Text.StartsWith("Saved", StringComparison.Ordinal))
+            _diagSub.Text = $"On for {Clock(r.Elapsed)}, keeping the last {v.DiagnosticsMinutes} min.";
+        _savedShown = v.DiagnosticsSaved;
+        // Other programs busy (a build, a scan, an update) spoil what's measured: say so.
+        var busy = v.Diagnostics ? p.Busy : null;
         Parts.Show(_busyLine, busy != null);
         if (busy != null)
-            _busyLine.Text = $"⚠ The PC is busy: {busy}. A build, scan or update running now can cause hitches the test would blame on the link; wait for it to end. Records mark busy seconds either way.";
-        SetRecordText(r == null ? "Record" : "Stop");
-        if (r != null)
-            _recordSub.Text = $"Recording '{r.Name}': {Clock(r.Elapsed)}{(r.Seconds > 0 ? $" of {Clock(r.Seconds)}" : "")}.";
-        else if (_wasRecording)
-            _recordSub.Text = "Done. The new record is at the top of Results.";
-        _wasRecording = r != null;
+            _busyLine.Text = $"⚠ The PC is busy: {busy}. A build, scan or update can cause hitches the link would be blamed for. Saved records mark busy seconds.";
 
         // Results
         var runs = p.Runs;
@@ -343,15 +286,6 @@ internal sealed class PerformancePage : Page
     }
 
     private static string Ms(uint us) => us == HostStatus.Unknown ? "–" : $"{us / 1000.0:0.0} ms";
-
-    private void SetRecordText(string text)
-    {
-        if (_record.Content is StackPanel sp && sp.Children.Count > 1 && sp.Children[1] is TextBlock t)
-        {
-            t.Text = text;
-            if (sp.Children[0] is TextBlock g) g.Text = text == "Stop" ? "" : "";
-        }
-    }
 
     private static long NowUs() => (long)(System.Diagnostics.Stopwatch.GetTimestamp() * (1_000_000.0 / System.Diagnostics.Stopwatch.Frequency));
 

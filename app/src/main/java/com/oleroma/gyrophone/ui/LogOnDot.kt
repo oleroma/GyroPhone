@@ -21,18 +21,14 @@ import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.roundToInt
 
 /**
- * A small red dot in the pad's top left corner while any Performance log is on: the phone's debug tools (with or
- * without their panel), Ratchet timing, Display timing log, or the companion's Record input log or Overlay timing
- * log. It sits just inside the screen's rounded corner (the display's own corner radius), so the curve never hides
+ * A small red dot in the pad's top left corner while Diagnostics is on, on the phone or in the companion. It sits just inside the screen's rounded corner (the display's own corner radius), so the curve never hides
  * it. A still dot: it redraws only when a log is switched, so it costs the screen thread nothing while playing.
  */
 @Composable
 fun LogOnDot(runtime: GamepadRuntime, modifier: Modifier = Modifier) {
-    val debug by runtime.debug.enabled.collectAsStateWithLifecycle()
-    val ratchet by runtime.ratchetTimingOn.collectAsStateWithLifecycle()
-    val draw by runtime.drawTimingLogOn.collectAsStateWithLifecycle()
+    val on by runtime.debug.enabled.collectAsStateWithLifecycle()
     val pc by runtime.wifi.pcLogging.collectAsStateWithLifecycle()
-    if (!(debug || ratchet || draw || pc)) return
+    if (!(on || pc)) return
     val view = LocalView.current
     val config = LocalConfiguration.current
     val density = LocalDensity.current

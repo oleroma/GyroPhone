@@ -30,10 +30,14 @@ public static class Wire
     public const int ErrorSize = 16;
     /// <summary>LINK_TEST_CTL: u16 seconds@12 (0 = stop), 2 reserved bytes; only from this PC (loopback).</summary>
     public const int LinkTestCtlSize = 16;
-    /// <summary>LOG_CTL: u8 log@12 (<see cref="LogCtlInputLog"/> or <see cref="LogCtlOverlayTiming"/>), u8 on@13, 2 reserved bytes; only from this PC (loopback).</summary>
+    /// <summary>
+    /// LOG_CTL: u8 what@12, u8 value@13, 2 reserved bytes; only from this PC (loopback). What: <see cref="LogCtlDiagnostics"/>
+    /// (value 1 on, 0 off), <see cref="LogCtlSave"/>, <see cref="LogCtlKeep"/> (value = minutes).
+    /// </summary>
     public const int LogCtlSize = 16;
-    public const byte LogCtlInputLog = 1;
-    public const byte LogCtlOverlayTiming = 2;
+    public const byte LogCtlDiagnostics = 1;
+    public const byte LogCtlSave = 2;
+    public const byte LogCtlKeep = 3;
     /// <summary>QR code pairing: the phone's key, MACed with the QR's one-time token.</summary>
     public const int KeyEnrollSize = 137;
     public const int KeyEnrollAckSize = 41;
@@ -249,10 +253,10 @@ public static class LinkInfoFlags
     /// <summary>With Usb: the cable runs in accessory mode (direct USB), not tethering.</summary>
     public const byte UsbDirect = 1 << 2;
 
-    /// <summary>The phone's debug tools are on: the PC keeps its debug log while LINK_INFOs carry this.</summary>
+    /// <summary>The phone's Diagnostics is on: the PC's switch follows it when it changes.</summary>
     public const byte DebugTrace = 1 << 3;
 
-    /// <summary>With DebugTrace: a 3-bit counter; the PC saves its last 3 minutes of debug log when it changes.</summary>
+    /// <summary>With DebugTrace: a 3-bit counter of the phone's Saves; the PC saves its side when it changes.</summary>
     public const byte DebugSaveMask = 0x70;
     public const int DebugSaveShift = 4;
 
@@ -277,8 +281,11 @@ public static class TestModeFlags
     public const byte LatencyScreen = 1 << 1;
     /// <summary>A Link test runs: the phone sends fake moving input at its full rate, marked <see cref="StateFlags.LinkTest"/>.</summary>
     public const byte LinkTest = 1 << 2;
-    /// <summary>A Performance record runs: the phone measures its side of the link and sends PHONE_STATS once a second.</summary>
+    /// <summary>Diagnostics is on: the phone measures its side of the link and sends PHONE_STATS once a second.</summary>
     public const byte PhoneStats = 1 << 3;
+    /// <summary>With <see cref="PhoneStats"/>: a 3-bit counter of the PC's Saves; the phone saves its side when it changes.</summary>
+    public const byte DiagSaveMask = 0x70;
+    public const int DiagSaveShift = 4;
 }
 
 /// <summary>HOST_STATUS's second flags byte (byte 22).</summary>
@@ -291,7 +298,7 @@ public static class HostStatusFlags2
     /// the phone sends OVERLAY_SAMPLES before each OVERLAY. Older phones ignore it.
     /// </summary>
     public const byte OverlaySamples = 1 << 6;
-    /// <summary>A Performance log is on (Record input log or Overlay timing log): the phone's pad shows a red dot. Older phones ignore it.</summary>
+    /// <summary>Diagnostics is on: the phone's switch follows it when it changes, and its pad shows a red dot. Older phones ignore it.</summary>
     public const byte PcLogging = 1 << 7;
     /// <summary>The PC reaches the phone through its own Wi-Fi as a client (of a router or the phone's hotspot), not by cable or as the hotspot.</summary>
     public const byte PcWifi = 1 << 1;

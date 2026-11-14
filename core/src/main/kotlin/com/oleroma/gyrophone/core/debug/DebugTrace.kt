@@ -7,15 +7,19 @@ import com.oleroma.gyrophone.core.model.GamepadButton
 import kotlin.math.abs
 
 /**
- * The debug view's event log: what came in (touches, controller keys, layer changes), what went
- * out (game pad buttons and sticks, keys, mouse), and once-a-second link lines, in a ring of the
- * last [capacity] events. Exists only while debugging is on, so nothing here costs anything
- * otherwise. Thread-safe: the engine, the pump and the UI all call it.
+ * Diagnostics' event log (Settings › Performance › Diagnostics): what came in (touches, controller keys,
+ * layer changes), what went out (game pad buttons and sticks, keys, mouse), ratchet timings, draw times and
+ * once-a-second link lines, in a ring of the last [capacity] events. Exists only while Diagnostics is on, so
+ * nothing here costs anything otherwise. Thread-safe.
+ *
+ * The input paths never format text: [queue] and [queueOutput] only put the time, a reference and two
+ * numbers into a ready-made slot (no allocation for an output); the diagnostics thread turns them into
+ * lines with [drain] a few times a second.
  *
  * Times are [clock] nanoseconds (the engine's clock). [save] turns them into wall-clock times.
  */
 class DebugTrace(
-    val capacity: Int = 65_536,
+    val capacity: Int = 200_000,
     private val clock: () -> Long = System::nanoTime,
     private val wallMillis: () -> Long = System::currentTimeMillis,
 ) {
@@ -35,6 +39,54 @@ class DebugTrace(
     }
 
     class Event(val nanos: Long, val kind: Kind, val text: String)
+
+    // ---- the input paths' queue ----------------------------------------------------------------
+
+    private val qLock = Any()
+    private val qNanos = LongArray(QUEUE)
+    private val qKind = arrayOfNulls<Kind>(QUEUE)
+    private val qRef = arrayOfNulls<Any>(QUEUE)
+    private val qA = IntArray(QUEUE)
+    private val qB = IntArray(QUEUE)
+    private var qHead = 0
+    private var qCount = 0
+
+    /** Queued events dropped because the queue was full (the diagnostics thread fell behind). */
+    @Volatile var dropped = 0L
+        private set
+
+    private fun enqueue(kind: Kind?, ref: Any, a: Int, b: Int, nanos: Long) {
+        synchronized(qLock) {
+            if (qCount == QUEUE) { dropped++; return }
+            val i = (qHead + qCount) % QUEUE
+            qNanos[i] = nanos; qKind[i] = kind; qRef[i] = ref; qA[i] = a; qB[i] = b
+            qCount++
+        }
+    }
+
+    /** From an input path: a line made later by [text], on the diagnostics thread, stamped with now. */
+    fun queue(kind: Kind, text: () -> String) = enqueue(kind, text, 0, 0, clock())
+
+    /** From the send path: one engine snapshot, compared with the one before on the diagnostics thread ([output]). */
+    fun queueOutput(s: HidState, gyroDx: Int = 0, gyroDy: Int = 0) = enqueue(null, s, gyroDx, gyroDy, clock())
+
+    /** Turns the queued events into lines, oldest first; the diagnostics thread calls it a few times a second. */
+    fun drain() {
+        while (true) {
+            val nanos: Long; val kind: Kind?; val ref: Any?; val a: Int; val b: Int
+            synchronized(qLock) {
+                if (qCount == 0) return
+                val i = qHead
+                nanos = qNanos[i]; kind = qKind[i]; ref = qRef[i]; a = qA[i]; b = qB[i]
+                qRef[i] = null
+                qHead = (qHead + 1) % QUEUE
+                qCount--
+            }
+            @Suppress("UNCHECKED_CAST")
+            if (kind == null) output(ref as HidState, a, b, nanos)
+            else add(kind, runCatching { (ref as () -> String)() }.getOrElse { "(line failed: ${it.javaClass.simpleName})" }, nanos)
+        }
+    }
 
     private val times = LongArray(capacity)
     private val kinds = arrayOfNulls<Kind>(capacity)
@@ -185,22 +237,14 @@ class DebugTrace(
 
     // ---- gyro -------------------------------------------------------------------------------
 
-    /** Latest raw gyro sample, deg/s, for the overlay. */
-    @Volatile var gyroRaw = FloatArray(3)
-        private set
     private val gyroSamples = java.util.concurrent.atomic.AtomicInteger()
-
-    /** Keep [gyroRaw] for the panel; off in quiet mode, where nothing shows it. */
-    @Volatile var keepGyroRaw = true
 
     /** Gyro samples per second (set once a second by [secondTick]). */
     @Volatile var gyroPerSecond = 0
         private set
 
-    /** One raw gyro sample in deg/s. Only counted and kept for the overlay; not logged. */
-    fun gyro(x: Float, y: Float, z: Float) {
-        // On the gyro path: no lock and, in quiet mode, no allocation.
-        if (keepGyroRaw) gyroRaw = floatArrayOf(x, y, z)
+    /** One gyro sample: only counted (for the link line's gyro rate). On the gyro path: no lock, no allocation. */
+    fun gyroSample() {
         gyroSamples.incrementAndGet()
     }
 
@@ -220,6 +264,7 @@ class DebugTrace(
      * per event, `<wall ms>\t<side>\t<kind>\t<text>`, so recordings of both sides sort together.
      */
     fun save(side: String, header: List<String>, windowNanos: Long = RECORD_NANOS): String {
+        drain()
         val events = since(windowNanos)
         val nowNanos = clock()
         val nowMs = wallMillis()
@@ -227,6 +272,7 @@ class DebugTrace(
         sb.append("# GyroPhone debug recording, side ").append(side).append('\n')
         sb.append("# saved at wall ms ").append(nowMs).append('\n')
         for (h in header) sb.append("# ").append(h.replace('\n', ' ')).append('\n')
+        if (dropped > 0) sb.append("# events dropped (the diagnostics thread fell behind): ").append(dropped).append('\n')
         for (e in events) {
             val ms = nowMs - (nowNanos - e.nanos) / 1_000_000
             sb.append(ms).append('\t').append(side).append('\t').append(e.kind.tag).append('\t').append(e.text).append('\n')
@@ -236,6 +282,8 @@ class DebugTrace(
 
     companion object {
         const val RECORD_NANOS = 180_000_000_000L
+        /** Events the input paths may queue between two drains. */
+        const val QUEUE = 16_384
         const val AXIS_EVERY_NANOS = 100_000_000L
         const val MOTION_EVERY_NANOS = 100_000_000L
         const val AXIS_STEP_PCT = 5

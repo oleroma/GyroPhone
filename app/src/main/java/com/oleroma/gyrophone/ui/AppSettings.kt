@@ -34,6 +34,7 @@ import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.ProfileExport
 import com.oleroma.gyrophone.core.model.isWorkspaceInput
 import com.oleroma.gyrophone.runtime.GamepadRuntime
+import com.oleroma.gyrophone.runtime.PhoneDebug
 import com.oleroma.gyrophone.runtime.ScreenOrientation
 import kotlin.math.roundToInt
 
@@ -145,9 +146,8 @@ private fun AppTab(runtime: GamepadRuntime) {
             dismissButton = { TextButton(onClick = { importing = null }) { Text("Cancel") } },
         )
     }
-    val debugOn by runtime.debug.enabled.collectAsStateWithLifecycle()
-    val ratchetTimingOn by runtime.ratchetTimingOn.collectAsStateWithLifecycle()
-    val drawTimingLogOn by runtime.drawTimingLogOn.collectAsStateWithLifecycle()
+    val diagOn by runtime.debug.enabled.collectAsStateWithLifecycle()
+    val diagKeep by runtime.debug.keepMinutes.collectAsStateWithLifecycle()
     val usbDirect by runtime.usbDirectOn.collectAsStateWithLifecycle()
     val tight by runtime.gyroTightening.collectAsStateWithLifecycle()
     val smooth by runtime.gyroSmoothing.collectAsStateWithLifecycle()
@@ -351,7 +351,7 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "ends on the PC plays either way.",
             ) { runtime.setGameRumble(it) }
         },
-        category(runtime, "debugging", "Performance", "Reading USB controllers directly; debug: the debug panel, ratchet timing, recordings and logs") {
+        category(runtime, "debugging", "Performance", "Reading USB controllers directly; Diagnostics: every log in one switch") {
             SwitchRow(
                 "Read USB controllers directly", usbDirect,
                 hint = if (usbDirect) "A gamepad plugged into the phone's USB port is read by GP itself on its own thread, the fastest " +
@@ -361,25 +361,39 @@ private fun AppTab(runtime: GamepadRuntime) {
             ) { runtime.setUsbDirect(it) }
             Text("Debug", style = MaterialTheme.typography.titleSmall)
             SwitchRow(
-                "Debug tools", debugOn,
-                hint = "Shows a debug panel on the pad: the link's speed and latency, the gyro, the active workspace and " +
-                        "layer, what the PC is sent now, and a list of what you press and what it turns into. " +
-                        "Record saves the last 3 minutes (the PC saves its side too over Wi-Fi or USB). " +
-                        "Off: nothing is logged.",
+                "Diagnostics", diagOn,
+                hint = "Every log at once, here and on the PC (switching it on either side switches both): what you press and " +
+                        "what it turns into, what the PC is sent, ratchet timings, the gyro displays' draw times and the link " +
+                        "each second. Only the last minutes set below are kept, in memory; Save writes them to a file and the " +
+                        "PC saves its side into its Performance results. A red dot shows at the pad's top left while it's on. " +
+                        "It barely touches input: a press only drops a few numbers into a slot, and the text is made later on " +
+                        "a side thread. Off: nothing is measured or logged.",
             ) { runtime.debug.setEnabled(it) }
-            SwitchRow(
-                "Ratchet timing", ratchetTimingOn,
-                hint = "Measures each ratchet press made during a quick swing and back, shown at the top of the pad " +
-                        "(the last 10 and the middle of each). You: ms from the swing's turn-around to your press " +
-                        "(+ = after the turn). App: ms from the press reaching the phone to the gyro stopping. " +
-                        "Back: how far the camera still moved back after the turn before it stopped (degrees once the " +
-                        "game's turn is set in Gyro, else mouse counts). Turning it off clears the list.",
-            ) { runtime.setRatchetTiming(it) }
-            SwitchRow(
-                "Display timing log", drawTimingLogOn,
-                hint = "While the gyro displays draw, writes how long they take to the phone's system log once a " +
-                        "second (tag GPDraw, read with adb logcat), so a slow display can be found. Costs almost nothing.",
-            ) { runtime.setDrawTimingLog(it) }
+            var keep by remember(diagKeep) { mutableStateOf(diagKeep.toFloat()) }
+            Searchable("Keep", "How many minutes Diagnostics keeps and Save writes, 1 to 30.") {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Keep %.0f min".format(keep), Modifier.padding(end = 8.dp))
+                        Slider(
+                            value = keep,
+                            onValueChange = { keep = it.roundToInt().toFloat() },
+                            valueRange = PhoneDebug.MIN_KEEP.toFloat()..PhoneDebug.MAX_KEEP.toFloat(),
+                            steps = PhoneDebug.MAX_KEEP - PhoneDebug.MIN_KEEP - 1,
+                            onValueChangeFinished = { runtime.debug.setKeepMinutes(keep.roundToInt()) },
+                        )
+                    }
+                    Hint("How many minutes Diagnostics keeps and Save writes. More only takes memory (a few MB at 30).")
+                }
+            }
+            if (diagOn) {
+                OutlinedButton(onClick = {
+                    runtime.debug.saveInBackground { f ->
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            note(context, if (f != null) "Saved the last ${diagKeep} min (the PC saves its side too)" else "Not saved")
+                        }
+                    }
+                }) { Text("Save") }
+            }
         },
         category(runtime, "backup", "Backup", "Export or import everything as a file") {
             Searchable(

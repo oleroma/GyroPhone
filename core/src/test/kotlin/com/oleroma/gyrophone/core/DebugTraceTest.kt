@@ -73,6 +73,9 @@ class DebugTraceTest {
         e.trace = t
         e.setKey(AndroidKey.BUTTON_A, true)
         e.snapshot()
+        // The input paths only queue; nothing is made into text until the diagnostics thread drains.
+        assertTrue(texts(t).none { it.startsWith("any device:") })
+        t.drain()
         val log = texts(t)
         assertTrue(log.toString(), log.any { it.startsWith("any device: A down → ") && "Gamepad A" in it })
         assertTrue(log.toString(), "pad A down" in log)
@@ -85,5 +88,13 @@ class DebugTraceTest {
         assertEquals(listOf("A"), e.heldInputs())
         e.setKey(AndroidKey.BUTTON_A, false)
         assertEquals(emptyList<String>(), e.heldInputs())
+    }
+
+    @Test fun queuedOutputIsComparedWhenDrained() {
+        val t = trace()
+        t.queueOutput(HidState(gamepad = GamepadState(buttons = 1 shl GamepadButton.A.bit)))
+        assertEquals(emptyList<String>(), texts(t))
+        t.drain()
+        assertEquals(listOf("pad A down"), texts(t))
     }
 }
