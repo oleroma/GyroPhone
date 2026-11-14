@@ -368,6 +368,8 @@ object HostStatusFlags2 {
      * phone sends OVERLAY_SAMPLES before each OVERLAY. Older PCs never set it; older phones ignore it.
      */
     const val OVERLAY_SAMPLES = 64
+    /** A Performance log is on in the companion (Record input log or Overlay timing log): the pad shows its red dot. */
+    const val PC_LOGGING = 128
 }
 
 /** HOST_STATUS flags. */

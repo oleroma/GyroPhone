@@ -339,6 +339,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     // Read by the pump (LINK_INFO) and the UI (stats).
     @Volatile private var clockOffsetUs = 0L
     @Volatile private var rttMinUs = -1L
+    private val _pcLogging = MutableStateFlow(false)
+
+    /** A Performance log is on in the connected companion (the pad's red dot); false with no PC. */
+    val pcLogging: StateFlow<Boolean> = _pcLogging
+
     @Volatile private var hostStatus: HostStatus? = null
         set(v) {
             field = v
@@ -346,6 +351,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             overlay.compassWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_COMPASS != 0
             overlay.totalsWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_TOTALS != 0
             overlay.samplesWanted = overlay.wanted && v!!.flags2 and HostStatusFlags2.OVERLAY_SAMPLES != 0
+            _pcLogging.value = v != null && v.flags2 and HostStatusFlags2.PC_LOGGING != 0
             if (v != null) motion.padTakesMotion = OutputMode.takesMotion(v.outputMode) && v.flags and HostStatusFlags.PAD_PLUGGED != 0
             else motion.padTakesMotion = false
         }

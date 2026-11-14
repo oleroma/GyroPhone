@@ -291,6 +291,8 @@ public static class HostStatusFlags2
     /// the phone sends OVERLAY_SAMPLES before each OVERLAY. Older phones ignore it.
     /// </summary>
     public const byte OverlaySamples = 1 << 6;
+    /// <summary>A Performance log is on (Record input log or Overlay timing log): the phone's pad shows a red dot. Older phones ignore it.</summary>
+    public const byte PcLogging = 1 << 7;
     /// <summary>The PC reaches the phone through its own Wi-Fi as a client (of a router or the phone's hotspot), not by cable or as the hotspot.</summary>
     public const byte PcWifi = 1 << 1;
     /// <summary>With <see cref="PcWifi"/>: the PC's Wi-Fi is on 2.4 GHz.</summary>

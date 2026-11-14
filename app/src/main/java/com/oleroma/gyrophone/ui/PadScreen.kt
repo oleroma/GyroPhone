@@ -2251,6 +2251,9 @@ fun PadScreen(
 
         if (!editing && !hidden) DebugOverlay(runtime, Modifier.align(Alignment.BottomStart), covered)
 
+        // A small red dot while any Performance log is on, here or in the companion (switched by hand or by an agent).
+        if (!hidden) LogOnDot(runtime, Modifier.align(Alignment.TopStart))
+
         // Settings › Performance › Ratchet timing: each ratchet press against the swing's turn-around.
         if (!editing && !hidden && !covered) RatchetTimingPanel(runtime, Modifier.align(Alignment.TopCenter).padding(top = 48.dp))
 

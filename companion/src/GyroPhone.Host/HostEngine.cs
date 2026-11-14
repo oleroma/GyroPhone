@@ -2646,7 +2646,8 @@ public sealed class HostEngine
         WireCodec.EncodeHostStatus(new HostStatus(s.HighestRxSeq, _stats.RxPerSec, _stats.LossPermille,
             _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs, (byte)_settings.OutputMode, flags,
             (byte)((_settings.UsbDirect ? HostStatusFlags2.UsbDirect : 0) | _pcSetup
-                | (_overlayOn && OverlayWantsSamples() ? HostStatusFlags2.OverlaySamples : 0))), p);
+                | (_overlayOn && OverlayWantsSamples() ? HostStatusFlags2.OverlaySamples : 0)
+                | (_settings.InputLog || _settings.OverlayTimingLog ? HostStatusFlags2.PcLogging : 0))), p);
         // TEST_MODE first, so HOST_STATUS stays the newest status the phone holds. While no test
         // runs it goes only with the few statuses after one ended (a lost "off" comes again).
         if (TestModeFlagsNow() != 0 || _testModeOffRepeats > 0)
