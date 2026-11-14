@@ -63,7 +63,7 @@ public class EngineLockTests
         var h = new Harness();
         var lines = new List<string>();
         bool allFree = true;
-        h.Engine.SetInputLog(true); // off by default
+        h.Engine.SetDiagnostics(true); // off by default
         h.Engine.Recorder = new InputRecorder(l =>
         {
             allFree &= Task.Run(() => h.Engine.Snapshot()).Wait(5000);
@@ -82,7 +82,7 @@ public class EngineLockTests
     {
         var h = new Harness();
         var lines = new List<string>();
-        h.Engine.SetInputLog(true); // off by default
+        h.Engine.SetDiagnostics(true); // off by default
         h.Engine.Recorder = new InputRecorder(lines.Add);
         var phone = h.NewPhone();
         h.Connect(phone);
@@ -117,7 +117,7 @@ public class EngineLockTests
     {
         var h = new Harness();
         var lines = new List<string>();
-        h.Engine.SetInputLog(true); // off by default
+        h.Engine.SetDiagnostics(true); // off by default
         h.Engine.Recorder = new InputRecorder(lines.Add);
         var phone = h.NewPhone();
         h.Connect(phone);

@@ -31,10 +31,14 @@ public sealed class HostSettings
 
     /// <summary>"Measure buttons" on Home's latency card: the phone sends PRESS_TIME.</summary>
     public bool MeasureButtons { get; set; }
-    /// <summary>"Record input log" (Performance › Debug, off by default): the engine writes input.log (<see cref="InputRecorder"/>).</summary>
-    public bool InputLog { get; set; }
-    /// <summary>"Overlay timing log" (off by default): the overlays' draw times in companion.log, every second while they draw.</summary>
-    public bool OverlayTimingLog { get; set; }
+    /// <summary>
+    /// "Diagnostics" (Performance, off by default): every log at once, kept in memory for <see cref="DiagnosticsMinutes"/>
+    /// (<see cref="DebugTrace"/>): the input log's lines, what was injected, the overlays' draw times, the link each second.
+    /// </summary>
+    public bool Diagnostics { get; set; }
+    /// <summary>"Keep" under Diagnostics: the minutes kept and saved, <see cref="MinKeepMinutes"/> to <see cref="DebugTrace.MaxKeepMinutes"/>.</summary>
+    public int DiagnosticsMinutes { get; set; } = DefaultKeepMinutes;
+    public const int MinKeepMinutes = 1, DefaultKeepMinutes = 3;
     /// <summary>"Use this PC's keys for Press a key" on the App page: off, the PC's keyboard, mouse and controller are never read for it.</summary>
     public bool PressKeyListen { get; set; } = true;
     /// <summary>"Notify when the phone listens for a key" on the App page: a tray notification each time the phone's "Press a key" opens.</summary>
@@ -60,14 +64,14 @@ public sealed class HostSettings
         bool migrated = false;
         if (Version < 2)
         {
-            // Logs and metrics run only when switched on (both used to start on).
-            InputLog = false;
-            OverlayTimingLog = false;
+            // Logs and metrics run only when switched on.
+            Diagnostics = false;
             migrated = true;
         }
         Version = CurrentVersion;
         PairedPhones ??= [];
         CatchUpMs = ClampCatchUpMs(CatchUpMs);
+        DiagnosticsMinutes = Math.Clamp(DiagnosticsMinutes, MinKeepMinutes, DebugTrace.MaxKeepMinutes);
         Overlays ??= [];
         OverlayPresets ??= [];
         OverlayPresets.RemoveAll(o => o == null);

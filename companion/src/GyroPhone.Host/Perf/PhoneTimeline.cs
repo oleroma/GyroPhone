@@ -16,7 +16,7 @@ public readonly record struct PhoneSecond(long AtUs, int States, int Packets, in
 /// <summary>The last 20 minutes of <see cref="PhoneSecond"/>s, for test records. Written by the engine, read by the monitor.</summary>
 public sealed class PhoneTimeline
 {
-    public const int Keep = 1200;
+    public const int Keep = 1860; // Diagnostics keeps up to 30 minutes, plus a minute of slack
     private readonly PhoneSecond[] _ring = new PhoneSecond[Keep];
     private int _head, _count;
     private readonly object _lock = new();

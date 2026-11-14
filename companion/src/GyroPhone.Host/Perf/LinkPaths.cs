@@ -14,7 +14,7 @@ public sealed record PcAdapter(string Name, bool Hotspot, bool Wireless = false,
 
 /// <summary>
 /// The way the phone's packets go (docs/spec/pc-companion.md, "Performance"): the phone's side from LINK_INFO's
-/// path, the PC's from the adapter on the phone's subnet. Named as the Record test's Setup picks are.
+/// path, the PC's from the adapter on the phone's subnet. Named as people name their setups.
 /// </summary>
 public static class LinkPaths
 {
