@@ -59,6 +59,9 @@
     </Link>
     <Inf>
       <TimeStamp>$(GpDriverVersion)</TimeStamp>
+      <!-- Yesterday in UTC: stampinf's default (today, local time) is "in the future" to Inf2Cat between
+           local midnight and UTC midnight, and it refuses a postdated DriverVer. -->
+      <DateStamp>$([System.DateTime]::UtcNow.AddDays(-1).ToString("MM/dd/yyyy"))</DateStamp>
     </Inf>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
