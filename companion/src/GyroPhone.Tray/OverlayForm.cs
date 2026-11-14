@@ -1012,7 +1012,8 @@ internal sealed class OverlayForm : Form
         string by = _gpuSurface == null ? "CPU" : _gpuSurface.Direct ? "GPU" : "GPU, copied";
         _stats = _statFrames == 0
             ? $"{_title} {Width}×{Height} ({by}): idle"
-            : $"{_title} {Width}×{Height} ({by}): {_statSumMs / _statFrames:0.0} ms avg, {_statMaxMs:0.0} max, {_statFrames / secs:0} fps";
+            : $"{_title} {Width}×{Height} ({by}): {_statSumMs / _statFrames:0.0} ms avg, {_statMaxMs:0.0} max, {_statFrames / secs:0} fps"
+                + (_gpuSurface?.TakeTimes() is { Length: > 0 } parts ? " [" + parts + "]" : "");
         _statStart = now;
         _statSumMs = _statMaxMs = 0;
         _statFrames = 0;

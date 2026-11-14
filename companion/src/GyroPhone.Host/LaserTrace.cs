@@ -14,7 +14,7 @@ public sealed class LaserTrace
     public const int StrokeMax = 4096;
     public const float StrokeStepDeg = 0.5f;
     public const int GridDeg = 15;
-    private const int GridSteps = 96;
+    public const int GridSteps = 96;
     private static readonly float StrokeStepCos = MathF.Cos(StrokeStepDeg * MathF.PI / 180f);
 
     /// <summary>A ring of directions with times, oldest first.</summary>
