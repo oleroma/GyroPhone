@@ -555,6 +555,15 @@ public sealed class HostEngine
                 if (from.Family == AddressFamily.InterNetwork && from[4] == 127) SetLinkTest(Le.U16(d, Wire.Header), "asked on this PC");
                 else _dropped++;
                 return;
+            case PacketType.LogCtl:
+                // Performance › Debug's log switches, for an agent on this PC (tools/gp-log.sh); loopback only.
+                if (from.Family != AddressFamily.InterNetwork || from[4] != 127) { _dropped++; return; }
+                bool logOn = d[13] != 0;
+                if (d[12] == Wire.LogCtlInputLog) SetInputLog(logOn);
+                else if (d[12] == Wire.LogCtlOverlayTiming) SetOverlayTimingLog(logOn);
+                else { _dropped++; return; }
+                _events.Log((d[12] == Wire.LogCtlInputLog ? "input log" : "overlay timing log") + (logOn ? " turned on" : " turned off") + " (asked on this PC)");
+                return;
             case PacketType.KeyEnroll:
                 if (WireCodec.TryDecodeKeyEnroll(d, out var ke)) OnKeyEnroll(d, ke, from, nowUs);
                 else _dropped++;

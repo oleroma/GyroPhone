@@ -126,14 +126,24 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
 
     /** What `adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService` prints. */
     fun dump(args: Array<out String>): String = buildString {
-        if ("quiet" in args) { setQuiet(true); enable(true) }
-        if ("on" in args) setEnabled(true)
-        if ("off" in args) setEnabled(false)
+        // The Performance tab's other logs: `ratchet on|off` (Ratchet timing), `drawlog on|off` (Display timing log).
+        val switch = args.getOrNull(1)?.let { it == "on" }
+        when (args.firstOrNull()) {
+            "ratchet" -> switch?.let { runtime.setRatchetTiming(it) }
+            "drawlog" -> switch?.let { runtime.setDrawTimingLog(it) }
+            else -> {
+                if ("quiet" in args) { setQuiet(true); enable(true) }
+                if ("on" in args) setEnabled(true)
+                if ("off" in args) setEnabled(false)
+            }
+        }
         appendLine("GyroPhone $version")
         for (h in header()) appendLine(h)
+        appendLine("ratchet timing: " + (if (runtime.ratchetTimingOn.value) "on" else "off") +
+                " · display timing log: " + (if (runtime.drawTimingLogOn.value) "on" else "off"))
         val t = trace
         if (t == null) {
-            appendLine("debug tools: off (args: on | quiet | off | record | events [n])")
+            appendLine("debug tools: off (args: on | quiet | off | record | events [n] | ratchet on|off | drawlog on|off)")
             return@buildString
         }
         appendLine("debug tools: on" + if (_quiet.value) " (quiet: no panel)" else "")

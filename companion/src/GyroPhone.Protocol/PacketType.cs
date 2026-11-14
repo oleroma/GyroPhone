@@ -57,6 +57,8 @@ public static class PacketType
     public const byte HostBye = 0x3F;
     /// <summary>Unsealed, from a program on this PC (loopback only): start or stop a Link test (tools/link-test.sh).</summary>
     public const byte LinkTestCtl = 0x7E;
+    /// <summary>Unsealed, from a program on this PC (loopback only): switch a Performance log on or off (tools/gp-log.sh).</summary>
+    public const byte LogCtl = 0x7D;
     public const byte Error = 0x7F;
 
     /// <summary>Sealed (AES-GCM) packets are types 0x20..0x3F.</summary>
@@ -80,6 +82,7 @@ public static class PacketType
         Welcome => Wire.WelcomeSize,
         Error => Wire.ErrorSize,
         LinkTestCtl => Wire.LinkTestCtlSize,
+        LogCtl => Wire.LogCtlSize,
         KeyEnroll => Wire.KeyEnrollSize,
         KeyEnrollAck => Wire.KeyEnrollAckSize,
         _ => PlainSize(type) is var p && p >= 0 ? Wire.Header + p + Wire.GcmTag : -1,

@@ -30,6 +30,10 @@ public static class Wire
     public const int ErrorSize = 16;
     /// <summary>LINK_TEST_CTL: u16 seconds@12 (0 = stop), 2 reserved bytes; only from this PC (loopback).</summary>
     public const int LinkTestCtlSize = 16;
+    /// <summary>LOG_CTL: u8 log@12 (<see cref="LogCtlInputLog"/> or <see cref="LogCtlOverlayTiming"/>), u8 on@13, 2 reserved bytes; only from this PC (loopback).</summary>
+    public const int LogCtlSize = 16;
+    public const byte LogCtlInputLog = 1;
+    public const byte LogCtlOverlayTiming = 2;
     /// <summary>QR code pairing: the phone's key, MACed with the QR's one-time token.</summary>
     public const int KeyEnrollSize = 137;
     public const int KeyEnrollAckSize = 41;
