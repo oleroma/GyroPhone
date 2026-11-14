@@ -339,15 +339,13 @@ public sealed class OverlaySettings
     /// <summary>Snake: a ratchet press clears the Snake.</summary>
     public bool LaserSnakeClearOnRatchet { get; set; }
     /// <summary>
-    /// Snake zip back (LaserSnakeZip, on), as the phone's GyroDisplay.laserSnakeZip*: with LaserSnakeZipBySpeed the tail
-    /// always runs toward the head at LaserSnakeZipSpeed degrees a second, the beam moving or still; else (by time) a
-    /// ratchet press runs it back into the head, the whole Snake in LaserSnakeZipSeconds. It grows again as the beam moves
-    /// on. LaserSnakeZipStops and LaserSnakeZipRatchet are no longer read.
+    /// Snake zip back, as the phone's GyroDisplay.laserSnakeZip*: LaserSnakeZipAlways (Continuous, off) the tail always runs
+    /// toward the head at LaserSnakeZipSpeed degrees a second, the beam moving or still; LaserSnakeZipRatchet (On ratchet,
+    /// on) a ratchet press runs it back into the head, the whole Snake in LaserSnakeZipSeconds. Both can be on. It grows
+    /// again as the beam moves on.
     /// </summary>
-    public bool LaserSnakeZip { get; set; } = true;
-    public bool LaserSnakeZipStops { get; set; } = true;
-    public bool LaserSnakeZipRatchet { get; set; }
-    public bool LaserSnakeZipBySpeed { get; set; }
+    public bool LaserSnakeZipAlways { get; set; }
+    public bool LaserSnakeZipRatchet { get; set; } = true;
     public float LaserSnakeZipSeconds { get; set; } = 0.4f;
     public int LaserSnakeZipSpeed { get; set; } = 360;
 
@@ -365,8 +363,8 @@ public sealed class OverlaySettings
 
     /// <summary>The Snake's zip back as LaserTrace.Add takes it, or null when off.</summary>
     [JsonIgnore]
-    public LaserTrace.Zip? SnakeZip => !LaserSnakeZip ? null
-        : new LaserTrace.Zip(false, true, LaserSnakeZipBySpeed, Math.Clamp(LaserSnakeZipSeconds, 0.05f, 2f), Math.Clamp(LaserSnakeZipSpeed, 1, 2000));
+    public LaserTrace.Zip? SnakeZip => !LaserSnakeZipAlways && !LaserSnakeZipRatchet ? null
+        : new LaserTrace.Zip(LaserSnakeZipAlways, LaserSnakeZipRatchet, Math.Clamp(LaserSnakeZipSeconds, 0.05f, 2f), Math.Clamp(LaserSnakeZipSpeed, 1, 2000));
     /// <summary>
     /// Laser pointer Draw mode: while this output is held (LaserFire numbers, default the left mouse button), from the
     /// phone or, with "Use PC controller for gyro ratchet", the PC's controller, it paints in the Fire colours; with

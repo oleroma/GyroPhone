@@ -23,10 +23,10 @@ public class SnakeZipTests
     }
 
     [Fact]
-    public void BySpeedTheTailAlwaysRunsTowardTheHead()
+    public void ContinuousTheTailAlwaysRunsTowardTheHead()
     {
         var t = new LaserTrace();
-        var zip = new LaserTrace.Zip(false, false, true, 0.4f, 50f);
+        var zip = new LaserTrace.Zip(true, false, 0.4f, 50f);
         Swept(t, zip);
         float moving = t.Strokes.BehindNewest(0);
         Assert.InRange(moving, 28f, 32f);
@@ -38,28 +38,30 @@ public class SnakeZipTests
     }
 
     [Fact]
-    public void ByTimeTheWholeSnakeGoesInThatLongOnceTheBeamStops()
+    public void OnRatchetTheWholeSnakeGoesInThatLongWhileHeld()
     {
         var t = new LaserTrace();
-        var zip = new LaserTrace.Zip(true, false, false, 0.2f, 360f);
-        Swept(t, zip);
-        Assert.InRange(t.Strokes.BehindNewest(0), 59.4f, 60.6f);
-        Still(t, zip, 605, 640);
-        Assert.True(t.Strokes.BehindNewest(0) > 50f);
-        Still(t, zip, 645, 860);
-        Assert.Equal(0f, t.Strokes.BehindNewest(0), 4);
-    }
-
-    [Fact]
-    public void OnRatchetZipsOnAPressOnly()
-    {
-        var t = new LaserTrace();
-        var zip = new LaserTrace.Zip(false, true, false, 0.3f, 360f);
+        var zip = new LaserTrace.Zip(false, true, 0.2f, 360f);
         Swept(t, zip);
         Still(t, zip, 605, 1000);
         Assert.InRange(t.Strokes.BehindNewest(0), 59.4f, 60.6f);
-        Still(t, zip, 1005, 1400, held: true);
+        Still(t, zip, 1005, 1105, held: true);
+        Assert.InRange(t.Strokes.BehindNewest(0), 26f, 34f);
+        Still(t, zip, 1110, 1300, held: true);
         Assert.Equal(0f, t.Strokes.BehindNewest(0), 4);
+        Assert.Equal(1, t.Strokes.Count);
+    }
+
+    [Fact]
+    public void BothAddUp()
+    {
+        var t = new LaserTrace();
+        var zip = new LaserTrace.Zip(true, true, 1f, 30f);
+        Swept(t, zip);
+        float before = t.Strokes.BehindNewest(0);
+        Still(t, zip, 605, 1105, held: true);
+        float want = before / 2f - 15f;
+        Assert.InRange(t.Strokes.BehindNewest(0), want - 3f, want + 3f);
     }
 
     [Fact]

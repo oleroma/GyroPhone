@@ -72,10 +72,9 @@ internal sealed class OverlaysPage : Page
     private readonly UIElement _shootsLikeTitle;
     private readonly StackPanel _spreadOptions;
     private readonly SphereLookRows _paintLook, _snakeLook;
-    private readonly StackPanel _snakeZip, _zipOptions, _zipTimed, _snakeShots, _snakeLookPanel, _laserFacesPanel;
-    private readonly CheckBox _zipOn;
-    private readonly TextBlock _zipSpeedHint;
-    private readonly Seg<bool> _zipBy, _snakeColourBy;
+    private readonly StackPanel _snakeZip, _snakeShots, _snakeLookPanel, _laserFacesPanel;
+    private readonly CheckBox _zipAlways, _zipRatchet;
+    private readonly Seg<bool> _snakeColourBy;
     private readonly SliderRow _zipSeconds, _zipSpeed, _snakeFireBrush, _snakeAimBrush;
     private readonly Seg<int> _laserShape;
     private readonly StackPanel _chOptions;
@@ -585,23 +584,19 @@ internal sealed class OverlaysPage : Page
 
         // Zip back: the tail runs back into the head; the Snake grows again as the beam moves on.
         _snakeZip = new StackPanel();
-        _zipOn = Parts.Toggle("Zip back", () => Change(o => o.LaserSnakeZip = !o.LaserSnakeZip), "The tail runs back into the head, then the Snake grows again as the beam moves on.");
-        _snakeZip.Children.Add(_zipOn);
-        _zipOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
-        _zipBy = new Seg<bool>(b => Change(o => o.LaserSnakeZipBySpeed = b), false, ("By time", false), ("By speed", true));
-        _zipBy.View.Margin = new Thickness(0, 6, 0, 4);
-        _zipOptions.Children.Add(_zipBy.View);
+        _snakeZip.Children.Add(Parts.Text("Zip back", "Sub"));
+        _zipAlways = Parts.Toggle("Continuous", () => Change(o => o.LaserSnakeZipAlways = !o.LaserSnakeZipAlways), "The tail always runs toward the head, while the beam moves and while it holds still: moving faster than the zip speed, the Snake grows (up to its Length); slower, it shrinks.");
+        _snakeZip.Children.Add(_zipAlways);
         // 1 to 2000 °/s, finer toward the slow end: the slider's square, in 1 °/s steps.
         _zipSpeed = new SliderRow("Zip speed", 0, 1, 0.0005, v => $"{ZipSpeed(v)} °/s", v => Change(o => o.LaserSnakeZipSpeed = ZipSpeed(v)));
-        _zipSpeedHint = Parts.Text("The tail always runs toward the head at this many degrees a second, while the beam moves and while it holds still: moving faster than that, the Snake grows (up to its Length); slower, it shrinks.", "Hint");
-        _zipOptions.Children.Add(_zipSpeed.View);
-        _zipOptions.Children.Add(_zipSpeedHint);
-        _zipTimed = new StackPanel();
+        _zipSpeed.View.Margin = new Thickness(20, 0, 0, 0);
+        _snakeZip.Children.Add(_zipSpeed.View);
+        _zipRatchet = Parts.Toggle("On ratchet", () => Change(o => o.LaserSnakeZipRatchet = !o.LaserSnakeZipRatchet), "A ratchet press runs the tail back into the head, the whole Snake in the time below, however long it is. Clear on ratchet, when on, wins.");
+        _snakeZip.Children.Add(_zipRatchet);
         _zipSeconds = new SliderRow("Zip back in", 0.05, 2, 0.05, v => $"{v:0.00} s", v => Change(o => o.LaserSnakeZipSeconds = (float)v));
-        _zipTimed.Children.Add(_zipSeconds.View);
-        _zipTimed.Children.Add(Parts.Text("A ratchet press runs the tail back into the head: the whole Snake goes in that long, however long it is. Clear on ratchet, when on, wins.", "Hint"));
-        _zipOptions.Children.Add(_zipTimed);
-        _snakeZip.Children.Add(_zipOptions);
+        _zipSeconds.View.Margin = new Thickness(20, 0, 0, 0);
+        _snakeZip.Children.Add(_zipSeconds.View);
+        _snakeZip.Children.Add(Parts.Text("Both can be on. Zipped all the way, the Snake stays as a dot the size of its head; it grows again as the beam moves on.", "Hint"));
         snb.Children.Add(_snakeZip);
 
         _snakeShots = new StackPanel();
@@ -1122,14 +1117,12 @@ internal sealed class OverlaysPage : Page
         _laserSnakeGlow.Set(o.LaserSnakeGlow);
         Parts.SetChecked(_laserSnakeClearOnRatchet, o.LaserSnakeClearOnRatchet);
         Parts.Show(_snakeZip, o.LaserSnake);
-        Parts.SetChecked(_zipOn, o.LaserSnakeZip);
-        Parts.Show(_zipOptions, o.LaserSnakeZip);
-        _zipBy.Set(o.LaserSnakeZipBySpeed);
-        Parts.Show(_zipSpeed.View, o.LaserSnakeZipBySpeed);
-        Parts.Show(_zipSpeedHint, o.LaserSnakeZipBySpeed);
-        Parts.Show(_zipTimed, !o.LaserSnakeZipBySpeed);
-        _zipSeconds.Set(o.LaserSnakeZipSeconds);
+        Parts.SetChecked(_zipAlways, o.LaserSnakeZipAlways);
+        Parts.Show(_zipSpeed.View, o.LaserSnakeZipAlways);
         _zipSpeed.Set(Math.Sqrt(Math.Clamp(o.LaserSnakeZipSpeed, ZipSpeedMin, ZipSpeedMax) / (double)ZipSpeedMax));
+        Parts.SetChecked(_zipRatchet, o.LaserSnakeZipRatchet);
+        Parts.Show(_zipSeconds.View, o.LaserSnakeZipRatchet);
+        _zipSeconds.Set(o.LaserSnakeZipSeconds);
         Parts.Show(_snakeShots, o.LaserSnake && (fires || aims));
         Parts.Show(_snakeFireBrush.View, fires);
         Parts.Show(_snakeAimBrush.View, aims);

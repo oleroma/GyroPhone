@@ -279,74 +279,52 @@ public sealed class LaserTrace
         if (draw && brush > 0f) StampNewest(brush / 2f, kind, wayColors, smooth ? SmoothReach : 0, mapWidth, soft);
         if (snake) Strokes.Cut(snakeDeg);
         // The beam moves again: a zip back ends and the Snake grows from its head.
-        _lastPointMs = nowMs;
         _zipping = false;
         _strokeGap = false;
         _lastKind = kind;
         _lastX = dx; _lastY = dy; _lastZ = dz;
     }
 
-    /// <summary>Snake zip back: the beam added no point for this long (it stopped), and the tail starts running into the head.</summary>
-    public const long ZipStillMs = 25;
-
-    // Snake zip back: the tail running into the head, the length it started from, the time it last moved and when the
-    // beam last added a point.
     private bool _zipping;
     private float _zipFrom;
-    private long _zipMs, _lastPointMs = long.MinValue;
+    private long _zipMs;
 
-    /// <summary>A zip back runs or may start soon (the beam stopped): the overlay keeps drawing meanwhile.</summary>
+    /// <summary>A zip back runs: the window keeps drawing (and feeding the trace) meanwhile.</summary>
     public bool ZipWants { get; private set; }
 
     /// <summary>
-    /// Snake zip back settings (OverlaySettings.LaserSnakeZipStops and the rest): when the beam stops, on a ratchet press;
-    /// the whole Snake in Seconds, or with BySpeed at Speed degrees a second. As the phone's LaserTrace.Zip.
+    /// Snake zip back settings (OverlaySettings.LaserSnakeZipAlways and the rest): Always at Speed degrees a second; on a
+    /// Ratchet press, the whole Snake in Seconds. As the phone's LaserTrace.Zip.
     /// </summary>
-    public readonly record struct Zip(bool Stops, bool Ratchet, bool BySpeed, float Seconds, float Speed);
+    public readonly record struct Zip(bool Always, bool Ratchet, float Seconds, float Speed);
 
     /// <summary>
-    /// Snake zip back as <paramref name="zip"/> sets: starts when the beam has added no point for <see cref="ZipStillMs"/>
-    /// (Stops) or on a ratchet press (Ratchet), then runs the tail into the head, the whole Snake in Seconds or at Speed
-    /// degrees a second (BySpeed), until it is gone or the beam moves on. As the phone's.
+    /// Snake zip back as <paramref name="zip"/> sets: with Always the tail always runs toward the head at Speed degrees a
+    /// second, the beam moving or still; with Ratchet a ratchet press runs it back into the head, the whole Snake in
+    /// Seconds, on top of that, until only the head is left or the beam moves on. Fed with the clock while it runs, so a
+    /// held ratchet (a still pose) doesn't stop it. As the phone's.
     /// </summary>
     private void ZipBack(long nowMs, bool pressed, Zip zip)
     {
+        long step = Math.Clamp(nowMs - _zipMs, 0L, 100L);
+        _zipMs = nowMs;
         if (Strokes.Count < 2)
         {
             _zipping = false;
             ZipWants = false;
-            _zipMs = nowMs;
             return;
         }
-        if (zip.BySpeed)
+        if (zip.Ratchet && pressed && !_zipping)
         {
-            // By speed: the tail always runs toward the head at that speed, the beam moving or still.
-            ZipWants = true;
-            long step = Math.Clamp(nowMs - _zipMs, 0L, 100L);
-            _zipMs = nowMs;
-            if (step == 0) return;
-            Strokes.TrimTo(Strokes.BehindNewest(0) - Math.Max(zip.Speed, 1f) * step / 1000f);
-            Version++;
-            return;
+            _zipping = true;
+            _zipFrom = Strokes.BehindNewest(0);
         }
-        if (!_zipping)
-        {
-            bool still = zip.Stops && _lastPointMs != long.MinValue && nowMs - _lastPointMs >= ZipStillMs;
-            if (still || zip.Ratchet && pressed)
-            {
-                _zipping = true;
-                _zipMs = nowMs;
-                _zipFrom = Strokes.BehindNewest(0);
-            }
-            ZipWants = _zipping || zip.Stops;
-            return;
-        }
-        ZipWants = true;
-        long dt = Math.Clamp(nowMs - _zipMs, 0L, 100L);
-        if (dt == 0) return;
-        _zipMs = nowMs;
-        float rate = _zipFrom / Math.Max(zip.Seconds, 0.01f);
-        float left = Strokes.BehindNewest(0) - rate * dt / 1000f;
+        ZipWants = zip.Always || _zipping;
+        float cut = 0f;
+        if (zip.Always) cut += Math.Max(zip.Speed, 1f) * step / 1000f;
+        if (_zipping) cut += _zipFrom / Math.Max(zip.Seconds, 0.01f) * step / 1000f;
+        if (cut <= 0f) return;
+        float left = Strokes.BehindNewest(0) - cut;
         Strokes.TrimTo(left);
         Version++;
         if (left <= 0f)

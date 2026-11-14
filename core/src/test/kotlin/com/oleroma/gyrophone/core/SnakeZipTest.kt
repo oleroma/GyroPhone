@@ -21,14 +21,14 @@ class SnakeZipTest {
         for (ms in from..to step 5) t.add(sin(a), 0f, -cos(a), ms, draw = false, held = held, snakeDeg = 180f, zip = zip)
     }
 
-    @Test fun bySpeedTheTailAlwaysRunsTowardTheHead() {
+    @Test fun continuousTheTailAlwaysRunsTowardTheHead() {
         val t = LaserTrace()
-        val zip = LaserTrace.Zip(stops = false, ratchet = false, bySpeed = true, seconds = 0.4f, speed = 50f)
+        val zip = LaserTrace.Zip(always = true, ratchet = false, seconds = 0.4f, speed = 50f)
         // Moving at 100°/s for 0.6 s with the tail running at 50°/s: half the 60° path is left.
         swept(t, zip)
         val moving = t.strokes.behindNewest(0)
         assertTrue("moving $moving", moving in 28f..32f)
-        // Still: it keeps running in at once, about 10° in 0.2 s, and is all gone in time, the head kept.
+        // Still: it keeps running in, about 10° in 0.2 s, and only the head is left in time.
         still(t, zip, 605, 800)
         val left = t.strokes.behindNewest(0)
         assertTrue("left $left", left in moving - 11f..moving - 9f)
@@ -37,23 +37,38 @@ class SnakeZipTest {
         assertEquals(1, t.strokes.count)
     }
 
-    @Test fun byTimeTheWholeSnakeGoesInThatLongOnceTheBeamStops() {
+    @Test fun onRatchetTheWholeSnakeGoesInThatLongWhileHeld() {
         val t = LaserTrace()
-        val zip = LaserTrace.Zip(stops = true, ratchet = false, bySpeed = false, seconds = 0.2f, speed = 360f)
+        val zip = LaserTrace.Zip(always = false, ratchet = true, seconds = 0.2f, speed = 360f)
         swept(t, zip)
+        // Still without a press: it stays.
+        still(t, zip, 605, 1000)
         assertEquals(60f, t.strokes.behindNewest(0), 0.6f)
-        // Starts as soon as the beam stops (no point for ZIP_STILL_MS); 0.2 s later it is gone.
-        still(t, zip, 605, 640)
-        assertTrue(t.strokes.behindNewest(0) > 50f)
-        still(t, zip, 645, 860)
+        // Held from 1005 ms: half gone after 0.1 s, all gone after 0.2 s, the head kept.
+        still(t, zip, 1005, 1105, held = true)
+        val half = t.strokes.behindNewest(0)
+        assertTrue("half $half", half in 26f..34f)
+        still(t, zip, 1110, 1300, held = true)
         assertEquals(0f, t.strokes.behindNewest(0), 1e-4f)
+        assertEquals(1, t.strokes.count)
+    }
+
+    @Test fun bothAddUp() {
+        val t = LaserTrace()
+        val zip = LaserTrace.Zip(always = true, ratchet = true, seconds = 1f, speed = 30f)
+        swept(t, zip)
+        val before = t.strokes.behindNewest(0)
+        // Held for 0.5 s: 15° by the speed and half the Snake by the ratchet's time.
+        still(t, zip, 605, 1105, held = true)
+        val left = t.strokes.behindNewest(0)
+        assertTrue("left $left of $before", left in before / 2f - 15f - 3f..before / 2f - 15f + 3f)
     }
 
     @Test fun itGrowsAgainFromTheHeadAsTheBeamMoves() {
         val t = LaserTrace()
-        val zip = LaserTrace.Zip(stops = true, ratchet = false, bySpeed = false, seconds = 0.1f, speed = 360f)
+        val zip = LaserTrace.Zip(always = false, ratchet = true, seconds = 0.1f, speed = 360f)
         swept(t, zip)
-        still(t, zip, 605, 1000)
+        still(t, zip, 605, 1000, held = true)
         assertEquals(1, t.strokes.count)
         // Moving on: the line grows from where the head was, with no line back to the old tail.
         for (ms in 1005L..1200L step 5) {
@@ -61,18 +76,6 @@ class SnakeZipTest {
             t.add(sin(a), 0f, -cos(a), ms, draw = false, held = false, snakeDeg = 180f, zip = zip)
         }
         assertEquals(20f, t.strokes.behindNewest(0), 0.6f)
-    }
-
-    @Test fun onRatchetZipsOnAPressOnly() {
-        val t = LaserTrace()
-        val zip = LaserTrace.Zip(stops = false, ratchet = true, bySpeed = false, seconds = 0.3f, speed = 360f)
-        swept(t, zip)
-        // Still without a press: it stays.
-        still(t, zip, 605, 1000)
-        assertEquals(60f, t.strokes.behindNewest(0), 0.6f)
-        // A press (held) runs it in.
-        still(t, zip, 1005, 1400, held = true)
-        assertEquals(0f, t.strokes.behindNewest(0), 1e-4f)
     }
 
     @Test fun trimmingMovesTheTailAlongItsSpan() {

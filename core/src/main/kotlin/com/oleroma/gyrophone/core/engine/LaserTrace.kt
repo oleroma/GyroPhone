@@ -177,9 +177,8 @@ class LaserTrace {
     private var zipping = false
     private var zipFrom = 0f
     private var zipMs = 0L
-    private var lastPointMs = Long.MIN_VALUE
 
-    /** A zip back runs or may start soon (the beam stopped): the display keeps drawing meanwhile. */
+    /** A zip back runs: the display keeps drawing (and feeding the trace) meanwhile. */
     var zipWants = false
         private set
 
@@ -264,7 +263,6 @@ class LaserTrace {
         }
         if (snake) strokes.cut(snakeDeg)
         // The beam moves again: a zip back ends and the Snake grows from its head.
-        lastPointMs = nowMs
         zipping = false
         strokeGap = false
         lastKind = kind
@@ -272,43 +270,29 @@ class LaserTrace {
     }
 
     /**
-     * Snake zip back as [zip] sets: starts when the beam has added no point for [ZIP_STILL_MS] ([Zip.stops]) or on a
-     * ratchet press ([Zip.ratchet]), then runs the tail into the head, the whole Snake in [Zip.seconds] or at
-     * [Zip.speed] degrees a second ([Zip.bySpeed]), until it is gone or the beam moves on.
+     * Snake zip back as [zip] sets: with [Zip.always] the tail always runs toward the head at [Zip.speed] degrees a
+     * second, the beam moving or still; with [Zip.ratchet] a ratchet press runs it back into the head, the whole Snake in
+     * [Zip.seconds], on top of that, until only the head is left or the beam moves on. Fed with the clock while it runs,
+     * so a held ratchet (a still pose) doesn't stop it.
      */
     private fun zipBack(nowMs: Long, pressed: Boolean, zip: Zip) {
+        val step = (nowMs - zipMs).coerceIn(0L, 100L)
+        zipMs = nowMs
         if (strokes.count < 2) {
             zipping = false
             zipWants = false
-            zipMs = nowMs
             return
         }
-        if (zip.bySpeed) {
-            // By speed: the tail always runs toward the head at that speed, the beam moving or still.
-            zipWants = true
-            val step = (nowMs - zipMs).coerceIn(0L, 100L)
-            zipMs = nowMs
-            if (step == 0L) return
-            strokes.trimTo(strokes.behindNewest(0) - zip.speed.coerceAtLeast(1f) * step / 1000f)
-            version++
-            return
+        if (zip.ratchet && pressed && !zipping) {
+            zipping = true
+            zipFrom = strokes.behindNewest(0)
         }
-        if (!zipping) {
-            val still = zip.stops && lastPointMs != Long.MIN_VALUE && nowMs - lastPointMs >= ZIP_STILL_MS
-            if (still || zip.ratchet && pressed) {
-                zipping = true
-                zipMs = nowMs
-                zipFrom = strokes.behindNewest(0)
-            }
-            zipWants = zipping || zip.stops
-            return
-        }
-        zipWants = true
-        val dt = (nowMs - zipMs).coerceIn(0L, 100L)
-        if (dt == 0L) return
-        zipMs = nowMs
-        val rate = zipFrom / zip.seconds.coerceAtLeast(0.01f)
-        val left = strokes.behindNewest(0) - rate * dt / 1000f
+        zipWants = zip.always || zipping
+        var cut = 0f
+        if (zip.always) cut += zip.speed.coerceAtLeast(1f) * step / 1000f
+        if (zipping) cut += zipFrom / zip.seconds.coerceAtLeast(0.01f) * step / 1000f
+        if (cut <= 0f) return
+        val left = strokes.behindNewest(0) - cut
         strokes.trimTo(left)
         version++
         if (left <= 0f) {
@@ -318,12 +302,10 @@ class LaserTrace {
     }
 
     /**
-     * Snake zip back settings ([com.oleroma.gyrophone.core.model.GyroDisplay.laserSnakeZipStops] and the rest): when
-     * the beam [stops], on a [ratchet] press; the whole Snake in [seconds], or with [bySpeed] at [speed] degrees a second.
+     * Snake zip back settings ([com.oleroma.gyrophone.core.model.GyroDisplay.laserSnakeZipAlways] and the rest):
+     * [always] at [speed] degrees a second; on a [ratchet] press, the whole Snake in [seconds].
      */
-    data class Zip(val stops: Boolean, val ratchet: Boolean, val bySpeed: Boolean, val seconds: Float, val speed: Float) {
-        val on: Boolean get() = stops || ratchet
-    }
+    data class Zip(val always: Boolean, val ratchet: Boolean, val seconds: Float, val speed: Float)
 
     /**
      * Moves the steadied point toward the beam at unit ([x], [y], [z]) at [nowMs], as a drawing
@@ -611,8 +593,6 @@ class LaserTrace {
             return argb
         }
         const val STROKE_STEP_DEG = 0.5f
-        /** Snake zip back: the beam added no point for this long (it stopped), and the tail starts running into the head. */
-        const val ZIP_STILL_MS = 25L
 
         /** The shortest run of paint painted at once (degrees); runs are about half the brush's width. */
         const val RUN_MIN_DEG = 1.0
