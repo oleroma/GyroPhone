@@ -58,6 +58,8 @@ object Wire {
     const val MOTION_PLAIN = MotionFeed.SIZE
     /** PRESS_TIME: u32 STATE time, u32 input event time (both low 32 bits of the phone's elapsed-realtime µs). */
     const val PRESS_TIME_PLAIN = 8
+    /** PHONE_STATS: u32 time, u16 states, packets, failed, slow sends, u32 send total µs, send max µs, wake late max µs, STATE gap max µs, phone tx packets ([PhoneStats]). */
+    const val PHONE_STATS_PLAIN = 32
     /** TEST_MODE: u8 [TestModeFlags], 3 reserved bytes. */
     const val TEST_MODE_PLAIN = 4
     /** CAPTURE: u8 [CaptureFlags], 3 reserved bytes. */
@@ -164,6 +166,7 @@ object Wire {
         PacketType.OVERLAY_SAMPLES -> OVERLAY_SAMPLES_PLAIN
         PacketType.MOTION -> MOTION_PLAIN
         PacketType.PRESS_TIME -> PRESS_TIME_PLAIN
+        PacketType.PHONE_STATS -> PHONE_STATS_PLAIN
         PacketType.TEST_MODE -> TEST_MODE_PLAIN
         PacketType.CAPTURE -> CAPTURE_PLAIN
         PacketType.CAPTURED -> CAPTURED_PLAIN
@@ -209,6 +212,8 @@ object PacketType {
     const val CAPTURE = 0x2B
     /** Sent just before each OVERLAY while HOST_STATUS has [HostStatusFlags2.OVERLAY_SAMPLES]: each gyro sample's turn in it. */
     const val OVERLAY_SAMPLES = 0x2C
+    /** Once a second while TEST_MODE has [TestModeFlags.PHONE_STATS] (a Performance record runs): the phone's side of the link ([PhoneStats]). */
+    const val PHONE_STATS = 0x2D
     const val BYE = 0x2F
     const val PONG = 0x30
     const val HOST_STATUS = 0x31
@@ -396,6 +401,9 @@ object TestModeFlags {
 
     /** The PC runs a Link test: the phone sends fake moving input at its full rate, marked [StateFlags.LINK_TEST]. */
     const val LINK_TEST = 4
+
+    /** A Performance record runs: the phone measures its side of the link and sends PHONE_STATS once a second. */
+    const val PHONE_STATS = 8
 }
 
 /** BYE reason (phone). */

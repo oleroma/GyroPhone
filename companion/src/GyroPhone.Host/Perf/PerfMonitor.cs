@@ -81,6 +81,8 @@ public sealed class PerfMonitor : IDisposable
     public FrameStats Frames { get; }
     /// <summary>The phone link's seconds; the input log fills it.</summary>
     public LinkTimeline Link { get; } = new();
+    /// <summary>The phone's side of the link (PHONE_STATS), sent only while a record runs; the engine fills it.</summary>
+    public PhoneTimeline Phone { get; } = new();
     public string Folder { get; }
     public FrameWatchState State { get; private set; } = FrameWatchState.Off;
     public string? Error { get; private set; }
@@ -238,7 +240,7 @@ public sealed class PerfMonitor : IDisposable
             Apply();
         }
         long end = _clock.NowUs;
-        var (run, text) = r.Finish(end, Link.Between(r.StartUs, end + 1_100_000));
+        var (run, text) = r.Finish(end, Link.Between(r.StartUs, end + 1_100_000), Phone.Between(r.StartUs, end + 1_100_000));
         run = run with { Text = text, File = ReportPath };
         List<PerfRun> kept;
         lock (_lock)

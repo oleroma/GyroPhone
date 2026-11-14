@@ -120,10 +120,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     val keys = PhoneKeys(appContext, ::phoneName)
     private val locks = WifiLocks(appContext)
     private val binder = WifiNetworkBinder(appContext) { post { onNetworkChanged() } }
-    private val pump = WifiPump(engine).also {
-        // The phone's side of the link, to read over adb after a test on the phone's own hotspot.
-        LinkLog.start(java.io.File(appContext.getExternalFilesDir(null) ?: appContext.filesDir, "linklog"))
-    }
+    private val pump = WifiPump(engine)
 
     /** The PC's phone overlay: its data is gathered and sent while the PC's HOST_STATUS asks for it. */
     val overlay = OverlayFeed()
@@ -167,6 +164,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             pump.pressTimes = v and TestModeFlags.PRESS_TIMES != 0
             _latencyScreen.value = v and TestModeFlags.LATENCY_SCREEN != 0
             pump.linkTest = v and TestModeFlags.LINK_TEST != 0
+            pump.phoneStats = v and TestModeFlags.PHONE_STATS != 0
             _linkTest.value = v and TestModeFlags.LINK_TEST != 0
         }
     private val accessory = AccessoryBridge(appContext).also { pump.direct = it }

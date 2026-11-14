@@ -125,8 +125,17 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         _perf = new PerfMonitor(new FpsHelperSource(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
             Path.Combine(_log.Directory, "perf"), _log.Write);
         _engine.Recorder!.Timeline = _perf.Link;
-        _perf.Started += () => _engine.Buzz();
-        _perf.Ended += _ => _engine.Buzz();
+        _engine.PhoneTimeline = _perf.Phone;
+        _perf.Started += () =>
+        {
+            _engine.SetPhoneStats(true);
+            _engine.Buzz();
+        };
+        _perf.Ended += _ =>
+        {
+            _engine.SetPhoneStats(false);
+            _engine.Buzz();
+        };
         _perf.PathNow = () => LinkPath()?.Text;
         _engine.Recorder!.SecondNote = _perf.SecondNote;
         OverlayForm.FpsSource = () => (_perf.View(), _perf.GameName, _perf.State, _perf.Recording);

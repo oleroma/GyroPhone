@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.wifi
 
+import android.net.TrafficStats
 import android.os.Process
 import android.os.SystemClock
 import com.oleroma.gyrophone.core.engine.MappingEngine
@@ -13,6 +14,7 @@ import com.oleroma.gyrophone.core.net.MouseTotals
 import com.oleroma.gyrophone.core.net.OverlayFeed
 import com.oleroma.gyrophone.core.net.PacketType
 import com.oleroma.gyrophone.core.net.PcGyroFeed
+import com.oleroma.gyrophone.core.net.PhoneStats
 import com.oleroma.gyrophone.core.net.PressStamp
 import com.oleroma.gyrophone.core.net.PressTime
 import com.oleroma.gyrophone.core.net.SendScheduler
@@ -95,14 +97,19 @@ class WifiPump(private val engine: MappingEngine) {
     private var failedCount = 0
     private var statsWindowStart = 0L
 
-    // For [LinkLog], pump thread only: this second's packets, bytes and time in send, and wake-ups.
-    private var logPackets = 0
-    private var logFailed = 0
-    private var logBytes = 0L
-    private var logSendNs = 0L
-    private var logSendMaxNs = 0L
-    private var logWakeLateMaxNs = 0L
+    /** A Performance record runs on the PC (TEST_MODE PHONE_STATS): measure this side of the link and send PHONE_STATS each second. */
+    @Volatile var phoneStats = false
+
+    // PHONE_STATS, pump thread only, counted only while [phoneStats]: this second's sends, time in send, wake-ups and gaps.
+    private var stPackets = 0
+    private var stFailed = 0
+    private var stSlow = 0
+    private var stSendNs = 0L
+    private var stSendMaxNs = 0L
+    private var stWakeLateMaxNs = 0L
+    private var stGapMaxNs = 0L
     private var lastStateNs = 0L
+    private var lastTxPackets = -1L
     /** When the loop asked to wake (0 = it didn't park on a time). */
     private var parkedUntil = 0L
 
@@ -204,7 +211,7 @@ class WifiPump(private val engine: MappingEngine) {
             if (cur != null && target.session === cur) {
                 val wait = scheduler.sendableAt() - System.nanoTime()
                 if (wait > 0) {
-                    parkedUntil = scheduler.sendableAt()
+                    if (phoneStats) parkedUntil = scheduler.sendableAt()
                     LockSupport.parkNanos(wait)
                     continue
                 }
@@ -213,8 +220,7 @@ class WifiPump(private val engine: MappingEngine) {
             if (parkedUntil != 0L) {
                 // Woken early by input is fine; waking late means the thread wasn't run on time.
                 val late = passStart - parkedUntil
-                if (late > logWakeLateMaxNs) logWakeLateMaxNs = late
-                if (late >= LinkLog.LATE_WAKE_NS) LinkLog.lateWake(passStart, late)
+                if (late > stWakeLateMaxNs) stWakeLateMaxNs = late
                 parkedUntil = 0L
             }
             // Switch first: switchTo resets the gyro's samples, so the tail below starts from the new session's.
@@ -257,7 +263,7 @@ class WifiPump(private val engine: MappingEngine) {
                 frame.flags = frame.flags or SendScheduler.flagsFor(kind)
                 frame.phoneTimeUs = phoneUs().toInt()
                 val stateLen = WireCodec.encodeStatePlain(frame, plain, 0)
-                if (lastStateNs != 0L && now - lastStateNs >= LinkLog.STATE_GAP_NS) LinkLog.stateGap(now, now - lastStateNs)
+                if (lastStateNs != 0L && now - lastStateNs > stGapMaxNs) stGapMaxNs = now - lastStateNs
                 lastStateNs = now
                 if (sendSealed(c, WireCodec.stateType(frame), stateLen)) sentCount++ else failedCount++
                 if (discrete && pressStamp.enabled) sendPressTime(c, frame.phoneTimeUs, now)
@@ -291,7 +297,7 @@ class WifiPump(private val engine: MappingEngine) {
             hint?.done(end - passStart, end)
             val wait = wakeAt - end
             if (wait > 0) {
-                parkedUntil = wakeAt
+                if (phoneStats) parkedUntil = wakeAt
                 LockSupport.parkNanos(wait)
             }
         }
@@ -392,17 +398,19 @@ class WifiPump(private val engine: MappingEngine) {
         if (direct?.sendDirect(c.hostAddr, out, 0, len) == true) return true
         packet.setData(out, 0, len)
         packet.socketAddress = c.hostAddr
-        val t0 = System.nanoTime()
+        val measure = phoneStats
+        val t0 = if (measure) System.nanoTime() else 0L
         return try {
             s.send(packet)
-            val d = System.nanoTime() - t0
-            logPackets++; logBytes += len; logSendNs += d
-            if (d > logSendMaxNs) logSendMaxNs = d
-            if (d >= LinkLog.SLOW_SEND_NS) LinkLog.slowSend(t0, d, type, len)
+            if (measure) {
+                val d = System.nanoTime() - t0
+                stPackets++; stSendNs += d
+                if (d > stSendMaxNs) stSendMaxNs = d
+                if (d >= SLOW_SEND_NS) stSlow++
+            }
             true
         } catch (e: IOException) {
-            logFailed++
-            LinkLog.failedSend(t0, System.nanoTime() - t0, type, e)
+            if (measure) stFailed++
             false // no route while Wi-Fi changes; the next packet carries the full state anyway
         }
     }
@@ -410,13 +418,28 @@ class WifiPump(private val engine: MappingEngine) {
     private fun updateStats(now: Long) {
         if (now - statsWindowStart >= SECOND_NS) {
             sentPerSecond = sentCount; failedPerSecond = failedCount
-            if (statsWindowStart != 0L) {
-                LinkLog.second(now, sentCount, logPackets, logFailed, logBytes, logSendNs, logSendMaxNs, logWakeLateMaxNs)
-            }
+            val c = cur
+            if (phoneStats && c != null && statsWindowStart != 0L) sendPhoneStats(c, sentCount)
+            else lastTxPackets = -1L
             sentCount = 0; failedCount = 0; statsWindowStart = now
-            logPackets = 0; logFailed = 0; logBytes = 0L; logSendNs = 0L; logSendMaxNs = 0L; logWakeLateMaxNs = 0L
+            stPackets = 0; stFailed = 0; stSlow = 0; stSendNs = 0L; stSendMaxNs = 0L; stWakeLateMaxNs = 0L; stGapMaxNs = 0L
         }
     }
+
+    /** PHONE_STATS for the second just ended (its numbers are cleared right after). */
+    private fun sendPhoneStats(c: LiveSession, states: Int) {
+        val tx = TrafficStats.getTotalTxPackets()
+        val txDelta = if (lastTxPackets >= 0 && tx >= lastTxPackets) tx - lastTxPackets else 0L
+        lastTxPackets = tx
+        val p = PhoneStats(
+            phoneUs().toInt(), sat16(states), sat16(stPackets), sat16(stFailed), sat16(stSlow),
+            usOf(stSendNs), usOf(stSendMaxNs), usOf(stWakeLateMaxNs), usOf(stGapMaxNs), txDelta.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+        )
+        sendSealed(c, PacketType.PHONE_STATS, WireCodec.encodeSealedPlain(p, plain, 0))
+    }
+
+    private fun sat16(v: Int) = v.coerceIn(0, 0xFFFF)
+    private fun usOf(ns: Long) = (ns / 1000).coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
 
     companion object {
         const val NO_BYE = -1
@@ -426,6 +449,8 @@ class WifiPump(private val engine: MappingEngine) {
         private const val BYE_SPACING_NS = 5_000_000L
         private const val STOP_JOIN_MS = 500L
         private const val MOTION_KEEPALIVE_NS = MotionFeed.KEEPALIVE_MS * 1_000_000L
+        /** A send that took this long or more counts as slow in PHONE_STATS. */
+        private const val SLOW_SEND_NS = 2_000_000L
 
         /** Phone clock for STATE, PING and LINK_INFO: elapsed realtime in microseconds. */
         fun phoneUs(): Long = SystemClock.elapsedRealtimeNanos() / 1000

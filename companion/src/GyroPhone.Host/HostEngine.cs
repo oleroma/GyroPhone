@@ -634,6 +634,9 @@ public sealed class HostEngine
                 if (MeasuringButtons)
                     _press.OnPressTime(WireCodec.DecodePressTime(plain), nowUs, ClockOffsetUs, _stats.LastLinkInfo != null);
                 break;
+            case PacketType.PhoneStats:
+                if (_phoneStats && PhoneTimeline is { } pt) pt.Add(ToPhoneSecond(WireCodec.DecodePhoneStats(plain), nowUs));
+                break;
             case PacketType.Bye:
                 _events.Log($"phone said bye (reason {plain[0]})");
                 RememberEnded(s.SessionId);
@@ -1831,6 +1834,37 @@ public sealed class HostEngine
         }
     }
 
+    /// <summary>Where PHONE_STATS go (the Performance monitor's), or null.</summary>
+    public Perf.PhoneTimeline? PhoneTimeline { get; set; }
+
+    private bool _phoneStats;
+
+    /// <summary>A Performance record runs: the phone measures its side of the link and sends PHONE_STATS each second (told at once).</summary>
+    public void SetPhoneStats(bool on)
+    {
+        using (Lock(ByUi))
+        {
+            if (on == _phoneStats) return;
+            _phoneStats = on;
+            _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
+            if (_sessions.Active is { } a) SendTestMode(a);
+        }
+    }
+
+    /// <summary>PHONE_STATS on the engine's clock: its end is placed by the phone's time when the clock offset is known, so a late report keeps its second.</summary>
+    private Perf.PhoneSecond ToPhoneSecond(in PhoneStats p, long nowUs)
+    {
+        long at = nowUs;
+        if (_stats.LastLinkInfo != null)
+        {
+            // How long ago the phone ended that second (its clock's low 32 bits wrap every ~71 min).
+            uint age = unchecked((uint)(nowUs - ClockOffsetUs) - p.TimeUs);
+            if (age < 10_000_000) at = nowUs - age;
+        }
+        return new Perf.PhoneSecond(at, p.States, p.Packets, p.Failed, p.SlowSends, p.SendMaxUs / 1000f, p.WakeLateMaxUs / 1000f,
+            p.StateGapMaxUs / 1000f, p.PhoneTxPackets);
+    }
+
     /// <summary>A Link test runs (<see cref="SetLinkTest"/>).</summary>
     public bool LinkTesting
     {
@@ -2590,6 +2624,7 @@ public sealed class HostEngine
         if (MeasuringButtons) flags |= TestModeFlags.PressTimes;
         if (_latencyScreen) flags |= TestModeFlags.LatencyScreen;
         if (_linkTestUntilUs != long.MinValue) flags |= TestModeFlags.LinkTest;
+        if (_phoneStats) flags |= TestModeFlags.PhoneStats;
         return flags;
     }
 

@@ -39,6 +39,8 @@ public static class PacketType
     public const byte Capture = 0x2B;
     /// <summary>Sent before each OVERLAY while HOST_STATUS flags2 has <see cref="HostStatusFlags2.OverlaySamples"/>: each gyro sample's turn in it.</summary>
     public const byte OverlaySamples = 0x2C;
+    /// <summary>Phone to host once a second while TEST_MODE has <see cref="TestModeFlags.PhoneStats"/>: the phone's side of the link (<see cref="Protocol.PhoneStats"/>).</summary>
+    public const byte PhoneStats = 0x2D;
     public const byte Bye = 0x2F;
     public const byte Pong = 0x30;
     public const byte HostStatus = 0x31;
@@ -104,6 +106,7 @@ public static class PacketType
         OverlayLayout => Wire.OverlayLayoutPlain,
         OverlaySamples => Wire.OverlaySamplesPlain,
         PressTime => Wire.PressTimePlain,
+        PhoneStats => Wire.PhoneStatsPlain,
         TestMode => Wire.TestModePlain,
         Capture => Wire.CapturePlain,
         Captured => Wire.CapturedPlain,
