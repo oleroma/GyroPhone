@@ -106,6 +106,8 @@ internal sealed class OverlayForm : Form
     private int _drawnSize;
     private int _drawnLaser;
     private long _drawnSpeeds;
+    /// <summary>When the pointer's trace was last fed (ms), so a running zip back is fed at most once a tick.</summary>
+    private long _zipFedAt;
     // The refresh rate of the screen this window is on (0 = not known yet), read every 2 s.
     private volatile int _screenHz;
     private long _screenHzAt;
@@ -623,7 +625,15 @@ internal sealed class OverlayForm : Form
                 }
                 // The pose as drawn (the newest sample's, or the frame's when the samples don't come).
                 if (fed == 0) FeedBeam(LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, ls), ls)), now);
+                _zipFedAt = now;
             }
+        }
+        // A zip back runs on with the clock, not the gyro: with no new frame this tick it is fed the beam as it was.
+        if (_laser.ZipWants && _zipFedAt != now && _feedSettings is { Kind: OverlayKind.Laser } zs && Settings == zs && age >= 0)
+        {
+            _feedNow = now;
+            FeedBeam(LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, zs), zs)), now);
+            _zipFedAt = now;
         }
         // A Clear displays mapping on the phone: the paint goes (the first count seen clears nothing).
         if (age >= 0)

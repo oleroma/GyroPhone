@@ -1201,6 +1201,9 @@ private class VisState {
             if (v != lt.fedVersion) {
                 lt.fedVersion = v
                 addBeam(beam[0], beam[1], beam[2], now)
+            } else if (lt.zipWants) {
+                // A zip back runs on with the clock, not the gyro: a held ratchet keeps the pose still, so no new pose comes.
+                addBeam(beam[0], beam[1], beam[2], now)
             }
             // The paint goes in runs: what is left of this frame's run is painted now, so it reaches the beam.
             lt.flushPaint()
