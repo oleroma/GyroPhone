@@ -1053,6 +1053,7 @@ internal sealed class OverlayForm : Form
     {
         double end = _clock.Elapsed.TotalMilliseconds;
         _lastDrawAt = start;
+        if (!OverlayTiming.On) return;
         double took = end - start;
         _statSumMs += took;
         _statMaxMs = Math.Max(_statMaxMs, took);
@@ -1063,6 +1064,15 @@ internal sealed class OverlayForm : Form
     {
         double now = _clock.Elapsed.TotalMilliseconds;
         if (now - _statStart < 1000) return;
+        if (!OverlayTiming.On)
+        {
+            // Off: nothing is measured or put together.
+            _stats = "";
+            _statStart = now;
+            _statSumMs = _statMaxMs = 0;
+            _statFrames = 0;
+            return;
+        }
         double secs = (now - _statStart) / 1000.0;
         string by = _gpuSurface == null ? "CPU" : _gpuSurface.Direct ? "GPU" : "GPU, copied";
         _stats = _statFrames == 0

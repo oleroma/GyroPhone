@@ -6,7 +6,7 @@ namespace GyroPhone.Host.Settings;
 /// <summary>Persisted host settings (%APPDATA%\GyroPhone\settings.json). byte[] fields serialize as base64.</summary>
 public sealed class HostSettings
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     public int Version { get; set; } = CurrentVersion;
     public byte[] HostId { get; set; } = [];
@@ -31,10 +31,10 @@ public sealed class HostSettings
 
     /// <summary>"Measure buttons" on Home's latency card: the phone sends PRESS_TIME.</summary>
     public bool MeasureButtons { get; set; }
-    /// <summary>"Record input log" on the App page: the engine writes input.log (<see cref="InputRecorder"/>).</summary>
-    public bool InputLog { get; set; } = true;
-    /// <summary>"Overlay timing log": the overlays' draw times in companion.log, every second while they draw.</summary>
-    public bool OverlayTimingLog { get; set; } = true;
+    /// <summary>"Record input log" (Performance › Debug, off by default): the engine writes input.log (<see cref="InputRecorder"/>).</summary>
+    public bool InputLog { get; set; }
+    /// <summary>"Overlay timing log" (off by default): the overlays' draw times in companion.log, every second while they draw.</summary>
+    public bool OverlayTimingLog { get; set; }
     /// <summary>"Use this PC's keys for Press a key" on the App page: off, the PC's keyboard, mouse and controller are never read for it.</summary>
     public bool PressKeyListen { get; set; } = true;
     /// <summary>"Notify when the phone listens for a key" on the App page: a tray notification each time the phone's "Press a key" opens.</summary>
@@ -54,8 +54,18 @@ public sealed class HostSettings
     public OverlaySettings? Overlay { get; set; }
 
     /// <summary>Fills in what an older or hand-edited file lacks.</summary>
-    public void Normalize()
+    /// <returns>True when an older file was brought up to date (save it).</returns>
+    public bool Normalize()
     {
+        bool migrated = false;
+        if (Version < 2)
+        {
+            // Logs and metrics run only when switched on (both used to start on).
+            InputLog = false;
+            OverlayTimingLog = false;
+            migrated = true;
+        }
+        Version = CurrentVersion;
         PairedPhones ??= [];
         CatchUpMs = ClampCatchUpMs(CatchUpMs);
         Overlays ??= [];
@@ -89,6 +99,7 @@ public sealed class HostSettings
             o.Colors ??= [];
             o.MigrateOld();
         }
+        return migrated;
     }
 
     public static HostSettings CreateDefault(string hostName)

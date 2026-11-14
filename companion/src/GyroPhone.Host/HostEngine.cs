@@ -251,7 +251,7 @@ public sealed class HostEngine
         Func<int, byte[]>? random = null, Func<P256>? newPairKey = null, P256? hostKey = null)
     {
         _settings = settings;
-        _settings.Normalize();
+        if (_settings.Normalize()) _settingsDirty = true;
         _catchUp.MaxUs = _settings.CatchUpMs * 1000L;
         _hostKey = hostKey;
         _hostKeyId = hostKey == null ? null : KeyPairing.KeyId(hostKey.PublicKey);
@@ -304,12 +304,46 @@ public sealed class HostEngine
         {
             _recorder = value;
             // Its lines are written once the engine lock is free (Unlock), never under it.
-            if (value != null) value.Deferred = true;
+            if (value != null)
+            {
+                value.Deferred = true;
+                value.WriteLines = _settings.InputLog;
+            }
         }
     }
 
     private InputRecorder? _recorder;
-    private InputRecorder? Rec => _settings.InputLog ? Recorder : null;
+    /// <summary>
+    /// The recorder counts the link's seconds only when something needs them: the input log, a Performance record
+    /// (<see cref="SetPhoneStats"/>), or the Performance page or an FPS overlay showing the link (<see cref="SetLinkWatch"/>).
+    /// </summary>
+    private InputRecorder? Rec => RecOn ? Recorder : null;
+    private bool RecOn => _settings.InputLog || _phoneStats || _linkWatch;
+    private bool _linkWatch;
+
+    /// <summary>After a switch that feeds <see cref="RecOn"/> changed: starts or ends the recorder's session, and writes lines only with the input log.</summary>
+    private void RecorderSwitched(bool wasOn, bool wasWriting, string why)
+    {
+        var r = Recorder;
+        if (r == null) return;
+        long now = _clock.NowUs;
+        bool on = RecOn;
+        if (wasOn && (!on || wasWriting != _settings.InputLog)) r.SessionEnded(why, now);
+        r.WriteLines = _settings.InputLog;
+        if (on && (!wasOn || wasWriting != _settings.InputLog) && _sessions.Active is { } a) r.SessionStarted(a.PhoneName, now);
+    }
+
+    /// <summary>The Performance page is shown or an FPS overlay is on: the link's seconds are counted for them (nothing is written without the input log).</summary>
+    public void SetLinkWatch(bool on)
+    {
+        using (Lock(ByUi))
+        {
+            if (on == _linkWatch) return;
+            bool was = RecOn;
+            _linkWatch = on;
+            RecorderSwitched(was, _settings.InputLog, on ? "link shown" : "link no longer shown");
+        }
+    }
 
     /// <summary>Runs a pad plug or unplug job; null: on a new "gp-pad" thread. Tests run it at once.</summary>
     internal Action<Action>? PadWorker { get; init; }
@@ -320,10 +354,10 @@ public sealed class HostEngine
         using (Lock(ByUi))
         {
             if (on == _settings.InputLog) return;
-            if (!on) Recorder?.SessionEnded("input log turned off", _clock.NowUs);
+            bool was = RecOn;
             _settings.InputLog = on;
             _settingsDirty = true;
-            if (on && _sessions.Active is { } a) Recorder?.SessionStarted(a.PhoneName, _clock.NowUs);
+            RecorderSwitched(was, !on, on ? "input log turned on" : "input log turned off");
         }
     }
     /// <summary>Saves <see cref="HostSettings.OverlayTimingLog"/> (the tray reads it when it logs the overlays' draw times).</summary>
@@ -1845,7 +1879,9 @@ public sealed class HostEngine
         using (Lock(ByUi))
         {
             if (on == _phoneStats) return;
+            bool was = RecOn;
             _phoneStats = on;
+            RecorderSwitched(was, _settings.InputLog, on ? "performance record started" : "performance record ended");
             _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
             if (_sessions.Active is { } a) SendTestMode(a);
         }

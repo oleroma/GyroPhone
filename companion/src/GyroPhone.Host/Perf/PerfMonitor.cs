@@ -117,6 +117,22 @@ public sealed class PerfMonitor : IDisposable
             if (!on) _busy = null;
             Apply();
         }
+        RaiseShowsLink();
+    }
+
+    /// <summary>The Performance page is shown or an FPS overlay is on: they show the link's seconds, so the engine counts them.</summary>
+    public bool ShowsLink
+    {
+        get { lock (_lock) return _checking || _watch; }
+    }
+
+    /// <summary><see cref="ShowsLink"/> may have changed (raised on the thread that changed it).</summary>
+    public event Action? ShowsLinkChanged;
+
+    private void RaiseShowsLink()
+    {
+        try { ShowsLinkChanged?.Invoke(); }
+        catch (Exception e) { _log($"performance link notice failed: {e.GetType().Name}: {e.Message}"); }
     }
 
     /// <summary>The PC's load in the last second, while checking or recording.</summary>
@@ -166,6 +182,7 @@ public sealed class PerfMonitor : IDisposable
             _watch = on;
             Apply();
         }
+        RaiseShowsLink();
     }
 
     /// <summary>Tries again after the user was given the right (or restarted as administrator).</summary>

@@ -351,9 +351,9 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
                     st.shots = kicks[b.control.id]
                     st.lower = 1f - (raises[b.control.id] ?: 1f)
                     st.hip = (hips[b.control.id] ?: 0f) * shownAs.gunHipPull.coerceIn(0f, 1f)
-                    val k0 = System.nanoTime()
+                    val k0 = DrawProbe.now()
                     st.drawDisplay(this, runtime.gyroFeed(b.control.id), d, b.control.id, b.box, runtime.gyroLiveAxes)
-                    DrawProbe.kind(d.kind.ordinal, System.nanoTime() - k0)
+                    DrawProbe.kindSince(d.kind.ordinal, k0)
                     if (inp.editing) {
                         val sel = b.control.id in inp.selected
                         drawRect(
@@ -371,9 +371,9 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
                 if (edge != null) st.drawEdge(this, runtime, edge)
             }
         } finally {
-            val p0 = System.nanoTime()
+            val p0 = DrawProbe.now()
             s.unlockCanvasAndPost(canvas)
-            DrawProbe.add(DrawProbe.POST, System.nanoTime() - p0)
+            DrawProbe.since(DrawProbe.POST, p0)
         }
     }
 }
@@ -392,6 +392,12 @@ private class DrawTiming {
 
     /** Counts a frame of [ns]; once a second logs the line if [log] (Settings › Performance › Display timing log), else only starts over. */
     fun frame(ns: Long, now: Long, log: Boolean) {
+        // Off, nothing is measured: the probes stop too.
+        DrawProbe.on = log
+        if (!log) {
+            since = 0L; frames = 0; sum = 0L; longest = 0L; slow = 0
+            return
+        }
         if (since == 0L) since = now
         frames++
         sum += ns
@@ -427,6 +433,22 @@ internal object DrawProbe {
     private val names = arrayOf("feed", "maps", "snake", "post", "wait")
     private val ns = LongArray(5)
     private val most = LongArray(5)
+
+    /** Measuring: the Display timing log is on. Off, [now] and [since] cost nothing. */
+    @Volatile @JvmField var on = false
+
+    /** A start time for [since], or 0 while off. */
+    fun now(): Long = if (on) System.nanoTime() else 0L
+
+    /** Adds the time since [t0] (from [now]) to [section]. */
+    fun since(section: Int, t0: Long) {
+        if (on && t0 != 0L) add(section, System.nanoTime() - t0)
+    }
+
+    /** Adds the time since [t0] (from [now]) to a display kind. */
+    fun kindSince(ordinal: Int, t0: Long) {
+        if (on && t0 != 0L) kind(ordinal, System.nanoTime() - t0)
+    }
 
     fun add(section: Int, t: Long) {
         ns[section] += t
@@ -864,9 +886,9 @@ private class VisState {
         // Both halves' pieces are made once a frame (the far half is drawn first, the near half takes the same pieces).
         if (t !== snakeOf || now != snakeAt || t.version != snakeVersion || c.x != snakeCx || c.y != snakeCy || r != snakeR) {
             snakeOf = t; snakeAt = now; snakeVersion = t.version; snakeCx = c.x; snakeCy = c.y; snakeR = r
-            val b0 = System.nanoTime()
+            val b0 = DrawProbe.now()
             snakeCount = buildSnake(t, d, c, r, col)
-            DrawProbe.add(DrawProbe.SNAKE, System.nanoTime() - b0)
+            DrawProbe.since(DrawProbe.SNAKE, b0)
         }
         drawSnake(d, front, c, r, snakeCount)
     }
@@ -1183,7 +1205,7 @@ private class VisState {
             }
             // Every pose the gyro made since the last frame, so a fast turn draws a smooth curve
             // through all of them, not straight pieces from one frame's pose to the next.
-            val feedT0 = System.nanoTime()
+            val feedT0 = DrawProbe.now()
             val h = feed?.history
             if (feed != null && h != null && (d.laserDraw || d.laserSnake)) {
                 if (lt.historySeen == 0L || lt.historySeen > h.count) lt.historySeen = h.count
@@ -1209,7 +1231,7 @@ private class VisState {
             lt.flushPaint()
             // The stamps are painted on gp-paint while this thread draws the rest ([PaintWorker]).
             PaintWorker.start(lt)
-            DrawProbe.add(DrawProbe.FEED, System.nanoTime() - feedT0)
+            DrawProbe.since(DrawProbe.FEED, feedT0)
         }
         val rifle = d.laserRifle
         val crosshair = d.laserCrosshair && !rifle
@@ -1317,9 +1339,9 @@ private class VisState {
                 if (paintAwaited !== t || paintAwaitedAt != now) {
                     // This frame's paint, if gp-paint gets it done within the budget; else what it has so far.
                     paintAwaited = t; paintAwaitedAt = now
-                    val w0 = System.nanoTime()
+                    val w0 = DrawProbe.now()
                     PaintWorker.await(t, PAINT_WAIT_NS)
-                    DrawProbe.add(DrawProbe.WAIT, System.nanoTime() - w0)
+                    DrawProbe.since(DrawProbe.WAIT, w0)
                 }
                 paintShaders.getOrPut(t) { PointerPaintShader() }.draw(drawContext.canvas.nativeCanvas, lp, t.paintLock, front, c.x, c.y, r, viewOf, sceneOf, look, now)
             }

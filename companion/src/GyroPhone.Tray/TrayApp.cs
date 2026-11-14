@@ -126,6 +126,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             Path.Combine(_log.Directory, "perf"), _log.Write);
         _engine.Recorder!.Timeline = _perf.Link;
         _engine.PhoneTimeline = _perf.Phone;
+        OverlayTiming.On = _engine.Settings.OverlayTimingLog;
+        _perf.ShowsLinkChanged += () => _engine.SetLinkWatch(_perf.ShowsLink);
         _perf.Started += () =>
         {
             _engine.SetPhoneStats(true);
@@ -522,6 +524,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     public void ToggleOverlayTimingLog()
     {
         _engine.SetOverlayTimingLog(!_engine.Settings.OverlayTimingLog);
+        OverlayTiming.On = _engine.Settings.OverlayTimingLog;
         Refresh();
     }
 
