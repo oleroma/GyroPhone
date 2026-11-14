@@ -15,8 +15,6 @@ import com.oleroma.gyrophone.core.net.PacketType
 import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.PressStamp
 import com.oleroma.gyrophone.core.net.PressTime
-import com.oleroma.gyrophone.core.net.CaptureListen
-import com.oleroma.gyrophone.core.net.CaptureFlags
 import com.oleroma.gyrophone.core.net.SendScheduler
 import com.oleroma.gyrophone.core.net.SessionCipher
 import com.oleroma.gyrophone.core.net.StateFrame
@@ -33,8 +31,9 @@ import java.util.concurrent.locks.LockSupport
  * The Wi-Fi send loop on its own thread. Event-driven: the engine's onChange unparks it, and
  * [SendScheduler] decides between a normal STATE, the +2/+6 ms repeats after a discrete change
  * and the 20 ms keepalive, capped at [rateHz]. It is the only thread that seals P->H packets,
- * BYE included (sent on its way out). The loop allocates little besides `engine.snapshot()`,
- * the once-a-second PING / LINK_INFO and the overlay's set entries while the PC overlay is on.
+ * BYE included (sent on its way out). The loop allocates little besides `engine.snapshot()`.
+ * The packets that aren't input (the PC phone overlay's, LINK_INFO, CAPTURE) are built on their own
+ * thread ([SideOutbox]); this loop only seals and sends them, after its input.
  */
 class WifiPump(private val engine: MappingEngine) {
     /** The session to send on; [byeReason] >= 0 says the previous one gets a goodbye first. */
@@ -46,13 +45,15 @@ class WifiPump(private val engine: MappingEngine) {
     @Volatile private var running = false
     @Volatile private var exitByeReason = ByeReason.SHUTDOWN
     @Volatile private var socket: DatagramSocket? = null
+
+    /** Sends a sealed packet straight down the USB cable when it goes there ([AccessoryBridge.sendDirect]). */
+    @Volatile var direct: AccessoryBridge? = null
     @Volatile private var thread: Thread? = null
 
     @Volatile var rateHz: Int = Wire.DEFAULT_RATE_HZ
 
-    /** Builds LINK_INFO on the pump thread; null while there is no clock sample yet. */
+    /** Builds LINK_INFO (on the side thread, [SideOutbox]); null while there is no clock sample yet. */
     @Volatile var linkInfoSource: (() -> LinkInfo?)? = null
-    @Volatile private var linkInfoDue = false
 
     /** The phone overlay's data: sent while [OverlayFeed.wanted] (the PC's overlay is on). */
     @Volatile var overlay: OverlayFeed? = null
@@ -60,11 +61,12 @@ class WifiPump(private val engine: MappingEngine) {
     /** "Use PC controller for gyro ratchet": STATE_GYRO and PAD_GYRO for a PC that takes them. */
     @Volatile var pcGyro: PcGyroFeed? = null
 
-    /** "Press a key" listens: CAPTURE on every second while it does, then off a few times. */
+    /** "Press a key" listens: CAPTURE on every second while it does, then off a few times ([SideOutbox]). */
     @Volatile var capturing = false
-    private var captureSentOn = false
-    private var captureNs = 0L
-    private var captureOffLeft = 0
+        set(v) {
+            field = v
+            side.wake()
+        }
 
     /** The raw motion for the PC's DualShock 4: MOTION while [MotionFeed.wanted]. */
     @Volatile var motion: MotionFeed? = null
@@ -111,13 +113,8 @@ class WifiPump(private val engine: MappingEngine) {
     private var cipher: SessionCipher? = null
     private var seq = 0
     private var nextPingNs = 0L
-    private var lastLinkInfoNs = 0L
-    private var nextOverlayNs = 0L
-    private var layoutSentVersion = -1
-    private var layoutSentNs = 0L
-    /** Reused for each OVERLAY's pressed and latched controls. */
-    private val overlayPressed = HashSet<String>()
-    private val overlayLatched = HashSet<String>()
+    /** The packets that aren't input (overlay, LINK_INFO, CAPTURE), built on their own thread. */
+    private val side = SideOutbox(engine, { overlay }, { linkInfoSource }, { capturing }, wake)
     private var gyroSnapshot = false
     private var motionSentVersion = -1
     private var nextMotionNs = 0L
@@ -135,6 +132,7 @@ class WifiPump(private val engine: MappingEngine) {
             priority = Thread.MAX_PRIORITY
             start()
         }
+        side.start()
     }
 
     /** Sends on [socket] from now on (the link moved between USB and Wi-Fi). */
@@ -147,6 +145,7 @@ class WifiPump(private val engine: MappingEngine) {
         val t = thread ?: return
         exitByeReason = byeReason
         running = false
+        side.stop()
         LockSupport.unpark(t)
         try {
             t.join(STOP_JOIN_MS)
@@ -182,8 +181,7 @@ class WifiPump(private val engine: MappingEngine) {
 
     /** A PONG lowered the minimum round trip: send LINK_INFO with the better clock offset now. */
     fun requestLinkInfo() {
-        linkInfoDue = true
-        LockSupport.unpark(thread)
+        side.requestLinkInfo()
     }
 
     private fun loop() {
@@ -217,6 +215,8 @@ class WifiPump(private val engine: MappingEngine) {
             val now = System.nanoTime()
             updateStats(now)
             val c = cur
+            val has = c != null
+            if (side.sending != has) side.sending = has
             if (c == null) {
                 LockSupport.parkNanos(IDLE_PARK_NS)
                 continue
@@ -249,14 +249,6 @@ class WifiPump(private val engine: MappingEngine) {
                 sendSealed(c, PacketType.PING, Wire.PING_PLAIN)
                 nextPingNs = now + SECOND_NS
             }
-            if (linkInfoDue || now - lastLinkInfoNs >= SECOND_NS) {
-                linkInfoDue = false
-                lastLinkInfoNs = now
-                linkInfoSource?.invoke()?.let { info ->
-                    val n = WireCodec.encodeSealedPlain(info, plain, 0)
-                    sendSealed(c, PacketType.LINK_INFO, n)
-                }
-            }
             // Each new gyro sample goes out at once; while still, every MOTION_KEEPALIVE_NS so a lost stop arrives.
             val mo = motion?.takeIf { it.wanted }
             if (mo != null && (mo.version != motionSentVersion || now >= nextMotionNs)) {
@@ -265,18 +257,14 @@ class WifiPump(private val engine: MappingEngine) {
                 sendSealed(c, PacketType.MOTION, mo.encode(plain, 0))
             }
             pcGyro?.let { if (it.hostTakes) sendPadGyro(c, it, now) }
-            sendCapture(c, now)
-            val ov = overlay?.takeIf { it.wanted }
-            if (ov == null) layoutSentVersion = -1
-            if (ov != null && now >= nextOverlayNs) {
-                nextOverlayNs = now + OVERLAY_NS
-                sendOverlay(c, ov, now)
+            // The packets that aren't input, ready-made on their own thread: only sealed and sent here.
+            while (true) {
+                val p = side.take() ?: break
+                sendSealed(c, p.type, p.plain, p.len)
+                side.recycle(p)
             }
-            var wakeAt = minOf(minOf(scheduler.nextDeadline(), nextPingNs), minOf(lastLinkInfoNs + SECOND_NS, engine.touchpadDeadlineNanos()))
-            if (ov != null) wakeAt = minOf(wakeAt, nextOverlayNs)
+            var wakeAt = minOf(minOf(scheduler.nextDeadline(), nextPingNs), engine.touchpadDeadlineNanos())
             if (mo != null) wakeAt = minOf(wakeAt, nextMotionNs)
-            if (capturing) wakeAt = minOf(wakeAt, captureNs + Wire.CAPTURE_RESEND_MS * 1_000_000L)
-            else if (captureOffLeft > 0) wakeAt = minOf(wakeAt, captureNs + CAPTURE_OFF_GAP_NS)
             val end = System.nanoTime()
             // The pass is done: how long it took goes to the performance hint.
             hint?.done(end - passStart, end)
@@ -299,26 +287,6 @@ class WifiPump(private val engine: MappingEngine) {
         sendSealed(c, PacketType.PRESS_TIME, n)
     }
 
-    /** CAPTURE on at once and every second while [capturing]; once it stops, off three times, [CAPTURE_OFF_GAP_NS] apart. */
-    private fun sendCapture(c: LiveSession, now: Long) {
-        val on = capturing
-        when {
-            on -> {
-                if (captureSentOn && now - captureNs < Wire.CAPTURE_RESEND_MS * 1_000_000L) return
-                captureSentOn = true
-                captureOffLeft = 3
-            }
-            captureOffLeft > 0 -> {
-                if (!captureSentOn && now - captureNs < CAPTURE_OFF_GAP_NS) return
-                captureSentOn = false
-                captureOffLeft--
-            }
-            else -> return
-        }
-        captureNs = now
-        sendSealed(c, PacketType.CAPTURE, WireCodec.encodeSealedPlain(CaptureListen(if (on) CaptureFlags.ON else 0), plain, 0))
-    }
-
     /** PAD_GYRO when the switch, the buttons or the toggle epoch changed, else once a second (a lost one comes again). */
     private fun sendPadGyro(c: LiveSession, g: PcGyroFeed, now: Long) {
         g.buttons = engine.pcGyroButtons
@@ -336,22 +304,6 @@ class WifiPump(private val engine: MappingEngine) {
         padGyroHeldSent = held
     }
 
-    /** One OVERLAY, then the layout's pieces when it changed or every [LAYOUT_REPEAT_NS] (a lost piece comes again). */
-    private fun sendOverlay(c: LiveSession, ov: OverlayFeed, now: Long) {
-        engine.touchesInto(overlayPressed, overlayLatched)
-        val n = ov.encodeFrame(plain, 0, phoneUs().toInt(), overlayPressed, overlayLatched)
-        sendSealed(c, PacketType.OVERLAY, n)
-        val v = ov.layoutVersion()
-        if (v < 0 || v == layoutSentVersion && now - layoutSentNs < LAYOUT_REPEAT_NS) return
-        val (version, blob) = ov.layoutSnapshot() ?: return
-        layoutSentVersion = version
-        layoutSentNs = now
-        for (i in 0 until OverlayFeed.pieceCount(blob)) {
-            val m = OverlayFeed.encodeLayoutPiece(plain, 0, version, blob, i)
-            sendSealed(c, PacketType.OVERLAY_LAYOUT, m)
-        }
-    }
-
     private fun switchTo(session: LiveSession?) {
         cur = session
         hires = session != null && session.hostFlags and HostFlags.HIRES_WHEEL != 0
@@ -360,7 +312,6 @@ class WifiPump(private val engine: MappingEngine) {
             it.reset()
         }
         padGyroSent = null; padGyroSentEpoch = -1; padGyroHeldSent = null
-        captureSentOn = false; captureOffLeft = 0
         motion?.let {
             it.hostTakes = session != null && session.hostFlags and HostFlags.MOTION != 0
             it.reset()
@@ -373,10 +324,7 @@ class WifiPump(private val engine: MappingEngine) {
         scheduler.reset()
         val now = System.nanoTime()
         nextPingNs = now
-        lastLinkInfoNs = now
-        linkInfoDue = false
-        nextOverlayNs = now
-        layoutSentVersion = -1
+        side.clear()
     }
 
     /** One neutral STATE (totals kept), then BYE x3 at 5 ms intervals. */
@@ -399,7 +347,10 @@ class WifiPump(private val engine: MappingEngine) {
     }
 
     /** Seals the first [plainLen] bytes of [plain] as [type] with the next seq and sends it. */
-    private fun sendSealed(c: LiveSession, type: Int, plainLen: Int): Boolean {
+    private fun sendSealed(c: LiveSession, type: Int, plainLen: Int): Boolean = sendSealed(c, type, plain, plainLen)
+
+    /** Seals the first [plainLen] bytes of [src] as [type] with the next seq and sends it. */
+    private fun sendSealed(c: LiveSession, type: Int, src: ByteArray, plainLen: Int): Boolean {
         val ci = cipher ?: return false
         val s = socket ?: return false
         if ((seq.toLong() and 0xFFFF_FFFFL) == 0xFFFF_FFFFL) {
@@ -412,7 +363,8 @@ class WifiPump(private val engine: MappingEngine) {
         seq++
         if ((seq.toLong() and 0xFFFF_FFFFL) >= Wire.REKEY_SEQ) c.rekeyRequested = true
         WireCodec.writeHeader(header, type, c.sessionId, seq)
-        val len = ci.seal(header, plain, plainLen, out)
+        val len = ci.seal(header, src, plainLen, out)
+        if (direct?.sendDirect(c.hostAddr, out, 0, len) == true) return true
         packet.setData(out, 0, len)
         packet.socketAddress = c.hostAddr
         return try {
@@ -433,16 +385,11 @@ class WifiPump(private val engine: MappingEngine) {
     companion object {
         const val NO_BYE = -1
         private const val SECOND_NS = 1_000_000_000L
-        /** The gap between the CAPTUREs that say "off" (three, so one lost doesn't keep the PC listening for 3 s). */
-        private const val CAPTURE_OFF_GAP_NS = 100_000_000L
         private const val IDLE_PARK_NS = Wire.KEEPALIVE_MS * 1_000_000L
         private const val BYE_COUNT = 3
         private const val BYE_SPACING_NS = 5_000_000L
         private const val STOP_JOIN_MS = 500L
-        /** OVERLAY about 60 times a second. */
-        private const val OVERLAY_NS = 16_666_667L
         private const val MOTION_KEEPALIVE_NS = MotionFeed.KEEPALIVE_MS * 1_000_000L
-        private const val LAYOUT_REPEAT_NS = 2 * SECOND_NS
 
         /** Phone clock for STATE, PING and LINK_INFO: elapsed realtime in microseconds. */
         fun phoneUs(): Long = SystemClock.elapsedRealtimeNanos() / 1000

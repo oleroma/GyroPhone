@@ -44,9 +44,9 @@ internal sealed class OverlaysPage : Page
     private readonly TextBlock _labelHint;
     private readonly Seg<int> _tabs;
     private int _tab;
-    /// <summary>Tabs as on the phone: Window (PC only), Look, Draw, Paint, Colours and Turning; Draw, Paint and Colours only for the pointer.</summary>
-    private const int WindowTab = 0, LookTab = 1, DrawTab = 2, PaintTab = 3, ColoursTab = 4, TurnTab = 5;
-    private readonly StackPanel _windowTab, _lookTab, _drawTab, _paintTab, _coloursTab, _turnTab;
+    /// <summary>Tabs as on the phone: Window (PC only), Look, Paint, Snake, Colours and Turning; Paint, Snake and Colours only for the pointer.</summary>
+    private const int WindowTab = 0, LookTab = 1, PaintTab = 2, SnakeTab = 3, ColoursTab = 4, TurnTab = 5;
+    private readonly StackPanel _windowTab, _lookTab, _paintTab, _snakeTab, _coloursTab, _turnTab;
     /// <summary>The Colours card: in the Look tab, or the pointer's own Colours tab.</summary>
     private readonly Border _coloursCard;
 
@@ -58,21 +58,30 @@ internal sealed class OverlaysPage : Page
     private readonly Seg<int> _fps;
 
     // Look
-    private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook;
+    private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook, _ringLook, _graphLook;
+    private readonly Seg<int> _graphRange, _graphSeconds;
     private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserGimbal, _laserDraw, _laserClearOnRatchet, _laserSnakeClearOnRatchet;
     private readonly CheckBox _laserPerspective, _laserSnake, _laserOutline;
     private readonly StackPanel _laserSnakeOptions;
-    private readonly SliderRow _laserSnakeLength, _laserSnakeBrush, _laserSnakeTaper, _laserSnakeFade, _laserSnakeGlow, _laserSoftness, _laserGlow, _laserShade, _laserInside, _laserLight, _laserShine;
+    private readonly SliderRow _laserSnakeLength, _laserSnakeBrush, _laserSnakeTaper, _laserSnakeFade, _laserSnakeGlow, _laserSoftness, _laserGlow;
     private readonly Seg<bool> _laserColourBy;
-    private readonly Seg<int> _laserPaintDetail, _laserLightFrom;
-    private readonly StackPanel _laserPaintOptions, _laserDrawLook;
+    private readonly Seg<int> _laserPaintDetail;
+    private readonly StackPanel _laserDrawLook, _paintShots, _paintFire, _paintAim, _shotOptions, _paintAndSnake;
+    private readonly Seg<int> _shotBeat, _shootsLike;
+    private readonly SliderRow _shotRpm;
+    private readonly UIElement _shootsLikeTitle;
+    private readonly StackPanel _spreadOptions;
+    private readonly SphereLookRows _paintLook, _snakeLook;
+    private readonly StackPanel _snakeZip, _snakeShots, _snakeLookPanel, _laserFacesPanel;
+    private readonly CheckBox _zipAlways, _zipRatchet;
+    private readonly Seg<bool> _snakeColourBy;
+    private readonly SliderRow _zipSeconds, _zipSpeed, _snakeFireBrush, _snakeAimBrush;
     private readonly Seg<int> _laserShape;
     private readonly StackPanel _chOptions;
     private readonly Seg<int> _chShape;
     private readonly SliderRow _chSize, _chGap, _chThick;
     private readonly CheckBox _chDot, _chOutline;
     private readonly Seg<int> _laserFaces;
-    private readonly TextBlock _laserFacesTitle;
     private readonly TextBlock _laserRifleHint;
     private readonly SliderRow _laserBrush, _laserLineSmoothing;
     private readonly CheckBox _laserSmoothColours;
@@ -113,7 +122,6 @@ internal sealed class OverlaysPage : Page
     private readonly CheckBox _muzzleFlash, _laserSpread, _laserBloom, _laserShotDraw;
     private readonly SliderRow _gunSpread;
     private readonly Seg<int> _hitLook;
-    private readonly UIElement _hitLookTitle;
     private readonly CheckBox _laserFireOnly;
     private readonly CheckBox[] _tbEase = new CheckBox[3];
     private readonly StackPanel[] _tbEaseOptions = new StackPanel[3];
@@ -259,18 +267,18 @@ internal sealed class OverlaysPage : Page
         {
             _tab = t;
             ShowTab();
-        }, true, ("Window", WindowTab), ("Look", LookTab), ("Draw", DrawTab), ("Paint", PaintTab), ("Colours", ColoursTab), ("Turning", TurnTab));
+        }, true, ("Window", WindowTab), ("Look", LookTab), ("Paint", PaintTab), ("Snake", SnakeTab), ("Colours", ColoursTab), ("Turning", TurnTab));
         // Tabs: the segmented buttons in the tab style.
         foreach (var rb in ((Panel)_tabs.View).Children.OfType<RadioButton>()) rb.Style = Parts.Style("Tab");
         tabBar.Child = _tabs.View;
         _settings.Children.Add(tabBar);
         _windowTab = new StackPanel();
         _lookTab = new StackPanel();
-        _drawTab = new StackPanel();
         _paintTab = new StackPanel();
+        _snakeTab = new StackPanel();
         _coloursTab = new StackPanel();
         _turnTab = new StackPanel();
-        foreach (var t in new[] { _windowTab, _lookTab, _drawTab, _paintTab, _coloursTab, _turnTab }) _settings.Children.Add(t);
+        foreach (var t in new[] { _windowTab, _lookTab, _paintTab, _snakeTab, _coloursTab, _turnTab }) _settings.Children.Add(t);
 
         // Window tab
         var (show, sb) = Parts.Card();
@@ -296,7 +304,7 @@ internal sealed class OverlaysPage : Page
         _fps = new Seg<int>(f => Change(o => o.MaxFps = f), false, ("Every screen refresh", 0), ("About 60 fps", 60), ("About 30 fps", 30));
         _fps.View.Margin = new Thickness(0, 6, 0, 2);
         db.Children.Add(_fps.View);
-        db.Children.Add(Parts.Text("Every screen refresh is smoothest but costs more. About 60 and 30 draw every 2nd, 3rd… refresh, whichever is nearest (72 fps on a 144 Hz screen, 55 on 165 Hz), so the motion stays even. Draw times are in the Debug window (App page).", "Hint"));
+        db.Children.Add(Parts.Text("Every screen refresh is smoothest but costs more. About 60 and 30 draw every 2nd, 3rd… refresh, whichever is nearest (72 fps on a 144 Hz screen, 55 on 165 Hz), so the motion stays even. Draw times are in companion.log with Overlay timing log on, and in the Debug window (Performance page, Debug).", "Hint"));
         _windowTab.Children.Add(draw);
 
         // Look tab
@@ -348,6 +356,20 @@ internal sealed class OverlaysPage : Page
         _diskLook = disk;
         _lookTab.Children.Add(disk);
 
+        var (ring, rgb) = Parts.Card("Ratchet ring");
+        rgb.Children.Add(Parts.Text("Yaw, pitch and roll arcs, lit while that axis moves the mouse and dim while a ratchet (or the gyro mode) pauses it.", "Hint"));
+        _ringLook = ring;
+        _lookTab.Children.Add(ring);
+
+        var (graph, gb) = Parts.Card("Speed graph");
+        _graphRange = new Seg<int>(v => Change(o => o.GraphRange = v), true, ("±180°/s", 180), ("±360°/s", 360), ("±720°/s", 720), ("±1440°/s", 1440));
+        gb.Children.Add(_graphRange.View);
+        _graphSeconds = new Seg<int>(v => Change(o => o.GraphSeconds = v), true, ("2 s", 2), ("3 s", 3), ("5 s", 5), ("8 s", 8));
+        gb.Children.Add(_graphSeconds.View);
+        gb.Children.Add(Parts.Text("Yaw, pitch and roll speed; shaded while a ratchet is held.", "Hint"));
+        _graphLook = graph;
+        _lookTab.Children.Add(graph);
+
         var (laser, lb) = Parts.Card("Pointer");
         lb.Children.Add(Parts.Text("A see-through sphere seen from above and to the side. The laser at its centre aims along the phone's roll axis (out of its top edge, into the screen at rest) onto the inside; the tick at the dot shows which way the phone's screen faces. The beam dims while a ratchet is held.", "Hint"));
         _laserShape = new Seg<int>(k => Change(o => { o.LaserRifle = k == 1; o.LaserCrosshair = k == 2; }), false, ("Sphere", 0), ("Gun", 1), ("Crosshair", 2));
@@ -385,33 +407,30 @@ internal sealed class OverlaysPage : Page
         _chOptions.Children.Add(_chDot);
         _chOptions.Children.Add(_chOutline);
         lb.Children.Add(_chOptions);
-        _laserFacesTitle = Parts.Text("Laser faces (as a trackball)");
-        lb.Children.Add(_laserFacesTitle);
+        // Turning tab (pointer as a trackball): which way of it the pointer faces.
+        _laserFacesPanel = new StackPanel { Margin = new Thickness(20, 4, 0, 4) };
+        _laserFacesPanel.Children.Add(Parts.Text("Pointer faces (as a trackball)"));
         _laserFaces = new Seg<int>(f => Change(o => o.LaserFaces = f), false,
             ("−Z (into the screen)", 0), ("+Z", 1), ("+X", 2), ("−X", 3), ("+Y", 4), ("−Y", 5));
         _laserFaces.View.Margin = new Thickness(0, 6, 0, 2);
-        lb.Children.Add(_laserFaces.View);
+        _laserFacesPanel.Children.Add(_laserFaces.View);
+
         _laserAxon = Parts.Toggle("Axonometric view", () => Change(o => o.LaserAxonometric = !o.LaserAxonometric), "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot.");
-        _laserGrid = Parts.Toggle("Grid every 15°", () => Change(o => o.LaserGrid = !o.LaserGrid));
         lb.Children.Add(_laserAxon);
-        _laserSphereTurns = Parts.Toggle("Sphere turns, beam stays ahead", () => Change(o => o.LaserSphereTurns = !o.LaserSphereTurns), "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.");
-        lb.Children.Add(_laserSphereTurns);
-        _laserAxes = Parts.Toggle("Axes (pitch X red, yaw Y green, roll Z blue)", () => Change(o => o.LaserAxes = !o.LaserAxes), "They turn with the laser, R along its beam.");
-        _laserGimbal = Parts.Toggle("Gimbal rings", () => Change(o => o.LaserGimbal = !o.LaserGimbal), "Yaw (green, outside), pitch (red) and roll (blue) rings, each around its own axis, turning with the laser's axes as one set. They light up while that axis turns; a None axis's ring is faint and dashed.");
-        lb.Children.Add(_laserGrid);
-        lb.Children.Add(_laserAxes);
-        lb.Children.Add(_laserGimbal);
-        lb.Children.Add(Parts.Divider());
-        _laserPerspective = Parts.Toggle("Perspective", () => Change(o => o.Perspective = !o.Perspective), "Nearer parts of the sphere, its paint and the pointer look bigger.");
+        _laserPerspective = Parts.Toggle("Perspective", () => Change(o => o.Perspective = !o.Perspective), "Nearer parts show bigger, as a camera sees them. Off: flat, every part the same size wherever it is.");
         lb.Children.Add(_laserPerspective);
+        _laserSphereTurns = Parts.Toggle("Fixed pointer mode", () => Change(o => o.LaserSphereTurns = !o.LaserSphereTurns), "Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.");
+        lb.Children.Add(_laserSphereTurns);
+        _laserGrid = Parts.Toggle("Grid every 15°", () => Change(o => o.LaserGrid = !o.LaserGrid));
+        lb.Children.Add(_laserGrid);
+        _laserAxes = Parts.Toggle("Axes (pitch X red, yaw Y green, roll Z blue)", () => Change(o => o.LaserAxes = !o.LaserAxes), "They turn with the pointer, R along its beam.");
+        lb.Children.Add(_laserAxes);
 
         // Fire display and Aim display: the buttons, sent from the phone or pressed on the PC's controller with
-        // "Use PC controller for gyro ratchet" on.
+        // "Use PC controller for gyro ratchet" on. Here how the gun and crosshair take them; the paint's in the Paint tab.
         _firePick = new ButtonPick("Fire display", "While this button is sent from the phone (or pressed on the PC's controller with \"Use PC controller for gyro ratchet\" on) the gun and crosshair kick and flash with each shot, and Draw mode paints in the Fire colours. Click to pick another, or None.", k => Change(o => o.LaserFire = k));
         lb.Children.Add(_firePick.View);
         _fireOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
-        _fireBrush = new SliderRow("Fire brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserFireBrush = (int)v));
-        _fireGlow = new SliderRow("Fire glow", 0, 3, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserFireGlow = (float)v));
         _kickTitle = Parts.Text("Kick");
         _kickHint = Parts.Text("Each shot the crosshair jumps bigger and bounces back with the recoil of the gun picked here. Once: one kick per press. Auto rifle: keeps kicking while the button is held. Each gun keeps its own kick size and fire rate.", "Hint");
         _rifleKickHint = Parts.Text("Each shot the gun kicks back toward you, its muzzle jumping up, and springs back with its own recoil. Once: one kick per press. Auto rifle: keeps kicking while the button is held. Each gun keeps its own kick size and fire rate.", "Hint");
@@ -437,45 +456,118 @@ internal sealed class OverlaysPage : Page
         _fireOptions.Children.Add(_kickOptions);
         _muzzleFlash = Parts.Toggle("Muzzle flash", () => Change(o => o.MuzzleFlash = !o.MuzzleFlash), "Each shot a flash in time with the kick: white, cooling to the Flash colour (yellow), then Flash end (orange). The crosshair glows and takes those colours, then its own again; the gun's muzzle blasts flame as wide as its muzzle and as long as its calibre (pistol shortest, shotgun and sniper longest).");
         _fireOptions.Children.Add(_muzzleFlash);
+        _shootsLikeTitle = Parts.Text("Shoots like", "Sub");
+        _fireOptions.Children.Add(_shootsLikeTitle);
+        _shootsLike = new Seg<int>(k => Change(o => o.LaserGun = k), true, [.. GyroPhone.Host.Guns.All.Select((g, i) => (g.Name, i))]);
+        _fireOptions.Children.Add(_shootsLike.View);
         _laserSpread = Parts.Toggle("Simulate spread", () => Change(o => o.LaserSpread = !o.LaserSpread), "Each shot lands a little off the aim point, a random way, by up to the gun's spread; the crosshair or gun kicks toward it and springs back. Each gun keeps its own spread.");
         _fireOptions.Children.Add(_laserSpread);
+        _spreadOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
         _gunSpread = new SliderRow("Spread (this gun)", 0, 10, 0.1, v => $"{v:0.0}°", v => Change(o => (o.GunSpread ??= [])[o.Gun().Key] = (float)v));
-        _fireOptions.Children.Add(_gunSpread.View);
+        _spreadOptions.Children.Add(_gunSpread.View);
         _laserBloom = Parts.Toggle("Bloom", () => Change(o => o.LaserBloom = !o.LaserBloom), $"Shots fired in a row spread wider, up to twice over {GyroPhone.Host.CrosshairKick.BloomShots} shots; it settles half a second after you let go.");
-        _fireOptions.Children.Add(_laserBloom);
-        _laserShotDraw = Parts.Toggle("Draw each shot", () => Change(o => o.LaserShotDraw = !o.LaserShotDraw), "In Draw mode each shot marks a hit where it lands, in the Fire colours, as wide as the Fire brush (a shotgun's pellets half that). Firing then paints no Fire line. Hits stay until you clear the drawing.");
-        _fireOptions.Children.Add(_laserShotDraw);
-        _hitLookTitle = Parts.Text("Hit look", "Sub");
-        _fireOptions.Children.Add(_hitLookTitle);
-        _hitLook = new Seg<int>(k => Change(o => o.LaserHitLook = k), false, [.. GyroPhone.Host.LaserTrace.HitLooks.Select((n, i) => (n, i))]);
-        _fireOptions.Children.Add(_hitLook.View);
-        _fireOptions.Children.Add(_fireBrush.View);
-        _fireOptions.Children.Add(_fireGlow.View);
+        _spreadOptions.Children.Add(_laserBloom);
+        _fireOptions.Children.Add(_spreadOptions);
         lb.Children.Add(_fireOptions);
         _aimPick = new ButtonPick("Aim display", "While this button is held the crosshair shrinks and turns laser red (its Crosshair aiming colour), the gun is shouldered with a scope and a laser sight, and Draw mode paints in the Aim colours. Firing wins over aiming. Click to pick another, or None.", k => Change(o => o.LaserAim = k));
         lb.Children.Add(_aimPick.View);
         _aimOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
         _aimSize = new SliderRow("Crosshair while aiming", 0.2, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserAimSize = (float)v));
-        _aimBrush = new SliderRow("Aim brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserAimBrush = (int)v));
-        _aimGlow = new SliderRow("Aim glow", 0, 3, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserAimGlow = (float)v));
         _aimOptions.Children.Add(_aimSize.View);
-        _aimOptions.Children.Add(_aimBrush.View);
-        _aimOptions.Children.Add(_aimGlow.View);
         lb.Children.Add(_aimOptions);
-        _laserFireOnly = Parts.Toggle("Paint only while firing or aiming", () => Change(o => o.LaserFireOnly = !o.LaserFireOnly), "The beam alone leaves no trail; only shots and aiming draw.");
-        lb.Children.Add(_laserFireOnly);
+        _laserGimbal = Parts.Toggle("Gimbal rings", () => Change(o => o.LaserGimbal = !o.LaserGimbal), "Yaw (green, outside), pitch (red) and roll (blue) rings turning with the pointer's axes, each round its own: the path the beam and crosshair take turning about it. A None axis's ring is faint and dashed, and an axis lights up while the gyro turns it.");
+        lb.Children.Add(_laserGimbal);
+        _laserLook = laser;
+        _lookTab.Children.Add(laser);
 
-        // Draw tab (pointer): Draw mode, Snake, brush and Clear.
-        var (drawCard, dwb) = Parts.Card("Draw");
-        _drawTab.Children.Add(drawCard);
-
+        // Paint tab (pointer): Draw mode, its shots and aiming, how its paint looks, and what it shares with the Snake.
+        var (paintCard, pab) = Parts.Card("Paint");
+        _paintTab.Children.Add(paintCard);
         _laserDraw = Parts.Toggle("Draw mode", () => Change(o => o.LaserDraw = !o.LaserDraw), "The beam paints the inside of the sphere as you aim; the paint stays until you clear it.");
-        dwb.Children.Add(_laserDraw);
+        pab.Children.Add(_laserDraw);
+        _laserDrawOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
+        _laserBrush = new SliderRow("Brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserBrush = (int)v));
+        _laserDrawOptions.Children.Add(_laserBrush.View);
+        _laserClearOnRatchet = Parts.Toggle("Clear on ratchet", () => Change(o => o.LaserClearOnRatchet = !o.LaserClearOnRatchet), "A ratchet press clears the paint (the Snake has its own).");
+        _laserDrawOptions.Children.Add(_laserClearOnRatchet);
+        _laserDrawOptions.Children.Add(Parts.Text("The paint uncovers the sphere's own colours where it lands (the Moving colours, laid on the sphere as a normal map: right pink, left teal, up light green, down purple), or with Colour by the way it moved, the colour of each sweep's direction. Shots take the Fire colours and aiming the Aim colours, each with its own brush and glow (Shots and aiming below). Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping on the phone (Other targets) clears every pointer at once.", "Hint"));
+        pab.Children.Add(_laserDrawOptions);
+
+        // Paint from shots and aiming (the Fire and Aim display buttons are in the Look tab).
+        _paintShots = new StackPanel();
+        _paintShots.Children.Add(Parts.Text("Shots and aiming", "Sub"));
+        _paintFire = new StackPanel();
+        _fireBrush = new SliderRow("Fire brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => { o.KeepSnakeLook(); o.LaserFireBrush = (int)v; }));
+        _paintFire.Children.Add(_fireBrush.View);
+        _fireGlow = new SliderRow("Fire glow", 0, 3, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserFireGlow = (float)v));
+        _paintFire.Children.Add(_fireGlow.View);
+        _laserShotDraw = Parts.Toggle("Draw each shot", () => Change(o => o.LaserShotDraw = !o.LaserShotDraw), "Each shot marks a hit where it lands, in the Fire colours, as wide as the Fire brush (a shotgun's pellets half that). Firing then paints no Fire line. Hits stay until you clear the drawing.");
+        _paintFire.Children.Add(_laserShotDraw);
+        _shotOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
+        // The Sphere look has no Kick: its shots' beat here.
+        _shotBeat = new Seg<int>(k => Change(o => o.CrosshairKick = k), false,
+            [.. GyroPhone.Host.CrosshairKick.Modes.Select((n, i) => (n, i)).Skip(1)]);
+        _shotBeat.View.Margin = new Thickness(0, 6, 0, 2);
+        _shotOptions.Children.Add(_shotBeat.View);
+        _shotRpm = new SliderRow("Fire rate (this gun)", GyroPhone.Host.CrosshairKick.RpmMin, 1200, 5, v => $"{v:0} a minute", v => Change(o => (o.GunRpm ??= [])[o.Gun().Key] = (int)v));
+        _shotOptions.Children.Add(_shotRpm.View);
+        _shotOptions.Children.Add(Parts.Text("Hit look", "Sub"));
+        _hitLook = new Seg<int>(k => Change(o => o.LaserHitLook = k), false, [.. GyroPhone.Host.LaserTrace.HitLooks.Select((n, i) => (n, i))]);
+        _shotOptions.Children.Add(_hitLook.View);
+        _paintFire.Children.Add(_shotOptions);
+        _paintShots.Children.Add(_paintFire);
+        _paintAim = new StackPanel();
+        _aimBrush = new SliderRow("Aim brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => { o.KeepSnakeLook(); o.LaserAimBrush = (int)v; }));
+        _paintAim.Children.Add(_aimBrush.View);
+        _aimGlow = new SliderRow("Aim glow", 0, 3, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserAimGlow = (float)v));
+        _paintAim.Children.Add(_aimGlow.View);
+        _paintShots.Children.Add(_paintAim);
+        pab.Children.Add(_paintShots);
+
+        // How Draw mode's paint looks (the Snake has its own in the Snake tab): changing one keeps the Snake as it was.
+        _laserDrawLook = new StackPanel();
+        _laserDrawLook.Children.Add(Parts.Text("Colour by", "Sub"));
+        _laserColourBy = new Seg<bool>(w => Change(o => { o.KeepSnakeLook(); o.LaserColourByWay = w; }), true, ("Where it is", false), ("The way it moved", true));
+        _laserDrawLook.Children.Add(_laserColourBy.View);
+        _laserDrawLook.Children.Add(Parts.Text("Paint detail", "Sub"));
+        _laserPaintDetail = new Seg<int>(k => Change(o => o.LaserPaintDetail = k), true, ("Low", 0), ("Normal", 1), ("High", 2));
+        _laserDrawLook.Children.Add(_laserPaintDetail.View);
+        _laserDrawLook.Children.Add(Parts.Text("How finely Draw mode's paint is kept: Low is lightest on the PC, High sharpest. Changing it clears the paint.", "Hint"));
+        _laserSoftness = new SliderRow("Softness", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserSoftness = (float)v));
+        _laserDrawLook.Children.Add(_laserSoftness.View);
+        _laserGlow = new SliderRow("Glow", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserGlow = (float)v));
+        _laserDrawLook.Children.Add(_laserGlow.View);
+        _laserOutline = Parts.Toggle("Outline", () => Change(o => o.LaserOutline = !o.LaserOutline), "A thin dark edge round the paint (its colour is Paint outline), so it shows on light backgrounds.");
+        _laserDrawLook.Children.Add(_laserOutline);
+        _paintLook = new SphereLookRows(_laserDrawLook,
+            v => Change(o => { o.KeepSnakeLook(); o.LaserShade = v; }), v => Change(o => { o.KeepSnakeLook(); o.LaserInside = v; }),
+            v => Change(o => { o.KeepSnakeLook(); o.LaserLight = v; }), v => Change(o => { o.KeepSnakeLook(); o.LaserLightFrom = v; }),
+            v => Change(o => { o.KeepSnakeLook(); o.LaserShine = v; }));
+        _laserDrawLook.Children.Add(Parts.Text("Softness: how soft the paint's edge is (0 sharp); it shapes the paint as you lay it down, so changing it changes only new strokes. Where lines cross, the paint builds up and their colours blend. The Snake has its own look in the Snake tab.", "Hint"));
+        pab.Children.Add(_laserDrawLook);
+
+        // One line feeds both the paint and the Snake: these steady and gate it for both.
+        _paintAndSnake = new StackPanel();
+        _paintAndSnake.Children.Add(Parts.Text("Paint and Snake", "Sub"));
+        _laserLineSmoothing = new SliderRow("Line smoothing", 0, 1, 0.05, v => v < 0.025 ? "off" : $"{v * 100:0}%", v => Change(o => o.LaserLineSmoothing = (float)v));
+        _paintAndSnake.Children.Add(_laserLineSmoothing.View);
+        _laserFireOnly = Parts.Toggle("Paint only while firing or aiming", () => Change(o => o.LaserFireOnly = !o.LaserFireOnly), "The beam alone leaves no trail; only shots and aiming draw.");
+        _paintAndSnake.Children.Add(_laserFireOnly);
+        _paintAndSnake.Children.Add(Parts.Text("Both follow the same line, so these set the paint and the Snake together. Line smoothing steadies the line against hand shake, strongly when you move slowly and hardly when you move fast, so it may trail a slow aim a little; the beam, dot and crosshair stay as they are.", "Hint"));
+        pab.Children.Add(_paintAndSnake);
+        var clear = Parts.Button("Clear", () => { if (Picked is { } id) _app.ClearOverlay(id); }, glyph: "");
+        clear.Margin = new Thickness(0, 8, 0, 0);
+        clear.HorizontalAlignment = HorizontalAlignment.Left;
+        pab.Children.Add(clear);
+
+        // Snake tab (pointer): the Snake, its zip back, shots and aiming, and its own look.
+        var (snakeCard, snb) = Parts.Card("Snake");
+        _snakeTab.Children.Add(snakeCard);
         _laserSnake = Parts.Toggle("Snake", () => Change(o => o.LaserSnake = !o.LaserSnake), "A line following the beam along the newest stretch of its path, thinning and fading toward its tail as set. With or without Draw mode.");
-        dwb.Children.Add(_laserSnake);
+        snb.Children.Add(_laserSnake);
         // Length 10° to 720°, finer toward the short ones: the slider's square, in 5° steps.
-        _laserSnakeLength = new SliderRow("Length", 0, 1, 0.005, v => $"{SnakeDeg(v)}°", v => Change(o => o.LaserSnakeDeg = SnakeDeg(v)));
         _laserSnakeOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
+        _laserSnakeLength = new SliderRow("Length", 0, 1, 0.005, v => $"{SnakeDeg(v)}°", v => Change(o => o.LaserSnakeDeg = SnakeDeg(v)));
         _laserSnakeOptions.Children.Add(_laserSnakeLength.View);
         _laserSnakeBrush = new SliderRow("Snake brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserSnakeBrush = (int)v));
         _laserSnakeOptions.Children.Add(_laserSnakeBrush.View);
@@ -487,59 +579,48 @@ internal sealed class OverlaysPage : Page
         _laserSnakeOptions.Children.Add(_laserSnakeGlow.View);
         _laserSnakeClearOnRatchet = Parts.Toggle("Clear on ratchet", () => Change(o => o.LaserSnakeClearOnRatchet = !o.LaserSnakeClearOnRatchet), "A ratchet press clears the Snake.");
         _laserSnakeOptions.Children.Add(_laserSnakeClearOnRatchet);
-        _laserSnakeOptions.Children.Add(Parts.Text("Snake brush: how wide its head is. Taper: how much it thins toward its tail (0 keeps it the same width). Tail fade: how see-through it gets toward its tail (0 none). Snake glow: a soft glow round it (0 none). Shots and aiming keep their own brushes.", "Hint"));
-        dwb.Children.Add(_laserSnakeOptions);
-        _laserDrawOptions = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
-        _laserBrush = new SliderRow("Brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserBrush = (int)v));
-        _laserDrawOptions.Children.Add(_laserBrush.View);
-        _laserClearOnRatchet = Parts.Toggle("Clear on ratchet", () => Change(o => o.LaserClearOnRatchet = !o.LaserClearOnRatchet), "A ratchet press clears the paint (the Snake has its own).");
-        _laserDrawOptions.Children.Add(_laserClearOnRatchet);
-        _laserDrawOptions.Children.Add(Parts.Text("The paint uncovers the sphere's own colours where it lands (the Moving colours, laid on the sphere as a normal map: right pink, left teal, up light green, down purple), or with Colour by the way it moved, the colour of each sweep's direction. Shots take the Fire colours and aiming the Aim colours, each with its own brush and glow (Fire display, Aim display). Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping on the phone (Other targets) clears every pointer at once.", "Hint"));
-        dwb.Children.Add(_laserDrawOptions);
+        _laserSnakeOptions.Children.Add(Parts.Text("Snake brush: how wide its head is. Taper: how much it thins toward its tail (0 keeps it the same width). Tail fade: how see-through it gets toward its tail (0 none). Snake glow: a soft glow round it (0 none).", "Hint"));
+        snb.Children.Add(_laserSnakeOptions);
 
-        // Paint tab (pointer, while Draw mode or Snake is on): how the paint and Snake look.
-        var (paintCard, pab) = Parts.Card("Paint");
-        _paintTab.Children.Add(paintCard);
-        _laserPaintOptions = new StackPanel();
-        _laserPaintOptions.Children.Add(Parts.Text("Colour by", "Hint"));
-        _laserColourBy = new Seg<bool>(w => Change(o => o.LaserColourByWay = w), true, ("Where it is", false), ("The way it moved", true));
-        _laserPaintOptions.Children.Add(_laserColourBy.View);
-        _laserDrawLook = new StackPanel();
-        _laserDrawLook.Children.Add(Parts.Text("Paint detail", "Hint"));
-        _laserPaintDetail = new Seg<int>(k => Change(o => o.LaserPaintDetail = k), true, ("Low", 0), ("Normal", 1), ("High", 2));
-        _laserDrawLook.Children.Add(_laserPaintDetail.View);
-        _laserDrawLook.Children.Add(Parts.Text("How finely Draw mode's paint is kept: Low is lightest on the PC, High sharpest. Changing it clears the paint.", "Hint"));
-        _laserSoftness = new SliderRow("Softness", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserSoftness = (float)v));
-        _laserDrawLook.Children.Add(_laserSoftness.View);
-        _laserGlow = new SliderRow("Glow", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserGlow = (float)v));
-        _laserDrawLook.Children.Add(_laserGlow.View);
-        _laserOutline = Parts.Toggle("Outline", () => Change(o => o.LaserOutline = !o.LaserOutline), "A thin dark edge round the paint (its colour is Paint outline), so it shows on light backgrounds.");
-        _laserDrawLook.Children.Add(_laserOutline);
-        _laserPaintOptions.Children.Add(_laserDrawLook);
-        _laserShade = new SliderRow("Facing shade", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserShade = (float)v));
-        _laserPaintOptions.Children.Add(_laserShade.View);
-        _laserInside = new SliderRow("Inside", 0.2, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserInside = (float)v));
-        _laserPaintOptions.Children.Add(_laserInside.View);
-        _laserPaintOptions.Children.Add(Parts.Text("Light", "Hint"));
-        _laserLight = new SliderRow("Light strength", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserLight = (float)v));
-        _laserPaintOptions.Children.Add(_laserLight.View);
-        _laserLightFrom = new Seg<int>(k => Change(o => o.LaserLightFrom = k), true, ("Upper left", 0), ("Above", 1), ("Upper right", 2), ("Front", 3));
-        _laserPaintOptions.Children.Add(_laserLightFrom.View);
-        _laserShine = new SliderRow("Shine", 0, 1, 0.05, v => $"{v * 100:0}%", v => Change(o => o.LaserShine = (float)v));
-        _laserPaintOptions.Children.Add(_laserShine.View);
-        _laserPaintOptions.Children.Add(Parts.Text("A light fixed in the scene, shining from where you pick: it stays put while the sphere or the pointer turns. Light strength darkens what faces away from it (0 off); Shine adds a glossy highlight where it reflects toward you (0 none).", "Hint"));
-        _laserLineSmoothing = new SliderRow("Line smoothing", 0, 1, 0.05, v => v < 0.025 ? "off" : $"{v * 100:0}%", v => Change(o => o.LaserLineSmoothing = (float)v));
-        _laserPaintOptions.Children.Add(_laserLineSmoothing.View);
-        _laserPaintOptions.Children.Add(Parts.Text("Softness: how soft the paint's edge is (0 sharp); it shapes the paint as you lay it down, so changing it changes only new strokes. Where lines cross, the paint builds up and their colours blend. Facing shade darkens paint where the sphere's surface turns away from you, so you see its roundness (0 off). Inside: how bright the far half's paint is, seen from inside the sphere, next to the near half's seen from outside. Line smoothing steadies the painted line against hand shake, strongly when you move slowly and hardly when you move fast, so the paint may trail a slow aim a little; the beam, dot and crosshair stay as they are.", "Hint"));
-        pab.Children.Add(_laserPaintOptions);
+        // Zip back: the tail runs back into the head; the Snake grows again as the beam moves on.
+        _snakeZip = new StackPanel();
+        _snakeZip.Children.Add(Parts.Text("Zip back", "Sub"));
+        _zipAlways = Parts.Toggle("Continuous", () => Change(o => o.LaserSnakeZipAlways = !o.LaserSnakeZipAlways), "The tail always runs toward the head, while the beam moves and while it holds still: moving faster than the zip speed, the Snake grows (up to its Length); slower, it shrinks.");
+        _snakeZip.Children.Add(_zipAlways);
+        // 1 to 2000 °/s, finer toward the slow end: the slider's square, in 1 °/s steps.
+        _zipSpeed = new SliderRow("Zip speed", 0, 1, 0.0005, v => $"{ZipSpeed(v)} °/s", v => Change(o => o.LaserSnakeZipSpeed = ZipSpeed(v)));
+        _zipSpeed.View.Margin = new Thickness(20, 0, 0, 0);
+        _snakeZip.Children.Add(_zipSpeed.View);
+        _zipRatchet = Parts.Toggle("On ratchet", () => Change(o => o.LaserSnakeZipRatchet = !o.LaserSnakeZipRatchet), "A ratchet press runs the tail back into the head, the whole Snake in the time below, however long it is. Clear on ratchet, when on, wins.");
+        _snakeZip.Children.Add(_zipRatchet);
+        _zipSeconds = new SliderRow("Zip back in", 0.05, 2, 0.05, v => $"{v:0.00} s", v => Change(o => o.LaserSnakeZipSeconds = (float)v));
+        _zipSeconds.View.Margin = new Thickness(20, 0, 0, 0);
+        _snakeZip.Children.Add(_zipSeconds.View);
+        _snakeZip.Children.Add(Parts.Text("Both can be on. Zipped all the way, the Snake stays as a dot the size of its head; it grows again as the beam moves on.", "Hint"));
+        snb.Children.Add(_snakeZip);
+
+        _snakeShots = new StackPanel();
+        _snakeShots.Children.Add(Parts.Text("Shots and aiming", "Sub"));
+        _snakeFireBrush = new SliderRow("Fire brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserSnakeFireBrush = (int)v));
+        _snakeShots.Children.Add(_snakeFireBrush.View);
+        _snakeAimBrush = new SliderRow("Aim brush", 1, 20, 1, v => $"{v:0}°", v => Change(o => o.LaserSnakeAimBrush = (int)v));
+        _snakeShots.Children.Add(_snakeAimBrush.View);
+        _snakeShots.Children.Add(Parts.Text("How wide the Snake is while firing (in the Fire colours) and aiming (in the Aim colours).", "Hint"));
+        snb.Children.Add(_snakeShots);
+
+        _snakeLookPanel = new StackPanel();
+        _snakeLookPanel.Children.Add(Parts.Text("Colour by", "Sub"));
+        _snakeColourBy = new Seg<bool>(w => Change(o => o.LaserSnakeColourByWay = w), true, ("Where it is", false), ("The way it moved", true));
+        _snakeLookPanel.Children.Add(_snakeColourBy.View);
+        _snakeLook = new SphereLookRows(_snakeLookPanel,
+            v => Change(o => o.LaserSnakeShade = v), v => Change(o => o.LaserSnakeInside = v),
+            v => Change(o => o.LaserSnakeLight = v), v => Change(o => o.LaserSnakeLightFrom = v),
+            v => Change(o => o.LaserSnakeShine = v));
+        _snakeLookPanel.Children.Add(Parts.Text("The Snake's own look: Draw mode's paint has its own in the Paint tab.", "Hint"));
+        snb.Children.Add(_snakeLookPanel);
+
         _laserSmoothColours = Parts.Toggle("Smooth way colours", () => Change(o => o.LaserSmoothColours = !o.LaserSmoothColours), "Small shakes don't flicker the Moving colours.");
         _laserMovesHint = Parts.Text("The Moving colours colour the crosshair, and with Colour by the way it moved the paint, by the way the beam moves (right, left, up, down, toward you, away, as the sphere's axes are when it isn't turned). A slant blends its ways' colours, as a normal map does. The crosshair keeps the last way's colour when you stop. With Colour by where it is, the paint takes them by where on the sphere it lands: its right side Moving right's colour, and so on.", "Hint");
-        var clear = Parts.Button("Clear", () => { if (Picked is { } id) _app.ClearOverlay(id); }, glyph: "");
-        clear.Margin = new Thickness(0, 8, 0, 0);
-        clear.HorizontalAlignment = HorizontalAlignment.Left;
-        dwb.Children.Add(clear);
-        _laserLook = laser;
-        _lookTab.Children.Add(laser);
 
         // Colours: in Look, or for the pointer, with much to set, its own tab (as on the phone).
         var (colors, cb) = Parts.Card("Colours");
@@ -616,6 +697,7 @@ internal sealed class OverlaysPage : Page
         _tbAsCamera = Parts.Button("As the camera", () => Change(o => { o.TrackballAxes = OverlaySettings.TrackballAsCamera; o.TrackballOwnAxes = false; }));
         _trackballAxes.Children.Add(_tbAsCamera);
         tbb.Children.Add(_trackballAxes);
+        tbb.Children.Add(_laserFacesPanel);
         _turnTab.Children.Add(tb);
 
         var (pose, pob) = Parts.Card("Pose");
@@ -676,15 +758,15 @@ internal sealed class OverlaysPage : Page
     {
         Parts.Show(_windowTab, _tab == WindowTab);
         Parts.Show(_lookTab, _tab == LookTab);
-        Parts.Show(_drawTab, _tab == DrawTab);
         Parts.Show(_paintTab, _tab == PaintTab);
+        Parts.Show(_snakeTab, _tab == SnakeTab);
         Parts.Show(_coloursTab, _tab == ColoursTab);
         Parts.Show(_turnTab, _tab == TurnTab);
     }
 
-    /// <summary>Draw, Paint (while Draw mode or Snake is on) and Colours tabs only for the pointer; other overlays keep their colours in Look.
+    /// <summary>Paint, Snake and Colours tabs only for the pointer; other overlays keep their colours in Look.
     /// A tab that goes away falls back to Look.</summary>
-    private void ShowTabs(bool laser, bool paints, bool fps)
+    private void ShowTabs(bool laser, bool still)
     {
         var home = laser ? _coloursTab : _lookTab;
         if (_coloursCard.Parent != home)
@@ -692,12 +774,12 @@ internal sealed class OverlaysPage : Page
             ((Panel)_coloursCard.Parent).Children.Remove(_coloursCard);
             home.Children.Add(_coloursCard);
         }
-        _tabs.Show(DrawTab, laser);
-        _tabs.Show(PaintTab, laser && paints);
+        _tabs.Show(PaintTab, laser);
+        _tabs.Show(SnakeTab, laser);
         _tabs.Show(ColoursTab, laser);
-        // The FPS overlay doesn't turn with the phone.
-        _tabs.Show(TurnTab, !fps);
-        bool gone = _tab switch { DrawTab or ColoursTab => !laser, PaintTab => !laser || !paints, TurnTab => fps, _ => false };
+        // The FPS overlay, Ratchet ring and Speed graph don't turn with the phone.
+        _tabs.Show(TurnTab, !still);
+        bool gone = _tab switch { PaintTab or SnakeTab or ColoursTab => !laser, TurnTab => still, _ => false };
         if (gone)
         {
             _tab = LookTab;
@@ -855,6 +937,11 @@ internal sealed class OverlaysPage : Page
     private const int SnakeMinDeg = 10, SnakeMaxDeg = 720;
 
     /// <summary>Snake's Length slider's place (0..1, its square) in degrees, to 5°, from 10°.</summary>
+    private const int ZipSpeedMin = 1, ZipSpeedMax = 2000;
+
+    /// <summary>The Zip speed slider at <paramref name="p"/> (0..1, its square) in °/s, to 1 °/s.</summary>
+    private static int ZipSpeed(double p) => Math.Clamp((int)Math.Round(p * p * ZipSpeedMax), ZipSpeedMin, ZipSpeedMax);
+
     private static int SnakeDeg(double p) => Math.Max(SnakeMinDeg, (int)Math.Round(p * p * SnakeMaxDeg / 5) * 5);
 
     private static string BackgroundName(OverlayBackground b) => b switch
@@ -916,6 +1003,10 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_phoneLook, o.Kind == OverlayKind.Phone);
         Parts.Show(_shapeLook, o.Kind == OverlayKind.Shape);
         Parts.Show(_diskLook, o.Kind == OverlayKind.Disk);
+        Parts.Show(_ringLook, o.Kind == OverlayKind.Ring);
+        Parts.Show(_graphLook, o.Kind == OverlayKind.Graph);
+        _graphRange.Set(o.GraphRange);
+        _graphSeconds.Set(o.GraphSeconds);
         bool laser = o.Kind == OverlayKind.Laser;
         Parts.Show(_laserLook, laser);
         Parts.SetChecked(_phoneAxon, o.Axonometric);
@@ -933,12 +1024,12 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_chThick.View, o.CrosshairShape != 4);
         Parts.Show(_chDot, o.CrosshairShape != 4);
         _laserFaces.Set(o.LaserFaces);
-        Parts.Show(_laserFaces.View, o.IsTrackball);
-        Parts.Show(_laserFacesTitle, o.IsTrackball);
+        Parts.Show(_laserFacesPanel, laser && o.IsTrackball);
         Parts.Show(_laserRifleHint, o.LaserRifle);
         Parts.Show(_gunOptions, o.LaserRifle);
         _gunPick.Set(o.LaserGun);
         _recoilLike.Set(o.LaserGun);
+        _shootsLike.Set(o.LaserGun);
         Parts.SetChecked(_gunLowered, o.GunLowered);
         _gunHipPull.Set(o.GunHipPull);
         _gunHipRecover.Set(o.GunHipRecoverMs);
@@ -952,84 +1043,99 @@ internal sealed class OverlaysPage : Page
         Parts.SetChecked(_laserGimbal, o.LaserGimbal);
         Parts.Show(_laserGimbal, !o.LaserRifle && !o.LaserCrosshair);
         Parts.SetChecked(_laserPerspective, o.Perspective);
+        bool fires = o.LaserFire != GyroPhone.Host.LaserFire.None, aims = o.LaserAim != GyroPhone.Host.LaserFire.None;
+        bool kicks = ch || o.LaserRifle;
+
+        // Look: the Fire display's kick, flash and spread; the Aim display's crosshair size.
+        _firePick.Set(o.LaserFire);
+        _aimPick.Set(o.LaserAim);
+        Parts.Show(_fireOptions, fires && (o.LaserDraw || kicks));
+        Parts.Show(_kickTitle, kicks);
+        Parts.Show(_kickHint, ch);
+        Parts.Show(_rifleKickHint, o.LaserRifle);
+        Parts.Show(_recoilLikeTitle, ch);
+        Parts.Show(_recoilLike.View, ch);
+        Parts.Show(_kickMode.View, kicks);
+        _kickMode.Set(o.CrosshairKick);
+        Parts.Show(_kickOptions, kicks && o.CrosshairKick != GyroPhone.Host.CrosshairKick.Off);
+        _kickScale.Set(o.KickOf(o.Gun()));
+        _kickRpm.Set(o.RpmOf(o.Gun()));
+        Parts.Show(_kickRpm.View, o.CrosshairKick == GyroPhone.Host.CrosshairKick.Auto);
+        Parts.Show(_kickLines.View, ch);
+        _kickLines.Set(o.CrosshairKickLinesOnly);
+        Parts.Show(_muzzleFlash, kicks);
+        Parts.SetChecked(_muzzleFlash, o.MuzzleFlash);
+        Parts.Show(_shootsLikeTitle, !kicks && o.LaserDraw);
+        Parts.Show(_shootsLike.View, !kicks && o.LaserDraw);
+        Parts.SetChecked(_laserSpread, o.LaserSpread);
+        Parts.Show(_spreadOptions, o.LaserSpread);
+        _gunSpread.Set(o.SpreadOf(o.Gun()));
+        Parts.SetChecked(_laserBloom, o.LaserBloom);
+        Parts.Show(_aimOptions, aims && ch);
+        _aimSize.Set(o.LaserAimSize);
+
+        // Paint: Draw mode, its shots and aiming, its look, and what it shares with the Snake.
         Parts.SetChecked(_laserDraw, o.LaserDraw);
-        Parts.SetChecked(_laserSnake, o.LaserSnake);
-        Parts.Show(_laserSnakeOptions, o.LaserSnake);
-        _laserSnakeBrush.Set(o.LaserSnakeBrush);
-        _laserSnakeTaper.Set(o.LaserSnakeTaper);
-        _laserSnakeFade.Set(o.LaserSnakeFade);
-        _laserSnakeGlow.Set(o.LaserSnakeGlow);
-        _laserSnakeLength.Set(Math.Sqrt(Math.Clamp(o.LaserSnakeDeg, SnakeMinDeg, SnakeMaxDeg) / (double)SnakeMaxDeg));
-        bool paints = o.LaserDraw || o.LaserSnake;
-        Parts.Show(_laserDrawOptions, paints);
-        Parts.Show(_laserPaintOptions, paints);
-        Parts.Show(_laserDrawLook, o.LaserDraw);
+        Parts.Show(_laserDrawOptions, o.LaserDraw);
         _laserBrush.Set(o.LaserBrush);
-        Parts.Show(_laserBrush.View, o.LaserDraw);
+        Parts.SetChecked(_laserClearOnRatchet, o.LaserClearOnRatchet);
+        Parts.Show(_paintShots, o.LaserDraw && (fires || aims));
+        Parts.Show(_paintFire, fires);
+        _fireBrush.Set(o.LaserFireBrush);
+        _fireGlow.Set(o.LaserFireGlow);
+        Parts.SetChecked(_laserShotDraw, o.LaserShotDraw);
+        Parts.Show(_shotOptions, o.LaserShotDraw);
+        // The Sphere look has no Kick: its shots come Once a press or by Auto rifle, set here.
+        Parts.Show(_shotBeat.View, !kicks);
+        _shotBeat.Set(Math.Max(o.CrosshairKick, GyroPhone.Host.CrosshairKick.Once));
+        Parts.Show(_shotRpm.View, !kicks && o.CrosshairKick == GyroPhone.Host.CrosshairKick.Auto);
+        _shotRpm.Set(o.RpmOf(o.Gun()));
+        _hitLook.Set(o.LaserHitLook);
+        Parts.Show(_paintAim, aims);
+        _aimBrush.Set(o.LaserAimBrush);
+        _aimGlow.Set(o.LaserAimGlow);
+        Parts.Show(_laserDrawLook, o.LaserDraw);
         _laserColourBy.Set(o.LaserColourByWay);
         _laserPaintDetail.Set(Math.Clamp(o.LaserPaintDetail, 0, 2));
         _laserSoftness.Set(o.LaserSoftness);
         _laserGlow.Set(o.LaserGlow);
         Parts.SetChecked(_laserOutline, o.LaserOutline);
-        _laserShade.Set(o.LaserShade);
-        _laserInside.Set(o.LaserInside);
-        _laserLight.Set(o.LaserLight);
-        _laserLightFrom.Set(Math.Clamp(o.LaserLightFrom, 0, 3));
-        _laserShine.Set(o.LaserShine);
+        _paintLook.Set(o.LaserShade, o.LaserInside, o.LaserLight, o.LaserLightFrom, o.LaserShine);
+        bool paints = o.LaserDraw || o.LaserSnake;
+        Parts.Show(_paintAndSnake, paints);
         _laserLineSmoothing.Set(o.LaserLineSmoothing);
+        Parts.Show(_laserFireOnly, fires || aims);
+        Parts.SetChecked(_laserFireOnly, o.LaserFireOnly);
+
+        // Snake: its options, zip back, shots and aiming, and its own look.
+        Parts.SetChecked(_laserSnake, o.LaserSnake);
+        Parts.Show(_laserSnakeOptions, o.LaserSnake);
+        _laserSnakeLength.Set(Math.Sqrt(Math.Clamp(o.LaserSnakeDeg, SnakeMinDeg, SnakeMaxDeg) / (double)SnakeMaxDeg));
+        _laserSnakeBrush.Set(o.LaserSnakeBrush);
+        _laserSnakeTaper.Set(o.LaserSnakeTaper);
+        _laserSnakeFade.Set(o.LaserSnakeFade);
+        _laserSnakeGlow.Set(o.LaserSnakeGlow);
+        Parts.SetChecked(_laserSnakeClearOnRatchet, o.LaserSnakeClearOnRatchet);
+        Parts.Show(_snakeZip, o.LaserSnake);
+        Parts.SetChecked(_zipAlways, o.LaserSnakeZipAlways);
+        Parts.Show(_zipSpeed.View, o.LaserSnakeZipAlways);
+        _zipSpeed.Set(Math.Sqrt(Math.Clamp(o.LaserSnakeZipSpeed, ZipSpeedMin, ZipSpeedMax) / (double)ZipSpeedMax));
+        Parts.SetChecked(_zipRatchet, o.LaserSnakeZipRatchet);
+        Parts.Show(_zipSeconds.View, o.LaserSnakeZipRatchet);
+        _zipSeconds.Set(o.LaserSnakeZipSeconds);
+        Parts.Show(_snakeShots, o.LaserSnake && (fires || aims));
+        Parts.Show(_snakeFireBrush.View, fires);
+        Parts.Show(_snakeAimBrush.View, aims);
+        _snakeFireBrush.Set(o.SnakeFireBrush);
+        _snakeAimBrush.Set(o.SnakeAimBrush);
+        Parts.Show(_snakeLookPanel, o.LaserSnake);
+        _snakeColourBy.Set(o.SnakeColourByWay);
+        _snakeLook.Set(o.SnakeShade, o.SnakeInside, o.SnakeLight, o.SnakeLightFrom, o.SnakeShine);
+
         bool moves = paints || (o.LaserCrosshair && !o.LaserRifle);
         Parts.Show(_laserSmoothColours, laser && moves);
         Parts.Show(_laserMovesHint, laser && moves);
         Parts.SetChecked(_laserSmoothColours, o.LaserSmoothColours);
-        _firePick.Set(o.LaserFire);
-        _aimPick.Set(o.LaserAim);
-        bool fires = o.LaserFire != GyroPhone.Host.LaserFire.None, aims = o.LaserAim != GyroPhone.Host.LaserFire.None;
-        bool kicks = ch || o.LaserRifle;
-        // The Sphere look with Draw each shot: its shots' gun and beat.
-        bool sphereShots = !kicks && o.LaserDraw && o.LaserShotDraw;
-        Parts.Show(_fireOptions, fires && (paints || kicks));
-        Parts.Show(_kickTitle, kicks);
-        Parts.Show(_kickHint, ch);
-        Parts.Show(_rifleKickHint, o.LaserRifle);
-        Parts.Show(_kickMode.View, kicks || sphereShots);
-        _kickMode.Set(o.CrosshairKick);
-        Parts.Show(_kickOptions, (kicks || sphereShots) && o.CrosshairKick != GyroPhone.Host.CrosshairKick.Off);
-        Parts.Show(_kickScale.View, kicks);
-        Parts.Show(_kickLines.View, ch);
-        Parts.Show(_recoilLikeTitle, ch || (!kicks && o.LaserDraw));
-        Parts.Show(_recoilLike.View, ch || (!kicks && o.LaserDraw));
-        Parts.Show(_laserSpread, kicks || o.LaserDraw);
-        Parts.SetChecked(_laserSpread, o.LaserSpread);
-        Parts.Show(_gunSpread.View, (kicks || o.LaserDraw) && o.LaserSpread);
-        _gunSpread.Set(o.SpreadOf(o.Gun()));
-        Parts.Show(_laserBloom, (kicks || o.LaserDraw) && o.LaserSpread);
-        Parts.SetChecked(_laserBloom, o.LaserBloom);
-        Parts.Show(_laserShotDraw, o.LaserDraw);
-        Parts.SetChecked(_laserShotDraw, o.LaserShotDraw);
-        Parts.Show(_hitLookTitle, o.LaserDraw && o.LaserShotDraw);
-        Parts.Show(_hitLook.View, o.LaserDraw && o.LaserShotDraw);
-        _hitLook.Set(o.LaserHitLook);
-        Parts.Show(_muzzleFlash, kicks);
-        Parts.SetChecked(_muzzleFlash, o.MuzzleFlash);
-        _kickScale.Set(o.KickOf(o.Gun()));
-        _kickRpm.Set(o.RpmOf(o.Gun()));
-        Parts.Show(_kickRpm.View, o.CrosshairKick == GyroPhone.Host.CrosshairKick.Auto);
-        _kickLines.Set(o.CrosshairKickLinesOnly);
-        _fireBrush.Set(o.LaserFireBrush);
-        Parts.Show(_fireBrush.View, paints);
-        _fireGlow.Set(o.LaserFireGlow);
-        Parts.Show(_fireGlow.View, o.LaserDraw);
-        Parts.Show(_aimOptions, aims);
-        _aimSize.Set(o.LaserAimSize);
-        Parts.Show(_aimSize.View, ch);
-        _aimBrush.Set(o.LaserAimBrush);
-        Parts.Show(_aimBrush.View, paints);
-        _aimGlow.Set(o.LaserAimGlow);
-        Parts.Show(_aimGlow.View, o.LaserDraw);
-        Parts.Show(_laserFireOnly, paints && (fires || aims));
-        Parts.SetChecked(_laserFireOnly, o.LaserFireOnly);
-        Parts.SetChecked(_laserClearOnRatchet, o.LaserClearOnRatchet);
-        Parts.SetChecked(_laserSnakeClearOnRatchet, o.LaserSnakeClearOnRatchet);
         Parts.SetChecked(_dots, o.FingerDots);
         Parts.SetChecked(_trails, o.FingerTrails);
         _handles.Set(o.Handles);
@@ -1049,7 +1155,7 @@ internal sealed class OverlaysPage : Page
         _diskRange.Set(o.DiskRange);
         Parts.SetChecked(_crosshair, o.Crosshair);
         ShowColors(o);
-        ShowTabs(laser, paints, o.Kind == OverlayKind.Fps);
+        ShowTabs(laser, !o.Turns);
 
         _turnsWith.Set(o.TurnsWith);
         _turnsHint.Text = o.TurnsWith switch
@@ -1162,5 +1268,41 @@ internal sealed class OverlaysPage : Page
     {
         if (Picked is not { } id || _app.OverlayOf(id) is not { } o) return;
         if (_app.PickColor(o.Color(key), _window.Handle) is { } argb) _app.ChangeOverlay(id, x => x.Colors[key] = argb);
+    }
+}
+
+/// <summary>
+/// How paint on the sphere is shaded and lit, as rows in <c>into</c>: facing shade, inside, and a light fixed in the
+/// scene (strength, where it shines from, shine). The paint and the Snake each have their own, as on the phone.
+/// </summary>
+internal sealed class SphereLookRows
+{
+    private readonly SliderRow _shade, _inside, _light, _shine;
+    private readonly Seg<int> _from;
+
+    public SphereLookRows(Panel into, Action<float> shade, Action<float> inside, Action<float> light, Action<int> from, Action<float> shine)
+    {
+        _shade = new SliderRow("Facing shade", 0, 1, 0.05, v => $"{v * 100:0}%", v => shade((float)v));
+        into.Children.Add(_shade.View);
+        _inside = new SliderRow("Inside", 0.2, 1, 0.05, v => $"{v * 100:0}%", v => inside((float)v));
+        into.Children.Add(_inside.View);
+        into.Children.Add(Parts.Text("Facing shade darkens it where the sphere's surface turns away from you, so you see its roundness (0 off). Inside: how bright the far half is, seen from inside the sphere, next to the near half seen from outside.", "Hint"));
+        into.Children.Add(Parts.Text("Light", "Sub"));
+        _light = new SliderRow("Light strength", 0, 1, 0.05, v => $"{v * 100:0}%", v => light((float)v));
+        into.Children.Add(_light.View);
+        _from = new Seg<int>(from, true, ("Upper left", 0), ("Above", 1), ("Upper right", 2), ("Front", 3));
+        into.Children.Add(_from.View);
+        _shine = new SliderRow("Shine", 0, 1, 0.05, v => $"{v * 100:0}%", v => shine((float)v));
+        into.Children.Add(_shine.View);
+        into.Children.Add(Parts.Text("A light fixed in the scene, shining from where you pick: it stays put while the sphere or the pointer turns. Light strength darkens what faces away from it (0 off); Shine adds a glossy highlight where it reflects toward you (0 none).", "Hint"));
+    }
+
+    public void Set(float shade, float inside, float light, int from, float shine)
+    {
+        _shade.Set(shade);
+        _inside.Set(inside);
+        _light.Set(light);
+        _from.Set(Math.Clamp(from, 0, 3));
+        _shine.Set(shine);
     }
 }

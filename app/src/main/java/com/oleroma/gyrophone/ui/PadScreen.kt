@@ -126,6 +126,7 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.model.Bindings
+import com.oleroma.gyrophone.core.model.ButtonHow
 import com.oleroma.gyrophone.core.model.ButtonLibrary
 import com.oleroma.gyrophone.core.model.ControlGroups
 import com.oleroma.gyrophone.core.model.ToggleRule
@@ -136,6 +137,7 @@ import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.slides
@@ -164,6 +166,7 @@ import com.oleroma.gyrophone.core.model.heightRatio
 import com.oleroma.gyrophone.core.model.hitOrder
 import com.oleroma.gyrophone.core.model.isTouchpad
 import com.oleroma.gyrophone.core.model.layered
+import com.oleroma.gyrophone.core.model.nothing
 import com.oleroma.gyrophone.core.model.ownSurface
 import com.oleroma.gyrophone.core.model.placeSize
 import com.oleroma.gyrophone.core.model.placeX
@@ -205,10 +208,7 @@ private const val REVEAL_TAPS = 4
 private const val REVEAL_GAP_NS = 300_000_000L
 private const val PILL_MS = 1_000L
 
-/** Highlight refresh while a finger is on a button (holds and lift commits happen between events). */
-private const val HIGHLIGHT_POLL_MS = 50L
-
-/** With live mappings: refresh fast enough to catch a tap's short pulse. */
+/** Highlight and live mappings refresh: fast enough to catch a tap's short pulse. */
 private const val LIVE_POLL_MS = 16L
 
 /** How often the pad screen checks the mapping set in use (for its pill and live labels). */
@@ -613,6 +613,9 @@ fun PadScreen(
     var fingersOnButtons by remember { mutableIntStateOf(0) }
     var pressedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var latchedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    /** Controls lit as pressed: one of their mappings in use is active now (a finger on a Position or Move counts). */
+    var activeIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var cornersHeld by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     /** Counts multi-finger touches that Android cancelled (a phone gesture took them). */
@@ -675,12 +678,13 @@ fun PadScreen(
             delay(LAYER_POLL_MS)
         }
     }
-    // What each control maps in the set in use (labels), and what it really presses now (live
-    // labels: the engine's mappings in use, held inputs carrying their old set's included).
+    // What each control maps in the set in use (labels).
     val controlMappings = remember(ws.mappings, layers) {
         layered(ws.mappings, layers.set, layers.overrides).filterNot { Describe.isHaptic(it.target) }
             .groupBy { MappingProfiles.touchId(it.source) }
     }
+    // What each control really presses now, for the PC's phone overlay (live labels: the engine's
+    // mappings in use, held inputs carrying their old set's included). The pad shows it in the frames ([ValueBars]).
     val labelCache = remember { LabelCache() }
     val inUseCache = remember { arrayOfNulls<List<Mapping>>(1) }
     val inUseShown = remember { arrayOf<List<Mapping>>(emptyList()) }
@@ -692,20 +696,24 @@ fun PadScreen(
     val liveWatchUntil = remember { LongArray(1) }
     var liveWatching by remember { mutableStateOf(false) }
 
-    fun refreshLive() {
-        val now = SystemClock.uptimeMillis()
-        if (!visuals.liveMappings || editing) {
-            liveLabels.clear(); liveUntil.clear(); liveWatching = false
-            return
-        }
+    /** The touch mappings in use that light or label their control: not haptics, empty ones or gyro cards. */
+    fun shownInUse(): List<Mapping> {
         val inUse = runtime.engine.touchMappingsInUse
         if (inUse !== inUseCache[0]) {
             inUseCache[0] = inUse
             inUseShown[0] = inUse.filter { MappingProfiles.touchId(it.source) != null || it.source.isTouchpad }
                 .filterNot { Describe.isHaptic(it.target) || it.target == OutputTarget.NoOutput }
+                .filterNot { it.source is InputSource.Gyro || it.source is InputSource.Tilt || it.source is InputSource.Shake }
         }
-        // One engine call per poll; the labels are rebuilt only when what is on changes.
-        val active = runtime.engine.activeMappings(inUseShown[0])
+        return inUseShown[0]
+    }
+
+    fun refreshLive(active: List<Mapping>) {
+        val now = SystemClock.uptimeMillis()
+        if (!visuals.liveMappings || editing) {
+            liveLabels.clear(); liveUntil.clear()
+            return
+        }
         val last = activeCache[0]
         if (active.size != last.size || active.indices.any { active[it] !== last[it] }) {
             activeCache[0] = active
@@ -728,7 +736,6 @@ fun PadScreen(
                 if (id in liveLabels) liveLabels.remove(id)
             }
         }
-        if (liveWatching && now > liveWatchUntil[0] && liveLabels.isEmpty()) liveWatching = false
     }
 
     fun refreshHighlights() {
@@ -736,12 +743,19 @@ fun PadScreen(
         if (p != pressedIds) pressedIds = p
         val l = runtime.engine.latchedTouches()
         if (l != latchedIds) latchedIds = l
-        refreshLive()
+        // Lit only while something on it is active: a button with just a long press lights when it fires.
+        val shown = shownInUse()
+        val active = runtime.engine.activeMappings(shown.filterNot { it.source.slides })
+        val ids = HashSet<String>()
+        for (m in active) MappingProfiles.touchId(m.source)?.let(ids::add)
+        for (m in shown) if (m.source.slides) MappingProfiles.touchId(m.source)?.takeIf { it in p }?.let(ids::add)
+        if (ids != activeIds) activeIds = ids
+        refreshLive(active)
+        if (liveWatching && SystemClock.uptimeMillis() > liveWatchUntil[0] && liveLabels.isEmpty() && ids.isEmpty()) liveWatching = false
     }
 
-    /** A touch began or ended: watch the live mappings for a while (gestures fire after lifts). */
+    /** A touch began or ended: watch the mappings for a while (gestures fire after lifts). */
     fun watchLive() {
-        if (!visuals.liveMappings) return
         liveWatchUntil[0] = SystemClock.uptimeMillis() + ws.longPressMs + LIVE_LINGER_MS
         if (!liveWatching) liveWatching = true
     }
@@ -895,7 +909,7 @@ fun PadScreen(
         snapshotFlow { fingersOnButtons > 0 || pressedIds.isNotEmpty() || liveWatching }.collectLatest { poll ->
             if (!poll) return@collectLatest
             while (true) {
-                delay(if (visuals.liveMappings) LIVE_POLL_MS else HIGHLIGHT_POLL_MS)
+                delay(LIVE_POLL_MS)
                 refreshHighlights()
             }
         }
@@ -921,7 +935,7 @@ fun PadScreen(
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF101318))
+            .background(PAD_BACKGROUND)
             .recordTouches(trails, visuals, showTouchVisuals)
             .watchTouches(lastTouchMs, fingersDown)
             .onGloballyPositioned { padOrigin = it.positionInWindow() },
@@ -1948,14 +1962,15 @@ fun PadScreen(
         LaunchedEffect(displays, hidden) { runtime.setGyroDisplays(if (hidden) emptyList() else displays) }
         DisposableEffect(Unit) { onDispose { runtime.setGyroDisplays(emptyList()) } }
         // Covered or hidden, the per-frame layers stop (nothing would show them).
-        if (displays.isNotEmpty() && !covered && !hidden) {
+        // The parallax edge is drawn by the displays' layer too, on its thread, never on the screen thread.
+        val edgeShown = !editing && visuals.gyroEdge
+        if ((displays.isNotEmpty() || edgeShown) && !covered && !hidden) {
             val boxes = displays.map { c ->
                 val o = center(c)
                 DisplayBox(c, Rect(o.x - half(c), o.y - halfH(c), o.x + half(c), o.y + halfH(c)))
             }
-            GyroDisplaysLayer(runtime, boxes, editing, lit, litColor, Modifier.fillMaxSize())
+            GyroDisplaysLayer(runtime, boxes, editing, lit, litColor, if (edgeShown) visuals else null, Modifier.fillMaxSize())
         }
-        if (!editing && !covered && !hidden && visuals.gyroEdge) GyroEdgeLayer(runtime, visuals, Modifier.fillMaxSize())
         val noButtons = ws.touchControls.all { it.kind == TouchKind.DISPLAY }
         if (!editing && ws.touchpad.enabled && (noButtons || portrait)) {
             Text(
@@ -1979,31 +1994,49 @@ fun PadScreen(
                 modifier = Modifier.align(Alignment.TopCenter).padding(16.dp),
             )
         }
-        // The pad's value sliders, read once for the frames behind the buttons and the bars over them.
-        val valueBars = if (editing || covered) null else {
+        // The buttons' frames (their mappings active now, their Toggles, their sliders' values), read
+        // once for the frames behind the buttons and the bars and frames over them.
+        val frames = visuals.liveMappings
+        val valueBars = if (editing || covered || !(frames || visuals.positionRuler)) null else {
             // Only the buttons and mappings decide the marks: a workspace edit that changes neither (a
             // slider's saved value) keeps the overlay as it is.
-            val valueMarks = remember(ws.touchControls, ws.mappings, ws.padFingers, w, h, portrait) {
+            val valueMarks = remember(ws.touchControls, ws.mappings, ws.padFingers, ws.gyro.gameCountsPer360, w, h, portrait, frames, visuals.positionRuler) {
                 fun steps(fingers: List<FingerAxisSettings>) =
                     FingerAxis.entries.mapNotNull { a -> fingers.fingerOf(a).steps?.let { a to it } }.toMap()
                 val chips = ws.mappings.filter { m -> m.target.valueTarget && m.source.slides }
                 val ids = chips.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
                 val setIds = chips.filter { it.setValue != null }.map { MappingProfiles.touchId(it.source) ?: "" }.toSet()
+                // Every line a frame could show, in any layer, with each chip's How from its button.
+                val all = ButtonHow.touch(ws, ws.mappings)
+                val byId = ws.touchControls.associateBy { it.id }
+                fun toggles(m: Mapping): Boolean =
+                    m.options?.mode == How.TOGGLE || ButtonHow.ownerOf(m.source)?.let(byId::get)?.let { ButtonHow.stateOf(it, m) } == true
+                val counts = ws.gyro.gameCountsPer360
+                fun possible(id: String) = frameLines(id, all, ::toggles, counts, visuals.positionRuler, frames)
                 buildList {
-                    if ("" in ids) add(ValueMark("", 0f, 0f, w, h, round = false, set = "" in setIds, framed = false, steps = steps(ws.padFingers)))
+                    val pad = possible("")
+                    if ("" in ids || pad.isNotEmpty()) {
+                        add(ValueMark("", 0f, 0f, w, h, round = false, set = "" in setIds, framed = false, steps = steps(ws.padFingers), possible = pad))
+                    }
                     for (c in ws.touchControls) {
-                        if (c.id !in ids) continue
+                        if (c.kind == TouchKind.DISPLAY) continue
+                        val lines = possible(c.id)
+                        if (c.id !in ids && lines.isEmpty()) continue
                         val cx = c.placeX(portrait) * w
                         val cy = c.placeY(portrait) * h
                         val hw = c.placeSize(portrait) * minOf(w, h) / 2f
                         val round = c.shape == TouchShape.CIRCLE
                         val hh = if (round) hw else hw * c.heightRatio
-                        add(ValueMark(c.id, cx - hw, cy - hh, cx + hw, cy + hh, round, c.id in setIds, steps = steps(c.fingers)))
+                        add(ValueMark(c.id, cx - hw, cy - hh, cx + hw, cy + hh, round, c.id in setIds, steps = steps(c.fingers), possible = lines))
                     }
                 }
             }
             val padMarked = valueMarks.any { it.id.isEmpty() }
-            rememberValueBars(runtime.engine, valueMarks, { padMarked || fingersOnButtons > 0 }, bars = visuals.positionRuler)
+            rememberValueBars(
+                runtime.engine, valueMarks,
+                { padMarked || fingersOnButtons > 0 || pressedIds.isNotEmpty() || liveWatching },
+                bars = visuals.positionRuler, frames = frames,
+            )
         }
         Box(Modifier.fillMaxSize().then(touchModifier)) {
             if (editing && snap) {
@@ -2020,9 +2053,7 @@ fun PadScreen(
                 }
             }
             // A control the edit left as it was keeps its label: a drag works out only the moved one's.
-            val labels = remember(ws, editing, controlMappings) {
-                labelCache.labels(ws, editing, controlMappings)
-            }
+            val labels = remember(ws, editing, controlMappings) { labelCache.labels(ws, editing, controlMappings) }
             // The PC's phone overlay draws this layout on its phone (the last one in play stays during edit mode).
             if (!editing) {
                 val setName = if (layers.set == MappingSet.BASE && layers.overrides.isEmpty()) "" else {
@@ -2093,11 +2124,11 @@ fun PadScreen(
                     editing = editing,
                     label = labels[c.id] ?: "",
                     selectedTint = if (isSelected) litColor(c.id) else null,
-                    pressed = { c.id in pressedIds || c.id in heldSticks },
+                    pressed = { c.id in activeIds || c.id in heldSticks },
                     latched = { c.id in latchedIds },
                     syncTint = syncTints[c.id],
-                    // Values sitting in the button's middle take its label's place.
-                    liveLabel = { if (valueBars != null && c.id in valueBars.centered) "" else liveLabels[c.id] },
+                    // A frame in the button's middle takes its label's place.
+                    liveLabel = { if (valueBars != null && c.id in valueBars.centered) "" else null },
                     widthDp = with(density) { (r * 2).toDp() },
                     heightDp = with(density) { (rh * 2).toDp() },
                     knob = { stickPos[c.id] ?: Offset.Zero },
@@ -2128,8 +2159,8 @@ fun PadScreen(
                     )
                 }
             }
-            // The touchpad's label and what it sends now, at the pad's top centre (when the workspace asks).
-            if (ws.touchpadLabelShown) TouchpadLabel(ws.touchpadLabel, live = { if (editing) null else liveLabels[""] })
+            // The touchpad's label at the pad's top centre (when the workspace asks); what it sends now is in its frame.
+            if (ws.touchpadLabelShown) TouchpadLabel(ws.touchpadLabel, live = { null })
             // The corners: shared by all workspaces, drawn over the controls, always shown.
             for (c in shown.shownCorners) {
                 val r = half(c)
@@ -2219,6 +2250,9 @@ fun PadScreen(
         }
 
         if (!editing && !hidden) DebugOverlay(runtime, Modifier.align(Alignment.BottomStart), covered)
+
+        // Settings › Performance › Ratchet timing: each ratchet press against the swing's turn-around.
+        if (!editing && !hidden && !covered) RatchetTimingPanel(runtime, Modifier.align(Alignment.TopCenter).padding(top = 48.dp))
 
         if (markersShown) LatencyMarkers { latencyHidden = true }
 
@@ -3379,21 +3413,21 @@ private class LabelCache {
 }
 
 /**
- * Label shown on a control: its own, else its first mapping's short name, its cards taken in the
- * order the mapping editor shows them ([cardsInOrder]): in play mode from
- * [inUse] (its mappings in the set in use), while editing from Base.
+ * Label shown on a control: its own, else every mapping of its first card with any, its cards
+ * taken in the order the mapping editor shows them ([cardsInOrder]), joined by " + ": in play
+ * mode from [inUse] (its mappings in the set in use), while editing from Base ("?" for none).
  */
 private fun controlLabel(workspace: Workspace, c: TouchControl, editing: Boolean, inUse: List<Mapping>?): String {
     if (c.label.isNotBlank()) return c.label
-    val first = if (editing) {
-        cardsInOrder(c).firstNotNullOfOrNull { Bindings.targets(workspace.mappings, it).firstOrNull() }
+    val targets = if (editing) {
+        cardsInOrder(c).firstNotNullOfOrNull { input -> Bindings.targets(workspace.mappings, input).takeIf { it.isNotEmpty() } }
     } else {
-        val ms = inUse.orEmpty().filter { it.target != OutputTarget.NoOutput }
+        val ms = inUse.orEmpty().filter { !it.target.nothing }
         cardsInOrder(c).firstNotNullOfOrNull { input ->
-            ms.firstOrNull { m -> input.sources.any { Bindings.sameSource(it, m.source) } }?.target
+            ms.filter { m -> input.sources.any { Bindings.sameSource(it, m.source) } }.map { it.target }.distinct().takeIf { it.isNotEmpty() }
         }
     }
-    return first?.let { Describe.shortTarget(it) } ?: if (editing) "?" else ""
+    return targets?.joinToString(" + ") { Describe.shortTarget(it) } ?: if (editing) "?" else ""
 }
 
 private fun shapeOf(c: TouchControl): Shape =
@@ -3910,3 +3944,6 @@ private fun fadeAlpha(c: TouchControl, ws: Workspace, touched: () -> Boolean): S
     }
     return animateFloatAsState(if (idle && faded != null) faded else full, tween(if (idle) 600 else 120), label = "fade")
 }
+
+/** The pad's background (the gyro displays' layer paints it too: [GyroDisplaysLayer]). */
+val PAD_BACKGROUND = Color(0xFF101318)

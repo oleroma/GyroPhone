@@ -43,7 +43,8 @@ public sealed record CompanionView(
     bool InputLog = true,
     int CatchUpMs = 16,
     bool PressKeyNotice = true,
-    bool PressKeyListen = true);
+    bool PressKeyListen = true,
+    bool OverlayTimingLog = true);
 
 /// <summary>
 /// The tray app as the windows see it. Every setter saves the setting and refreshes the open windows,
@@ -91,6 +92,8 @@ public interface ICompanion
     void OpenLogFolder();
     void ShowDebugWindow();
     void ToggleInputLog();
+    /// <summary>"Overlay timing log" (Performance › Debug).</summary>
+    void ToggleOverlayTimingLog();
     /// <summary>"Use this PC's keys for Press a key".</summary>
     void TogglePressKeyListen();
     /// <summary>"Notify when the phone listens for a key".</summary>
@@ -102,10 +105,10 @@ public interface ICompanion
     /// <summary>The Performance page's frame watcher, link seconds and test records.</summary>
     GyroPhone.Host.Perf.PerfMonitor Perf { get; }
     /// <summary>
-    /// Adds the user to Windows' "Performance Log Users" (one admin prompt), so the frame watcher works without
-    /// admin from the next sign-in. True when added.
+    /// Sets up the FPS helper (one admin prompt): it reads the game's frames as administrator, started by Windows at
+    /// sign-in, so the companion never needs admin for them. True when set up.
     /// </summary>
-    bool AllowFrameWatch();
+    bool SetUpFpsHelper();
     /// <summary>The way the phone's packets go now ("Phone hotspot · PC Wi-Fi") and which Record Setup that is, or null without a phone.</summary>
     (string Text, string? Setup)? LinkPath();
     void OpenPerfFolder();

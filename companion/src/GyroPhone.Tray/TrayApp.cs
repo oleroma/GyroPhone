@@ -122,7 +122,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         };
         _engine.SetPcPad(new XInputPcPad(_log.Write, _clock));
         _engine.SetKeyMouseListener(new RawInputListener(_log.Write));
-        _perf = new PerfMonitor(new FrameWatch(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
+        _perf = new PerfMonitor(new FpsHelperSource(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
             Path.Combine(_log.Directory, "perf"), _log.Write);
         _engine.Recorder!.Timeline = _perf.Link;
         _perf.Started += () => _engine.Buzz();
@@ -498,7 +498,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _engine.Settings.InputLog,
             _engine.Settings.CatchUpMs,
             _engine.Settings.PressKeyNotice,
-            _engine.Settings.PressKeyListen);
+            _engine.Settings.PressKeyListen,
+            _engine.Settings.OverlayTimingLog);
     }
 
     public void SetLatencyScreen(bool on) => _engine.SetLatencyScreen(on);
@@ -506,6 +507,12 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     public void SetCatchUpMs(int ms)
     {
         _engine.SetCatchUpMs(ms);
+        Refresh();
+    }
+
+    public void ToggleOverlayTimingLog()
+    {
+        _engine.SetOverlayTimingLog(!_engine.Settings.OverlayTimingLog);
         Refresh();
     }
 
@@ -1031,17 +1038,25 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     {
         if (Volatile.Read(ref _exited) != 0) return;
         foreach (var f in _overlayList)
-            if (!f.IsDisposed) f.Tick();
-        // The draw times in the log now and then, so they can be read without the Debug window.
+            if (!f.IsDisposed) f.Signal();
+        // The draw times in the log (Performance › Debug › Overlay timing log): every second while an overlay
+        // draws (so a short burst of fast moves can be read back), else now and then.
         long now = Environment.TickCount64;
-        if (now - _overlayStatsLoggedAt >= 30_000)
+        if (now - _overlayStatsLoggedAt >= 1_000 && _engine.Settings.OverlayTimingLog)
         {
-            if (_overlayStatsLoggedAt != 0) _log.Write(OverlayStats());
+            string stats = OverlayStats();
+            bool drawing = _overlayList.Any(f => f.Stats.Length > 0 && !f.Stats.EndsWith(": idle", StringComparison.Ordinal));
+            if (_overlayStatsLoggedAt != 0 && (drawing || now - _overlayStatsQuietAt >= 30_000))
+            {
+                _log.Write(stats);
+                if (!drawing) _overlayStatsQuietAt = now;
+            }
             _overlayStatsLoggedAt = now;
         }
     }
 
     private long _overlayStatsLoggedAt;
+    private long _overlayStatsQuietAt;
 
     /// <summary>The fastest frame rate an open overlay window wants (pacer thread); 0 = every screen refresh.</summary>
     private int OverlayWantHz()
@@ -1099,7 +1114,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     public string OverlayStats()
     {
         var open = _overlayList;
-        return open.Length == 0 ? "overlays: none open" : "overlays: " + string.Join(" · ", open.Select(f => f.Stats).Where(t => t.Length > 0));
+        if (open.Length == 0) return "overlays: none open";
+        string paint = GpuPaint.Status, shapes = Gpu3D.Status;
+        return "overlays: " + string.Join(" · ", open.Select(f => f.Stats).Where(t => t.Length > 0)) + (paint.Length > 0 ? " · " + paint : "")
+            + (shapes.Length > 0 ? " · " + shapes : "");
     }
 
     /// <summary>An overlay window that shows the phone's pose is open (the FPS overlay needs nothing from the phone).</summary>
@@ -1296,7 +1314,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         return (LinkPaths.Describe(l, pc), LinkPaths.Setup(l, pc));
     }
 
-    public bool AllowFrameWatch() => PerfPermission.Grant(_log.Write);
+    public bool SetUpFpsHelper() => FpsHelperSetup.Install(_log.Write);
 
     public void OpenPerfFolder()
     {

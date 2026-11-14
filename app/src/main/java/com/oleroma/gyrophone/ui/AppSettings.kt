@@ -146,6 +146,9 @@ private fun AppTab(runtime: GamepadRuntime) {
         )
     }
     val debugOn by runtime.debug.enabled.collectAsStateWithLifecycle()
+    val ratchetTimingOn by runtime.ratchetTimingOn.collectAsStateWithLifecycle()
+    val drawTimingLogOn by runtime.drawTimingLogOn.collectAsStateWithLifecycle()
+    val usbDirect by runtime.usbDirectOn.collectAsStateWithLifecycle()
     val tight by runtime.gyroTightening.collectAsStateWithLifecycle()
     val smooth by runtime.gyroSmoothing.collectAsStateWithLifecycle()
     val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
@@ -213,7 +216,8 @@ private fun AppTab(runtime: GamepadRuntime) {
                     "Hardware devices too", padOnlyHardware,
                     hint = if (padOnlyHardware) "Controllers, keyboards and the volume buttons also reach the PC only on the pad."
                     else "Controllers, keyboards and the volume buttons reach the PC with the pad closed too, while GP is on screen " +
-                        "(Android gives an app in the background no buttons). A keyboard still types into GP's boxes.",
+                        "(Android gives an app in the background no buttons; a USB controller read directly works in the background too). " +
+                        "A keyboard still types into GP's boxes.",
                 ) { runtime.setPadOnlyHardware(it) }
             }
         },
@@ -224,7 +228,7 @@ private fun AppTab(runtime: GamepadRuntime) {
             }
             Hint("The ← / → buttons are ordinary buttons of every workspace (Make global): move, resize, map or delete them in Edit layout. Add them back from Add preset ★ → Workspace arrows.")
         },
-        category(runtime, "touchDisplay", "Touch display", "Touches, trails, live mappings, swipe lines, Move rulers") {
+        category(runtime, "touchDisplay", "Touch display", "Touches, trails, mappings on buttons, swipe lines, Move rulers") {
             SwitchRow("Show touches", visuals.showTouches) { runtime.setTouchVisuals(visuals.copy(showTouches = it)) }
             SwitchRow("Trail behind fingers", visuals.trail) { runtime.setTouchVisuals(visuals.copy(trail = it)) }
             if (visuals.trail) {
@@ -254,8 +258,11 @@ private fun AppTab(runtime: GamepadRuntime) {
                 ) { runtime.setTouchVisuals(visuals.copy(fadeMs = it)) }
             }
             SwitchRow(
-                "Show live mappings on buttons", visuals.liveMappings,
-                hint = "A button's label briefly shows what it is sending, such as a tap, double tap or long press action.",
+                "Show mappings on buttons", visuals.liveMappings,
+                hint = "A frame on each button lists what it is sending now, one line each (a tap, double tap or long press action " +
+                        "stays a moment), and each Toggle it has with its state: \"Crouch on\" in green, \"Crouch off\" in grey. " +
+                        "Slider values join the same frame. It sits in the middle of the button, in place of its label, when everything " +
+                        "the button could show fits there; otherwise outside by its top-right corner.",
             ) { runtime.setTouchVisuals(visuals.copy(liveMappings = it)) }
             SwitchRow(
                 "Show the swipe line on touchpad buttons", visuals.swipeLine,
@@ -344,7 +351,15 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "ends on the PC plays either way.",
             ) { runtime.setGameRumble(it) }
         },
-        category(runtime, "debugging", "Debugging", "The debug panel and recordings") {
+        category(runtime, "debugging", "Performance", "Reading USB controllers directly; debug: the debug panel, ratchet timing, recordings and logs") {
+            SwitchRow(
+                "Read USB controllers directly", usbDirect,
+                hint = if (usbDirect) "A gamepad plugged into the phone's USB port is read by GP itself on its own thread, the fastest " +
+                    "way: the screen and Android's input queue never hold a press. Android asks once per plug-in. While GP holds it " +
+                    "(when input is sent, see Screen), other apps get nothing from it, and its buttons reach the PC from the background too."
+                else "USB gamepads go through Android like any other: only while GP is on screen.",
+            ) { runtime.setUsbDirect(it) }
+            Text("Debug", style = MaterialTheme.typography.titleSmall)
             SwitchRow(
                 "Debug tools", debugOn,
                 hint = "Shows a debug panel on the pad: the link's speed and latency, the gyro, the active workspace and " +
@@ -352,6 +367,19 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "Record saves the last 30 seconds (the PC saves its side too over Wi-Fi or USB). " +
                         "Off: nothing is logged.",
             ) { runtime.debug.setEnabled(it) }
+            SwitchRow(
+                "Ratchet timing", ratchetTimingOn,
+                hint = "Measures each ratchet press made during a quick swing and back, shown at the top of the pad " +
+                        "(the last 10 and the middle of each). You: ms from the swing's turn-around to your press " +
+                        "(+ = after the turn). App: ms from the press reaching the phone to the gyro stopping. " +
+                        "Back: how far the camera still moved back after the turn before it stopped (degrees once the " +
+                        "game's turn is set in Gyro, else mouse counts). Turning it off clears the list.",
+            ) { runtime.setRatchetTiming(it) }
+            SwitchRow(
+                "Display timing log", drawTimingLogOn,
+                hint = "While the gyro displays draw, writes how long they take to the phone's system log once a " +
+                        "second (tag GPDraw, read with adb logcat), so a slow display can be found. Costs almost nothing.",
+            ) { runtime.setDrawTimingLog(it) }
         },
         category(runtime, "backup", "Backup", "Export or import everything as a file") {
             Searchable(

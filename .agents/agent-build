@@ -3,8 +3,8 @@
 # so the thread agent watching that PR wakes up. It runs agent-install on the build; a failed
 # install is reported in the summary but doesn't fail the build. Every PC build publishes its
 # build files as a pre-release on its build/<n> tag, as the CI fallback does, so Obtainium on the
-# phone can install it. Builds don't run the full checks: agent-check runs them once, before the
-# merge.
+# phone can install it; once the build is installed, that upload runs in the background
+# (upload-build). Builds don't run the full checks: agent-check runs them once, before the merge.
 # Before it builds, it stops with "other-build" when the repo's newest build came from another
 # branch whose PR is still open, since Olex may still be testing that build; --replace builds anyway.
 # It also stops with "workflow-change" when everything the branch changed since main is pipeline
@@ -97,7 +97,7 @@ guard_workflow_change() {
 open_build_window() {
   [ -f /git-bash.exe ] && command -v cygpath >/dev/null 2>&1 || return 0
   cmd //c start "" "$(cygpath -w /git-bash.exe)" -c \
-    "bash '$(cygpath -m "$AGENTS_DIR/build-window")' '$(cygpath -m "$LOG_FILE")' '$(cygpath -m "$CANCEL_FILE")' '$(cygpath -m "$BUILD_DIR/logs/build-output.txt")'" ||
+    "bash '$(cygpath -m "$AGENTS_DIR/build-window")' '$(cygpath -m "$LOG_FILE")' '$(cygpath -m "$CANCEL_FILE")' '$(cygpath -m "$BUILD_DIR/logs/build-output.txt")' $$" ||
     echo "Couldn't open the build window."
 }
 
@@ -128,8 +128,9 @@ build_pc() {
   report() { report_pr "PC build" "$@"; }
   [ "$WORKTREE" -ef "$BUILD_DIR/src" ] || die "Run this from the build/src worktree, as in AGENTS.md step 3."
 
-  local lock="$BUILD_DIR/.build-lock"
-  mkdir "$lock" 2>/dev/null || die "Another build is running in build/src, or $lock was left behind. Ask Olex."
+  take_lock "$(git rev-parse --short=7 HEAD)"
+  # The commit is read once: everything below builds, publishes and reports this one.
+  SHA="$(git rev-parse HEAD)"
   # The build window shows this log; Ctrl+C there makes the cancel file, and watch_cancel stops
   # the build. The file stays until the next build, so the result can still see it.
   CANCEL_FILE="$BUILD_DIR/.build-cancel"
@@ -139,12 +140,12 @@ build_pc() {
   trap 'exit 130' TERM
   watch_cancel &
   local watcher=$!
-  cleanup() { kill "$watcher" 2>/dev/null || true; rmdir "$lock" 2>/dev/null || true; }
+  cleanup() { kill "$watcher" 2>/dev/null || true; release_lock; }
 
   local commit
   commit="$(git rev-parse --short=7 HEAD)"
   guard_workflow_change
-  guard_other_build "$(git rev-parse HEAD)"
+  guard_other_build "$SHA"
 
   # An Android repo: say at once whether the phone is on adb, so Olex can connect it while this
   # builds. The install runs after the build, so a phone connected by then still gets it.
@@ -159,7 +160,7 @@ build_pc() {
   # When CI already built this commit (agent-build ci while the PC was away), download and
   # install that build instead of building it again.
   local version="" line rel v files=() names=() ci_tag="" built_here=1
-  read -r ci_tag version < <(ci_build_release "$(git rev-parse HEAD)") || true
+  read -r ci_tag version < <(ci_build_release "$SHA") || true
   if [ -n "$ci_tag" ]; then
     built_here=0
     fetch_ci_build "$ci_tag" "$BUILD_DIR/logs/ci-build"
@@ -261,19 +262,28 @@ build_pc() {
   done <<<"$out"
   echo "$out"
 
-  # Every build is published right after the install, as the CI fallback does.
+  # Every build is published right after the install, as the CI fallback does (upload-build).
+  # Once it's installed, the upload runs in the background, so the build ends right after the
+  # install. When it wasn't installed, the phone gets it from the pre-release, so this waits.
+  # The upload takes the copies in builds/, which the next build doesn't change.
   if [ "$built_here" = 1 ]; then
-    if gh release create "build/$BUILD_NUMBER" "${files[@]}" -R "$SLUG" --verify-tag --prerelease \
-      --title "$version" \
-      --notes "$(bash "$AGENTS_DIR/release-notes" "$(git rev-parse HEAD)" "$BUILD_NUMBER" "PC build of $(git rev-parse HEAD)")" >/dev/null; then
-      summary+=("Published: https://github.com/$SLUG/releases/tag/build/$BUILD_NUMBER")
+    local url="https://github.com/$SLUG/releases/tag/build/$BUILD_NUMBER"
+    local up=("$AGENTS_DIR/upload-build" "$SHA" "$BUILD_NUMBER" "$version"
+      "$(bash "$AGENTS_DIR/release-notes" "$SHA" "$BUILD_NUMBER" "PC build of $SHA")")
+    for name in "${names[@]}"; do up+=("$dest/$name"); done
+    if [ "$installed" = 1 ] && [ "${#away[@]}" = 0 ]; then
+      UPLOAD_BACKGROUND=1 nohup bash "${up[@]}" </dev/null >/dev/null 2>&1 3>&- &
+      disown
+      summary+=("Publishing in the background: $url" "A failed upload is posted on the PR; its log is $BUILD_DIR/logs/upload-build-*.log.")
+    elif bash "${up[@]}" >/dev/null; then
+      summary+=("Published: $url")
     else
-      summary+=("Publishing the build failed (see the log).")
+      summary+=("Publishing the build failed (see $BUILD_DIR/logs/upload-build-*.log).")
     fi
   else
     summary+=("CI already published this build.")
   fi
-  if [ "${#away[@]}" -gt 0 ]; then summary+=("Not installed: the phone wasn't connected; it can get the build from the pre-release."); fi
+  if [ "${#away[@]}" -gt 0 ]; then summary+=("Not installed on the phone (the reason is above); it can get the build from the pre-release."); fi
   # The full checks aren't run here: agent-check runs them once, before the merge.
   if [ "$built_here" = 1 ]; then summary+=("Full checks: before the merge (agent-check)."); fi
 
@@ -321,13 +331,8 @@ if [ -n "$BRANCH" ]; then
   git fetch origin "$BRANCH" || die "Couldn't fetch $BRANCH."
   case "$MODE" in
     pc)
-      src="$MAIN_REPO/build/src"
-      if [ -e "$src/.git" ]; then
-        git -C "$src" checkout --detach "origin/$BRANCH" || die "Couldn't check out $BRANCH in build/src."
-      else
-        git -C "$MAIN_REPO" worktree add --detach "$src" "origin/$BRANCH" || die "Couldn't make build/src."
-      fi
-      exec bash "$src/.agents/agent-build" pc "${FLAGS[@]}" >&3 2>&3 3>&-
+      checkout_src "$BRANCH"
+      exec bash "$MAIN_REPO/build/src/.agents/agent-build" pc "${FLAGS[@]}" >&3 2>&3 3>&-
       ;;
     ci)
       git checkout "$BRANCH" && git merge --ff-only "origin/$BRANCH" || die "Couldn't check out $BRANCH."

@@ -166,7 +166,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             pump.linkTest = v and TestModeFlags.LINK_TEST != 0
             _linkTest.value = v and TestModeFlags.LINK_TEST != 0
         }
-    private val accessory = AccessoryBridge(appContext)
+    private val accessory = AccessoryBridge(appContext).also { pump.direct = it }
 
     private val _state = MutableStateFlow<LinkState>(LinkState.Off)
     override val state: StateFlow<LinkState> = _state
@@ -344,6 +344,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             overlay.wanted = v != null && v.flags and HostStatusFlags.OVERLAY != 0
             overlay.compassWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_COMPASS != 0
             overlay.totalsWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_TOTALS != 0
+            overlay.samplesWanted = overlay.wanted && v!!.flags2 and HostStatusFlags2.OVERLAY_SAMPLES != 0
             if (v != null) motion.padTakesMotion = OutputMode.takesMotion(v.outputMode) && v.flags and HostStatusFlags.PAD_PLUGGED != 0
             else motion.padTakesMotion = false
         }

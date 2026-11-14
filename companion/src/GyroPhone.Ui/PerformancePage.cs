@@ -20,11 +20,14 @@ internal sealed class PerformancePage : Page
     private readonly LatencyPage _latency;
     private readonly Border _permission;
     private readonly TextBlock _permissionText;
-    private readonly Button _allow, _admin;
+    private readonly Button _setUp;
     private readonly TextBlock _linkBig, _linkSub, _latBig, _latSub, _gameSub;
     private readonly Sparkline _latGraph = new() { Margin = new Thickness(0, 8, 0, 0) };
     private readonly FrameGraph _graph = new() { Margin = new Thickness(0, 10, 0, 4) };
     private readonly CheckBox _measureButtons;
+    private readonly CheckBox _inputLog, _overlayLog;
+    private readonly Seg<int> _catchUp;
+    private readonly TextBlock _logPath;
     private readonly TextBlock _buttonsSub;
     private readonly TextBox _name;
     private readonly Seg<string> _picks;
@@ -35,7 +38,7 @@ internal sealed class PerformancePage : Page
     private readonly StackPanel _results = new();
     private string _resultsKey = "\0";
     private string? _setup;
-    private bool _nameEdited, _settingName, _granted, _wasRecording, _wasConnected, _shown;
+    private bool _nameEdited, _settingName, _setUpFailed, _wasRecording, _wasConnected, _shown;
     private long _sampledAt;
 
     public override FrameworkElement View => _root;
@@ -44,7 +47,7 @@ internal sealed class PerformancePage : Page
     {
         _app = app;
         _root.Children.Add(Parts.Text("Performance", "H1"));
-        var intro = Parts.Text("The phone link live, link tests to compare ways of connecting, and the video latency test. " +
+        var intro = Parts.Text("The phone link live, link tests to compare ways of connecting, the video latency test, and the debug logs and tools. " +
             "Measured only while this page is open (and while a test records).", "Sub");
         intro.Margin = new Thickness(0, 0, 0, 14);
         _root.Children.Add(intro);
@@ -58,14 +61,11 @@ internal sealed class PerformancePage : Page
         _permissionText.VerticalAlignment = VerticalAlignment.Center;
         _permissionText.FontSize = 13.5;
         pg.Children.Add(_permissionText);
-        _allow = Parts.Button("Allow", Allow, "WarnButton");
-        _admin = Parts.Button("Restart as administrator", app.RestartAsAdmin, "WarnButton");
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        _allow.Margin = _admin.Margin = new Thickness(12, 0, 0, 0);
-        buttons.Children.Add(_allow);
-        buttons.Children.Add(_admin);
-        Grid.SetColumn(buttons, 1);
-        pg.Children.Add(buttons);
+        _setUp = Parts.Button("Set up FPS helper", SetUp, "WarnButton");
+        _setUp.Margin = new Thickness(12, 0, 0, 0);
+        _setUp.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(_setUp, 1);
+        pg.Children.Add(_setUp);
         _permission = new Border { Style = Parts.Style("Banner"), Child = pg, MinHeight = 44, Margin = new Thickness(0, 0, 0, 14) };
         _root.Children.Add(_permission);
 
@@ -158,6 +158,32 @@ internal sealed class PerformancePage : Page
         // Latency test (video)
         _latency = new LatencyPage(app, owner, icon);
         _root.Children.Add(_latency.View);
+
+        // Speed settings
+        var (mouse, mb) = Parts.Card("Mouse");
+        mb.Children.Add(Parts.Text("Catch-up time"));
+        _catchUp = new Seg<int>(app.SetCatchUpMs, false, ("Off", 0), ("8 ms", 8), ("16 ms", 16), ("32 ms", 32));
+        _catchUp.View.Margin = new Thickness(0, 8, 0, 4);
+        mb.Children.Add(_catchUp.View);
+        mb.Children.Add(Parts.Text("When Wi-Fi loses or holds up a stretch of gyro or mouse movement, it is played out over up to this long instead of landing as one jump. New movement always goes out at once. Off: the old one-step jump.", "Hint"));
+        _root.Children.Add(mouse);
+
+        // Debug: every log and debug tool, each switchable
+        var (debug, db) = Parts.Card("Debug");
+        _inputLog = Parts.Toggle("Record input log", app.ToggleInputLog,
+            "Notes lost, late and stalled input in input.log in the log folder, so a stutter can be traced after you play. Costs almost nothing.");
+        db.Children.Add(_inputLog);
+        db.Children.Add(Parts.Divider());
+        _overlayLog = Parts.Toggle("Overlay timing log", app.ToggleOverlayTimingLog,
+            "Writes each open overlay's draw times to companion.log once a second while they draw, so a slow overlay can be found. Costs almost nothing.");
+        db.Children.Add(_overlayLog);
+        db.Children.Add(Parts.Divider());
+        _logPath = Parts.Text("", "Sub");
+        db.Children.Add(_logPath);
+        db.Children.Add(Parts.Row(
+            Parts.Button("Open log folder", app.OpenLogFolder, glyph: ""),
+            Parts.Button("Debug window…", app.ShowDebugWindow, glyph: "")));
+        _root.Children.Add(debug);
     }
 
     public override void Shown(bool on)
@@ -167,11 +193,12 @@ internal sealed class PerformancePage : Page
         _latency.Shown(on);
     }
 
-    private void Allow()
+    private void SetUp()
     {
-        _granted = _app.AllowFrameWatch();
-        _app.Perf.Retry();
-        _app.Log($"performance page: allow {(_granted ? "done" : "not done")}");
+        bool done = _app.SetUpFpsHelper();
+        _setUpFailed = !done;
+        if (done) _app.Perf.Retry();
+        _app.Log($"performance page: FPS helper set up {(done ? "done" : "not done")}");
     }
 
     private void Record()
@@ -189,6 +216,10 @@ internal sealed class PerformancePage : Page
 
     public override void Refresh(CompanionView v)
     {
+        Parts.SetChecked(_inputLog, v.InputLog);
+        Parts.SetChecked(_overlayLog, v.OverlayTimingLog);
+        _catchUp.Set(v.CatchUpMs);
+        _logPath.Text = $"Log: {v.LogPath}";
         var p = _app.Perf;
         var s = v.Status;
         var path = s.Connected ? _app.LinkPath() : null;
@@ -200,11 +231,13 @@ internal sealed class PerformancePage : Page
         {
             _permissionText.Text = p.State == FrameWatchState.Failed
                 ? $"The FPS overlay can't watch frames: {p.Error}."
-                : _granted
-                    ? "Allowed. It works from your next Windows sign-in (sign out and back in), or now if you restart GyroPhone as administrator."
-                    : "The FPS overlay needs a Windows permission to watch the game's frames. \"Allow\" asks once for admin rights, then it works without them from your next sign-in.";
-            Parts.Show(_allow, p.State == FrameWatchState.NeedsPermission && !_granted);
-            Parts.Show(_admin, !v.Elevated);
+                : _setUpFailed
+                    ? "The FPS helper wasn't set up (the admin prompt was declined, or a step failed: see the log). Try again?"
+                    : p.Error != null
+                        ? $"The FPS overlay needs its helper updated: {p.Error}. \"Set up FPS helper\" asks once for admin rights."
+                        : "The FPS overlay needs a small helper that watches the game's frames. \"Set up FPS helper\" asks once for admin rights; " +
+                          "after that Windows starts it at sign-in and GyroPhone never asks again.";
+            Parts.Show(_setUp, p.State == FrameWatchState.NeedsPermission);
         }
 
         // Link

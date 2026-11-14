@@ -18,6 +18,31 @@ class OverlayFeedTest {
         assertEquals(true, PacketType.isPhoneToHost(PacketType.OVERLAY_LAYOUT))
     }
 
+    @Test fun samplesAddUpToTheFrameThatFollows() {
+        val f = OverlayFeed()
+        f.wanted = true
+        f.samplesWanted = true
+        repeat(3) { f.gyro(100f, -50f, 10f, 0.001f, 1, false) }
+        val s = ByteArray(Wire.OVERLAY_SAMPLES_PLAIN)
+        assertEquals(Wire.OVERLAY_SAMPLES_PLAIN, f.encodeSamples(s, 0, 42))
+        // A sample between the two packets waits for the next frame.
+        f.gyro(100f, 0f, 0f, 0.001f, 1, false)
+        val o = ByteArray(Wire.OVERLAY_PLAIN)
+        f.encodeFrame(o, 0, 42, emptySet(), emptySet())
+        assertEquals(42, s.getU32(0).toInt())
+        assertEquals(3, s.getU8(4))
+        assertEquals(100, s.getI16(8))
+        assertEquals(-50, s.getI16(10))
+        assertEquals(10, s.getI16(12))
+        assertEquals(100, s.getU16(14))
+        assertEquals(0.3f, java.lang.Float.intBitsToFloat(o.getU32(4).toInt()), 1e-5f)
+        assertEquals(300, o.getU16(16))
+        val o2 = ByteArray(Wire.OVERLAY_PLAIN)
+        f.encodeFrame(o2, 0, 43, emptySet(), emptySet())
+        assertEquals(0.1f, java.lang.Float.intBitsToFloat(o2.getU32(4).toInt()), 1e-5f)
+        assertEquals(292, Wire.sizeOf(PacketType.OVERLAY_SAMPLES))
+    }
+
     @Test fun layoutPiece() {
         val blob = OverlayFeed.encodeLayout(layout)
         assertEquals(LAYOUT_BLOB, blob.hex())

@@ -52,6 +52,8 @@ object Wire {
     const val OVERLAY_PLAIN = 152
     /** OVERLAY_LAYOUT: one piece of the layout the overlay draws on the phone's screen. */
     const val OVERLAY_LAYOUT_PLAIN = 200
+    /** OVERLAY_SAMPLES: each gyro sample's turn in the OVERLAY that follows ([OverlayFeed.encodeSamples]). */
+    const val OVERLAY_SAMPLES_PLAIN = 264
     /** MOTION: the phone's raw gyro and accelerometer samples for the PC's DualShock 4 or DualSense ([MotionFeed]). */
     const val MOTION_PLAIN = MotionFeed.SIZE
     /** PRESS_TIME: u32 STATE time, u32 input event time (both low 32 bits of the phone's elapsed-realtime µs). */
@@ -159,6 +161,7 @@ object Wire {
         PacketType.FOREGROUND -> FOREGROUND_PLAIN
         PacketType.OVERLAY -> OVERLAY_PLAIN
         PacketType.OVERLAY_LAYOUT -> OVERLAY_LAYOUT_PLAIN
+        PacketType.OVERLAY_SAMPLES -> OVERLAY_SAMPLES_PLAIN
         PacketType.MOTION -> MOTION_PLAIN
         PacketType.PRESS_TIME -> PRESS_TIME_PLAIN
         PacketType.TEST_MODE -> TEST_MODE_PLAIN
@@ -204,6 +207,8 @@ object PacketType {
     const val PRESS_TIME = 0x2A
     /** About once a second while the "Press a key" screen is open, and when it closes ([CaptureListen]): the PC then sends CAPTURED. */
     const val CAPTURE = 0x2B
+    /** Sent just before each OVERLAY while HOST_STATUS has [HostStatusFlags2.OVERLAY_SAMPLES]: each gyro sample's turn in it. */
+    const val OVERLAY_SAMPLES = 0x2C
     const val BYE = 0x2F
     const val PONG = 0x30
     const val HOST_STATUS = 0x31
@@ -353,6 +358,11 @@ object HostStatusFlags2 {
     const val PC_ON_BATTERY = 16
     /** The PC saves power: energy (battery) saver on, or power mode "Best power efficiency". */
     const val PC_POWER_SAVING = 32
+    /**
+     * With [HostStatusFlags.OVERLAY]: the PC follows every gyro sample (a pointer that paints or has a Snake): the
+     * phone sends OVERLAY_SAMPLES before each OVERLAY. Older PCs never set it; older phones ignore it.
+     */
+    const val OVERLAY_SAMPLES = 64
 }
 
 /** HOST_STATUS flags. */

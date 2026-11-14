@@ -167,6 +167,8 @@ internal sealed class GpuDevice
 /// </summary>
 internal sealed class GpuSurface : IDisposable
 {
+    private static double Ms(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+
     private readonly GpuDevice _shared;
     private readonly ID2D1DeviceContext _dc = null!;
     private readonly D2DCanvas _canvas = null!;
@@ -177,6 +179,21 @@ internal sealed class GpuSurface : IDisposable
     private readonly IDXGISwapChain1? _swap;
     private bool _disposed;
 
+    /// <summary>Where a window's frames went, summed (ms) until <see cref="TakeTimes"/>: drawing, D2D's EndDraw, the presenting (with the wait for the shared lock).</summary>
+    private double _drawMs, _endMs, _presentMs;
+    private int _timed;
+
+    /// <summary>The sums since the last call as one short text (average ms a frame), then starts again.</summary>
+    public string TakeTimes()
+    {
+        if (_timed == 0) return "";
+        var t = $"draw {_drawMs / _timed:0.00}, end {_endMs / _timed:0.00}, present {_presentMs / _timed:0.00}";
+        string card = _canvas.TakeCardTimes(_timed);
+        _drawMs = _endMs = _presentMs = 0;
+        _timed = 0;
+        return card.Length > 0 ? t + ", " + card : t;
+    }
+
     /// <summary>With <paramref name="hwnd"/>: presented by a swap chain to that window; without: copied (see the class).</summary>
     public GpuSurface(IntPtr hwnd = default, int width = 1, int height = 1)
     {
@@ -184,7 +201,7 @@ internal sealed class GpuSurface : IDisposable
         try
         {
             _dc = _shared.Device.CreateDeviceContext(DeviceContextOptions.None);
-            _canvas = new D2DCanvas(_shared.Factory, _shared.Device, _dc, _shared.Write);
+            _canvas = new D2DCanvas(_shared.Factory, _shared.Device, _dc, _shared.Write) { Gpu = _shared };
             if (hwnd == IntPtr.Zero) return;
             // Bit-block transfer model: the one a layered window takes. Its alpha reaches the screen
             // through the window's redirection surface (the extended frame), premultiplied.
@@ -300,17 +317,21 @@ internal sealed class GpuSurface : IDisposable
                     _shared.Leave();
                 }
             }
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
             _dc.BeginDraw();
+            long t1 = t0;
             try
             {
                 _canvas.Begin(quality);
                 draw(_canvas);
                 _canvas.End();
+                t1 = System.Diagnostics.Stopwatch.GetTimestamp();
             }
             finally
             {
                 _dc.EndDraw().CheckError();
             }
+            long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
             _shared.Enter();
             try
             {
@@ -320,6 +341,11 @@ internal sealed class GpuSurface : IDisposable
             {
                 _shared.Leave();
             }
+            long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
+            _drawMs += Ms(t1 - t0);
+            _endMs += Ms(t2 - t1);
+            _presentMs += Ms(t3 - t2);
+            _timed++;
             return;
         }
         if (_bitmap == null || width != _width || height != _height) Bind(width, height);
@@ -400,6 +426,37 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
     private bool _noTextCache;
     private ID2D1PathGeometry? _lastGeo;
 
+    /// <summary>The shared device this canvas draws on (for <see cref="GpuPaint"/>), or null.</summary>
+    public GpuDevice? Gpu { get; init; }
+
+    /// <summary>The device context drawn on (for <see cref="GpuPaint"/>'s pictures).</summary>
+    public ID2D1DeviceContext Dc => _dc;
+
+    // The 3D overlay's pictures on the card (<see cref="Gpu3D"/>), let go with this canvas.
+    private readonly HashSet<IDisposable> _scenes = [];
+
+    /// <summary>Lets go of <paramref name="scene"/> (<see cref="Gpu3D"/>'s pictures for this canvas) when this canvas goes.</summary>
+    public void OwnScene(IDisposable scene) => _scenes.Add(scene);
+
+    /// <summary>The picture's size in pixels (<see cref="Gpu3D"/>'s pictures are as big).</summary>
+    public float Width => _dc.PixelSize.Width;
+
+    public float Height => _dc.PixelSize.Height;
+
+    /// <summary>Counts the pictures begun on this canvas.</summary>
+    public long Frame { get; private set; }
+
+    /// <summary>What <see cref="Gpu3D"/> spent on this canvas, summed (ms): waiting for the shared lock, and its own drawing.</summary>
+    internal double CardWaitMs, CardWorkMs;
+
+    internal string TakeCardTimes(int frames)
+    {
+        if (CardWaitMs == 0 && CardWorkMs == 0) return "";
+        var t = $"card wait {CardWaitMs / frames:0.00}, card {CardWorkMs / frames:0.00}";
+        CardWaitMs = CardWorkMs = 0;
+        return t;
+    }
+
     private readonly record struct TextKey(string Text, float Px, bool Bold, int Argb, float W, float H, TextAlign Hz, TextAlign Vt, int Scale8);
     // What each Push did, so Pop undoes it: a transform to restore, or a layer (with its geometry) to pop.
     private readonly Stack<(Matrix3x2? Transform, ID2D1Geometry? Geometry, bool Layer)> _stack = new();
@@ -425,6 +482,7 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
 
     public void Begin(OverlayQuality quality)
     {
+        Frame++;
         _dc.Transform = Matrix3x2.Identity;
         _dc.AntialiasMode = quality == OverlayQuality.Fast ? AntialiasMode.Aliased : AntialiasMode.PerPrimitive;
         _dc.TextAntialiasMode = quality == OverlayQuality.Fast ? Vortice.Direct2D1.TextAntialiasMode.Aliased : Vortice.Direct2D1.TextAntialiasMode.Grayscale;
@@ -791,6 +849,8 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
         ForgetLast();
         ForgetLineSets();
         _ball?.Dispose();
+        foreach (var scene in _scenes) scene.Dispose();
+        _scenes.Clear();
         _textBrush.Dispose();
         _textDc.Dispose();
         _round.Dispose();

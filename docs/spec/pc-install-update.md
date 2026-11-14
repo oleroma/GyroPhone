@@ -2,7 +2,7 @@
 
 ## Where it lives
 
-The companion is one self-contained exe at a fixed path, **`%LOCALAPPDATA%\Programs\GyroPhone\GyroPhoneCompanion.exe`**, with OpenCV's two native DLLs beside it (used only by the latency test, so kept out of the exe), so its firewall rule and Run entries stay valid across updates. Settings and keys are in `%APPDATA%\GyroPhone` and survive updates ([Companion](pc-companion.md)). No installer, no admin rights needed except for the firewall rule.
+The companion is one self-contained exe at a fixed path, **`%LOCALAPPDATA%\Programs\GyroPhone\GyroPhoneCompanion.exe`**, with OpenCV's two native DLLs beside it (used only by the latency test, so kept out of the exe), so its firewall rule and Run entries stay valid across updates. Settings and keys are in `%APPDATA%\GyroPhone` and survive updates ([Companion](pc-companion.md)). No installer, no admin rights needed except for the firewall rule and, for the FPS overlay, setting up the FPS helper once ([Companion](pc-companion.md), Performance).
 
 ## Installing a build
 
@@ -12,7 +12,7 @@ The companion is one self-contained exe at a fixed path, **`%LOCALAPPDATA%\Progr
 2. **Key files**: copies the phone's `phone.pub` (over adb) to `%APPDATA%\GyroPhone\authorized_phones\` and the PC's `host.pub` to the phone's `keys/trusted_hosts/`, so the phone connects over Wi-Fi with no code. Only public keys move. A PC whose companion never ran gets its key from `GyroPhoneCompanion.exe --init-keys` (makes the key and exits, no window).
 3. It never starts or closes the apps.
 
-The APK (the release build type) is installed by `agent-install` with `adb install -r` (an in-place update; same signing key `keystore/debug.keystore`, never an uninstall).
+The APK (the release build type) is installed by `agent-install` with `adb install -r` (an in-place update; same signing key, kept outside the repo (`~/.android-keys/gyrophone.jks` on the PC, repo secrets in CI), never an uninstall).
 
 ## Self-update
 

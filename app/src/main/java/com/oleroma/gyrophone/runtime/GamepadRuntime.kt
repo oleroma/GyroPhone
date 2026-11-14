@@ -6,6 +6,7 @@ import android.hardware.SensorManager
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.SystemClock
 import com.oleroma.gyrophone.core.engine.CountStream
 import com.oleroma.gyrophone.core.engine.GyroCalibration
 import com.oleroma.gyrophone.core.engine.GravityPose
@@ -16,6 +17,7 @@ import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.engine.GyroPose
 import com.oleroma.gyrophone.core.engine.GyroSway
 import com.oleroma.gyrophone.core.engine.MappingEngine
+import com.oleroma.gyrophone.core.engine.RatchetTiming
 import com.oleroma.gyrophone.core.engine.PadGyro
 import com.oleroma.gyrophone.core.engine.TiltShake
 import com.oleroma.gyrophone.core.engine.Touchpad
@@ -635,6 +637,60 @@ class GamepadRuntime(context: Context) {
         h.log = { line -> debug.trace?.add(com.oleroma.gyrophone.core.debug.DebugTrace.Kind.OUT, line) }
     }
 
+    /**
+     * Settings › Performance › "Ratchet timing": each ratchet press during a swing is measured
+     * against the swing's turn-around ([RatchetTiming]) and shown on the pad.
+     */
+    val ratchetTiming = RatchetTiming().also { rt ->
+        rt.enabled = prefs.getBoolean(KEY_RATCHET_TIMING, false)
+        // Each result to logcat too (tag GPRatchet), so it can be read over adb: `adb logcat -d -s GPRatchet`.
+        rt.onResult = { r ->
+            fun f(v: Float?) = v?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: "-"
+            android.util.Log.i(
+                "GPRatchet",
+                "swing=${r.swing} you_ms=${f(r.playerMs)} app_ms=${f(r.appMs)} back_counts=${r.backCounts ?: "-"} back_deg=${f(r.backDeg)}",
+            )
+        }
+    }
+    private val _ratchetTimingOn = MutableStateFlow(ratchetTiming.enabled)
+    val ratchetTimingOn: StateFlow<Boolean> = _ratchetTimingOn
+
+    fun setRatchetTiming(on: Boolean) {
+        prefs.edit().putBoolean(KEY_RATCHET_TIMING, on).apply()
+        ratchetTiming.enabled = on
+        _ratchetTimingOn.value = on
+    }
+
+    /**
+     * Settings › Performance › "Display timing log" (on by default): the gyro displays' drawing times,
+     * one logcat line a second while they draw (tag GPDraw), read over adb to find a slow display.
+     */
+    private val _drawTimingLogOn = MutableStateFlow(prefs.getBoolean(KEY_DRAW_TIMING_LOG, true))
+    val drawTimingLogOn: StateFlow<Boolean> = _drawTimingLogOn
+
+    fun setDrawTimingLog(on: Boolean) {
+        prefs.edit().putBoolean(KEY_DRAW_TIMING_LOG, on).apply()
+        _drawTimingLogOn.value = on
+    }
+
+    /**
+     * Settings › "Read USB controllers directly" (on by default): a game pad on the phone's USB port
+     * is read by GP itself on its own thread, not through Android's input ([UsbPads]).
+     */
+    private val _usbDirectOn = MutableStateFlow(prefs.getBoolean(KEY_USB_DIRECT, true))
+    val usbDirectOn: StateFlow<Boolean> = _usbDirectOn
+
+    fun setUsbDirect(on: Boolean) {
+        prefs.edit().putBoolean(KEY_USB_DIRECT, on).apply()
+        _usbDirectOn.value = on
+        usbPads.update()
+    }
+
+    private val usbPadsLazy = lazy { com.oleroma.gyrophone.input.UsbPads(appContext, this) }
+
+    /** USB game pads GP reads itself ([usbDirectOn]). */
+    val usbPads by usbPadsLazy
+
     private val _gameRumble = MutableStateFlow(prefs.getBoolean(KEY_GAME_RUMBLE, true))
 
     /** When on (the default), the game's rumble on the PC's virtual controller vibrates the phone. */
@@ -660,6 +716,9 @@ class GamepadRuntime(context: Context) {
 
     @Volatile
     private var running = false
+
+    /** Whether the runtime runs (the service is up). */
+    val isRunning: Boolean get() = running
 
     private val active: OutputLink get() = link(_transport.value)
 
@@ -1074,6 +1133,7 @@ class GamepadRuntime(context: Context) {
             if (!allowed) engine.reset()
         } else if (was && !hardware) engine.reset()
         updateGyro()
+        if (usbPadsLazy.isInitialized()) usbPads.update()
     }
 
     /**
@@ -1099,6 +1159,7 @@ class GamepadRuntime(context: Context) {
         // Nothing polls the engine while no link runs: drop touchpad taps queued meanwhile.
         engine.touchpadCancel()
         active.start()
+        usbPads.update()
         avoidDirect = directSilent
         updateGyro()
     }
@@ -1116,6 +1177,7 @@ class GamepadRuntime(context: Context) {
         active.stop()
         engine.reset()
         running = false
+        if (usbPadsLazy.isInitialized()) usbPads.update()
     }
 
     fun setDisplayRotation(degrees: Int) {
@@ -1722,6 +1784,9 @@ class GamepadRuntime(context: Context) {
         private const val KEY_START_FULLSCREEN = "start_fullscreen"
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         private const val KEY_GAME_RUMBLE = "game_rumble"
+        private const val KEY_RATCHET_TIMING = "ratchet_timing"
+        private const val KEY_DRAW_TIMING_LOG = "draw_timing_log"
+        private const val KEY_USB_DIRECT = "usb_direct"
         private const val KEY_BLACK_SCREEN_IDLE = "black_screen_idle"
         private const val KEY_BLACK_SCREEN_SECONDS = "black_screen_seconds"
         const val DEFAULT_BLACK_SCREEN_SECONDS = 60
@@ -2003,6 +2068,7 @@ class GamepadRuntime(context: Context) {
             pcGyroSample(pc, allowed, axes, spaced, dt, ts)
         } else {
             pcGyroRouting = false
+            var sentDx = 0; var sentDy = 0
             // An axis a ratchet just turned off may glide on (inertia) while the others are off.
             if (active || (allowed && gyroMouse.coasting)) {
                 // A layer in use may set gyro settings of its own.
@@ -2013,9 +2079,16 @@ class GamepadRuntime(context: Context) {
                 if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel, fromGyro = active)
                 engine.setGyroAxes(r.pad)
                 gyroPadSet = true
+                sentDx = r.dx; sentDy = r.dy
             } else {
                 gyroMouse.reset()
                 if (gyroPadSet) clearGyroPad()
+            }
+            val timing = ratchetTiming
+            if (timing.enabled) {
+                // The sensor's clock (boot time) into the input events' (System.nanoTime).
+                val sampleNs = ts - (SystemClock.elapsedRealtimeNanos() - System.nanoTime())
+                timing.sample(sampleNs, local.yaw, local.pitch, sentDx, sentDy, allowed && engine.ratchetsHeld != 0, gsNow.gameCountsPer360)
             }
         }
         if (rateWindow.add(ts)) {

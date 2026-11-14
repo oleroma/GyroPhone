@@ -210,6 +210,11 @@ public sealed class HostEngine
     /// <summary>HOST_STATUSes still to carry a TEST_MODE of 0 after the last test ended.</summary>
     private int _testModeOffRepeats;
     private readonly OverlayFrame _overlayFrame = new();
+    /// <summary>The newest OVERLAY_SAMPLES (each gyro sample's turn in the OVERLAY after it), and a frame to feed them in.</summary>
+    private readonly OverlaySamples _overlaySamples = new();
+    /// <summary>The Speed graph overlays' yaw, pitch and roll speeds (fed while one is shown).</summary>
+    private readonly SpeedTrace _speeds = new();
+    private readonly OverlayFrame _overlaySub = new();
     /// <summary>The last OVERLAY totals of this session, for the motion since then.</summary>
     private readonly OverlayTotals _overlayTotals = new();
     private readonly OverlayLayoutAssembler _overlayLayout = new();
@@ -319,6 +324,16 @@ public sealed class HostEngine
             _settings.InputLog = on;
             _settingsDirty = true;
             if (on && _sessions.Active is { } a) Recorder?.SessionStarted(a.PhoneName, _clock.NowUs);
+        }
+    }
+    /// <summary>Saves <see cref="HostSettings.OverlayTimingLog"/> (the tray reads it when it logs the overlays' draw times).</summary>
+    public void SetOverlayTimingLog(bool on)
+    {
+        using (Lock(ByUi))
+        {
+            if (on == _settings.OverlayTimingLog) return;
+            _settings.OverlayTimingLog = on;
+            _settingsDirty = true;
         }
     }
     /// <summary>Saves <see cref="HostSettings.PressKeyListen"/>; turned off while the phone listens, the PC stops being read at once.</summary>
@@ -577,12 +592,18 @@ public sealed class HostEngine
                 _overlayFrame.Decode(plain);
                 _overlayTotals.ToDeltas(_overlayFrame);
                 if (_padGyro.Enabled) GateOverlay(_overlayFrame);
+                long rxMs = Environment.TickCount64;
+                bool graph = false;
                 foreach (var o in _settings.Overlays)
                 {
                     if (!o.Shown) continue;
+                    if (o.Kind == OverlayKind.Graph) graph = true;
                     if (!_overlayPoses.TryGetValue(o.Id, out var pose)) _overlayPoses[o.Id] = pose = new OverlayPose();
-                    pose.Feed(_overlayFrame, o);
+                    // A pointer that paints follows every gyro sample (the samples sent just before this frame).
+                    if (o.FollowsSamples && _overlaySamples.Matches(_overlayFrame)) pose.FeedSamples(_overlayFrame, o, _overlaySamples, _overlaySub, rxMs);
+                    else pose.Feed(_overlayFrame, o);
                 }
+                if (graph) FeedSpeeds(_overlayFrame);
                 // Set orientation on the phone: every overlay shown starts again from its new base orientation.
                 if (_levelPresses >= 0 && _overlayFrame.LevelPresses != _levelPresses)
                     foreach (var o in _settings.Overlays)
@@ -591,6 +612,9 @@ public sealed class HostEngine
                 _overlayRest.Feed(_overlayFrame, nowUs, _settings);
                 _overlayRxUs = nowUs;
                 _overlayDirty = true;
+                break;
+            case PacketType.OverlaySamples:
+                if (_overlayOn) _overlaySamples.Decode(plain);
                 break;
             case PacketType.OverlayLayout:
                 if (_overlayOn)
@@ -1436,14 +1460,14 @@ public sealed class HostEngine
         {
             var o = _settings.Overlays.Find(x => x.Id == id);
             if (o == null) return false;
-            bool compass = OverlayCompassLocked();
+            int asks = OverlayAsks();
             var kind = o.Kind;
             change(o);
             o.Id = id;
             if (o.Kind != kind) _overlayPoses.Remove(id);
             _settingsDirty = true;
             _overlayDirty = true;
-            OverlayCompassChanged(compass);
+            OverlayAsksChanged(asks);
             return true;
         }
     }
@@ -1453,7 +1477,7 @@ public sealed class HostEngine
     {
         using (Lock(ByUi))
         {
-            bool compass = OverlayCompassLocked();
+            int asks = OverlayAsks();
             var o = new OverlaySettings { Kind = kind, Shown = true };
             if (_settings.Overlays.Count > 0)
             {
@@ -1469,11 +1493,14 @@ public sealed class HostEngine
                         if (f.Colors.TryGetValue(key, out var c)) o.Colors[key] = c;
                 }
             }
-            if (kind != OverlayKind.Phone) o.Width = o.Height = 260;
+            // As the phone's new displays: the ring small, the graph wide and low.
+            if (kind == OverlayKind.Ring) o.Width = o.Height = 120;
+            else if (kind == OverlayKind.Graph) (o.Width, o.Height) = (420, 115);
+            else if (kind != OverlayKind.Phone) o.Width = o.Height = 260;
             _settings.Overlays.Add(o);
             _settingsDirty = true;
             _overlayDirty = true;
-            OverlayCompassChanged(compass);
+            OverlayAsksChanged(asks);
             return o.Id;
         }
     }
@@ -1502,14 +1529,14 @@ public sealed class HostEngine
         {
             var p = _settings.OverlayPresets.Find(x => x.Id == presetId);
             if (p == null) return null;
-            bool compass = OverlayCompassLocked();
+            int asks = OverlayAsks();
             var o = p.Copy();
             o.Shown = true;
             o.X = o.Y = -1;
             _settings.Overlays.Add(o);
             _settingsDirty = true;
             _overlayDirty = true;
-            OverlayCompassChanged(compass);
+            OverlayAsksChanged(asks);
             return o.Id;
         }
     }
@@ -1537,12 +1564,12 @@ public sealed class HostEngine
     {
         using (Lock(ByUi))
         {
-            bool compass = OverlayCompassLocked();
+            int asks = OverlayAsks();
             if (_settings.Overlays.RemoveAll(x => x.Id == id) == 0) return;
             _overlayPoses.Remove(id);
             _settingsDirty = true;
             _overlayDirty = true;
-            OverlayCompassChanged(compass);
+            OverlayAsksChanged(asks);
         }
     }
 
@@ -1552,10 +1579,20 @@ public sealed class HostEngine
         return false;
     }
 
-    // The phone sends compass readings only while asked.
-    private void OverlayCompassChanged(bool before)
+    /// <summary>A shown pointer paints or has a Snake: it follows every gyro sample, so the phone sends OVERLAY_SAMPLES.</summary>
+    private bool OverlayWantsSamples()
     {
-        if (_overlayOn && before != OverlayCompassLocked() && _sessions.Active is { } a) SendStatus(a, _clock.NowUs);
+        foreach (var o in _settings.Overlays) if (o.Shown && o.WantsSamples) return true;
+        return false;
+    }
+
+    /// <summary>What the overlays ask the phone for besides OVERLAY: 1 compass readings, 2 each gyro sample.</summary>
+    private int OverlayAsks() => (OverlayCompassLocked() ? 1 : 0) | (OverlayWantsSamples() ? 2 : 0);
+
+    // The phone sends compass readings and samples only while asked.
+    private void OverlayAsksChanged(int before)
+    {
+        if (_overlayOn && before != OverlayAsks() && _sessions.Active is { } a) SendStatus(a, _clock.NowUs);
     }
 
     /// <summary>"Catch-up time" (ms; 0 = off): the longest a lost or late stretch of mouse motion is spread over.</summary>
@@ -1931,6 +1968,25 @@ public sealed class HostEngine
     }
 
     /// <summary>Overlay window <paramref name="id"/>'s pose now (w, x, y, z), or null before it has one.</summary>
+    /// <summary>Overlay window <paramref name="id"/>'s poses sample by sample, or null while it has none (read without the engine lock).</summary>
+    public PoseHistory? OverlayHistory(string id) => _view.HistoryOf(id);
+
+    /// <summary>The Speed graph's yaw, pitch and roll speeds (read without the engine lock).</summary>
+    public SpeedTrace OverlaySpeeds => _speeds;
+
+    /// <summary>The Speed graph: each gyro sample's speed (the samples sent with <paramref name="f"/>), or the frame's when they didn't come.</summary>
+    private void FeedSpeeds(OverlayFrame f)
+    {
+        bool held = f.RatchetHeld;
+        if (_overlaySamples.Matches(f))
+        {
+            var t = _overlaySamples.Turns;
+            for (int k = 0; k < _overlaySamples.Count; k++)
+                _speeds.Add(t[k * 4], t[k * 4 + 1], t[k * 4 + 2], t[k * 4 + 3], held);
+        }
+        else _speeds.Add(f.TurnYaw, f.TurnPitch, f.TurnRoll, f.TurnSeconds, held);
+    }
+
     public float[]? OverlayPoseOf(string id)
     {
         return _view.PoseOf(id);
@@ -2510,7 +2566,8 @@ public sealed class HostEngine
         Span<byte> p = stackalloc byte[Wire.HostStatusPlain];
         WireCodec.EncodeHostStatus(new HostStatus(s.HighestRxSeq, _stats.RxPerSec, _stats.LossPermille,
             _stats.LatP50Us, _stats.LatP99Us, _stats.JitterUs, (byte)_settings.OutputMode, flags,
-            (byte)((_settings.UsbDirect ? HostStatusFlags2.UsbDirect : 0) | _pcSetup)), p);
+            (byte)((_settings.UsbDirect ? HostStatusFlags2.UsbDirect : 0) | _pcSetup
+                | (_overlayOn && OverlayWantsSamples() ? HostStatusFlags2.OverlaySamples : 0))), p);
         // TEST_MODE first, so HOST_STATUS stays the newest status the phone holds. While no test
         // runs it goes only with the few statuses after one ended (a lost "off" comes again).
         if (TestModeFlagsNow() != 0 || _testModeOffRepeats > 0)

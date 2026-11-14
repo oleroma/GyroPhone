@@ -36,7 +36,7 @@
    - **CI**, when the PC was offline or Olex says CI: run `bash .agents/agent-build ci <branch>` from your session and post the CI run link as soon as it shows.
    - Every build is published as a pre-release on its `build/<n>` tag. Watch the build's output: as soon as it shows the build is ready (a PC build's "Ready" lines, a CI build's "Published build" line), post it in one line, such as "📲📦 Build 334 installed and published." (see Status lines). Olex can test it then.
    - If checks fail in code this feature didn't change, tell Olex instead of fixing it in the feature.
-   - Run `agent-build` and `agent-install` in the background with output to a file, never through a pipe: the build daemons they start keep a pipe open, so the command would never return. Watch that file with the Monitor tool on `tail -F <file>`, filtered to `Phone`, `CI run:`, `Ready`, `Published build` and `result:`, and post each status line as it shows.
+   - Run `agent-build` and `agent-install` in the background with output to a file, never through a pipe: the build daemons they start keep a pipe open, so the command would never return. Watch that file with the Monitor tool on `tail -F <file>`, filtered to `Waiting`, `Phone`, `CI run:`, `Ready`, `Published build` and `result:`, and post each status line as it shows.
    - Build only what the code needs to work: a branch that changes only files no build uses needs no build, and `agent-build` stops with `workflow-change`.
 4. **Check.** Wait for Olex. If he asks for changes, go back to 2. Merge only when he says "merge". When he says "check", run the full checks now, as in step 5 (`agent-check`), and post their result; he can keep testing meanwhile. The merge then skips them if nothing was committed since.
    - A new feature asked for while one is open: a small one goes on the open branch and PR, a big one gets its own branch and PR after the open one merges.
@@ -139,7 +139,7 @@ and Windows PC. No per-install approval is needed. This covers:
 
 - **Phone**: the debug APK built on the PC in `build/` (or, when the PC is offline, the APK from a
   `fallback.yml` run), installed over adb as an in-place update (`adb install -r`). Settings and pairings must survive, so never uninstall, clear app data
-  or change the signing key (`keystore/debug.keystore`).
+  or change the signing key (`~/.android-keys/gyrophone.jks` on the PC, the repo's secrets in CI).
 - **PC**: the companion from the same build, installed to `%LOCALAPPDATA%\Programs\GyroPhone` by
   `.agents/hooks/install` (which `agent-build pc` runs after each PC build), plus the key file
   exchange that hook does.

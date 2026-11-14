@@ -30,22 +30,17 @@ fi
 # reuse its build outputs).
 if [ -n "$BRANCH" ]; then
   git fetch origin "$BRANCH" || die "Couldn't fetch $BRANCH."
-  src="$MAIN_REPO/build/src"
-  if [ -e "$src/.git" ]; then
-    git -C "$src" checkout --detach "origin/$BRANCH" || die "Couldn't check out $BRANCH in build/src."
-  else
-    git -C "$MAIN_REPO" worktree add --detach "$src" "origin/$BRANCH" || die "Couldn't make build/src."
-  fi
-  exec bash "$src/.agents/agent-check" pc >&3 2>&3 3>&-
+  checkout_src "$BRANCH"
+  exec bash "$MAIN_REPO/build/src/.agents/agent-check" pc >&3 2>&3 3>&-
 fi
 
 report() { report_pr "PC full checks" "$@"; }
 [ "$WORKTREE" -ef "$BUILD_DIR/src" ] || die "Run this as agent-check pc <branch>, as in AGENTS.md step 5."
-lock="$BUILD_DIR/.build-lock"
-mkdir "$lock" 2>/dev/null || die "A build is running in build/src, or $lock was left behind. Ask Olex."
-cleanup() { rmdir "$lock" 2>/dev/null || true; }
+take_lock "$(git rev-parse --short=7 HEAD)"
+cleanup() { release_lock; }
 
 sha="$(git rev-parse HEAD)"
+SHA="$sha"
 commit="${sha:0:7}"
 if checked "$sha"; then finish done "The full checks already passed at $commit."; fi
 bash "$WORKTREE/.agents/hooks/full-check" || finish checks-failed "Full checks failed at $commit (see the log)." \
