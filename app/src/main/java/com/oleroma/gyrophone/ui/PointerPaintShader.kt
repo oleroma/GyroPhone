@@ -71,7 +71,7 @@ internal class PointerPaintShader {
         nowMs: Long,
     ) {
         val s = if (front) near else far
-        val m0 = System.nanoTime()
+        val m0 = DrawProbe.now()
         // gp-paint paints the map under [lock]: while it is busy, the paint shown so far stays (the
         // new rows go up next frame); only a map never sent waits for it.
         val never = packed == null && uploadedOf == null
@@ -82,7 +82,7 @@ internal class PointerPaintShader {
                 lock.unlock()
             }
         }
-        DrawProbe.add(DrawProbe.MAPS, System.nanoTime() - m0)
+        DrawProbe.since(DrawProbe.MAPS, m0)
         s.setFloatUniform("packedMaps", if (packed != null) 1f else 0f)
         setUniforms(s, lp, front, cx, cy, r, view, scene, look)
         paint.shader = s

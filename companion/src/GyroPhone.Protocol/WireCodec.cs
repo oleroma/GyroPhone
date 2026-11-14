@@ -411,6 +411,24 @@ public static class WireCodec
 
     public static PressTime DecodePressTime(ReadOnlySpan<byte> b) => new(Le.U32(b, 0), Le.U32(b, 4));
 
+    public static int EncodePhoneStats(in PhoneStats p, Span<byte> b)
+    {
+        Le.PutU32(b, 0, p.TimeUs);
+        Le.PutU16(b, 4, p.States);
+        Le.PutU16(b, 6, p.Packets);
+        Le.PutU16(b, 8, p.Failed);
+        Le.PutU16(b, 10, p.SlowSends);
+        Le.PutU32(b, 12, p.SendTotalUs);
+        Le.PutU32(b, 16, p.SendMaxUs);
+        Le.PutU32(b, 20, p.WakeLateMaxUs);
+        Le.PutU32(b, 24, p.StateGapMaxUs);
+        Le.PutU32(b, 28, p.PhoneTxPackets);
+        return Wire.PhoneStatsPlain;
+    }
+
+    public static PhoneStats DecodePhoneStats(ReadOnlySpan<byte> b) => new(Le.U32(b, 0), Le.U16(b, 4), Le.U16(b, 6), Le.U16(b, 8),
+        Le.U16(b, 10), Le.U32(b, 12), Le.U32(b, 16), Le.U32(b, 20), Le.U32(b, 24), Le.U32(b, 28));
+
     /// <summary>TEST_MODE: flags then three zero bytes.</summary>
     public static int EncodeTestMode(byte flags, Span<byte> b)
     {

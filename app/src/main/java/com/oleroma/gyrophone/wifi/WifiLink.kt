@@ -164,6 +164,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             pump.pressTimes = v and TestModeFlags.PRESS_TIMES != 0
             _latencyScreen.value = v and TestModeFlags.LATENCY_SCREEN != 0
             pump.linkTest = v and TestModeFlags.LINK_TEST != 0
+            pump.phoneStats = v and TestModeFlags.PHONE_STATS != 0
             _linkTest.value = v and TestModeFlags.LINK_TEST != 0
         }
     private val accessory = AccessoryBridge(appContext).also { pump.direct = it }

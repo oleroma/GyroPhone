@@ -341,11 +341,14 @@ internal sealed class GpuSurface : IDisposable
             {
                 _shared.Leave();
             }
-            long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
-            _drawMs += Ms(t1 - t0);
-            _endMs += Ms(t2 - t1);
-            _presentMs += Ms(t3 - t2);
-            _timed++;
+            if (OverlayTiming.On)
+            {
+                long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
+                _drawMs += Ms(t1 - t0);
+                _endMs += Ms(t2 - t1);
+                _presentMs += Ms(t3 - t2);
+                _timed++;
+            }
             return;
         }
         if (_bitmap == null || width != _width || height != _height) Bind(width, height);

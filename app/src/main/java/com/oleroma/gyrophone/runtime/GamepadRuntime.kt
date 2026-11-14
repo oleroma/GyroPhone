@@ -662,10 +662,10 @@ class GamepadRuntime(context: Context) {
     }
 
     /**
-     * Settings › Performance › "Display timing log" (on by default): the gyro displays' drawing times,
+     * Settings › Performance › "Display timing log" (off by default): the gyro displays' drawing times,
      * one logcat line a second while they draw (tag GPDraw), read over adb to find a slow display.
      */
-    private val _drawTimingLogOn = MutableStateFlow(prefs.getBoolean(KEY_DRAW_TIMING_LOG, true))
+    private val _drawTimingLogOn = MutableStateFlow(prefs.getBoolean(KEY_DRAW_TIMING_LOG, false))
     val drawTimingLogOn: StateFlow<Boolean> = _drawTimingLogOn
 
     fun setDrawTimingLog(on: Boolean) {

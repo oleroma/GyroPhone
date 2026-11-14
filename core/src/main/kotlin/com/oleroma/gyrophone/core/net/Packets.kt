@@ -115,6 +115,25 @@ data class HostStatus(
  */
 data class PressTime(val stateTimeUs: Int, val eventTimeUs: Int) : WirePacket
 
+/**
+ * The phone's side of the link over one second, for the PC's Performance record (TEST_MODE
+ * [TestModeFlags.PHONE_STATS]): what the send thread sent, how long the sends took, how late it woke,
+ * the longest gap between two STATEs, and the packets the whole phone sent ([timeUs]: the second's end,
+ * low 32 bits of the phone's elapsed-realtime µs, as STATE's time). Times in µs, saturated.
+ */
+data class PhoneStats(
+    val timeUs: Int,
+    val states: Int,
+    val packets: Int,
+    val failed: Int,
+    val slowSends: Int,
+    val sendTotalUs: Int,
+    val sendMaxUs: Int,
+    val wakeLateMaxUs: Int,
+    val stateGapMaxUs: Int,
+    val phoneTxPackets: Int,
+) : WirePacket
+
 /** The PC's latency tests the phone takes part in ([TestModeFlags]). */
 data class TestMode(val flags: Int) : WirePacket
 

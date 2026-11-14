@@ -62,6 +62,8 @@ public static class Wire
     public const int MotionPlain = MotionFrame.Size;
     /// <summary>PRESS_TIME: u32 STATE time, u32 input event time (low 32 bits of the phone's µs clock).</summary>
     public const int PressTimePlain = 8;
+    /// <summary>PHONE_STATS: u32 time, u16 states, packets, failed, slow sends, u32 send total µs, send max µs, wake late max µs, STATE gap max µs, phone tx packets (<see cref="PhoneStats"/>).</summary>
+    public const int PhoneStatsPlain = 32;
     /// <summary>TEST_MODE: u8 <see cref="TestModeFlags"/>, 3 reserved bytes.</summary>
     public const int TestModePlain = 4;
     /// <summary>CAPTURE: u8 <see cref="CaptureFlags"/>, 3 reserved bytes.</summary>
@@ -271,6 +273,8 @@ public static class TestModeFlags
     public const byte LatencyScreen = 1 << 1;
     /// <summary>A Link test runs: the phone sends fake moving input at its full rate, marked <see cref="StateFlags.LinkTest"/>.</summary>
     public const byte LinkTest = 1 << 2;
+    /// <summary>A Performance record runs: the phone measures its side of the link and sends PHONE_STATS once a second.</summary>
+    public const byte PhoneStats = 1 << 3;
 }
 
 /// <summary>HOST_STATUS's second flags byte (byte 22).</summary>

@@ -112,6 +112,9 @@ public sealed class InputRecorder
     /// <summary>More for each second's line (the FPS overlay's frames), or null; called under the engine lock.</summary>
     public Func<string?>? SecondNote { get; set; }
 
+    /// <summary>Lines go to input.log ("Record input log"); off, the seconds are still counted for the Performance page and records, but nothing is written.</summary>
+    public bool WriteLines { get; set; } = true;
+
     /// <summary>Lines wait in a queue for <see cref="WritePending"/> instead of going to <c>write</c> at once.</summary>
     public bool Deferred { get; set; }
 
@@ -401,6 +404,7 @@ public sealed class InputRecorder
 
     private void Line(long atUs, string what, string detail)
     {
+        if (!WriteLines) return;
         var line = string.Create(CultureInfo.InvariantCulture, $"{(atUs - _sessionStartUs) / 1e6,10:0.000} {what,-13} {detail}");
         if (Deferred) _pending.Enqueue(line);
         else _write(line);
