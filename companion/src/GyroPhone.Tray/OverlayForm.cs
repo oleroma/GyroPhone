@@ -105,6 +105,7 @@ internal sealed class OverlayForm : Form
     private bool _drawnLive, _drawnFiring;
     private int _drawnSize;
     private int _drawnLaser;
+    private long _drawnSpeeds;
     // The refresh rate of the screen this window is on (0 = not known yet), read every 2 s.
     private volatile int _screenHz;
     private long _screenHzAt;
@@ -709,7 +710,7 @@ internal sealed class OverlayForm : Form
         if (fresh && !shows) _lastTime = _scene.Frame.PhoneTimeUs;
         bool changed = _dirty || shows || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
             !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now) || laserFading ||
-            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser;
+            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser || GraphMoved();
         // The FPS overlay shows nothing of the phone: it draws only on a change of its own settings, and 4 times a second.
         if (Settings is { Kind: OverlayKind.Fps }) changed = _dirty || now - _lastDrawTicks >= FpsDrawing.EveryMs;
         if (!changed && now - _lastDrawTicks < 500) return;
@@ -737,6 +738,9 @@ internal sealed class OverlayForm : Form
         float scale = s == null || s.FollowsCamera ? 1f : Math.Clamp(s.MotionScale, 0.25f, 4f);
         return OverlayPacing.TurnShows(OverlayFrame.TurnBetween(_drawnFrame, _scene.Frame), _drawnSize, scale);
     }
+
+    /// <summary>The Speed graph got new speeds since it was drawn (it scrolls with them).</summary>
+    private bool GraphMoved() => Settings is { Kind: OverlayKind.Graph } && _engine.OverlaySpeeds.Version != _drawnSpeeds;
 
     /// <summary>The laser pointer's trail and paint as they are now: it changes when they do.</summary>
     private int LaserStamp()
@@ -832,6 +836,8 @@ internal sealed class OverlayForm : Form
         _drawnSize = Math.Max(width, height);
         _drawnFiring = _scene.Firing;
         _drawnLaser = LaserStamp();
+        _scene.Speeds = Settings is { Kind: OverlayKind.Graph } ? _engine.OverlaySpeeds : null;
+        _drawnSpeeds = _scene.Speeds?.Version ?? 0;
         _scene.Arranging = !ClickThrough;
         _scene.Selected = _selected;
         _scene.Title = _title;

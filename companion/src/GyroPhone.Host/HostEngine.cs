@@ -212,6 +212,8 @@ public sealed class HostEngine
     private readonly OverlayFrame _overlayFrame = new();
     /// <summary>The newest OVERLAY_SAMPLES (each gyro sample's turn in the OVERLAY after it), and a frame to feed them in.</summary>
     private readonly OverlaySamples _overlaySamples = new();
+    /// <summary>The Speed graph overlays' yaw, pitch and roll speeds (fed while one is shown).</summary>
+    private readonly SpeedTrace _speeds = new();
     private readonly OverlayFrame _overlaySub = new();
     /// <summary>The last OVERLAY totals of this session, for the motion since then.</summary>
     private readonly OverlayTotals _overlayTotals = new();
@@ -591,14 +593,17 @@ public sealed class HostEngine
                 _overlayTotals.ToDeltas(_overlayFrame);
                 if (_padGyro.Enabled) GateOverlay(_overlayFrame);
                 long rxMs = Environment.TickCount64;
+                bool graph = false;
                 foreach (var o in _settings.Overlays)
                 {
                     if (!o.Shown) continue;
+                    if (o.Kind == OverlayKind.Graph) graph = true;
                     if (!_overlayPoses.TryGetValue(o.Id, out var pose)) _overlayPoses[o.Id] = pose = new OverlayPose();
                     // A pointer that paints follows every gyro sample (the samples sent just before this frame).
                     if (o.FollowsSamples && _overlaySamples.Matches(_overlayFrame)) pose.FeedSamples(_overlayFrame, o, _overlaySamples, _overlaySub, rxMs);
                     else pose.Feed(_overlayFrame, o);
                 }
+                if (graph) FeedSpeeds(_overlayFrame);
                 // Set orientation on the phone: every overlay shown starts again from its new base orientation.
                 if (_levelPresses >= 0 && _overlayFrame.LevelPresses != _levelPresses)
                     foreach (var o in _settings.Overlays)
@@ -1488,7 +1493,10 @@ public sealed class HostEngine
                         if (f.Colors.TryGetValue(key, out var c)) o.Colors[key] = c;
                 }
             }
-            if (kind != OverlayKind.Phone) o.Width = o.Height = 260;
+            // As the phone's new displays: the ring small, the graph wide and low.
+            if (kind == OverlayKind.Ring) o.Width = o.Height = 120;
+            else if (kind == OverlayKind.Graph) (o.Width, o.Height) = (420, 115);
+            else if (kind != OverlayKind.Phone) o.Width = o.Height = 260;
             _settings.Overlays.Add(o);
             _settingsDirty = true;
             _overlayDirty = true;
@@ -1574,7 +1582,7 @@ public sealed class HostEngine
     /// <summary>A shown pointer paints or has a Snake: it follows every gyro sample, so the phone sends OVERLAY_SAMPLES.</summary>
     private bool OverlayWantsSamples()
     {
-        foreach (var o in _settings.Overlays) if (o.Shown && o.FollowsSamples) return true;
+        foreach (var o in _settings.Overlays) if (o.Shown && o.WantsSamples) return true;
         return false;
     }
 
@@ -1962,6 +1970,22 @@ public sealed class HostEngine
     /// <summary>Overlay window <paramref name="id"/>'s pose now (w, x, y, z), or null before it has one.</summary>
     /// <summary>Overlay window <paramref name="id"/>'s poses sample by sample, or null while it has none (read without the engine lock).</summary>
     public PoseHistory? OverlayHistory(string id) => _view.HistoryOf(id);
+
+    /// <summary>The Speed graph's yaw, pitch and roll speeds (read without the engine lock).</summary>
+    public SpeedTrace OverlaySpeeds => _speeds;
+
+    /// <summary>The Speed graph: each gyro sample's speed (the samples sent with <paramref name="f"/>), or the frame's when they didn't come.</summary>
+    private void FeedSpeeds(OverlayFrame f)
+    {
+        bool held = f.RatchetHeld;
+        if (_overlaySamples.Matches(f))
+        {
+            var t = _overlaySamples.Turns;
+            for (int k = 0; k < _overlaySamples.Count; k++)
+                _speeds.Add(t[k * 4], t[k * 4 + 1], t[k * 4 + 2], t[k * 4 + 3], held);
+        }
+        else _speeds.Add(f.TurnYaw, f.TurnPitch, f.TurnRoll, f.TurnSeconds, held);
+    }
 
     public float[]? OverlayPoseOf(string id)
     {

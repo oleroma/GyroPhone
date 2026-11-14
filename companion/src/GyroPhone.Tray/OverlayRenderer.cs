@@ -45,6 +45,8 @@ internal sealed class OverlayScene
     public readonly DrawBuffers Buffers = new();
     /// <summary>The FPS overlay: the game's frames, its name, and whether they are watched.</summary>
     public GyroPhone.Host.Perf.FrameView? Fps;
+    /// <summary>The Speed graph's speeds (Speed graph only).</summary>
+    public GyroPhone.Host.SpeedTrace? Speeds;
     public string? FpsGame;
     public GyroPhone.Host.Perf.FrameWatchState FpsState;
     /// <summary>The link test recording now, or null.</summary>
@@ -63,7 +65,11 @@ internal sealed class DrawBuffers
     /// <summary><paramref name="a"/>, made again only when it isn't <paramref name="n"/> long.</summary>
     public static PointF[] Sized(ref PointF[]? a, int n) => a != null && a.Length == n ? a : a = new PointF[n];
 
-    public PointF[]? Front, Back, Quad, Island, Screen, Knob, Dot, Corner;
+    public PointF[]? Front, Back, Quad, Island, Screen, Knob, Dot, Corner, Arc, GraphLine, GraphBackPoly;
+    /// <summary>The Speed graph's buckets, read from <see cref="GyroPhone.Host.SpeedTrace"/>.</summary>
+    public readonly float[] Yaw = new float[GyroPhone.Host.SpeedTrace.Capacity], Pitch = new float[GyroPhone.Host.SpeedTrace.Capacity], Roll = new float[GyroPhone.Host.SpeedTrace.Capacity];
+    public readonly bool[] Held = new bool[GyroPhone.Host.SpeedTrace.Capacity];
+    public readonly Rounded GraphBack = new();
     public readonly (float X, float Y)[] Round24 = new (float, float)[24], Round16 = new (float, float)[16];
     public readonly List<(float X, float Y)> ClipOut = new(64), ClipScratch = new(64);
     public readonly Rounded Outline = new(), IslandShape = new(), ScreenShape = new(), ScreenInset = new();
@@ -252,6 +258,12 @@ internal static class OverlayRenderer
                     aimed = LaserTrace.TurnToward(aimed, b, LaserTrace.ShotPoint(aimed, b, scene.SpreadX, scene.SpreadY), Math.Clamp(scene.Kick, -0.5f, 1.5f));
                 }
                 LaserDrawing.Draw(g, area, settings, aimed, scene.Laser, scene.NowTicks, live && scene.Frame.RatchetHeld, live ? scene.Frame.PoseActive : 0, live && scene.Firing, m, live ? scene.Aim : 0f, scene.Buffers, live ? scene.Kick : 0f, live ? scene.ShotAt : -1, live ? scene.Lower : 0f, live ? scene.Hip * Math.Clamp(settings.GunHipPull, 0f, 1f) : 0f);
+                break;
+            case OverlayKind.Ring:
+                GaugeDrawing.DrawRing(g, area, settings, live ? scene.Frame.Axes : 0, scene.Buffers);
+                break;
+            case OverlayKind.Graph:
+                GaugeDrawing.DrawGraph(g, area, settings, scene.Speeds, scene.Buffers);
                 break;
             default:
                 DialDrawing.DrawDisk(g, area, settings, m, m);

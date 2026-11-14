@@ -68,6 +68,10 @@ public enum OverlayKind
     Laser,
     /// <summary>The game's frames per second, 1% low and jumps, with a frame-time strip; the only thing that watches the game's frames.</summary>
     Fps,
+    /// <summary>Yaw, pitch and roll arcs, lit while that axis moves the mouse, dim while a ratchet pauses it.</summary>
+    Ring,
+    /// <summary>Scrolling yaw, pitch and roll speed, shaded while a ratchet is held.</summary>
+    Graph,
 }
 
 public enum OverlayShape
@@ -223,6 +227,10 @@ public sealed class OverlaySettings
     // Bubble disk.
     /// <summary>The tilt that puts the dot on the rim, in degrees.</summary>
     public int DiskRange { get; set; } = 30;
+    /// <summary>Speed graph: its full height is ± this many °/s.</summary>
+    public int GraphRange { get; set; } = 360;
+    /// <summary>Speed graph: how many seconds it shows.</summary>
+    public int GraphSeconds { get; set; } = 3;
     public bool Crosshair { get; set; } = true;
 
     // Laser pointer.
@@ -344,6 +352,14 @@ public sealed class OverlaySettings
     /// <summary>A pointer that paints or has a Snake: it follows every gyro sample (OVERLAY_SAMPLES), as the phone's does.</summary>
     [JsonIgnore]
     public bool FollowsSamples => Kind == OverlayKind.Laser && (LaserDraw || LaserSnake);
+
+    /// <summary>It wants every gyro sample: a pointer that paints, or the Speed graph.</summary>
+    [JsonIgnore]
+    public bool WantsSamples => FollowsSamples || Kind == OverlayKind.Graph;
+
+    /// <summary>It turns with the phone (the FPS overlay, Ratchet ring and Speed graph don't).</summary>
+    [JsonIgnore]
+    public bool Turns => Kind is not (OverlayKind.Fps or OverlayKind.Ring or OverlayKind.Graph);
 
     /// <summary>The Snake's zip back as LaserTrace.Add takes it, or null when off.</summary>
     [JsonIgnore]
@@ -565,6 +581,8 @@ public sealed class OverlaySettings
         OverlayKind.Disk => DiskColors,
         OverlayKind.Laser => LaserColors,
         OverlayKind.Fps => FpsColors,
+        OverlayKind.Ring => RingColors,
+        OverlayKind.Graph => GraphColors,
         _ => shape switch
         {
             null => ShapeColors,
@@ -581,6 +599,8 @@ public sealed class OverlaySettings
         OverlayKind.Horizon => "Attitude indicator",
         OverlayKind.Laser => "Pointer",
         OverlayKind.Fps => "FPS",
+        OverlayKind.Ring => "Ratchet ring",
+        OverlayKind.Graph => "Speed graph",
         _ => "Bubble disk",
     };
 
@@ -655,6 +675,23 @@ public sealed class OverlaySettings
         new("crosshair_aim", "Crosshair aiming", 0xFFFF2020),
         new("flash", "Flash", 0xFFFFE04A),
         new("flash_end", "Flash end", 0xFFFF7A1A),
+    ];
+
+    private static readonly OverlayColor[] RingColors =
+    [
+        new("yaw", "Yaw", 0xFFFF5A5A),
+        new("pitch", "Pitch", 0xFF5ADB6E),
+        new("roll", "Roll", 0xFF5AA8FF),
+        new("text", "Letters", 0xE6FFFFFF),
+    ];
+
+    private static readonly OverlayColor[] GraphColors =
+    [
+        new("yaw", "Yaw", 0xFFFF5A5A),
+        new("pitch", "Pitch", 0xFF5ADB6E),
+        new("roll", "Roll", 0xFF5AA8FF),
+        new("back", "Background", 0x59000000),
+        new("held", "Ratchet shading", 0x1FFFFFFF),
     ];
 
     private static readonly OverlayColor[] FpsColors =

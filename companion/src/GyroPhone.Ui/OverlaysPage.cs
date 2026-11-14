@@ -58,7 +58,8 @@ internal sealed class OverlaysPage : Page
     private readonly Seg<int> _fps;
 
     // Look
-    private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook;
+    private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook, _ringLook, _graphLook;
+    private readonly Seg<int> _graphRange, _graphSeconds;
     private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserGimbal, _laserDraw, _laserClearOnRatchet, _laserSnakeClearOnRatchet;
     private readonly CheckBox _laserPerspective, _laserSnake, _laserOutline;
     private readonly StackPanel _laserSnakeOptions;
@@ -354,6 +355,20 @@ internal sealed class OverlaysPage : Page
         dkb.Children.Add(_crosshair);
         _diskLook = disk;
         _lookTab.Children.Add(disk);
+
+        var (ring, rgb) = Parts.Card("Ratchet ring");
+        rgb.Children.Add(Parts.Text("Yaw, pitch and roll arcs, lit while that axis moves the mouse and dim while a ratchet (or the gyro mode) pauses it.", "Hint"));
+        _ringLook = ring;
+        _lookTab.Children.Add(ring);
+
+        var (graph, gb) = Parts.Card("Speed graph");
+        _graphRange = new Seg<int>(v => Change(o => o.GraphRange = v), true, ("±180°/s", 180), ("±360°/s", 360), ("±720°/s", 720), ("±1440°/s", 1440));
+        gb.Children.Add(_graphRange.View);
+        _graphSeconds = new Seg<int>(v => Change(o => o.GraphSeconds = v), true, ("2 s", 2), ("3 s", 3), ("5 s", 5), ("8 s", 8));
+        gb.Children.Add(_graphSeconds.View);
+        gb.Children.Add(Parts.Text("Yaw, pitch and roll speed; shaded while a ratchet is held.", "Hint"));
+        _graphLook = graph;
+        _lookTab.Children.Add(graph);
 
         var (laser, lb) = Parts.Card("Pointer");
         lb.Children.Add(Parts.Text("A see-through sphere seen from above and to the side. The laser at its centre aims along the phone's roll axis (out of its top edge, into the screen at rest) onto the inside; the tick at the dot shows which way the phone's screen faces. The beam dims while a ratchet is held.", "Hint"));
@@ -753,7 +768,7 @@ internal sealed class OverlaysPage : Page
 
     /// <summary>Paint, Snake and Colours tabs only for the pointer; other overlays keep their colours in Look.
     /// A tab that goes away falls back to Look.</summary>
-    private void ShowTabs(bool laser, bool fps)
+    private void ShowTabs(bool laser, bool still)
     {
         var home = laser ? _coloursTab : _lookTab;
         if (_coloursCard.Parent != home)
@@ -764,9 +779,9 @@ internal sealed class OverlaysPage : Page
         _tabs.Show(PaintTab, laser);
         _tabs.Show(SnakeTab, laser);
         _tabs.Show(ColoursTab, laser);
-        // The FPS overlay doesn't turn with the phone.
-        _tabs.Show(TurnTab, !fps);
-        bool gone = _tab switch { PaintTab or SnakeTab or ColoursTab => !laser, TurnTab => fps, _ => false };
+        // The FPS overlay, Ratchet ring and Speed graph don't turn with the phone.
+        _tabs.Show(TurnTab, !still);
+        bool gone = _tab switch { PaintTab or SnakeTab or ColoursTab => !laser, TurnTab => still, _ => false };
         if (gone)
         {
             _tab = LookTab;
@@ -985,6 +1000,10 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_phoneLook, o.Kind == OverlayKind.Phone);
         Parts.Show(_shapeLook, o.Kind == OverlayKind.Shape);
         Parts.Show(_diskLook, o.Kind == OverlayKind.Disk);
+        Parts.Show(_ringLook, o.Kind == OverlayKind.Ring);
+        Parts.Show(_graphLook, o.Kind == OverlayKind.Graph);
+        _graphRange.Set(o.GraphRange);
+        _graphSeconds.Set(o.GraphSeconds);
         bool laser = o.Kind == OverlayKind.Laser;
         Parts.Show(_laserLook, laser);
         Parts.SetChecked(_phoneAxon, o.Axonometric);
@@ -1135,7 +1154,7 @@ internal sealed class OverlaysPage : Page
         _diskRange.Set(o.DiskRange);
         Parts.SetChecked(_crosshair, o.Crosshair);
         ShowColors(o);
-        ShowTabs(laser, o.Kind == OverlayKind.Fps);
+        ShowTabs(laser, !o.Turns);
 
         _turnsWith.Set(o.TurnsWith);
         _turnsHint.Text = o.TurnsWith switch
