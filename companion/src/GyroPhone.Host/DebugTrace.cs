@@ -7,7 +7,8 @@ namespace GyroPhone.Host;
 /// <summary>
 /// The companion's debug log: what was injected (keys, mouse, the virtual pad), link lines and
 /// session events, in a ring of the newest events. Logs only while <see cref="Enabled"/> (the
-/// Debug window is open, or the phone's debug tools asked for it within the last few seconds),
+/// Debug window is open, or the phone's debug tools are on: from its first LINK_INFO that asks until one
+/// that doesn't, so it keeps logging across a reconnect and catches what happens at a session's start),
 /// so the input path costs one bool check otherwise. Thread-safe.
 /// </summary>
 public sealed class DebugTrace
@@ -17,11 +18,10 @@ public sealed class DebugTrace
 
     public readonly record struct Event(long Us, Kind Kind, string Text);
 
-    public const long RecordUs = 30_000_000;
+    public const long RecordUs = 180_000_000;
     private const long AxisEveryUs = 100_000;
     private const long MotionEveryUs = 100_000;
     private const int AxisStepPct = 5;
-    private const long PhoneAskHoldUs = 5_000_000;
 
     private readonly object _lock = new();
     private readonly Event[] _ring;
@@ -29,9 +29,9 @@ public sealed class DebugTrace
     private readonly Func<long> _nowUs;
 
     private bool _windowOpen;
-    private long _phoneAskedUntilUs = long.MinValue;
+    private volatile bool _phoneOn;
 
-    public DebugTrace(Func<long> nowUs, int capacity = 16_384)
+    public DebugTrace(Func<long> nowUs, int capacity = 65_536)
     {
         _nowUs = nowUs;
         _ring = new Event[capacity];
@@ -40,8 +40,8 @@ public sealed class DebugTrace
     /// <summary>Bumped on every event, so a view redraws only when something happened.</summary>
     public long Version { get; private set; }
 
-    /// <summary>Logging now: the Debug window is open or the phone asked within the last 5 s.</summary>
-    public bool Enabled => _windowOpen || _nowUs() < Volatile.Read(ref _phoneAskedUntilUs);
+    /// <summary>Logging now: the Debug window is open or the phone's debug tools are on.</summary>
+    public bool Enabled => _windowOpen || _phoneOn;
 
     /// <summary>The Debug window opened or closed.</summary>
     public void SetWindowOpen(bool open)
@@ -50,11 +50,20 @@ public sealed class DebugTrace
         if (open) Add(Kind.Note, "debug window opened");
     }
 
-    /// <summary>A LINK_INFO with the phone's debug flag: keep logging for the next few seconds.</summary>
+    /// <summary>A LINK_INFO with the phone's debug flag: log until one comes without it.</summary>
     public void PhoneAsked(long nowUs)
     {
-        if (nowUs >= Volatile.Read(ref _phoneAskedUntilUs)) Add(Kind.Note, "the phone's debug tools are on", nowUs);
-        Volatile.Write(ref _phoneAskedUntilUs, nowUs + PhoneAskHoldUs);
+        if (_phoneOn) return;
+        _phoneOn = true;
+        Add(Kind.Note, "the phone's debug tools are on", nowUs);
+    }
+
+    /// <summary>A LINK_INFO without the phone's debug flag: the phone's debug tools are off, stop logging.</summary>
+    public void PhoneStopped(long nowUs)
+    {
+        if (!_phoneOn) return;
+        Add(Kind.Note, "the phone's debug tools are off", nowUs);
+        _phoneOn = false;
     }
 
     public void Add(Kind kind, string text, long us = long.MinValue)
@@ -238,7 +247,7 @@ public sealed class DebugTrace
     // ---- saving ----------------------------------------------------------------------------
 
     /// <summary>
-    /// The last 30 s as text: '#' header lines, then <c>wall ms \t pc \t kind \t text</c> per event,
+    /// The last 3 minutes as text: '#' header lines, then <c>wall ms \t pc \t kind \t text</c> per event,
     /// the same format as the phone's recordings so both sort together.
     /// </summary>
     public string Save(IEnumerable<string> header)

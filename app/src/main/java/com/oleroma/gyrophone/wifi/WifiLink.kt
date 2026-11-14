@@ -1355,7 +1355,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** Bumped by [requestDebugSave]; LINK_INFO carries its low bits so the PC saves when they change. */
     @Volatile private var debugSaves = 0
 
-    /** Asks the PC to save its last 30 s of debug log now, next to the phone's recording. */
+    /** Asks the PC to save its last 3 minutes of debug log now, next to the phone's recording. */
     fun requestDebugSave() {
         debugSaves++
         pump.requestLinkInfo()

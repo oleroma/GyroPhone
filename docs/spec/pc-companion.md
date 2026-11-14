@@ -61,7 +61,7 @@ All engine state is under one lock, which gp-rx takes for every packet and Flush
 
 **Pairing window** (`PairWindow`): a QR code for the phone's Scan QR code (a one-time token, renewed when it expires, gone when the window closes; holds up to four of this PC's IPv4 addresses), and for code pairing the PC's name, addresses, port and the pairing countdown, then "Pair <phone>? Code 123 456" with **Allow** / **Deny**. On first run with nothing paired the pairing window opens by itself.
 
-**Debug window** (`DebugForm`, from Performance › Debug): the link as the PC sees it, what the game is given now, and the newest debug events at 4 Hz; **Save last 30 s**. The engine logs only while it is open or the phone's debug tools are on. A phone-side Record also saves the PC's (LINK_INFO save counter).
+**Debug window** (`DebugForm`, from Performance › Debug): the link as the PC sees it, what the game is given now, and the newest debug events at 4 Hz; **Save last 3 min**. The engine logs only while it is open or the phone's debug tools are on (from the first LINK_INFO that says so until one that doesn't, so a reconnect keeps it logging), in a ring of the newest 65,536 events; saves cover the last 3 minutes. A phone-side Record also saves the PC's (LINK_INFO save counter).
 
 **Overlay drawing threads**: the pacer (`OverlayPacer`) wakes every open overlay window at each screen refresh, and each window draws on a thread of its own (`OverlayForm.Signal`, "overlay <id>"), so windows draw side by side and a heavy one (a pointer's paint) never holds the others back; a window still drawing when the next refresh comes skips it. A pointer's paint stamps pieces at least half the brush long and paints a big piece's rows on several cores (`LaserPaint.Piece`, from 24 rows).
 

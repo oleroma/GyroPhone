@@ -35,6 +35,20 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
     /** The Settings switch "Debug tools". */
     val enabled: StateFlow<Boolean> = _enabled
 
+    private val _quiet = MutableStateFlow(prefs.getBoolean(KEY_QUIET, false))
+
+    /**
+     * Logging without the panel on the pad, so it can stay on while playing (to catch a rare misfire):
+     * `dumpsys ... quiet` turns it on, `on` brings the panel back, `off` stops both.
+     */
+    val quiet: StateFlow<Boolean> = _quiet
+
+    private fun setQuiet(on: Boolean) {
+        prefs.edit().putBoolean(KEY_QUIET, on).apply()
+        _quiet.value = on
+        trace?.keepGyroRaw = !on
+    }
+
     /** The log while [enabled]; null otherwise. */
     @Volatile var trace: DebugTrace? = null
         private set
@@ -46,7 +60,13 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         if (_enabled.value) turnOn()
     }
 
+    /** The Settings switch: always with the panel (it ends quiet mode). */
     fun setEnabled(on: Boolean) {
+        setQuiet(false)
+        enable(on)
+    }
+
+    private fun enable(on: Boolean) {
         prefs.edit().putBoolean(KEY_ON, on).apply()
         _enabled.value = on
         if (on) turnOn() else turnOff()
@@ -56,6 +76,7 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
     private fun turnOn() {
         if (trace != null) return
         val t = DebugTrace()
+        t.keepGyroRaw = !_quiet.value
         t.note("debug tools on · GyroPhone $version")
         trace = t
         runtime.engine.trace = t
@@ -85,7 +106,7 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
     }
 
     /**
-     * Saves the last 30 s to a file in the app's external files (`files/debug/`), and asks the PC to save
+     * Saves the last 3 minutes to a file in the app's external files (`files/debug/`), and asks the PC to save
      * its side at the same moment when the link is Wi-Fi or USB. Returns the file, or null when
      * debugging is off.
      */
@@ -105,16 +126,17 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
 
     /** What `adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService` prints. */
     fun dump(args: Array<out String>): String = buildString {
+        if ("quiet" in args) { setQuiet(true); enable(true) }
         if ("on" in args) setEnabled(true)
         if ("off" in args) setEnabled(false)
         appendLine("GyroPhone $version")
         for (h in header()) appendLine(h)
         val t = trace
         if (t == null) {
-            appendLine("debug tools: off (args: on | off | record | events [n])")
+            appendLine("debug tools: off (args: on | quiet | off | record | events [n])")
             return@buildString
         }
-        appendLine("debug tools: on")
+        appendLine("debug tools: on" + if (_quiet.value) " (quiet: no panel)" else "")
         if ("record" in args) appendLine("recording: " + (record()?.absolutePath ?: "debug tools are off"))
         val n = args.indexOf("events").takeIf { it >= 0 }?.let { args.getOrNull(it + 1)?.toIntOrNull() } ?: 60
         appendLine("--- last $n events (ms ago, kind, text)")
@@ -146,6 +168,7 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
 
     companion object {
         private const val KEY_ON = "debug_tools"
+        private const val KEY_QUIET = "debug_tools_quiet"
         private const val MAX_FILES = 20
 
         fun describe(s: LinkState): String = when (s) {

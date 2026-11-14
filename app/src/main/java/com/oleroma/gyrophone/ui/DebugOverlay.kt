@@ -56,14 +56,15 @@ import kotlin.math.roundToInt
  * The pad's debug panel while Settings › Debug tools is on: link, gyro, workspace and layer, what
  * is held (inputs and output), and the newest events. It keeps its place and size whatever it
  * shows: drag the title to move it, drag the ◢ corner to resize it, tap ▾ to fold it to the
- * link and what is held. It stays on screen. Record saves the last 30 s ([PhoneDebug.record]).
+ * link and what is held. It stays on screen. Record saves the last 3 minutes ([PhoneDebug.record]).
  */
 @Composable
 fun DebugOverlay(runtime: GamepadRuntime, modifier: Modifier = Modifier, covered: Boolean = false) {
     val on by runtime.debug.enabled.collectAsStateWithLifecycle()
+    val quiet by runtime.debug.quiet.collectAsStateWithLifecycle()
     val link by runtime.linkState.collectAsStateWithLifecycle()
     val g by runtime.gyroInfo.collectAsStateWithLifecycle()
-    if (!on) return
+    if (!on || quiet) return
     val trace = runtime.debug.trace ?: return
     val density = LocalDensity.current
     // Place (px from the top left) and size (dp), remembered: "x,y,w,h".

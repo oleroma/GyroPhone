@@ -11,13 +11,15 @@ public class DebugTraceTests
     private static List<string> Texts(DebugTrace t) => t.Latest(1000).Select(e => e.Text).ToList();
 
     [Fact]
-    public void LogsOnlyWhileTheWindowIsOpenOrThePhoneAskedRecently()
+    public void LogsOnlyWhileTheWindowIsOpenOrThePhoneAsks()
     {
         var t = NewTrace();
         Assert.False(t.Enabled);
         t.PhoneAsked(_now);
         Assert.True(t.Enabled);
-        _now += 6_000_000;
+        _now += 600_000_000; // no LINK_INFO for a while (a reconnect): still logging
+        Assert.True(t.Enabled);
+        t.PhoneStopped(_now);
         Assert.False(t.Enabled);
         t.SetWindowOpen(true);
         Assert.True(t.Enabled);
@@ -50,11 +52,11 @@ public class DebugTraceTests
     }
 
     [Fact]
-    public void SaveKeepsTheLast30sInThePhoneFormat()
+    public void SaveKeepsTheLast3MinutesInThePhoneFormat()
     {
         var t = NewTrace();
         t.Add(DebugTrace.Kind.Note, "old", _now);
-        _now += 31_000_000;
+        _now += 181_000_000;
         t.Add(DebugTrace.Kind.Out, "new", _now);
         var lines = t.Save(["header"]).Split('\n', StringSplitOptions.RemoveEmptyEntries);
         Assert.Equal("# GyroPhone debug recording, side pc", lines[0]);

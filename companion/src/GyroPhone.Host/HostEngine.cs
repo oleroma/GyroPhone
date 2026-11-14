@@ -812,7 +812,7 @@ public sealed class HostEngine
 
     private void OnDebugFlags(byte flags, long nowUs)
     {
-        if ((flags & LinkInfoFlags.DebugTrace) == 0) return;
+        if ((flags & LinkInfoFlags.DebugTrace) == 0) { Debug.PhoneStopped(nowUs); return; }
         Debug.PhoneAsked(nowUs);
         int saves = (flags & LinkInfoFlags.DebugSaveMask) >> LinkInfoFlags.DebugSaveShift;
         bool asked = _debugSaves >= 0 && saves != _debugSaves;

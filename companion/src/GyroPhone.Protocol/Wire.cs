@@ -248,7 +248,7 @@ public static class LinkInfoFlags
     /// <summary>The phone's debug tools are on: the PC keeps its debug log while LINK_INFOs carry this.</summary>
     public const byte DebugTrace = 1 << 3;
 
-    /// <summary>With DebugTrace: a 3-bit counter; the PC saves its last 30 s of debug log when it changes.</summary>
+    /// <summary>With DebugTrace: a 3-bit counter; the PC saves its last 3 minutes of debug log when it changes.</summary>
     public const byte DebugSaveMask = 0x70;
     public const int DebugSaveShift = 4;
 

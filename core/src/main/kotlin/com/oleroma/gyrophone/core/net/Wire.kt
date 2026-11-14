@@ -338,7 +338,7 @@ object LinkInfoFlags {
     /** Debugging is on in the phone: the PC keeps its debug log while LINK_INFOs carry this. */
     const val DEBUG_TRACE = 8
 
-    /** With [DEBUG_TRACE]: a 3-bit counter; the PC saves its last 30 s of debug log when it changes. */
+    /** With [DEBUG_TRACE]: a 3-bit counter; the PC saves its last 3 minutes of debug log when it changes. */
     const val DEBUG_SAVE_MASK = 0x70
     const val DEBUG_SAVE_SHIFT = 4
 

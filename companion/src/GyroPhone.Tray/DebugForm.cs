@@ -6,7 +6,7 @@ namespace GyroPhone.Tray;
 /// <summary>
 /// The Debug window (tray menu "Debug window…"): the link as this PC sees it, what the game is
 /// given now (virtual pad, held keys and mouse buttons), and the newest events of the debug log,
-/// refreshed at 4 Hz. "Save last 30 s" writes a recording to the debug folder. The engine logs
+/// refreshed at 4 Hz. "Save last 3 min" writes a recording to the debug folder. The engine logs
 /// only while this window is open or the phone's debug tools are on.
 /// </summary>
 internal sealed class DebugForm : Form
@@ -52,7 +52,7 @@ internal sealed class DebugForm : Form
         table.Controls.Add(_status, 0, 0);
 
         var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Dock = DockStyle.Fill };
-        var saveButton = new Button { Text = "Save last 30 s", AutoSize = true };
+        var saveButton = new Button { Text = "Save last 3 min", AutoSize = true };
         saveButton.Click += (_, _) => ShowSaved(_save());
         var folderButton = new Button { Text = "Open recordings folder", AutoSize = true };
         folderButton.Click += (_, _) => openFolder();

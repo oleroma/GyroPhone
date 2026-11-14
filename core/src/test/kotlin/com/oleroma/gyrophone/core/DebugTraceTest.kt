@@ -56,10 +56,10 @@ class DebugTraceTest {
         assertEquals(listOf("pad LX 50%", "pad LX 0%"), texts(t))
     }
 
-    @Test fun saveKeepsTheLast30sWithWallTimes() {
+    @Test fun saveKeepsTheLast3MinutesWithWallTimes() {
         val t = trace()
         t.note("old")
-        now += 31_000_000_000L
+        now += 181_000_000_000L
         t.note("new")
         val lines = t.save("phone", listOf("x: y")).lines().filter { it.isNotEmpty() }
         assertTrue(lines[0].startsWith("# GyroPhone debug recording, side phone"))

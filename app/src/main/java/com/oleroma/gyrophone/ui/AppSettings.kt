@@ -364,7 +364,7 @@ private fun AppTab(runtime: GamepadRuntime) {
                 "Debug tools", debugOn,
                 hint = "Shows a debug panel on the pad: the link's speed and latency, the gyro, the active workspace and " +
                         "layer, what the PC is sent now, and a list of what you press and what it turns into. " +
-                        "Record saves the last 30 seconds (the PC saves its side too over Wi-Fi or USB). " +
+                        "Record saves the last 3 minutes (the PC saves its side too over Wi-Fi or USB). " +
                         "Off: nothing is logged.",
             ) { runtime.debug.setEnabled(it) }
             SwitchRow(

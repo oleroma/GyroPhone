@@ -15,7 +15,7 @@ import kotlin.math.abs
  * Times are [clock] nanoseconds (the engine's clock). [save] turns them into wall-clock times.
  */
 class DebugTrace(
-    val capacity: Int = 16_384,
+    val capacity: Int = 65_536,
     private val clock: () -> Long = System::nanoTime,
     private val wallMillis: () -> Long = System::currentTimeMillis,
 ) {
@@ -188,7 +188,10 @@ class DebugTrace(
     /** Latest raw gyro sample, deg/s, for the overlay. */
     @Volatile var gyroRaw = FloatArray(3)
         private set
-    private var gyroSamples = 0
+    private val gyroSamples = java.util.concurrent.atomic.AtomicInteger()
+
+    /** Keep [gyroRaw] for the panel; off in quiet mode, where nothing shows it. */
+    @Volatile var keepGyroRaw = true
 
     /** Gyro samples per second (set once a second by [secondTick]). */
     @Volatile var gyroPerSecond = 0
@@ -196,15 +199,16 @@ class DebugTrace(
 
     /** One raw gyro sample in deg/s. Only counted and kept for the overlay; not logged. */
     fun gyro(x: Float, y: Float, z: Float) {
-        gyroRaw = floatArrayOf(x, y, z)
-        synchronized(this) { gyroSamples++ }
+        // On the gyro path: no lock and, in quiet mode, no allocation.
+        if (keepGyroRaw) gyroRaw = floatArrayOf(x, y, z)
+        gyroSamples.incrementAndGet()
     }
 
     /** Once a second: updates the rates and logs [linkLine] when given. */
     @Synchronized
     fun secondTick(linkLine: String?) {
         snapshotsPerSecond = outSnapshots; outSnapshots = 0
-        gyroPerSecond = gyroSamples; gyroSamples = 0
+        gyroPerSecond = gyroSamples.getAndSet(0)
         if (outDx != 0 || outDy != 0 || outWheel != 0 || outHWheel != 0) flushMotion(clock())
         if (linkLine != null) add(Kind.LINK, linkLine + " · snapshots $snapshotsPerSecond/s · gyro $gyroPerSecond/s")
     }
@@ -231,7 +235,7 @@ class DebugTrace(
     }
 
     companion object {
-        const val RECORD_NANOS = 30_000_000_000L
+        const val RECORD_NANOS = 180_000_000_000L
         const val AXIS_EVERY_NANOS = 100_000_000L
         const val MOTION_EVERY_NANOS = 100_000_000L
         const val AXIS_STEP_PCT = 5
