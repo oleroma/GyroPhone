@@ -98,12 +98,18 @@ internal static class Gpu3D
         }
     }
 
-    /// <summary>One corner of a flat item: (x, y, kind 0 fill / 1 line, line half width), a line's ends, premultiplied colour.</summary>
+    /// <summary>
+    /// One corner of a flat item: (x, y, kind 0 fill / 1 line, line half width), a line's ends, premultiplied colour, and
+    /// a line's neighbours in its polyline (the point before its start, the point after its end; far away when none).
+    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct FlatVertex
     {
-        public Vector4 P, E, C;
+        public Vector4 P, E, C, N;
     }
+
+    /// <summary>"No neighbour" for <see cref="FlatList.Line"/> (the shader takes anything past 1e8 as none).</summary>
+    private const float Far = 1e9f;
 
     /// <summary>
     /// Flat items in picture pixels, drawn in order (each over those before it, as Direct2D's calls): filled polygons
@@ -208,8 +214,13 @@ internal static class Gpu3D
             return !(neg && pos);
         }
 
-        /// <summary>A line from a to b, <paramref name="width"/> wide, round-ended.</summary>
-        public void Line(PointF a, PointF b, Color color, float width)
+        /// <summary>
+        /// A line from a to b, <paramref name="width"/> wide, round-ended. As a piece of a polyline, with the point before
+        /// a (<paramref name="before"/>) and after b (<paramref name="after"/>): where it overlaps its neighbouring pieces
+        /// (round the joins) each pixel is drawn by one of them only, so a see-through line doesn't show a brighter dot at
+        /// every corner (as Direct2D draws one stroke).
+        /// </summary>
+        public void Line(PointF a, PointF b, Color color, float width, PointF? before = null, PointF? after = null)
         {
             if (color.A == 0) return;
             var c = Pre(color);
@@ -222,15 +233,31 @@ internal static class Gpu3D
             var p2 = new Vector2(b.X + ux * e + nx, b.Y + uy * e + ny);
             var p3 = new Vector2(b.X + ux * e - nx, b.Y + uy * e - ny);
             var ends = new Vector4(a.X, a.Y, b.X, b.Y);
-            void V(Vector2 p) => Items.Add(new FlatVertex { P = new Vector4(p.X, p.Y, 1f, hw), E = ends, C = c });
+            var near = new Vector4(before?.X ?? Far, before?.Y ?? Far, after?.X ?? Far, after?.Y ?? Far);
+            void V(Vector2 p) => Items.Add(new FlatVertex { P = new Vector4(p.X, p.Y, 1f, hw), E = ends, C = c, N = near });
             V(p0); V(p1); V(p2);
             V(p2); V(p1); V(p3);
         }
 
-        /// <summary>A closed polygon's outline.</summary>
+        /// <summary>A closed polygon's outline, joined as one stroke.</summary>
         public void Outline(ReadOnlySpan<PointF> pts, Color color, float width)
         {
-            for (int i = 0; i < pts.Length; i++) Line(pts[i], pts[(i + 1) % pts.Length], color, width);
+            int n = pts.Length;
+            if (n < 2) return;
+            if (n == 2)
+            {
+                Line(pts[0], pts[1], color, width);
+                return;
+            }
+            for (int i = 0; i < n; i++) Line(pts[i], pts[(i + 1) % n], color, width, pts[(i + n - 1) % n], pts[(i + 2) % n]);
+        }
+
+        /// <summary>An open polyline, joined as one stroke.</summary>
+        public void Polyline(ReadOnlySpan<PointF> pts, Color color, float width)
+        {
+            int n = pts.Length;
+            for (int i = 1; i < n; i++)
+                Line(pts[i - 1], pts[i], color, width, i >= 2 ? pts[i - 2] : null, i + 1 < n ? pts[i + 1] : null);
         }
     }
 
@@ -1052,7 +1079,7 @@ internal static class Gpu3D
             return float4(c.rgb * al, al);
         }
 
-        struct FlatV { float4 P; float4 E; float4 C; };
+        struct FlatV { float4 P; float4 E; float4 C; float4 N; };
         StructuredBuffer<FlatV> Flats : register(t3);
         struct FlatOut
         {
@@ -1060,6 +1087,7 @@ internal static class Gpu3D
             nointerpolation float4 Ends : TEXCOORD0;
             nointerpolation float2 Kind : TEXCOORD1;
             nointerpolation float4 C : COLOR0;
+            nointerpolation float4 Near : TEXCOORD2;
         };
 
         FlatOut FlatVs(uint v : SV_VertexID)
@@ -1070,20 +1098,31 @@ internal static class Gpu3D
             o.Ends = f.E + float4(Centre, Centre);
             o.Kind = f.P.zw;
             o.C = f.C;
+            o.Near = f.N + float4(Centre, Centre);
             return o;
         }
 
-        // A fill as it is; a line covered as a round-ended strip, smooth-edged.
+        // Distance from p to the piece a..b.
+        float ToPiece(float2 p, float2 a, float2 b)
+        {
+            float2 d = b - a;
+            float l2 = dot(d, d);
+            float t = l2 < 1e-6 ? 0.0 : saturate(dot(p - a, d) / l2);
+            return length(p - a - d * t);
+        }
+
+        // A fill as it is; a line covered as a round-ended strip, smooth-edged. Round a join, a pixel nearer to the
+        // piece before or after (the piece before when as near) is left to that one, so each pixel is drawn once.
         float4 FlatPs(FlatOut i) : SV_Target
         {
             if (i.Kind.x < 0.5) return i.C;
-            float2 a = i.Ends.xy;
-            float2 d = i.Ends.zw - a;
-            float2 q = i.Pos.xy - a;
-            float l2 = dot(d, d);
-            float t = l2 < 1e-6 ? 0.0 : saturate(dot(q, d) / l2);
-            float cover = saturate(i.Kind.y - length(q - d * t) + 0.5);
+            float2 p = i.Pos.xy;
+            float own = ToPiece(p, i.Ends.xy, i.Ends.zw);
+            float cover = saturate(i.Kind.y - own + 0.5);
             clip(cover - 0.001);
+            // A neighbour "far away" is none (an end of the polyline, or a line on its own).
+            if (i.Near.x < 1e8 && ToPiece(p, i.Near.xy, i.Ends.xy) <= own + 1e-3) discard;
+            if (i.Near.z < 1e8 && ToPiece(p, i.Ends.zw, i.Near.zw) < own - 1e-3) discard;
             return i.C * cover;
         }
 

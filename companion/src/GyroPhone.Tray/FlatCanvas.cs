@@ -38,7 +38,7 @@ internal sealed class FlatCanvas : ICanvas
 
     public void DrawLines(Color color, float width, PointF[] points, bool flat = false)
     {
-        for (int i = 1; i < points.Length; i++) List.Line(points[i - 1], points[i], color, width);
+        List.Polyline(points, color, width);
     }
 
     public void DrawLinesSet(Color color, float width, PointF[][] lines, long stamp)
