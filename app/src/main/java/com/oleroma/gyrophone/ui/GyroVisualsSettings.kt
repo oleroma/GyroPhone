@@ -401,13 +401,16 @@ internal fun GyroDisplaySettingsScreen(
                 if (d.laserSnakeZip) Indented {
                     Chips(listOf("By time" to false, "By speed" to true), d.laserSnakeZipBySpeed) { set(d.copy(laserSnakeZipBySpeed = it)) }
                     if (d.laserSnakeZipBySpeed) {
-                        IntSlider("Zip speed %d °/s", d.laserSnakeZipSpeed, 30..2000, step = 10) { set(d.copy(laserSnakeZipSpeed = it)) }
+                        // 1 to 2000 °/s, finer toward the slow end: the slider's square, in 1 °/s steps.
+                        SavedSlider(
+                            { p -> "Zip speed ${zipSpeed(p)} °/s" },
+                            sqrt(d.laserSnakeZipSpeed.coerceIn(ZIP_SPEED_MIN, ZIP_SPEED_MAX) / ZIP_SPEED_MAX.toFloat()), 0f..1f,
+                            { p -> sqrt(zipSpeed(p) / ZIP_SPEED_MAX.toFloat()) },
+                        ) { set(d.copy(laserSnakeZipSpeed = zipSpeed(it))) }
                         Hint("The tail always runs toward the head at this many degrees a second, while the beam moves and while it holds still: moving faster than that, the Snake grows (up to its Length); slower, it shrinks.")
                     } else {
-                        SwitchRow("When the beam stops", d.laserSnakeZipStops, "The moment the beam holds still, the tail runs back into the head.") { set(d.copy(laserSnakeZipStops = it)) }
-                        SwitchRow("On ratchet", d.laserSnakeZipRatchet, "A ratchet press runs the tail back into the head.") { set(d.copy(laserSnakeZipRatchet = it)) }
                         FloatSlider("Zip back in %.2f s", d.laserSnakeZipSeconds, 0.05f..2f, 0.05f) { set(d.copy(laserSnakeZipSeconds = it)) }
-                        Hint("The whole Snake goes in that long, however long it is. Clear on ratchet, when on, wins over On ratchet.")
+                        Hint("A ratchet press runs the tail back into the head: the whole Snake goes in that long, however long it is. Clear on ratchet, when on, wins.")
                     }
                 }
             }
@@ -649,6 +652,11 @@ private const val LASER_LENGTH_MAX = 720
 
 /** Snake's Length slider at [p] (0..1, its square) in degrees, to 5°, from [LASER_LENGTH_MIN]. */
 private fun lengthDeg(p: Float): Int = maxOf(LASER_LENGTH_MIN, ((p * p * LASER_LENGTH_MAX) / 5f).roundToInt() * 5)
+private const val ZIP_SPEED_MIN = 1
+private const val ZIP_SPEED_MAX = 2000
+
+/** Snake's Zip speed slider at [p] (0..1, its square) in °/s, to 1 °/s. */
+private fun zipSpeed(p: Float): Int = (p * p * ZIP_SPEED_MAX).roundToInt().coerceIn(ZIP_SPEED_MIN, ZIP_SPEED_MAX)
 private const val LASER_AXON_HINT = "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot."
 private const val AXON_HINT = "Seen from 30° round and 30° above with the world's axes (yaw toward you red, pitch right green, roll up blue, as the gimbal's rings), as the pointer is, instead of face-on."
 

@@ -73,7 +73,7 @@ internal sealed class OverlaysPage : Page
     private readonly StackPanel _spreadOptions;
     private readonly SphereLookRows _paintLook, _snakeLook;
     private readonly StackPanel _snakeZip, _zipOptions, _zipTimed, _snakeShots, _snakeLookPanel, _laserFacesPanel;
-    private readonly CheckBox _zipOn, _zipStops, _zipRatchet;
+    private readonly CheckBox _zipOn;
     private readonly TextBlock _zipSpeedHint;
     private readonly Seg<bool> _zipBy, _snakeColourBy;
     private readonly SliderRow _zipSeconds, _zipSpeed, _snakeFireBrush, _snakeAimBrush;
@@ -591,18 +591,15 @@ internal sealed class OverlaysPage : Page
         _zipBy = new Seg<bool>(b => Change(o => o.LaserSnakeZipBySpeed = b), false, ("By time", false), ("By speed", true));
         _zipBy.View.Margin = new Thickness(0, 6, 0, 4);
         _zipOptions.Children.Add(_zipBy.View);
-        _zipSpeed = new SliderRow("Zip speed", 30, 2000, 10, v => $"{v:0} °/s", v => Change(o => o.LaserSnakeZipSpeed = (int)v));
+        // 1 to 2000 °/s, finer toward the slow end: the slider's square, in 1 °/s steps.
+        _zipSpeed = new SliderRow("Zip speed", 0, 1, 0.0005, v => $"{ZipSpeed(v)} °/s", v => Change(o => o.LaserSnakeZipSpeed = ZipSpeed(v)));
         _zipSpeedHint = Parts.Text("The tail always runs toward the head at this many degrees a second, while the beam moves and while it holds still: moving faster than that, the Snake grows (up to its Length); slower, it shrinks.", "Hint");
         _zipOptions.Children.Add(_zipSpeed.View);
         _zipOptions.Children.Add(_zipSpeedHint);
         _zipTimed = new StackPanel();
-        _zipStops = Parts.Toggle("When the beam stops", () => Change(o => o.LaserSnakeZipStops = !o.LaserSnakeZipStops), "The moment the beam holds still, the tail runs back into the head.");
-        _zipTimed.Children.Add(_zipStops);
-        _zipRatchet = Parts.Toggle("On ratchet", () => Change(o => o.LaserSnakeZipRatchet = !o.LaserSnakeZipRatchet), "A ratchet press runs the tail back into the head.");
-        _zipTimed.Children.Add(_zipRatchet);
         _zipSeconds = new SliderRow("Zip back in", 0.05, 2, 0.05, v => $"{v:0.00} s", v => Change(o => o.LaserSnakeZipSeconds = (float)v));
         _zipTimed.Children.Add(_zipSeconds.View);
-        _zipTimed.Children.Add(Parts.Text("The whole Snake goes in that long, however long it is. Clear on ratchet, when on, wins over On ratchet.", "Hint"));
+        _zipTimed.Children.Add(Parts.Text("A ratchet press runs the tail back into the head: the whole Snake goes in that long, however long it is. Clear on ratchet, when on, wins.", "Hint"));
         _zipOptions.Children.Add(_zipTimed);
         _snakeZip.Children.Add(_zipOptions);
         snb.Children.Add(_snakeZip);
@@ -945,6 +942,11 @@ internal sealed class OverlaysPage : Page
     private const int SnakeMinDeg = 10, SnakeMaxDeg = 720;
 
     /// <summary>Snake's Length slider's place (0..1, its square) in degrees, to 5°, from 10°.</summary>
+    private const int ZipSpeedMin = 1, ZipSpeedMax = 2000;
+
+    /// <summary>The Zip speed slider at <paramref name="p"/> (0..1, its square) in °/s, to 1 °/s.</summary>
+    private static int ZipSpeed(double p) => Math.Clamp((int)Math.Round(p * p * ZipSpeedMax), ZipSpeedMin, ZipSpeedMax);
+
     private static int SnakeDeg(double p) => Math.Max(SnakeMinDeg, (int)Math.Round(p * p * SnakeMaxDeg / 5) * 5);
 
     private static string BackgroundName(OverlayBackground b) => b switch
@@ -1126,10 +1128,8 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_zipSpeed.View, o.LaserSnakeZipBySpeed);
         Parts.Show(_zipSpeedHint, o.LaserSnakeZipBySpeed);
         Parts.Show(_zipTimed, !o.LaserSnakeZipBySpeed);
-        Parts.SetChecked(_zipStops, o.LaserSnakeZipStops);
-        Parts.SetChecked(_zipRatchet, o.LaserSnakeZipRatchet);
         _zipSeconds.Set(o.LaserSnakeZipSeconds);
-        _zipSpeed.Set(o.LaserSnakeZipSpeed);
+        _zipSpeed.Set(Math.Sqrt(Math.Clamp(o.LaserSnakeZipSpeed, ZipSpeedMin, ZipSpeedMax) / (double)ZipSpeedMax));
         Parts.Show(_snakeShots, o.LaserSnake && (fires || aims));
         Parts.Show(_snakeFireBrush.View, fires);
         Parts.Show(_snakeAimBrush.View, aims);
