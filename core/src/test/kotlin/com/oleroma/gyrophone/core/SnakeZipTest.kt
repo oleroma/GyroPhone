@@ -21,38 +21,37 @@ class SnakeZipTest {
         for (ms in from..to step 5) t.add(sin(a), 0f, -cos(a), ms, draw = false, held = held, snakeDeg = 180f, zip = zip)
     }
 
-    @Test fun aStoppedBeamZipsTheTailIntoTheHeadBySpeed() {
+    @Test fun bySpeedTheTailAlwaysRunsTowardTheHead() {
         val t = LaserTrace()
-        val zip = LaserTrace.Zip(stops = true, ratchet = false, bySpeed = true, seconds = 0.4f, speed = 100f)
+        val zip = LaserTrace.Zip(stops = false, ratchet = false, bySpeed = true, seconds = 0.4f, speed = 50f)
+        // Moving at 100°/s for 0.6 s with the tail running at 50°/s: half the 60° path is left.
         swept(t, zip)
-        assertEquals(60f, t.strokes.behindNewest(0), 0.6f)
-        // Still for under the stop time: nothing yet.
-        still(t, zip, 605, 700)
-        assertEquals(60f, t.strokes.behindNewest(0), 0.6f)
-        // Then the tail runs in at 100°/s: about 30° gone after another 0.3 s.
-        still(t, zip, 705, 1050)
+        val moving = t.strokes.behindNewest(0)
+        assertTrue("moving $moving", moving in 28f..32f)
+        // Still: it keeps running in at once, about 10° in 0.2 s, and is all gone in time, the head kept.
+        still(t, zip, 605, 800)
         val left = t.strokes.behindNewest(0)
-        assertTrue("left $left", left in 20f..35f)
-        // And it is all gone in time, the head kept.
-        still(t, zip, 1055, 2000)
+        assertTrue("left $left", left in moving - 11f..moving - 9f)
+        still(t, zip, 805, 2000)
         assertEquals(0f, t.strokes.behindNewest(0), 1e-4f)
         assertEquals(1, t.strokes.count)
     }
 
-    @Test fun byTimeTheWholeSnakeGoesInThatLong() {
+    @Test fun byTimeTheWholeSnakeGoesInThatLongOnceTheBeamStops() {
         val t = LaserTrace()
         val zip = LaserTrace.Zip(stops = true, ratchet = false, bySpeed = false, seconds = 0.2f, speed = 360f)
         swept(t, zip)
-        // Starts 150 ms after the last point; 0.2 s later it is gone.
-        still(t, zip, 605, 760)
+        assertEquals(60f, t.strokes.behindNewest(0), 0.6f)
+        // Starts as soon as the beam stops (no point for ZIP_STILL_MS); 0.2 s later it is gone.
+        still(t, zip, 605, 640)
         assertTrue(t.strokes.behindNewest(0) > 50f)
-        still(t, zip, 765, 980)
+        still(t, zip, 645, 860)
         assertEquals(0f, t.strokes.behindNewest(0), 1e-4f)
     }
 
     @Test fun itGrowsAgainFromTheHeadAsTheBeamMoves() {
         val t = LaserTrace()
-        val zip = LaserTrace.Zip(stops = true, ratchet = false, bySpeed = true, seconds = 0.4f, speed = 1000f)
+        val zip = LaserTrace.Zip(stops = true, ratchet = false, bySpeed = false, seconds = 0.1f, speed = 360f)
         swept(t, zip)
         still(t, zip, 605, 1000)
         assertEquals(1, t.strokes.count)
@@ -66,7 +65,7 @@ class SnakeZipTest {
 
     @Test fun onRatchetZipsOnAPressOnly() {
         val t = LaserTrace()
-        val zip = LaserTrace.Zip(stops = false, ratchet = true, bySpeed = true, seconds = 0.4f, speed = 200f)
+        val zip = LaserTrace.Zip(stops = false, ratchet = true, bySpeed = false, seconds = 0.3f, speed = 360f)
         swept(t, zip)
         // Still without a press: it stays.
         still(t, zip, 605, 1000)

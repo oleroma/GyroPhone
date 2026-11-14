@@ -339,10 +339,12 @@ public sealed class OverlaySettings
     /// <summary>Snake: a ratchet press clears the Snake.</summary>
     public bool LaserSnakeClearOnRatchet { get; set; }
     /// <summary>
-    /// Snake zip back: the tail runs back into the head when the beam stops (LaserSnakeZipStops) and on a ratchet press
-    /// (LaserSnakeZipRatchet), the whole Snake in LaserSnakeZipSeconds or, LaserSnakeZipBySpeed, at LaserSnakeZipSpeed
-    /// degrees a second; it grows again as the beam moves on. As the phone's GyroDisplay.laserSnakeZip*.
+    /// Snake zip back (LaserSnakeZip, on), as the phone's GyroDisplay.laserSnakeZip*: with LaserSnakeZipBySpeed the tail
+    /// always runs toward the head at LaserSnakeZipSpeed degrees a second, the beam moving or still; else (by time) it runs
+    /// back into the head when the beam stops (LaserSnakeZipStops) and on a ratchet press (LaserSnakeZipRatchet), the whole
+    /// Snake in LaserSnakeZipSeconds. It grows again as the beam moves on.
     /// </summary>
+    public bool LaserSnakeZip { get; set; } = true;
     public bool LaserSnakeZipStops { get; set; } = true;
     public bool LaserSnakeZipRatchet { get; set; }
     public bool LaserSnakeZipBySpeed { get; set; }
@@ -363,7 +365,7 @@ public sealed class OverlaySettings
 
     /// <summary>The Snake's zip back as LaserTrace.Add takes it, or null when off.</summary>
     [JsonIgnore]
-    public LaserTrace.Zip? SnakeZip => !LaserSnakeZipStops && !LaserSnakeZipRatchet ? null
+    public LaserTrace.Zip? SnakeZip => !LaserSnakeZip || !LaserSnakeZipBySpeed && !LaserSnakeZipStops && !LaserSnakeZipRatchet ? null
         : new LaserTrace.Zip(LaserSnakeZipStops, LaserSnakeZipRatchet, LaserSnakeZipBySpeed,
             Math.Clamp(LaserSnakeZipSeconds, 0.05f, 2f), Math.Clamp(LaserSnakeZipSpeed, 30, 2000));
     /// <summary>

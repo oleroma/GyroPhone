@@ -280,6 +280,17 @@ class LaserTrace {
         if (strokes.count < 2) {
             zipping = false
             zipWants = false
+            zipMs = nowMs
+            return
+        }
+        if (zip.bySpeed) {
+            // By speed: the tail always runs toward the head at that speed, the beam moving or still.
+            zipWants = true
+            val step = (nowMs - zipMs).coerceIn(0L, 100L)
+            zipMs = nowMs
+            if (step == 0L) return
+            strokes.trimTo(strokes.behindNewest(0) - zip.speed.coerceAtLeast(1f) * step / 1000f)
+            version++
             return
         }
         if (!zipping) {
@@ -296,7 +307,7 @@ class LaserTrace {
         val dt = (nowMs - zipMs).coerceIn(0L, 100L)
         if (dt == 0L) return
         zipMs = nowMs
-        val rate = if (zip.bySpeed) zip.speed.coerceAtLeast(1f) else zipFrom / zip.seconds.coerceAtLeast(0.01f)
+        val rate = zipFrom / zip.seconds.coerceAtLeast(0.01f)
         val left = strokes.behindNewest(0) - rate * dt / 1000f
         strokes.trimTo(left)
         version++
@@ -601,7 +612,7 @@ class LaserTrace {
         }
         const val STROKE_STEP_DEG = 0.5f
         /** Snake zip back: the beam added no point for this long (it stopped), and the tail starts running into the head. */
-        const val ZIP_STILL_MS = 150L
+        const val ZIP_STILL_MS = 25L
 
         /** The shortest run of paint painted at once (degrees); runs are about half the brush's width. */
         const val RUN_MIN_DEG = 1.0

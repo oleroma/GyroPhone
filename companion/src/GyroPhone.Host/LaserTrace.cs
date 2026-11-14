@@ -287,7 +287,7 @@ public sealed class LaserTrace
     }
 
     /// <summary>Snake zip back: the beam added no point for this long (it stopped), and the tail starts running into the head.</summary>
-    public const long ZipStillMs = 150;
+    public const long ZipStillMs = 25;
 
     // Snake zip back: the tail running into the head, the length it started from, the time it last moved and when the
     // beam last added a point.
@@ -315,6 +315,18 @@ public sealed class LaserTrace
         {
             _zipping = false;
             ZipWants = false;
+            _zipMs = nowMs;
+            return;
+        }
+        if (zip.BySpeed)
+        {
+            // By speed: the tail always runs toward the head at that speed, the beam moving or still.
+            ZipWants = true;
+            long step = Math.Clamp(nowMs - _zipMs, 0L, 100L);
+            _zipMs = nowMs;
+            if (step == 0) return;
+            Strokes.TrimTo(Strokes.BehindNewest(0) - Math.Max(zip.Speed, 1f) * step / 1000f);
+            Version++;
             return;
         }
         if (!_zipping)
@@ -333,7 +345,7 @@ public sealed class LaserTrace
         long dt = Math.Clamp(nowMs - _zipMs, 0L, 100L);
         if (dt == 0) return;
         _zipMs = nowMs;
-        float rate = zip.BySpeed ? Math.Max(zip.Speed, 1f) : _zipFrom / Math.Max(zip.Seconds, 0.01f);
+        float rate = _zipFrom / Math.Max(zip.Seconds, 0.01f);
         float left = Strokes.BehindNewest(0) - rate * dt / 1000f;
         Strokes.TrimTo(left);
         Version++;

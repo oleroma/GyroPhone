@@ -23,26 +23,38 @@ public class SnakeZipTests
     }
 
     [Fact]
-    public void AStoppedBeamZipsTheTailIntoTheHeadBySpeed()
+    public void BySpeedTheTailAlwaysRunsTowardTheHead()
     {
         var t = new LaserTrace();
-        var zip = new LaserTrace.Zip(true, false, true, 0.4f, 100f);
+        var zip = new LaserTrace.Zip(false, false, true, 0.4f, 50f);
         Swept(t, zip);
-        Assert.InRange(t.Strokes.BehindNewest(0), 59.4f, 60.6f);
-        Still(t, zip, 605, 700);
-        Assert.InRange(t.Strokes.BehindNewest(0), 59.4f, 60.6f);
-        Still(t, zip, 705, 1050);
-        Assert.InRange(t.Strokes.BehindNewest(0), 20f, 35f);
-        Still(t, zip, 1055, 2000);
+        float moving = t.Strokes.BehindNewest(0);
+        Assert.InRange(moving, 28f, 32f);
+        Still(t, zip, 605, 800);
+        Assert.InRange(t.Strokes.BehindNewest(0), moving - 11f, moving - 9f);
+        Still(t, zip, 805, 2000);
         Assert.Equal(0f, t.Strokes.BehindNewest(0), 4);
         Assert.Equal(1, t.Strokes.Count);
+    }
+
+    [Fact]
+    public void ByTimeTheWholeSnakeGoesInThatLongOnceTheBeamStops()
+    {
+        var t = new LaserTrace();
+        var zip = new LaserTrace.Zip(true, false, false, 0.2f, 360f);
+        Swept(t, zip);
+        Assert.InRange(t.Strokes.BehindNewest(0), 59.4f, 60.6f);
+        Still(t, zip, 605, 640);
+        Assert.True(t.Strokes.BehindNewest(0) > 50f);
+        Still(t, zip, 645, 860);
+        Assert.Equal(0f, t.Strokes.BehindNewest(0), 4);
     }
 
     [Fact]
     public void OnRatchetZipsOnAPressOnly()
     {
         var t = new LaserTrace();
-        var zip = new LaserTrace.Zip(false, true, true, 0.4f, 200f);
+        var zip = new LaserTrace.Zip(false, true, false, 0.3f, 360f);
         Swept(t, zip);
         Still(t, zip, 605, 1000);
         Assert.InRange(t.Strokes.BehindNewest(0), 59.4f, 60.6f);

@@ -239,10 +239,12 @@ data class GyroDisplay(
     /** LASER Snake: a ratchet press clears the Snake. */
     val laserSnakeClearOnRatchet: Boolean = false,
     /**
-     * LASER Snake zip back: the tail runs back into the head when the beam stops ([laserSnakeZipStops]) and on a
-     * ratchet press ([laserSnakeZipRatchet]), the whole Snake in [laserSnakeZipSeconds] or, with
-     * [laserSnakeZipBySpeed], at [laserSnakeZipSpeed] degrees a second; it grows again as the beam moves on.
+     * LASER Snake zip back ([laserSnakeZip], on): with [laserSnakeZipBySpeed] the tail always runs toward the head at
+     * [laserSnakeZipSpeed] degrees a second, the beam moving or still; else (by time) it runs back into the head when
+     * the beam stops ([laserSnakeZipStops]) and on a ratchet press ([laserSnakeZipRatchet]), the whole Snake in
+     * [laserSnakeZipSeconds]. It grows again as the beam moves on.
      */
+    val laserSnakeZip: Boolean = true,
     val laserSnakeZipStops: Boolean = true,
     val laserSnakeZipRatchet: Boolean = false,
     val laserSnakeZipBySpeed: Boolean = false,
@@ -350,7 +352,7 @@ data class GyroDisplay(
 
     /** The Snake's zip back as [com.oleroma.gyrophone.core.engine.LaserTrace.add] takes it, or null when off. */
     val snakeZip: com.oleroma.gyrophone.core.engine.LaserTrace.Zip?
-        get() = if (!laserSnakeZipStops && !laserSnakeZipRatchet) null
+        get() = if (!laserSnakeZip || !laserSnakeZipBySpeed && !laserSnakeZipStops && !laserSnakeZipRatchet) null
         else com.oleroma.gyrophone.core.engine.LaserTrace.Zip(
             laserSnakeZipStops, laserSnakeZipRatchet, laserSnakeZipBySpeed,
             laserSnakeZipSeconds.coerceIn(0.05f, 2f), laserSnakeZipSpeed.coerceIn(30, 2000).toFloat(),
