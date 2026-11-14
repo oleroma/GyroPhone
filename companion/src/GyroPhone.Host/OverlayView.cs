@@ -43,6 +43,7 @@ internal sealed class OverlayView
         public long Active0, Active1, Active2;
         public long OffLevelUs;
         public bool PcHandles;
+        public PoseHistory? History;
     }
 
     // ---- written under the engine lock ----
@@ -84,6 +85,7 @@ internal sealed class OverlayView
                 w.PcHandles = o.HandleSource == OverlayHandleSource.Pc;
                 w.OffLevelUs = rest.OffLevelUs(o.Id);
                 w.HasPose = poses.TryGetValue(o.Id, out var p);
+                w.History = p?.History;
                 if (p != null)
                 {
                     w.W = p.W; w.X = p.X; w.Y = p.Y; w.Z = p.Z;
@@ -166,6 +168,26 @@ internal sealed class OverlayView
                 into.PoseActive = 0;
             }
             return rx;
+        }
+    }
+
+    /// <summary>Window <paramref name="id"/>'s poses sample by sample (<see cref="OverlayPose.History"/>), or null while it has none.</summary>
+    public PoseHistory? HistoryOf(string id)
+    {
+        while (true)
+        {
+            int s = _seq.ReadBegin();
+            PoseHistory? h = null;
+            var ws = _windows;
+            int n = Math.Min(_count, ws.Length);
+            for (int i = 0; i < n; i++)
+                if (string.Equals(ws[i].Id, id, StringComparison.Ordinal))
+                {
+                    h = ws[i].History;
+                    break;
+                }
+            if (_seq.ReadRetry(s)) continue;
+            return h;
         }
     }
 

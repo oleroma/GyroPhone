@@ -210,8 +210,8 @@ internal static class GpuPaint
             if (snake)
             {
                 int hash = HashCode.Combine(
-                    HashCode.Combine(s.Perspective, s.LaserColourByWay, s.LaserShade, s.LaserInside, s.LaserLight, s.LaserLightFrom, s.LaserShine, s.LaserAxonometric),
-                    HashCode.Combine(s.LaserSnakeDeg, s.LaserSnakeBrush, s.Color("fire"), s.Color("fire_behind"), s.Color("aim"), s.Color("aim_behind"), s.LaserFireBrush, s.LaserAimBrush),
+                    HashCode.Combine(s.Perspective, s.SnakeColourByWay, s.SnakeShade, s.SnakeInside, s.SnakeLight, s.SnakeLightFrom, s.SnakeShine, s.LaserAxonometric),
+                    HashCode.Combine(s.LaserSnakeDeg, s.LaserSnakeBrush, s.Color("fire"), s.Color("fire_behind"), s.Color("aim"), s.Color("aim_behind"), s.SnakeFireBrush, s.SnakeAimBrush),
                     HashCode.Combine(s.LaserSnakeTaper, s.LaserSnakeFade, s.LaserSnakeGlow),
                     HashCode.Combine(moves[0], moves[1], moves[2], moves[3], moves[4], moves[5], s.LaserSmoothColours));
                 var snakeKey = (trace.Strokes.Count, trace.Strokes.Count > 0 ? trace.Strokes.Along(trace.Strokes.Count - 1) : 0, trace.Version, size, r,

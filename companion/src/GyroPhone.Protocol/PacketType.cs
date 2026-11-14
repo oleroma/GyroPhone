@@ -37,6 +37,8 @@ public static class PacketType
     public const byte PressTime = 0x2A;
     /// <summary>Phone to host, about once a second while the phone's "Press a key" screen is open (and when it closes): <see cref="CaptureFlags"/>.</summary>
     public const byte Capture = 0x2B;
+    /// <summary>Sent before each OVERLAY while HOST_STATUS flags2 has <see cref="HostStatusFlags2.OverlaySamples"/>: each gyro sample's turn in it.</summary>
+    public const byte OverlaySamples = 0x2C;
     public const byte Bye = 0x2F;
     public const byte Pong = 0x30;
     public const byte HostStatus = 0x31;
@@ -100,6 +102,7 @@ public static class PacketType
         KeyLabels => Wire.KeyLabelsPlain,
         Overlay => Wire.OverlayPlain,
         OverlayLayout => Wire.OverlayLayoutPlain,
+        OverlaySamples => Wire.OverlaySamplesPlain,
         PressTime => Wire.PressTimePlain,
         TestMode => Wire.TestModePlain,
         Capture => Wire.CapturePlain,

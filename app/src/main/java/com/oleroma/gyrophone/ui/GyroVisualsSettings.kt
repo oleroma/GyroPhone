@@ -380,7 +380,7 @@ internal fun GyroDisplaySettingsScreen(
             }
             TextButton(onClick = { runtime.clearLaser(control.id) }) { Text("Clear") }
         }
-        val snake = if (!laser) null else category(runtime, "gyroDisplaySnake", "Snake", "Snake, length, brush, taper, tail fade, glow, Clear on ratchet, colour by, shade, light, shine") {
+        val snake = if (!laser) null else category(runtime, "gyroDisplaySnake", "Snake", "Snake, length, brush, taper, tail fade, glow, Clear on ratchet, zip back, colour by, shade, light, shine") {
             SwitchRow("Snake", d.laserSnake, "A line following the beam along the newest stretch of its path, thinning and fading toward its tail as set. With or without Draw mode.") { set(d.copy(laserSnake = it)) }
             // Length 10° to 720°, finer toward the short ones: the slider's square, in 5° steps.
             if (d.laserSnake) Indented {
@@ -395,6 +395,23 @@ internal fun GyroDisplaySettingsScreen(
                 PercentSlider("Snake glow", d.laserSnakeGlow, 0f..1f) { set(d.copy(laserSnakeGlow = it)) }
                 SwitchRow("Clear on ratchet", d.laserSnakeClearOnRatchet, "A ratchet press clears the Snake.") { set(d.copy(laserSnakeClearOnRatchet = it)) }
                 Hint("Snake brush: how wide its head is. Taper: how much it thins toward its tail (0 keeps it the same width). Tail fade: how see-through it gets toward its tail (0 none). Snake glow: a soft glow round it (0 none).")
+            }
+            if (d.laserSnake) {
+                GroupTitle("Zip back")
+                SwitchRow("Continuous", d.laserSnakeZipAlways, "The tail always runs toward the head, while the beam moves and while it holds still: moving faster than the zip speed, the Snake grows (up to its Length); slower, it shrinks.") { set(d.copy(laserSnakeZipAlways = it)) }
+                // 1 to 2000 °/s, finer toward the slow end: the slider's square, in 1 °/s steps.
+                if (d.laserSnakeZipAlways) Indented {
+                    SavedSlider(
+                        { p -> "Zip speed ${zipSpeed(p)} °/s" },
+                        sqrt(d.laserSnakeZipSpeed.coerceIn(ZIP_SPEED_MIN, ZIP_SPEED_MAX) / ZIP_SPEED_MAX.toFloat()), 0f..1f,
+                        { p -> sqrt(zipSpeed(p) / ZIP_SPEED_MAX.toFloat()) },
+                    ) { set(d.copy(laserSnakeZipSpeed = zipSpeed(it))) }
+                }
+                SwitchRow("On ratchet", d.laserSnakeZipRatchet, "A ratchet press runs the tail back into the head, the whole Snake in the time below, however long it is. Clear on ratchet, when on, wins.") { set(d.copy(laserSnakeZipRatchet = it)) }
+                if (d.laserSnakeZipRatchet) Indented {
+                    FloatSlider("Zip back in %.2f s", d.laserSnakeZipSeconds, 0.05f..2f, 0.05f) { set(d.copy(laserSnakeZipSeconds = it)) }
+                }
+                Hint("Both can be on. Zipped all the way, the Snake stays as a dot the size of its head; it grows again as the beam moves on.")
             }
             if (d.laserSnake && (d.laserFire != LaserFire.NONE || d.laserAim != LaserFire.NONE)) {
                 GroupTitle("Shots and aiming")
@@ -634,6 +651,11 @@ private const val LASER_LENGTH_MAX = 720
 
 /** Snake's Length slider at [p] (0..1, its square) in degrees, to 5°, from [LASER_LENGTH_MIN]. */
 private fun lengthDeg(p: Float): Int = maxOf(LASER_LENGTH_MIN, ((p * p * LASER_LENGTH_MAX) / 5f).roundToInt() * 5)
+private const val ZIP_SPEED_MIN = 1
+private const val ZIP_SPEED_MAX = 2000
+
+/** Snake's Zip speed slider at [p] (0..1, its square) in °/s, to 1 °/s. */
+private fun zipSpeed(p: Float): Int = (p * p * ZIP_SPEED_MAX).roundToInt().coerceIn(ZIP_SPEED_MIN, ZIP_SPEED_MAX)
 private const val LASER_AXON_HINT = "Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot."
 private const val AXON_HINT = "Seen from 30° round and 30° above with the world's axes (yaw toward you red, pitch right green, roll up blue, as the gimbal's rings), as the pointer is, instead of face-on."
 

@@ -49,7 +49,7 @@ internal static class PaintRenderer
     public static void Draw(ICanvas g, LaserTrace trace, OverlaySettings s, bool front, PointF c, float r, float[]? turned, uint[] moveColors)
     {
         var lp = s.LaserDraw ? trace.Paint : null;
-        bool snake = s.LaserSnake && trace.Strokes.Count >= 2;
+        bool snake = s.LaserSnake && trace.Strokes.Count >= 1;
         if (lp == null && !snake)
         {
             // Nothing to show: let go of the paint's tables until there is.
@@ -90,8 +90,8 @@ internal static class PaintRenderer
             return;
         }
         int hash = HashCode.Combine(
-            HashCode.Combine(s.Perspective, s.LaserColourByWay, s.LaserShade, s.LaserInside, s.LaserLight, s.LaserLightFrom, s.LaserShine, s.LaserAxonometric),
-            HashCode.Combine(s.LaserSnakeDeg, s.LaserSnakeBrush, s.Color("fire"), s.Color("fire_behind"), s.Color("aim"), s.Color("aim_behind"), s.LaserFireBrush, s.LaserAimBrush),
+            HashCode.Combine(s.Perspective, s.SnakeColourByWay, s.SnakeShade, s.SnakeInside, s.SnakeLight, s.SnakeLightFrom, s.SnakeShine, s.LaserAxonometric),
+            HashCode.Combine(s.LaserSnakeDeg, s.LaserSnakeBrush, s.Color("fire"), s.Color("fire_behind"), s.Color("aim"), s.Color("aim_behind"), s.SnakeFireBrush, s.SnakeAimBrush),
             HashCode.Combine(s.LaserSnakeTaper, s.LaserSnakeFade, s.LaserSnakeGlow),
             HashCode.Combine(moveColors[0], moveColors[1], moveColors[2], moveColors[3], moveColors[4], moveColors[5], s.LaserSmoothColours));
         var key = new Key(paint.Stamp, trace.Strokes.Count, trace.Strokes.Count > 0 ? trace.Strokes.Along(trace.Strokes.Count - 1) : 0,
@@ -176,14 +176,14 @@ internal static class PaintRenderer
         int n = strokes.Count;
         float toBuf = size / (2f * e);
         float Px(int deg) => Math.Max(1.5f, r * Math.Clamp(deg, 1, 20) * MathF.PI / 180f * 0.6f) * toBuf;
-        float paintPx = Px(s.LaserSnakeBrush), firePx = Px(s.LaserFireBrush), aimPx = Px(s.LaserAimBrush);
+        float paintPx = Px(s.LaserSnakeBrush), firePx = Px(s.SnakeFireBrush), aimPx = Px(s.SnakeAimBrush);
         float taper = Math.Clamp(s.LaserSnakeTaper, 0f, 1f), fade = Math.Clamp(s.LaserSnakeFade, 0f, 1f);
         float len = Math.Max(1f, s.LaserSnakeDeg);
         var fa = Color.FromArgb(s.Color("fire"));
         var fb = Color.FromArgb(s.Color("fire_behind"));
         var aa = Color.FromArgb(s.Color("aim"));
         var ab = Color.FromArgb(s.Color("aim_behind"));
-        var light = LightDir(s.LaserLightFrom);
+        var light = LightDir(s.SnakeLightFrom);
         var hv = LaserTrace.Unit(light.X, light.Y, light.Z + 1f);
         // The way colours' middle, worked out once for all the points.
         var mix = new LaserTrace.WayMix(moves);
@@ -209,10 +209,10 @@ internal static class PaintRenderer
                 cr = (argb >> 16 & 0xFF) / 255f; cg = (argb >> 8 & 0xFF) / 255f; cb = (argb & 0xFF) / 255f;
             }
             float facing = Math.Min(MathF.Abs(v.Z), 1f);
-            float kk = (1f + (0.25f + 0.75f * facing - 1f) * s.LaserShade) * (front ? 1f : s.LaserInside);
+            float kk = (1f + (0.25f + 0.75f * facing - 1f) * s.SnakeShade) * (front ? 1f : s.SnakeInside);
             float nx = front ? v.X : -v.X, ny = front ? v.Y : -v.Y, nz = front ? v.Z : -v.Z;
-            kk *= 1f + (0.3f + 0.9f * Math.Max(nx * light.X + ny * light.Y + nz * light.Z, 0f) - 1f) * s.LaserLight;
-            float spec = s.LaserShine * MathF.Pow(Math.Max(nx * hv.X + ny * hv.Y + nz * hv.Z, 0f), 24f);
+            kk *= 1f + (0.3f + 0.9f * Math.Max(nx * light.X + ny * light.Y + nz * light.Z, 0f) - 1f) * s.SnakeLight;
+            float spec = s.SnakeShine * MathF.Pow(Math.Max(nx * hv.X + ny * hv.Y + nz * hv.Z, 0f), 24f);
             return Pack(Math.Min(cr * kk + spec, 1f), Math.Min(cg * kk + spec, 1f), Math.Min(cb * kk + spec, 1f), 1f);
         }
         var pieces = st.Pieces;
@@ -233,7 +233,7 @@ internal static class PaintRenderer
             int kind = strokes.Kind(i);
             float headPx = kind == LaserPaint.FireKind ? firePx : kind == LaserPaint.AimKind ? aimPx : paintPx;
             float tailA = 1f - strokes.BehindNewest(i - 1) / len, tailB = 1f - strokes.BehindNewest(i) / len;
-            bool byWay = kind == LaserPaint.PaintKind && s.LaserColourByWay;
+            bool byWay = kind == LaserPaint.PaintKind && s.SnakeColourByWay;
             (float X, float Y, float Z) wayA = default, wayB = default;
             if (byWay)
             {
@@ -268,6 +268,26 @@ internal static class PaintRenderer
                     any = true;
                 }
                 bx0 = bx; by0 = by; prevFront = isFront;
+            }
+        }
+        // Zipped all the way (or a line just starting): the head alone, a dot as wide as the head, so it never vanishes.
+        int last = n - 1;
+        if (n >= 1 && (n == 1 || strokes.Gap(last)))
+        {
+            var q = strokes.Point(last);
+            var p = (q.X, q.Y, q.Z);
+            var v = Pic(p.Item1, p.Item2, p.Item3);
+            if (v.Z > 0f == front)
+            {
+                float k = s.Perspective ? LaserTrace.Perspective(v.Z) : 1f;
+                float bx = (v.X * k * r + e) * toBuf, by = (e - v.Y * k * r) * toBuf;
+                int kind = strokes.Kind(last);
+                float headPx = kind == LaserPaint.FireKind ? firePx : kind == LaserPaint.AimKind ? aimPx : paintPx;
+                bool byWay = kind == LaserPaint.PaintKind && s.SnakeColourByWay;
+                var way = byWay ? trace.Moving : default;
+                if (pieces.Count == pieces.Items.Length) Array.Resize(ref pieces.Items, pieces.Items.Length * 2);
+                pieces.Items[pieces.Count++] = new SnakePiece { Ax = bx, Ay = by, Bx = bx, By = by, Half = headPx * k / 2f, Col = ColourAt(p, v, kind, way, byWay), Op = 1f };
+                any = true;
             }
         }
         return any;

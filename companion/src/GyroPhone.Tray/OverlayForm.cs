@@ -105,6 +105,9 @@ internal sealed class OverlayForm : Form
     private bool _drawnLive, _drawnFiring;
     private int _drawnSize;
     private int _drawnLaser;
+    private long _drawnSpeeds;
+    /// <summary>When the pointer's trace was last fed (ms), so a running zip back is fed at most once a tick.</summary>
+    private long _zipFedAt;
     // The refresh rate of the screen this window is on (0 = not known yet), read every 2 s.
     private volatile int _screenHz;
     private long _screenHzAt;
@@ -544,6 +547,32 @@ internal sealed class OverlayForm : Form
         }
     }
 
+    // What the laser pointer's trace is fed with this tick (FeedBeam), and the poses sample by sample it reads.
+    private OverlaySettings? _feedSettings;
+    private bool _feedFire, _feedAim;
+    private long _feedNow;
+    private PoseHistory? _history;
+    private long _historySeen;
+    private readonly OverlayFrame _historyFrame = new();
+
+    /// <summary>The beam points at <paramref name="beam"/> at <paramref name="ms"/>: the pointer's trace paints and its Snake follows.</summary>
+    private void FeedBeam((float X, float Y, float Z) beam, long ms)
+    {
+        var ls = _feedSettings!;
+        _laser.Add(beam.X, beam.Y, beam.Z, ms, ls.LaserDraw, _scene.Frame.RatchetHeld, ls.LaserClearOnRatchet, _feedFire, ls.LaserFireOnly,
+            ls.LaserSmoothColours, ls.LaserLineSmoothing,
+            brushDeg: Math.Clamp(ls.LaserBrush, 1, 20) * 0.6f,
+            snakeDeg: ls.LaserSnake ? ls.LaserSnakeDeg : 0f,
+            wayColors: ls.LaserColourByWay ? _moveColors : null,
+            mapWidth: PaintWidths[Math.Clamp(ls.LaserPaintDetail, 0, 2)],
+            soft: ls.LaserSoftness,
+            aim: _feedAim,
+            fireBrushDeg: Math.Clamp(ls.LaserFireBrush, 1, 20) * 0.6f,
+            aimBrushDeg: Math.Clamp(ls.LaserAimBrush, 1, 20) * 0.6f,
+            clearSnakeOnPress: ls.LaserSnakeClearOnRatchet,
+            zip: ls.SnakeZip);
+    }
+
     /// <summary>The paint map's width for Paint detail low, normal, high (as the phone's).</summary>
     private static readonly int[] PaintWidths = [512, 1024, 2048];
     private readonly uint[] _moveColors = new uint[6];
@@ -567,23 +596,44 @@ internal sealed class OverlayForm : Form
             // The laser pointer: where the beam points now, as drawn.
             if (Settings is { Kind: OverlayKind.Laser } ls)
             {
-                var beam = LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, ls), ls));
                 // Draw each shot: firing paints its hits, not a Fire line.
-                bool fire = (ls.LaserDraw || ls.LaserSnake) && _engine.OutputHeld(ls.LaserFire) && !(ls.LaserShotDraw && ls.LaserDraw);
-                bool aim = (ls.LaserDraw || ls.LaserSnake) && _engine.OutputHeld(ls.LaserAim);
+                _feedFire = (ls.LaserDraw || ls.LaserSnake) && _engine.OutputHeld(ls.LaserFire) && !(ls.LaserShotDraw && ls.LaserDraw);
+                _feedAim = (ls.LaserDraw || ls.LaserSnake) && _engine.OutputHeld(ls.LaserAim);
                 for (int i = 0; i < 6; i++) _moveColors[i] = unchecked((uint)ls.Color(OverlaySettings.LaserMoves[i]));
-                _laser.Add(beam.X, beam.Y, beam.Z, now, ls.LaserDraw, _scene.Frame.RatchetHeld, ls.LaserClearOnRatchet, fire, ls.LaserFireOnly,
-                    ls.LaserSmoothColours, ls.LaserLineSmoothing,
-                    brushDeg: Math.Clamp(ls.LaserBrush, 1, 20) * 0.6f,
-                    snakeDeg: ls.LaserSnake ? ls.LaserSnakeDeg : 0f,
-                    wayColors: ls.LaserColourByWay ? _moveColors : null,
-                    mapWidth: PaintWidths[Math.Clamp(ls.LaserPaintDetail, 0, 2)],
-                    soft: ls.LaserSoftness,
-                    aim: aim,
-                    fireBrushDeg: Math.Clamp(ls.LaserFireBrush, 1, 20) * 0.6f,
-                    aimBrushDeg: Math.Clamp(ls.LaserAimBrush, 1, 20) * 0.6f,
-                    clearSnakeOnPress: ls.LaserSnakeClearOnRatchet);
+                _feedSettings = ls;
+                _feedNow = now;
+                // Every pose the gyro made since the last frame (OVERLAY_SAMPLES), so a fast turn paints a smooth curve
+                // through all of them, not straight pieces from one frame's pose to the next. As the phone's.
+                int fed = 0;
+                if (ls.FollowsSamples && _engine.OverlayHistory(_id) is { } hist)
+                {
+                    if (!ReferenceEquals(hist, _history) || _historySeen > hist.Count)
+                    {
+                        _history = hist;
+                        _historySeen = hist.Count;
+                    }
+                    var self = this;
+                    long before = _historySeen;
+                    _historySeen = hist.Since(_historySeen, ref self, static (ref OverlayForm f, float w, float x, float y, float z, long ms) =>
+                    {
+                        var hf = f._historyFrame;
+                        hf.Flags = f._scene.Frame.Flags;
+                        hf.Qw = w; hf.Qx = x; hf.Qy = y; hf.Qz = z;
+                        f.FeedBeam(LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(hf, f._feedSettings!), f._feedSettings!)), Math.Min(ms, f._feedNow));
+                    });
+                    fed = (int)(_historySeen - before);
+                }
+                // The pose as drawn (the newest sample's, or the frame's when the samples don't come).
+                if (fed == 0) FeedBeam(LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, ls), ls)), now);
+                _zipFedAt = now;
             }
+        }
+        // A zip back runs on with the clock, not the gyro: with no new frame this tick it is fed the beam as it was.
+        if (_laser.ZipWants && _zipFedAt != now && _feedSettings is { Kind: OverlayKind.Laser } zs && Settings == zs && age >= 0)
+        {
+            _feedNow = now;
+            FeedBeam(LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, zs), zs)), now);
+            _zipFedAt = now;
         }
         // A Clear displays mapping on the phone: the paint goes (the first count seen clears nothing).
         if (age >= 0)
@@ -670,7 +720,7 @@ internal sealed class OverlayForm : Form
         if (fresh && !shows) _lastTime = _scene.Frame.PhoneTimeUs;
         bool changed = _dirty || shows || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
             !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now) || laserFading ||
-            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser;
+            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser || GraphMoved();
         // The FPS overlay shows nothing of the phone: it draws only on a change of its own settings, and 4 times a second.
         if (Settings is { Kind: OverlayKind.Fps }) changed = _dirty || now - _lastDrawTicks >= FpsDrawing.EveryMs;
         if (!changed && now - _lastDrawTicks < 500) return;
@@ -698,6 +748,9 @@ internal sealed class OverlayForm : Form
         float scale = s == null || s.FollowsCamera ? 1f : Math.Clamp(s.MotionScale, 0.25f, 4f);
         return OverlayPacing.TurnShows(OverlayFrame.TurnBetween(_drawnFrame, _scene.Frame), _drawnSize, scale);
     }
+
+    /// <summary>The Speed graph got new speeds since it was drawn (it scrolls with them).</summary>
+    private bool GraphMoved() => Settings is { Kind: OverlayKind.Graph } && _engine.OverlaySpeeds.Version != _drawnSpeeds;
 
     /// <summary>The laser pointer's trail and paint as they are now: it changes when they do.</summary>
     private int LaserStamp()
@@ -793,6 +846,8 @@ internal sealed class OverlayForm : Form
         _drawnSize = Math.Max(width, height);
         _drawnFiring = _scene.Firing;
         _drawnLaser = LaserStamp();
+        _scene.Speeds = Settings is { Kind: OverlayKind.Graph } ? _engine.OverlaySpeeds : null;
+        _drawnSpeeds = _scene.Speeds?.Version ?? 0;
         _scene.Arranging = !ClickThrough;
         _scene.Selected = _selected;
         _scene.Title = _title;

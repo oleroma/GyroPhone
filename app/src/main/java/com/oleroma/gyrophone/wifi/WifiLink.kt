@@ -344,6 +344,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             overlay.wanted = v != null && v.flags and HostStatusFlags.OVERLAY != 0
             overlay.compassWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_COMPASS != 0
             overlay.totalsWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_TOTALS != 0
+            overlay.samplesWanted = overlay.wanted && v!!.flags2 and HostStatusFlags2.OVERLAY_SAMPLES != 0
             if (v != null) motion.padTakesMotion = OutputMode.takesMotion(v.outputMode) && v.flags and HostStatusFlags.PAD_PLUGGED != 0
             else motion.padTakesMotion = false
         }

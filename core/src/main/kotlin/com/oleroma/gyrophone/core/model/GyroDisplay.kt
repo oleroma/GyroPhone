@@ -239,6 +239,16 @@ data class GyroDisplay(
     /** LASER Snake: a ratchet press clears the Snake. */
     val laserSnakeClearOnRatchet: Boolean = false,
     /**
+     * LASER Snake zip back: [laserSnakeZipAlways] (Continuous, off) the tail always runs toward the head at
+     * [laserSnakeZipSpeed] degrees a second, the beam moving or still; [laserSnakeZipRatchet] (On ratchet, on) a ratchet
+     * press runs it back into the head, the whole Snake in [laserSnakeZipSeconds]. Both can be on. It grows again as the
+     * beam moves on.
+     */
+    val laserSnakeZipAlways: Boolean = false,
+    val laserSnakeZipRatchet: Boolean = true,
+    val laserSnakeZipSeconds: Float = 0.4f,
+    val laserSnakeZipSpeed: Int = 360,
+    /**
      * LASER Snake: its own look, apart from Draw mode's paint. Each null until set, following the paint's
      * setting until then ([snakeColourByWay] and the rest read them); the settings screen keeps a Snake copy
      * of the paint's value before changing it, so changing one never changes the other.
@@ -337,6 +347,14 @@ data class GyroDisplay(
             turnsWith = turns, trackball = false, trackballInvert = false,
         )
     }
+
+    /** The Snake's zip back as [com.oleroma.gyrophone.core.engine.LaserTrace.add] takes it, or null when off. */
+    val snakeZip: com.oleroma.gyrophone.core.engine.LaserTrace.Zip?
+        get() = if (!laserSnakeZipAlways && !laserSnakeZipRatchet) null
+        else com.oleroma.gyrophone.core.engine.LaserTrace.Zip(
+            always = laserSnakeZipAlways, ratchet = laserSnakeZipRatchet,
+            seconds = laserSnakeZipSeconds.coerceIn(0.05f, 2f), speed = laserSnakeZipSpeed.coerceIn(1, 2000).toFloat(),
+        )
 
     // The Snake's own look ([laserSnakeColourByWay] and the rest), else the paint's.
     val snakeColourByWay: Boolean get() = laserSnakeColourByWay ?: laserColourByWay

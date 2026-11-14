@@ -286,6 +286,8 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
             aims[id] = if (goal > was) minOf(goal, was + step) else maxOf(goal, was - step)
             until = maxOf(until, t + 20)
         }
+        // A Snake zipping back (or about to, the beam just stopped) runs on a still phone too.
+        for (b in shown) if (runtime.gyroFeed(b.control.id)?.laser?.zipWants == true) until = maxOf(until, t + 20)
         // A crosshair or rifle kicks on each shot and bounces back, its muzzle flash in time.
         for (b in shown) {
             val d = b.control.display ?: continue
@@ -882,7 +884,7 @@ private class VisState {
     private fun DrawScope.buildSnake(t: LaserTrace, d: GyroDisplay, c: Offset, r: Float, col: (GyroDisplayColor) -> Color): Int {
         val s = t.strokes
         val n = s.count
-        if (n < 2) return 0
+        if (n < 1) return 0
         val len = d.laserSnakeDeg.toFloat().coerceAtLeast(1f)
         snakeFire[0] = col(GyroDisplayColor.LASER_FIRE).toArgb(); snakeFire[1] = col(GyroDisplayColor.LASER_FIRE_BEHIND).toArgb()
         snakeFire[2] = col(GyroDisplayColor.LASER_AIM).toArgb(); snakeFire[3] = col(GyroDisplayColor.LASER_AIM_BEHIND).toArgb()
@@ -947,6 +949,24 @@ private class VisState {
                 }
                 prevX = p.x; prevY = p.y; prevFront = isFront
             }
+        }
+        // Zipped all the way (or a line just starting): the head alone, a dot as wide as the head, so it never vanishes.
+        val last = n - 1
+        if (n == 1 || s.gap(last)) {
+            s.point(last, la, 0)
+            val p = laserAt(c, r, la[0], la[1], la[2])
+            val z = pv[2]
+            val kind = s.kind(last)
+            val byWay = kind == LaserPaint.PAINT && d.snakeColourByWay
+            if (byWay) t.moving.copyInto(way)
+            if (m == snakeCol.size) growSnake()
+            snakeXY[m * 4] = p.x; snakeXY[m * 4 + 1] = p.y; snakeXY[m * 4 + 2] = p.x + 0.01f; snakeXY[m * 4 + 3] = p.y
+            snakeW[m] = (when (kind) { LaserPaint.FIRE -> firePx; LaserPaint.AIM -> aimPx; else -> paintPx }) *
+                (if (laserPersp) LaserTrace.perspective(z) else 1f)
+            snakeA[m] = 1f
+            snakeCol[m] = snakeShade(d, kind, byWay, z, z > 0f, ld)
+            snakeFront[m] = z > 0f
+            m++
         }
         return m
     }
@@ -1142,6 +1162,7 @@ private class VisState {
         if (lt != null) {
             if (!lt.deferPaint) PaintWorker.adopt(lt)
             val v = feed?.pose?.version ?: 0L
+            val zip = d.snakeZip
             fun addBeam(bx: Float, by: Float, bz: Float, ms: Long) {
                 lt.add(
                     // Draw each shot: firing paints its hits, not a Fire line.
@@ -1157,6 +1178,7 @@ private class VisState {
                     fireBrushDeg = d.laserFireBrush.coerceIn(1, 20) * BRUSH_WIDTH,
                     aimBrushDeg = d.laserAimBrush.coerceIn(1, 20) * BRUSH_WIDTH,
                     clearSnakeOnPress = d.laserSnakeClearOnRatchet,
+                    zip = zip,
                 )
             }
             // Every pose the gyro made since the last frame, so a fast turn draws a smooth curve
@@ -1178,6 +1200,9 @@ private class VisState {
             }
             if (v != lt.fedVersion) {
                 lt.fedVersion = v
+                addBeam(beam[0], beam[1], beam[2], now)
+            } else if (lt.zipWants) {
+                // A zip back runs on with the clock, not the gyro: a held ratchet keeps the pose still, so no new pose comes.
                 addBeam(beam[0], beam[1], beam[2], now)
             }
             // The paint goes in runs: what is left of this frame's run is painted now, so it reaches the beam.

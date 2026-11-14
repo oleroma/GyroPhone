@@ -68,6 +68,10 @@ public enum OverlayKind
     Laser,
     /// <summary>The game's frames per second, 1% low and jumps, with a frame-time strip; the only thing that watches the game's frames.</summary>
     Fps,
+    /// <summary>Yaw, pitch and roll arcs, lit while that axis moves the mouse, dim while a ratchet pauses it.</summary>
+    Ring,
+    /// <summary>Scrolling yaw, pitch and roll speed, shaded while a ratchet is held.</summary>
+    Graph,
 }
 
 public enum OverlayShape
@@ -223,6 +227,10 @@ public sealed class OverlaySettings
     // Bubble disk.
     /// <summary>The tilt that puts the dot on the rim, in degrees.</summary>
     public int DiskRange { get; set; } = 30;
+    /// <summary>Speed graph: its full height is ± this many °/s.</summary>
+    public int GraphRange { get; set; } = 360;
+    /// <summary>Speed graph: how many seconds it shows.</summary>
+    public int GraphSeconds { get; set; } = 3;
     public bool Crosshair { get; set; } = true;
 
     // Laser pointer.
@@ -331,6 +339,33 @@ public sealed class OverlaySettings
     /// <summary>Snake: a ratchet press clears the Snake.</summary>
     public bool LaserSnakeClearOnRatchet { get; set; }
     /// <summary>
+    /// Snake zip back, as the phone's GyroDisplay.laserSnakeZip*: LaserSnakeZipAlways (Continuous, off) the tail always runs
+    /// toward the head at LaserSnakeZipSpeed degrees a second, the beam moving or still; LaserSnakeZipRatchet (On ratchet,
+    /// on) a ratchet press runs it back into the head, the whole Snake in LaserSnakeZipSeconds. Both can be on. It grows
+    /// again as the beam moves on.
+    /// </summary>
+    public bool LaserSnakeZipAlways { get; set; }
+    public bool LaserSnakeZipRatchet { get; set; } = true;
+    public float LaserSnakeZipSeconds { get; set; } = 0.4f;
+    public int LaserSnakeZipSpeed { get; set; } = 360;
+
+    /// <summary>A pointer that paints or has a Snake: it follows every gyro sample (OVERLAY_SAMPLES), as the phone's does.</summary>
+    [JsonIgnore]
+    public bool FollowsSamples => Kind == OverlayKind.Laser && (LaserDraw || LaserSnake);
+
+    /// <summary>It wants every gyro sample: a pointer that paints, or the Speed graph.</summary>
+    [JsonIgnore]
+    public bool WantsSamples => FollowsSamples || Kind == OverlayKind.Graph;
+
+    /// <summary>It turns with the phone (the FPS overlay, Ratchet ring and Speed graph don't).</summary>
+    [JsonIgnore]
+    public bool Turns => Kind is not (OverlayKind.Fps or OverlayKind.Ring or OverlayKind.Graph);
+
+    /// <summary>The Snake's zip back as LaserTrace.Add takes it, or null when off.</summary>
+    [JsonIgnore]
+    public LaserTrace.Zip? SnakeZip => !LaserSnakeZipAlways && !LaserSnakeZipRatchet ? null
+        : new LaserTrace.Zip(LaserSnakeZipAlways, LaserSnakeZipRatchet, Math.Clamp(LaserSnakeZipSeconds, 0.05f, 2f), Math.Clamp(LaserSnakeZipSpeed, 1, 2000));
+    /// <summary>
     /// Laser pointer Draw mode: while this output is held (LaserFire numbers, default the left mouse button), from the
     /// phone or, with "Use PC controller for gyro ratchet", the PC's controller, it paints in the Fire colours; with
     /// LaserFireOnly only then. As the phone's GyroDisplay.laserFire.
@@ -374,6 +409,46 @@ public sealed class OverlaySettings
     public int LaserLightFrom { get; set; }
     public float LaserShine { get; set; } = 0.3f;
     public bool LaserColourByWay { get; set; }
+
+    /// <summary>
+    /// Snake: its own look, apart from Draw mode's paint. Each null until set, following the paint's setting until then
+    /// (<see cref="SnakeColourByWay"/> and the rest read them); the settings page keeps a Snake copy of the paint's value
+    /// before changing it (<see cref="KeepSnakeLook"/>), so changing one never changes the other. As the phone's
+    /// GyroDisplay.laserSnakeColourByWay and the rest.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? LaserSnakeColourByWay { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? LaserSnakeShade { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? LaserSnakeInside { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? LaserSnakeLight { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? LaserSnakeLightFrom { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? LaserSnakeShine { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? LaserSnakeFireBrush { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? LaserSnakeAimBrush { get; set; }
+
+    [JsonIgnore] public bool SnakeColourByWay => LaserSnakeColourByWay ?? LaserColourByWay;
+    [JsonIgnore] public float SnakeShade => LaserSnakeShade ?? LaserShade;
+    [JsonIgnore] public float SnakeInside => LaserSnakeInside ?? LaserInside;
+    [JsonIgnore] public float SnakeLight => LaserSnakeLight ?? LaserLight;
+    [JsonIgnore] public int SnakeLightFrom => LaserSnakeLightFrom ?? LaserLightFrom;
+    [JsonIgnore] public float SnakeShine => LaserSnakeShine ?? LaserShine;
+    [JsonIgnore] public int SnakeFireBrush => LaserSnakeFireBrush ?? LaserFireBrush;
+    [JsonIgnore] public int SnakeAimBrush => LaserSnakeAimBrush ?? LaserAimBrush;
+
+    /// <summary>Before a paint look setting changes: the Snake keeps its own copy of each one it still shares, so it stays as it was.</summary>
+    public void KeepSnakeLook()
+    {
+        LaserSnakeColourByWay = SnakeColourByWay; LaserSnakeShade = SnakeShade; LaserSnakeInside = SnakeInside;
+        LaserSnakeLight = SnakeLight; LaserSnakeLightFrom = SnakeLightFrom; LaserSnakeShine = SnakeShine;
+        LaserSnakeFireBrush = SnakeFireBrush; LaserSnakeAimBrush = SnakeAimBrush;
+    }
 
     // The pose, made on the PC (the phone's own gyro display settings are separate).
     /// <summary>
@@ -505,6 +580,8 @@ public sealed class OverlaySettings
         OverlayKind.Disk => DiskColors,
         OverlayKind.Laser => LaserColors,
         OverlayKind.Fps => FpsColors,
+        OverlayKind.Ring => RingColors,
+        OverlayKind.Graph => GraphColors,
         _ => shape switch
         {
             null => ShapeColors,
@@ -521,6 +598,8 @@ public sealed class OverlaySettings
         OverlayKind.Horizon => "Attitude indicator",
         OverlayKind.Laser => "Pointer",
         OverlayKind.Fps => "FPS",
+        OverlayKind.Ring => "Ratchet ring",
+        OverlayKind.Graph => "Speed graph",
         _ => "Bubble disk",
     };
 
@@ -595,6 +674,23 @@ public sealed class OverlaySettings
         new("crosshair_aim", "Crosshair aiming", 0xFFFF2020),
         new("flash", "Flash", 0xFFFFE04A),
         new("flash_end", "Flash end", 0xFFFF7A1A),
+    ];
+
+    private static readonly OverlayColor[] RingColors =
+    [
+        new("yaw", "Yaw", 0xFFFF5A5A),
+        new("pitch", "Pitch", 0xFF5ADB6E),
+        new("roll", "Roll", 0xFF5AA8FF),
+        new("text", "Letters", 0xE6FFFFFF),
+    ];
+
+    private static readonly OverlayColor[] GraphColors =
+    [
+        new("yaw", "Yaw", 0xFFFF5A5A),
+        new("pitch", "Pitch", 0xFF5ADB6E),
+        new("roll", "Roll", 0xFF5AA8FF),
+        new("back", "Background", 0x59000000),
+        new("held", "Ratchet shading", 0x1FFFFFFF),
     ];
 
     private static readonly OverlayColor[] FpsColors =
