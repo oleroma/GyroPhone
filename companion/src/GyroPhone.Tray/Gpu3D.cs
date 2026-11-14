@@ -27,7 +27,8 @@ namespace GyroPhone.Tray;
 /// turns, projects and shades them. Lines are round-ended strips with their own smooth edges (as the Snake's in
 /// <see cref="GpuPaint"/>); each line layer is drawn into a scratch picture with a "max" blend (so a polyline's joins
 /// don't double up where its pieces overlap, as Direct2D draws one stroke), then laid over the window's picture at the
-/// colour's opacity. Faces and disks are drawn straight onto the picture. The whole picture is then drawn by Direct2D
+/// colour's opacity. Faces and disks are drawn straight onto the picture. It is drawn at four samples a pixel, so
+/// the edges of faces and filled shapes are smooth too, then averaged into a plain picture. The whole picture is then drawn by Direct2D
 /// in one go, and not drawn again while nothing in it changes. False from <see cref="Draw{T}"/> when the card can't:
 /// the caller draws on the CPU then.
 /// </summary>
@@ -97,12 +98,18 @@ internal static class Gpu3D
         }
     }
 
-    /// <summary>One corner of a flat item: (x, y, kind 0 fill / 1 line, line half width), a line's ends, premultiplied colour.</summary>
+    /// <summary>
+    /// One corner of a flat item: (x, y, kind 0 fill / 1 line, line half width), a line's ends, premultiplied colour, and
+    /// a line's neighbours in its polyline (the point before its start, the point after its end; far away when none).
+    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct FlatVertex
     {
-        public Vector4 P, E, C;
+        public Vector4 P, E, C, N;
     }
+
+    /// <summary>"No neighbour" for <see cref="FlatList.Line"/> (the shader takes anything past 1e8 as none).</summary>
+    private const float Far = 1e9f;
 
     /// <summary>
     /// Flat items in picture pixels, drawn in order (each over those before it, as Direct2D's calls): filled polygons
@@ -207,8 +214,13 @@ internal static class Gpu3D
             return !(neg && pos);
         }
 
-        /// <summary>A line from a to b, <paramref name="width"/> wide, round-ended.</summary>
-        public void Line(PointF a, PointF b, Color color, float width)
+        /// <summary>
+        /// A line from a to b, <paramref name="width"/> wide, round-ended. As a piece of a polyline, with the point before
+        /// a (<paramref name="before"/>) and after b (<paramref name="after"/>): where it overlaps its neighbouring pieces
+        /// (round the joins) each pixel is drawn by one of them only, so a see-through line doesn't show a brighter dot at
+        /// every corner (as Direct2D draws one stroke).
+        /// </summary>
+        public void Line(PointF a, PointF b, Color color, float width, PointF? before = null, PointF? after = null)
         {
             if (color.A == 0) return;
             var c = Pre(color);
@@ -221,15 +233,31 @@ internal static class Gpu3D
             var p2 = new Vector2(b.X + ux * e + nx, b.Y + uy * e + ny);
             var p3 = new Vector2(b.X + ux * e - nx, b.Y + uy * e - ny);
             var ends = new Vector4(a.X, a.Y, b.X, b.Y);
-            void V(Vector2 p) => Items.Add(new FlatVertex { P = new Vector4(p.X, p.Y, 1f, hw), E = ends, C = c });
+            var near = new Vector4(before?.X ?? Far, before?.Y ?? Far, after?.X ?? Far, after?.Y ?? Far);
+            void V(Vector2 p) => Items.Add(new FlatVertex { P = new Vector4(p.X, p.Y, 1f, hw), E = ends, C = c, N = near });
             V(p0); V(p1); V(p2);
             V(p2); V(p1); V(p3);
         }
 
-        /// <summary>A closed polygon's outline.</summary>
+        /// <summary>A closed polygon's outline, joined as one stroke.</summary>
         public void Outline(ReadOnlySpan<PointF> pts, Color color, float width)
         {
-            for (int i = 0; i < pts.Length; i++) Line(pts[i], pts[(i + 1) % pts.Length], color, width);
+            int n = pts.Length;
+            if (n < 2) return;
+            if (n == 2)
+            {
+                Line(pts[0], pts[1], color, width);
+                return;
+            }
+            for (int i = 0; i < n; i++) Line(pts[i], pts[(i + 1) % n], color, width, pts[(i + n - 1) % n], pts[(i + 2) % n]);
+        }
+
+        /// <summary>An open polyline, joined as one stroke.</summary>
+        public void Polyline(ReadOnlySpan<PointF> pts, Color color, float width)
+        {
+            int n = pts.Length;
+            for (int i = 1; i < n; i++)
+                Line(pts[i - 1], pts[i], color, width, i >= 2 ? pts[i - 2] : null, i + 1 < n ? pts[i + 1] : null);
         }
     }
 
@@ -240,6 +268,10 @@ internal static class Gpu3D
     public sealed class Panel : IDisposable
     {
         internal Target? Picture;
+        // The picture with its smaller copies (each half the one before), made again each time it is drawn: laid
+        // smaller or tilted on screen, the card reads the copy nearest that size, so 1-pixel lines stay whole.
+        private ID3D11Texture2D? _mips;
+        internal ID3D11ShaderResourceView? Read;
         private ID2D1DeviceContext? _dc;
         private D2DCanvas? _canvas;
         private GpuDevice? _gpu;
@@ -275,10 +307,31 @@ internal static class Gpu3D
                 _dc.EndDraw();
                 _dc.Target = null;
             }
+            gpu.Enter();
+            try
+            {
+                if (_mips == null)
+                {
+                    _mips = gpu.D3D.CreateTexture2D(new Texture2DDescription(Format.B8G8R8A8_UNorm, (uint)w, (uint)h, 1, 0,
+                        BindFlags.RenderTarget | BindFlags.ShaderResource, ResourceUsage.Default, CpuAccessFlags.None, 1, 0,
+                        ResourceOptionFlags.GenerateMips));
+                    Read = gpu.D3D.CreateShaderResourceView(_mips);
+                }
+                var ctx = gpu.D3D.ImmediateContext;
+                ctx.CopySubresourceRegion(_mips, 0, 0, 0, 0, Picture.Texture, 0);
+                ctx.GenerateMips(Read!);
+            }
+            finally
+            {
+                gpu.Leave();
+            }
         }
 
         public void Dispose()
         {
+            Read?.Dispose();
+            _mips?.Dispose();
+            Read = null; _mips = null;
             _canvas?.Dispose();
             Picture?.Dispose();
             _dc?.Dispose();
@@ -344,12 +397,19 @@ internal static class Gpu3D
         }
     }
 
-    /// <summary>One window's pictures: one per slot (what is drawn where, such as a shape or a grid's near half), and the scratch picture, depth buffer and flat items they share.</summary>
+    /// <summary>
+    /// One window's pictures: one per slot (what is drawn where, such as a shape or a grid's near half), and what they
+    /// share while one is drawn: the picture it is drawn on (<see cref="Samples"/> samples a pixel, so the edges of faces
+    /// and filled shapes come out smooth; then averaged into the slot's picture), the scratch picture for line layers, the
+    /// depth buffer and the flat items.
+    /// </summary>
     internal sealed class Surface : IDisposable
     {
         public GpuDevice? Gpu;
         public int W, H;
-        public Target? Scratch;
+        public ID3D11Texture2D? DrawTexture, ScratchTexture;
+        public ID3D11RenderTargetView? DrawView, ScratchView;
+        public ID3D11ShaderResourceView? ScratchRead;
         public ID3D11Texture2D? DepthTexture;
         public ID3D11DepthStencilView? Depth;
         public readonly Dictionary<string, Slot> Slots = [];
@@ -361,9 +421,11 @@ internal static class Gpu3D
         {
             foreach (var slot in Slots.Values) slot.Dispose();
             Slots.Clear();
-            Scratch?.Dispose(); Depth?.Dispose(); DepthTexture?.Dispose();
+            DrawView?.Dispose(); DrawTexture?.Dispose();
+            ScratchRead?.Dispose(); ScratchView?.Dispose(); ScratchTexture?.Dispose();
+            Depth?.Dispose(); DepthTexture?.Dispose();
             FlatView?.Dispose(); Flats?.Dispose();
-            Scratch = null; Depth = null; DepthTexture = null; FlatView = null; Flats = null;
+            DrawView = null; DrawTexture = null; ScratchRead = null; ScratchView = null; ScratchTexture = null; Depth = null; DepthTexture = null; FlatView = null; Flats = null;
             FlatRoom = 0;
             W = H = 0;
         }
@@ -393,6 +455,9 @@ internal static class Gpu3D
     private static readonly ConditionalWeakTable<GpuDevice, Kit> Kits = new();
     private static readonly ConditionalWeakTable<GpuDevice, object> Failed = new();
     private static readonly ConditionalWeakTable<D2DCanvas, Surface> Surfaces = new();
+
+    /// <summary>Samples per pixel while drawing (4 is supported by every card that runs this, feature level 10.1 and up).</summary>
+    private const uint Samples = 4;
 
     /// <summary>Where the 3D overlays are drawn, for the overlay timing log: "3D on GPU", or on the CPU and why; empty before any.</summary>
     public static string Status { get; private set; } = "";
@@ -427,8 +492,15 @@ internal static class Gpu3D
                     surface.Dispose();
                     surface.Gpu = gpu;
                     var d3d = gpu.D3D;
-                    surface.Scratch = new Target(d3d, g.Dc, w, h);
-                    surface.DepthTexture = d3d.CreateTexture2D(new Texture2DDescription(Format.D32_Float, (uint)w, (uint)h, 1, 1, BindFlags.DepthStencil));
+                    var colour = new Texture2DDescription(Format.B8G8R8A8_UNorm, (uint)w, (uint)h, 1, 1,
+                        BindFlags.RenderTarget | BindFlags.ShaderResource, ResourceUsage.Default, CpuAccessFlags.None, Samples, 0);
+                    surface.DrawTexture = d3d.CreateTexture2D(colour);
+                    surface.DrawView = d3d.CreateRenderTargetView(surface.DrawTexture);
+                    surface.ScratchTexture = d3d.CreateTexture2D(colour);
+                    surface.ScratchView = d3d.CreateRenderTargetView(surface.ScratchTexture);
+                    surface.ScratchRead = d3d.CreateShaderResourceView(surface.ScratchTexture);
+                    surface.DepthTexture = d3d.CreateTexture2D(new Texture2DDescription(Format.D32_Float, (uint)w, (uint)h, 1, 1,
+                        BindFlags.DepthStencil, ResourceUsage.Default, CpuAccessFlags.None, Samples, 0));
                     surface.Depth = d3d.CreateDepthStencilView(surface.DepthTexture);
                     surface.W = w;
                     surface.H = h;
@@ -516,7 +588,7 @@ internal static class Gpu3D
         internal void Start()
         {
             var ctx = Ctx;
-            ctx.ClearRenderTargetView(_picture.View, new Color4(0f, 0f, 0f, 0f));
+            ctx.ClearRenderTargetView(_s.DrawView!, new Color4(0f, 0f, 0f, 0f));
             ctx.ClearDepthStencilView(_s.Depth!, DepthStencilClearFlags.Depth, 1f, 0);
             ctx.RSSetState(_kit.Raster);
             ctx.RSSetViewport(0f, 0f, _s.W, _s.H);
@@ -525,7 +597,13 @@ internal static class Gpu3D
             _d.Target = new Vector2(_s.W, _s.H);
         }
 
-        internal void Finish() => Unbind(Ctx);
+        /// <summary>The samples of each pixel averaged into the slot's picture.</summary>
+        internal void Finish()
+        {
+            var ctx = Ctx;
+            Unbind(ctx);
+            ctx.ResolveSubresource(_picture.Texture, 0, _s.DrawTexture!, 0, Format.B8G8R8A8_UNorm);
+        }
 
         /// <summary>The geometry named <paramref name="name"/> (made by <paramref name="make"/> the first time on this device).</summary>
         public Geo Geometry(string name, Action<GeoBuilder> make)
@@ -601,9 +679,9 @@ internal static class Gpu3D
             _d.Side = side switch { Side.Front => 1f, Side.Back => -1f, _ => 0f };
             _d.TwoSided = twoSided ? 1f : 0f;
             Push();
-            ctx.PSSetShaderResource(2, null!);
-            ctx.ClearRenderTargetView(_s.Scratch!.View, new Color4(0f, 0f, 0f, 0f));
-            ctx.OMSetRenderTargets(_s.Scratch.View, depthTest ? _s.Depth : null);
+            ctx.PSSetShaderResource(4, null!);
+            ctx.ClearRenderTargetView(_s.ScratchView!, new Color4(0f, 0f, 0f, 0f));
+            ctx.OMSetRenderTargets(_s.ScratchView!, depthTest ? _s.Depth : null);
             ctx.OMSetDepthStencilState(depthTest ? _kit.DepthTest : _kit.DepthOff, 0);
             ctx.OMSetBlendState(_kit.Max);
             ctx.VSSetShader(_kit.LineVs);
@@ -613,14 +691,14 @@ internal static class Gpu3D
             ctx.PSSetConstantBuffer(0, _kit.Cb);
             ctx.DrawInstanced(6, (uint)geo.SegCount, 0, 0);
             // The layer over the picture at the colour's opacity.
-            ctx.OMSetRenderTargets(_picture.View, null);
+            ctx.OMSetRenderTargets(_s.DrawView!, null);
             ctx.OMSetDepthStencilState(_kit.DepthOff, 0);
             ctx.OMSetBlendState(_kit.Over);
             ctx.VSSetShader(_kit.FullVs);
             ctx.PSSetShader(_kit.CopyPs);
-            ctx.PSSetShaderResource(2, _s.Scratch.Read);
+            ctx.PSSetShaderResource(4, _s.ScratchRead!);
             ctx.Draw(3, 0);
-            ctx.PSSetShaderResource(2, null!);
+            ctx.PSSetShaderResource(4, null!);
         }
 
         /// <summary>
@@ -635,7 +713,7 @@ internal static class Gpu3D
             _d.Col = Straight(body);
             _d.TwoSided = twoSided ? 1f : 0f;
             Push();
-            ctx.OMSetRenderTargets(_picture.View, _s.Depth);
+            ctx.OMSetRenderTargets(_s.DrawView!, _s.Depth);
             ctx.OMSetDepthStencilState(_kit.DepthWrite, 0);
             ctx.OMSetBlendState(_kit.Over);
             ctx.VSSetShader(_kit.FaceVs);
@@ -655,7 +733,7 @@ internal static class Gpu3D
             _d.Col2 = Straight(lit);
             _d.Lit = new Vector2(litAt.X + _dx, litAt.Y + _dy);
             Push();
-            ctx.OMSetRenderTargets(_picture.View, null);
+            ctx.OMSetRenderTargets(_s.DrawView!, null);
             ctx.OMSetDepthStencilState(_kit.DepthOff, 0);
             ctx.OMSetBlendState(_kit.Over);
             ctx.VSSetShader(_kit.DiskVs);
@@ -675,19 +753,19 @@ internal static class Gpu3D
         /// </summary>
         public void Panel(Panel panel, Vector3 q0, Vector3 q1, Vector3 q2, Vector3 q3, float[] m, PointF c, float k, float camera)
         {
-            if (panel.Picture == null) return;
+            if (panel.Picture == null || panel.Read == null) return;
             var ctx = Ctx;
             Set(m, c, k);
             _d.Persp = camera;
             _d.Q0 = new Vector4(q0, 0f); _d.Q1 = new Vector4(q1, 0f); _d.Q2 = new Vector4(q2, 0f); _d.Q3 = new Vector4(q3, 0f);
             Push();
-            ctx.OMSetRenderTargets(_picture.View, null);
+            ctx.OMSetRenderTargets(_s.DrawView!, null);
             ctx.OMSetDepthStencilState(_kit.DepthOff, 0);
             ctx.OMSetBlendState(_kit.Over);
             ctx.VSSetShader(_kit.PanelVs);
             ctx.VSSetConstantBuffer(0, _kit.Cb);
             ctx.PSSetShader(_kit.PanelPs);
-            ctx.PSSetShaderResource(2, panel.Picture.Read);
+            ctx.PSSetShaderResource(2, panel.Read);
             ctx.PSSetSampler(0, _kit.Smooth);
             ctx.Draw(6, 0);
             ctx.PSSetShaderResource(2, null!);
@@ -723,7 +801,7 @@ internal static class Gpu3D
             }
             Set(null, new PointF(0f, 0f), 1f);
             Push();
-            ctx.OMSetRenderTargets(_picture.View, null);
+            ctx.OMSetRenderTargets(_s.DrawView!, null);
             ctx.OMSetDepthStencilState(_kit.DepthOff, 0);
             ctx.OMSetBlendState(_kit.Over);
             ctx.VSSetShader(_kit.FlatVs);
@@ -802,7 +880,15 @@ internal static class Gpu3D
             kit.FlatPs = d3d.CreatePixelShader(CompileShader("FlatPs", "ps_5_0"));
             kit.PanelVs = d3d.CreateVertexShader(CompileShader("PanelVs", "vs_5_0"));
             kit.PanelPs = d3d.CreatePixelShader(CompileShader("PanelPs", "ps_5_0"));
-            kit.Smooth = d3d.CreateSamplerState(new SamplerDescription(Vortice.Direct3D11.Filter.MinMagMipLinear, TextureAddressMode.Clamp, TextureAddressMode.Clamp, TextureAddressMode.Clamp));
+            // From the panel's smaller copies, by how far it is shrunk each way (a tilted screen is shrunk more one way).
+            kit.Smooth = d3d.CreateSamplerState(new SamplerDescription
+            {
+                Filter = Vortice.Direct3D11.Filter.Anisotropic,
+                AddressU = TextureAddressMode.Clamp, AddressV = TextureAddressMode.Clamp, AddressW = TextureAddressMode.Clamp,
+                MaxAnisotropy = 8,
+                ComparisonFunc = ComparisonFunction.Never,
+                MinLOD = 0f, MaxLOD = float.MaxValue,
+            });
             kit.Max = MakeBlend(d3d, Blend.One, Blend.One, BlendOperation.Max);
             // Premultiplied "over".
             kit.Over = MakeBlend(d3d, Blend.One, Blend.InverseSourceAlpha, BlendOperation.Add);
@@ -839,11 +925,11 @@ internal static class Gpu3D
         ctx.UnsetRenderTargets();
         ctx.OMSetBlendState(null);
         ctx.OMSetDepthStencilState(null, 0);
-        ctx.PSSetShaderResources(0u, 4u, NoViews);
-        ctx.VSSetShaderResources(0u, 4u, NoViews);
+        ctx.PSSetShaderResources(0u, 5u, NoViews);
+        ctx.VSSetShaderResources(0u, 5u, NoViews);
     }
 
-    private static readonly ID3D11ShaderResourceView[] NoViews = new ID3D11ShaderResourceView[4];
+    private static readonly ID3D11ShaderResourceView[] NoViews = new ID3D11ShaderResourceView[5];
 
     [StructLayout(LayoutKind.Sequential)]
     private struct DrawData
@@ -876,6 +962,7 @@ internal static class Gpu3D
         struct Corner { float4 P; float4 N; };
         StructuredBuffer<Corner> Corners : register(t1);
         Texture2D<float4> Layer : register(t2);
+        Texture2DMS<float4> Scratch : register(t4);
 
         float3 Turn(float3 p) { return float3(dot(M0.xyz, p), dot(M1.xyz, p), dot(M2.xyz, p)); }
         float2 OnScreen(float3 v)
@@ -992,7 +1079,7 @@ internal static class Gpu3D
             return float4(c.rgb * al, al);
         }
 
-        struct FlatV { float4 P; float4 E; float4 C; };
+        struct FlatV { float4 P; float4 E; float4 C; float4 N; };
         StructuredBuffer<FlatV> Flats : register(t3);
         struct FlatOut
         {
@@ -1000,6 +1087,7 @@ internal static class Gpu3D
             nointerpolation float4 Ends : TEXCOORD0;
             nointerpolation float2 Kind : TEXCOORD1;
             nointerpolation float4 C : COLOR0;
+            nointerpolation float4 Near : TEXCOORD2;
         };
 
         FlatOut FlatVs(uint v : SV_VertexID)
@@ -1010,20 +1098,31 @@ internal static class Gpu3D
             o.Ends = f.E + float4(Centre, Centre);
             o.Kind = f.P.zw;
             o.C = f.C;
+            o.Near = f.N + float4(Centre, Centre);
             return o;
         }
 
-        // A fill as it is; a line covered as a round-ended strip, smooth-edged.
+        // Distance from p to the piece a..b.
+        float ToPiece(float2 p, float2 a, float2 b)
+        {
+            float2 d = b - a;
+            float l2 = dot(d, d);
+            float t = l2 < 1e-6 ? 0.0 : saturate(dot(p - a, d) / l2);
+            return length(p - a - d * t);
+        }
+
+        // A fill as it is; a line covered as a round-ended strip, smooth-edged. Round a join, a pixel nearer to the
+        // piece before or after (the piece before when as near) is left to that one, so each pixel is drawn once.
         float4 FlatPs(FlatOut i) : SV_Target
         {
             if (i.Kind.x < 0.5) return i.C;
-            float2 a = i.Ends.xy;
-            float2 d = i.Ends.zw - a;
-            float2 q = i.Pos.xy - a;
-            float l2 = dot(d, d);
-            float t = l2 < 1e-6 ? 0.0 : saturate(dot(q, d) / l2);
-            float cover = saturate(i.Kind.y - length(q - d * t) + 0.5);
+            float2 p = i.Pos.xy;
+            float own = ToPiece(p, i.Ends.xy, i.Ends.zw);
+            float cover = saturate(i.Kind.y - own + 0.5);
             clip(cover - 0.001);
+            // A neighbour "far away" is none (an end of the polyline, or a line on its own).
+            if (i.Near.x < 1e8 && ToPiece(p, i.Near.xy, i.Ends.xy) <= own + 1e-3) discard;
+            if (i.Near.z < 1e8 && ToPiece(p, i.Ends.zw, i.Near.zw) < own - 1e-3) discard;
             return i.C * cover;
         }
 
@@ -1057,9 +1156,10 @@ internal static class Gpu3D
             return float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
         }
 
-        float4 CopyPs(float4 pos : SV_Position) : SV_Target
+        // Sample by sample, so the edges stay smooth.
+        float4 CopyPs(float4 pos : SV_Position, uint si : SV_SampleIndex) : SV_Target
         {
-            return Layer.Load(int3(pos.xy, 0)) * Col.a;
+            return Scratch.Load(int2(pos.xy), si) * Col.a;
         }
         """;
 }

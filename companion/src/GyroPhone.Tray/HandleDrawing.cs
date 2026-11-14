@@ -27,13 +27,13 @@ internal static class HandleDrawing
     /// </summary>
     private sealed class Scratch
     {
-        public readonly PointF[] Round = new PointF[20], Well = new PointF[28], Box = new PointF[4], Quad = new PointF[4];
-        public readonly PointF[] Pill = new PointF[18];
+        public readonly PointF[] Round = new PointF[48], Well = new PointF[64], Box = new PointF[4], Quad = new PointF[4];
+        public readonly PointF[] Pill = new PointF[StadiumPoints];
         // The handle's outline and the 4-point bumper and trigger take turns: each keeps its own pair.
         public PointF[]? PillPart, Front, Back;
         public readonly PointF[] Front4 = new PointF[4], Back4 = new PointF[4];
         public readonly (float X, float Y)[] BumperRect = new (float, float)[4], TriggerRect = new (float, float)[4];
-        public readonly (float X, float Y)[] Shape4 = new (float, float)[4], Stadium = new (float, float)[18];
+        public readonly (float X, float Y)[] Shape4 = new (float, float)[4], Stadium = new (float, float)[StadiumPoints];
         public readonly List<(float X, float Y)> Cut = new(40), CutScratch = new(40);
         // Each side's outline in the phone frame, for the sizes it was made for.
         private readonly (float X, float Y)[]?[] _outline = new (float X, float Y)[]?[2];
@@ -259,9 +259,9 @@ internal static class HandleDrawing
             (ri, -h / 2 + ri, ri, MathF.PI),
         ];
         foreach (var (cx, cy, r, start) in corners)
-            for (int i = 0; i <= 6; i++)
+            for (int i = 0; i <= 12; i++)
             {
-                float a = start + i * (MathF.PI / 2) / 6;
+                float a = start + i * (MathF.PI / 2) / 12;
                 pts.Add((cx + r * MathF.Cos(a), cy + r * MathF.Sin(a)));
             }
         return pts.ToArray();
@@ -285,12 +285,17 @@ internal static class HandleDrawing
         }
     }
 
-    /// <summary>A rounded bar, counter-clockwise, filled into <paramref name="pts"/> (18 long).</summary>
+    /// <summary>Steps round each end of a <see cref="Stadium"/> (enough that its ends look round however big the window).</summary>
+    private const int StadiumSteps = 16;
+
+    private const int StadiumPoints = 2 * (StadiumSteps + 1);
+
+    /// <summary>A rounded bar, counter-clockwise, filled into <paramref name="pts"/> (<see cref="StadiumPoints"/> long).</summary>
     private static (float X, float Y)[] Stadium((float X, float Y)[] pts, float x0, float y0, float x1, float y1, float r)
     {
         float cy = (y0 + y1) / 2;
-        for (int i = 0; i <= 8; i++) { float a = -MathF.PI / 2 + i * MathF.PI / 8; pts[i] = (x1 - r + r * MathF.Cos(a), cy + r * MathF.Sin(a)); }
-        for (int i = 0; i <= 8; i++) { float a = MathF.PI / 2 + i * MathF.PI / 8; pts[9 + i] = (x0 + r + r * MathF.Cos(a), cy + r * MathF.Sin(a)); }
+        for (int i = 0; i <= StadiumSteps; i++) { float a = -MathF.PI / 2 + i * MathF.PI / StadiumSteps; pts[i] = (x1 - r + r * MathF.Cos(a), cy + r * MathF.Sin(a)); }
+        for (int i = 0; i <= StadiumSteps; i++) { float a = MathF.PI / 2 + i * MathF.PI / StadiumSteps; pts[StadiumSteps + 1 + i] = (x0 + r + r * MathF.Cos(a), cy + r * MathF.Sin(a)); }
         return pts;
     }
 
