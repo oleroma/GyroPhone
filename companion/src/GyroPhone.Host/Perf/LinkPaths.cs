@@ -56,11 +56,15 @@ public static class LinkPaths
     public static string Connection(LinkInfo? l, IPAddress? phone, Func<string, string?>? ssid = null)
     {
         if (phone == null) return "phone not connected";
-        if (IPAddress.IsLoopback(phone)) return (l != null ? Phone(l, null) : "USB cable (direct)") + $" · phone at {phone} (the cable's local socket)";
+        if (IPAddress.IsLoopback(phone)) return (l is { } lc ? Phone(lc, null) : "USB cable (direct)") + $" · phone at {phone} (the cable's local socket)";
         var pc = AdapterFor(phone);
         var parts = new List<string>(6);
-        parts.Add(l != null ? Phone(l, pc) : "phone link unknown (no LINK_INFO yet)");
-        if (l != null && Setup(l, pc) is { } setup) parts.Add("setup " + setup);
+        if (l is { } li)
+        {
+            parts.Add(Phone(li, pc));
+            if (Setup(li, pc) is { } setup) parts.Add("setup " + setup);
+        }
+        else parts.Add("phone link unknown (no LINK_INFO yet)");
         if (pc == null) parts.Add("PC adapter not found for the phone's address");
         else
         {
