@@ -36,7 +36,7 @@ public class OverlayRestTests
     private static long Run(OverlayRest r, HostSettings s, Func<OverlayFrame> frame, long from, long forMs)
     {
         long t = from;
-        for (; t < from + forMs * Ms; t += 16 * Ms) r.Feed(frame(), t, s);
+        for (; t < from + forMs * Ms; t += 16 * Ms) r.Feed(frame(), t, s.OverlayRestFade, s.Overlays);
         return t;
     }
 
@@ -84,7 +84,7 @@ public class OverlayRestTests
         // A finger on the screen brings it back at once.
         var touched = Frame(0.1f, tipDeg: 5f);
         touched.FingerCount = 1;
-        r.Feed(touched, t, s);
+        r.Feed(touched, t, s.OverlayRestFade, s.Overlays);
         Assert.False(r.Resting(o.Id, t, t, s.OverlayRestFade));
     }
 

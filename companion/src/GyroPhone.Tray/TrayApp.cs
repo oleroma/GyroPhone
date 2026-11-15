@@ -271,6 +271,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         int recovered = HeldKeysMarker.Recover(_marker.Path, _keyMouse.SendInput);
         if (recovered > 0) _log.Write($"released {recovered} inputs left held by a previous run");
         CheckInputDriver();
+        _engine.StartOverlayThread();
+        GcWatch.NameCurrentThread("window thread");
         _engine.Start(_clock.NowUs);
         _watchdog.Start();
         _usb.Start();

@@ -91,7 +91,12 @@ public sealed class HostEngine
     private HandOffCauses _handOff;
     /// <summary>What the overlays, the UI and the held-keys marker read without the lock (<see cref="PublishView"/>).</summary>
     private readonly OverlayView _view = new();
-    private bool _overlayDirty, _heldOutputsDirty;
+    private bool _heldOutputsDirty;
+    // The overlay side: gp-rx copies the overlay packets in, gp-overlay does the rest (OverlayWorker).
+    private readonly OverlayInbox _overlayInbox = new();
+    private readonly OverlayWorker _overlays;
+    // Something went into the inbox: gp-overlay is woken once the input is handed off.
+    private bool _overlayQueued;
     private readonly IKeyMouseSink _keyMouse;
     private readonly IKeyProtector _protector;
     private readonly IClock _clock;
@@ -209,22 +214,6 @@ public sealed class HostEngine
     private long _linkTestUntilUs = long.MinValue;
     /// <summary>HOST_STATUSes still to carry a TEST_MODE of 0 after the last test ended.</summary>
     private int _testModeOffRepeats;
-    private readonly OverlayFrame _overlayFrame = new();
-    /// <summary>The newest OVERLAY_SAMPLES (each gyro sample's turn in the OVERLAY after it), and a frame to feed them in.</summary>
-    private readonly OverlaySamples _overlaySamples = new();
-    /// <summary>The Speed graph overlays' yaw, pitch and roll speeds (fed while one is shown).</summary>
-    private readonly SpeedTrace _speeds = new();
-    private readonly OverlayFrame _overlaySub = new();
-    /// <summary>The last OVERLAY totals of this session, for the motion since then.</summary>
-    private readonly OverlayTotals _overlayTotals = new();
-    private readonly OverlayLayoutAssembler _overlayLayout = new();
-    // Each overlay window's pose, by its settings id, turned by every OVERLAY while it is shown.
-    private readonly Dictionary<string, OverlayPose> _overlayPoses = [];
-    // The phone's Level displays presses last seen (-1 = none yet: the first count levels nothing).
-    private int _levelPresses = -1;
-    private long _overlayRxUs = long.MinValue;
-    // "Fade when phone rests": whether the phone lies still at each overlay's Level, untouched.
-    private readonly OverlayRest _overlayRest = new();
     private long _lastStatusUs;
     private KeyLabels? _keyLabels;
     private int _rumbleNext; // (large << 8) | small, plus RumbleDirty while unsent
@@ -261,8 +250,11 @@ public sealed class HostEngine
         _protector = protector;
         _clock = clock ?? StopwatchClock.Instance;
         _pcHeldAt = us => _pcPad.HeldAt(us);
+        _overlays = new OverlayWorker(_overlayInbox, _view, SaveOverlayLevel);
+        PushOverlaySettings();
         Debug = new DebugTrace(() => _clock.NowUs);
         Debug.SetOn(settings.Diagnostics, "on since the last run");
+        SetGcWatch(settings.Diagnostics);
         _events = new TracedEvents(events ?? NullHostEvents.Instance, Debug);
         _sessions = new SessionManager(random);
         _pairing = new PairingManager(prompt, () => (_settings.HostId, _settings.HostName), OnPaired, random, newPairKey);
@@ -375,6 +367,7 @@ public sealed class HostEngine
             _settings.Diagnostics = on;
             _settingsDirty = true;
             Debug.SetOn(on, why);
+            SetGcWatch(on);
             RecorderSwitched(was, wasWriting, on ? "diagnostics on" : "diagnostics off");
             _events.Log("diagnostics " + (on ? "on" : "off") + " (" + why + ")");
             _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
@@ -382,6 +375,15 @@ public sealed class HostEngine
         }
         try { DiagnosticsChanged?.Invoke(on); }
         catch (Exception e) { _events.Log($"diagnostics notice failed: {e.GetType().Name}"); }
+    }
+
+    // Diagnostics' memory cleanup lines (GcWatch): made the first time Diagnostics is on, then only switched.
+    private GcWatch? _gcWatch;
+
+    private void SetGcWatch(bool on)
+    {
+        if (on) _gcWatch ??= new GcWatch(line => Debug.Add(DebugTrace.Kind.Note, line));
+        _gcWatch?.SetOn(on);
     }
 
     /// <summary>"Keep" under Diagnostics: how many minutes it keeps and a Save writes.</summary>
@@ -512,10 +514,10 @@ public sealed class HostEngine
             _heldOutputsDirty = false;
             _view.PublishHeldOutputs(_pending);
         }
-        if (_overlayDirty)
+        if (_overlayQueued)
         {
-            _overlayDirty = false;
-            _view.PublishOverlay(_overlayFrame, _overlayRxUs, _overlayLayout.Layout, _overlayRest, _overlayPoses, _settings.Overlays);
+            _overlayQueued = false;
+            _overlays.Signal();
         }
     }
 
@@ -669,41 +671,22 @@ public sealed class HostEngine
                 _stats.OnLinkInfo(info);
                 OnDebugFlags(info.Flags, nowUs);
                 break;
+            // Overlay data: copied as it came for gp-overlay (OverlayWorker), which does the rest.
             case PacketType.Overlay:
-                if (!_overlayOn || _overlayTotals.IsLate(plain)) break;
-                _overlayFrame.Decode(plain);
-                _overlayTotals.ToDeltas(_overlayFrame);
-                if (_padGyro.Enabled) GateOverlay(_overlayFrame);
-                long rxMs = Environment.TickCount64;
-                bool graph = false;
-                foreach (var o in _settings.Overlays)
-                {
-                    if (!o.Shown) continue;
-                    if (o.Kind == OverlayKind.Graph) graph = true;
-                    if (!_overlayPoses.TryGetValue(o.Id, out var pose)) _overlayPoses[o.Id] = pose = new OverlayPose();
-                    // A pointer that paints follows every gyro sample (the samples sent just before this frame).
-                    if (o.FollowsSamples && _overlaySamples.Matches(_overlayFrame)) pose.FeedSamples(_overlayFrame, o, _overlaySamples, _overlaySub, rxMs);
-                    else pose.Feed(_overlayFrame, o);
-                }
-                if (graph) FeedSpeeds(_overlayFrame);
-                // Set orientation on the phone: every overlay shown starts again from its new base orientation.
-                if (_levelPresses >= 0 && _overlayFrame.LevelPresses != _levelPresses)
-                    foreach (var o in _settings.Overlays)
-                        if (o.Shown) StartOverOverlay(o);
-                _levelPresses = _overlayFrame.LevelPresses;
-                _overlayRest.Feed(_overlayFrame, nowUs, _settings);
-                _overlayRxUs = nowUs;
-                _overlayDirty = true;
+                if (!_overlayOn) break;
+                if (_padGyro.Enabled) GateOverlay(plain, nowUs);
+                else _overlayInbox.Put(OverlayInbox.Kind.Overlay, plain, nowUs, Environment.TickCount64);
+                _overlayQueued = true;
                 break;
             case PacketType.OverlaySamples:
-                if (_overlayOn) _overlaySamples.Decode(plain);
+                if (!_overlayOn) break;
+                _overlayInbox.Put(OverlayInbox.Kind.Samples, plain, nowUs, Environment.TickCount64);
+                _overlayQueued = true;
                 break;
             case PacketType.OverlayLayout:
-                if (_overlayOn)
-                {
-                    _overlayLayout.Add(plain);
-                    _overlayDirty = true;
-                }
+                if (!_overlayOn) break;
+                _overlayInbox.Put(OverlayInbox.Kind.Layout, plain, nowUs, Environment.TickCount64);
+                _overlayQueued = true;
                 break;
             case PacketType.Motion:
                 OnMotion(plain, nowUs);
@@ -816,15 +799,15 @@ public sealed class HostEngine
         return _view.Held(code, pc ? held : 0, pc ? axes[4] : 0f, pc ? axes[5] : 0f);
     }
 
-    /// <summary>The overlays turn with the axes on after the PC controller, and its ratchets count for "On ratchet".</summary>
-    private void GateOverlay(OverlayFrame f)
+    /// <summary>
+    /// OVERLAY <paramref name="plain"/> with the PC controller's gate (its state is the input's): the overlays turn
+    /// with the axes on after the PC controller, and its ratchets count for "On ratchet". gp-overlay applies it.
+    /// </summary>
+    private void GateOverlay(ReadOnlySpan<byte> plain, long nowUs)
     {
         ReadPcPad();
-        int eff = _gate.EffectiveOf(f.Axes, _pcGyro.MayMove);
-        f.Axes = (byte)eff;
-        f.Flags = (byte)(eff != 0 ? f.Flags | OverlayFrame.FlagGyroActive : f.Flags & ~OverlayFrame.FlagGyroActive);
-        if (_gate.Flips != 0) f.Flags |= OverlayFrame.FlagRatchetHeld;
-        f.RatchetPresses = unchecked((byte)(f.RatchetPresses + _gate.RatchetPresses));
+        int eff = _gate.EffectiveOf(plain[OverlayFrame.AxesOffset], _pcGyro.MayMove);
+        _overlayInbox.PutGated(plain, nowUs, Environment.TickCount64, (byte)eff, _gate.Flips != 0, unchecked((byte)_gate.RatchetPresses));
     }
 
     /// <summary>
@@ -982,8 +965,8 @@ public sealed class HostEngine
         _phoneDiagSeen = null;
         var old = _sessions.Promote(s);
         // A new session's OVERLAY totals start from a new base.
-        _overlayTotals.Reset();
-        _overlayDirty = true;
+        _overlayInbox.Mark(OverlayInbox.Kind.TotalsReset, nowUs);
+        _overlayQueued = true;
         if (old != null)
         {
             if (old.SamePhone(s.PhoneId))
@@ -995,20 +978,14 @@ public sealed class HostEngine
                 RememberEnded(old.SessionId);
                 // Its app may have restarted: the next layout is taken even with the version shown now,
                 // and its press count starts again.
-                _overlayLayout.Renew();
-                foreach (var pose in _overlayPoses.Values) pose.ForgetPresses();
-                _levelPresses = -1;
+                _overlayInbox.Mark(OverlayInbox.Kind.Renew, nowUs);
             }
             else
             {
                 ReleaseAllLocked();
                 SendHostBye(old, HostByeReason.Replaced);
                 // Nothing of the old phone's overlay or PC controller carries over.
-                _overlayLayout.Reset();
-                _overlayPoses.Clear();
-                _levelPresses = -1;
-                _overlayRxUs = long.MinValue;
-                _overlayRest.Clear(_clock.NowUs);
+                _overlayInbox.Mark(OverlayInbox.Kind.Clear, _clock.NowUs, flag: true);
                 StopCapture();
                 StopPcPad();
                 _padGyro.Enabled = false;
@@ -1560,9 +1537,8 @@ public sealed class HostEngine
             var kind = o.Kind;
             change(o);
             o.Id = id;
-            if (o.Kind != kind) _overlayPoses.Remove(id);
             _settingsDirty = true;
-            _overlayDirty = true;
+            PushOverlaySettings();
             OverlayAsksChanged(asks);
             return true;
         }
@@ -1595,7 +1571,7 @@ public sealed class HostEngine
             else if (kind != OverlayKind.Phone) o.Width = o.Height = 260;
             _settings.Overlays.Add(o);
             _settingsDirty = true;
-            _overlayDirty = true;
+            PushOverlaySettings();
             OverlayAsksChanged(asks);
             return o.Id;
         }
@@ -1631,7 +1607,7 @@ public sealed class HostEngine
             o.X = o.Y = -1;
             _settings.Overlays.Add(o);
             _settingsDirty = true;
-            _overlayDirty = true;
+            PushOverlaySettings();
             OverlayAsksChanged(asks);
             return o.Id;
         }
@@ -1662,9 +1638,8 @@ public sealed class HostEngine
         {
             int asks = OverlayAsks();
             if (_settings.Overlays.RemoveAll(x => x.Id == id) == 0) return;
-            _overlayPoses.Remove(id);
             _settingsDirty = true;
-            _overlayDirty = true;
+            PushOverlaySettings();
             OverlayAsksChanged(asks);
         }
     }
@@ -1935,13 +1910,9 @@ public sealed class HostEngine
         {
             if (on == _overlayOn) return;
             _overlayOn = on;
-            _overlayRxUs = long.MinValue;
-            _overlayRest.Clear(_clock.NowUs);
-            _overlayPoses.Clear();
-            _levelPresses = -1;
-            _overlayTotals.Reset();
-            if (!on) _overlayLayout.Reset();
-            _overlayDirty = true;
+            _overlayInbox.Mark(OverlayInbox.Kind.Clear, _clock.NowUs, flag: !on);
+            if (on) PushOverlaySettings();
+            _overlayQueued = true;
             if (_sessions.Active is { } a) SendStatus(a, _clock.NowUs);
         }
     }
@@ -2066,46 +2037,43 @@ public sealed class HostEngine
     {
         using (Lock(ByUi))
         {
-            var o = _settings.Overlays.Find(x => x.Id == id);
-            if (o == null) return;
-            _overlayPoses.TryGetValue(id, out var pose);
-            // Which way is up now: "Fade when phone rests" counts the phone flat near this tilt.
-            if (_overlayRxUs != long.MinValue && _overlayFrame.HasUp &&
-                MathF.Sqrt(_overlayFrame.UpX * _overlayFrame.UpX + _overlayFrame.UpY * _overlayFrame.UpY + _overlayFrame.UpZ * _overlayFrame.UpZ) is var g and > 0f)
-                o.LevelUp = [_overlayFrame.UpX / g, _overlayFrame.UpY / g, _overlayFrame.UpZ / g];
-            if (o.Gravity && !o.FollowsCamera)
-            {
-                if (pose == null) return;
-                o.Rest = pose.TiltOnly();
-            }
-            else
-            {
-                pose?.Reset();
-                o.Rest = null;
-            }
-            _settingsDirty = true;
-            _overlayDirty = true;
+            _overlayInbox.Mark(OverlayInbox.Kind.Level, _clock.NowUs, id: id);
+            _overlayQueued = true;
         }
     }
 
-    /// <summary>
-    /// Set orientation on the phone: overlay <paramref name="o"/> starts again from the phone's new base
-    /// orientation, which the frames now come in: level (no saved grip), facing ahead, and "Fade when
-    /// phone rests" counts the phone flat near the way it is held now.
-    /// </summary>
-    private void StartOverOverlay(OverlaySettings o)
+    /// <summary>What Level or Set orientation changed in overlay <paramref name="id"/> (gp-overlay, <see cref="OverlayWorker"/>): saved.</summary>
+    private void SaveOverlayLevel(string id, float[]? levelUp, bool setRest, float[]? rest)
     {
         using (Lock(ByUi))
         {
-            if (_overlayFrame.HasUp &&
-                MathF.Sqrt(_overlayFrame.UpX * _overlayFrame.UpX + _overlayFrame.UpY * _overlayFrame.UpY + _overlayFrame.UpZ * _overlayFrame.UpZ) is var g and > 0f)
-                o.LevelUp = [_overlayFrame.UpX / g, _overlayFrame.UpY / g, _overlayFrame.UpZ / g];
-            o.Rest = null;
-            if (_overlayPoses.TryGetValue(o.Id, out var pose)) pose.Reset();
+            var o = _settings.Overlays.Find(x => x.Id == id);
+            if (o == null) return;
+            if (levelUp != null) o.LevelUp = levelUp;
+            if (setRest) o.Rest = rest;
             _settingsDirty = true;
-            _overlayDirty = true;
+            PushOverlaySettings();
         }
     }
+
+    /// <summary>Hands gp-overlay a copy of the overlay settings (call under the lock after any change to them).</summary>
+    private void PushOverlaySettings()
+    {
+        var copies = new List<OverlaySettings>(_settings.Overlays.Count);
+        foreach (var o in _settings.Overlays)
+        {
+            var c = o.Copy();
+            c.Id = o.Id;
+            copies.Add(c);
+        }
+        var fade = new OverlayRestFade();
+        fade.CopyFrom(_settings.OverlayRestFade);
+        _overlays.SetSettings(copies, fade);
+        _overlayQueued = true;
+    }
+
+    /// <summary>Runs the overlay side (pose math, layout, Speed graph) on its own thread, gp-overlay. Without it, it runs inline (tests).</summary>
+    public void StartOverlayThread() => _overlays.Start();
 
     /// <summary>"Fade when phone rests": overlay <paramref name="id"/> should be faded now (the phone lies still at its Level, untouched).</summary>
     public bool OverlayResting(string id)
@@ -2127,6 +2095,7 @@ public sealed class HostEngine
             change(_settings.OverlayRestFade);
             _settings.OverlayRestFade.Normalize();
             _settingsDirty = true;
+            PushOverlaySettings();
         }
     }
 
@@ -2135,20 +2104,7 @@ public sealed class HostEngine
     public PoseHistory? OverlayHistory(string id) => _view.HistoryOf(id);
 
     /// <summary>The Speed graph's yaw, pitch and roll speeds (read without the engine lock).</summary>
-    public SpeedTrace OverlaySpeeds => _speeds;
-
-    /// <summary>The Speed graph: each gyro sample's speed (the samples sent with <paramref name="f"/>), or the frame's when they didn't come.</summary>
-    private void FeedSpeeds(OverlayFrame f)
-    {
-        bool held = f.RatchetHeld;
-        if (_overlaySamples.Matches(f))
-        {
-            var t = _overlaySamples.Turns;
-            for (int k = 0; k < _overlaySamples.Count; k++)
-                _speeds.Add(t[k * 4], t[k * 4 + 1], t[k * 4 + 2], t[k * 4 + 3], held);
-        }
-        else _speeds.Add(f.TurnYaw, f.TurnPitch, f.TurnRoll, f.TurnSeconds, held);
-    }
+    public SpeedTrace OverlaySpeeds => _overlays.Speeds;
 
     public float[]? OverlayPoseOf(string id)
     {
@@ -2410,13 +2366,8 @@ public sealed class HostEngine
         _padGyro.Enabled = false;
         _gate.Reset();
         _pcGyro.Reset();
-        _overlayLayout.Reset();
-        _overlayRxUs = long.MinValue;
-        _overlayRest.Clear(_clock.NowUs);
-        _overlayPoses.Clear();
-        _levelPresses = -1;
-        _overlayTotals.Reset();
-        _overlayDirty = true;
+        _overlayInbox.Mark(OverlayInbox.Kind.Clear, _clock.NowUs, flag: true);
+        _overlayQueued = true;
         _ds4Motion.Reset();
         // The pad stays plugged, at rest (ReleaseAllLocked sent it neutral), so the game keeps its
         // controller; a session within PadIdleUnplugUs reuses it.

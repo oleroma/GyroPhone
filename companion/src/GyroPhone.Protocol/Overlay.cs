@@ -100,6 +100,9 @@ public sealed class OverlayFrame
     public bool IsPressed(int i) => i is >= 0 and < 128 && (Pressed[i >> 3] & (1 << (i & 7))) != 0;
     public bool IsLatched(int i) => i is >= 0 and < 128 && (Latched[i >> 3] & (1 << (i & 7))) != 0;
 
+    /// <summary>Where <see cref="Axes"/> sits in an OVERLAY's plain bytes.</summary>
+    public const int AxesOffset = 30;
+
     /// <summary>Decodes the wire fields; the pose (<see cref="Qw"/>..) is left as it is.</summary>
     public void Decode(ReadOnlySpan<byte> b)
     {
@@ -114,7 +117,7 @@ public sealed class OverlayFrame
         NorthX = Le.I16(b, 24) / 32767f;
         NorthY = Le.I16(b, 26) / 32767f;
         NorthZ = Le.I16(b, 28) / 32767f;
-        Axes = b[30];
+        Axes = b[AxesOffset];
         RatchetPresses = b[31];
         LayoutVersion = Le.U16(b, 32);
         Flags = b[34];

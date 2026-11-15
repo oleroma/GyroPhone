@@ -7,13 +7,15 @@ namespace GyroPhone.Host;
 /// The engine's published copy of what the overlay windows, the held-keys marker and the UI read
 /// many times a second: the newest OVERLAY and layout, each overlay window's pose, its "Fade when
 /// phone rests" state, the outputs a laser pointer shows held, the injected held set, and whether a
-/// session is up. The engine writes it under its lock when one of them changed (mostly gp-rx, after
-/// each packet and Flush); readers copy it without that lock (<see cref="SeqLock"/>), so a reader
+/// session is up. The engine writes the input part under its lock (mostly gp-rx, after each Flush), and
+/// <see cref="OverlayWorker"/> the overlay part on its own thread; readers copy it without that lock (<see cref="SeqLock"/>), so a reader
 /// paused by Windows mid-copy can never keep the input thread waiting.
 /// </summary>
 internal sealed class OverlayView
 {
     private readonly SeqLock _seq = new();
+    // The overlay part has its own writer (gp-overlay, OverlayWorker), so its own sequence lock.
+    private readonly SeqLock _overlaySeq = new();
 
     // OVERLAY
     private readonly OverlayFrame _frame = new();
@@ -46,7 +48,7 @@ internal sealed class OverlayView
         public PoseHistory? History;
     }
 
-    // ---- written under the engine lock ----
+    // ---- written under the engine lock (the overlay part: by OverlayWorker) ----
 
     public bool Connected
     {
@@ -66,7 +68,7 @@ internal sealed class OverlayView
         Dictionary<string, OverlayPose> poses, List<OverlaySettings> overlays)
     {
         Span<long> active = stackalloc long[3];
-        _seq.BeginWrite();
+        _overlaySeq.BeginWrite();
         try
         {
             if (rxUs != long.MinValue) f.CopyTo(_frame);
@@ -97,7 +99,7 @@ internal sealed class OverlayView
         }
         finally
         {
-            _seq.EndWrite();
+            _overlaySeq.EndWrite();
         }
     }
 
@@ -136,7 +138,7 @@ internal sealed class OverlayView
         Span<long> active = stackalloc long[3];
         while (true)
         {
-            int s = _seq.ReadBegin();
+            int s = _overlaySeq.ReadBegin();
             layout = _layout;
             long rx = _rxUs;
             pcHandles = false;
@@ -159,7 +161,7 @@ internal sealed class OverlayView
                     break;
                 }
             }
-            if (_seq.ReadRetry(s)) continue;
+            if (_overlaySeq.ReadRetry(s)) continue;
             if (rx == long.MinValue) return rx;
             if (pose) into.PoseActive = OverlayPose.ActiveOf(active, System.Diagnostics.Stopwatch.GetTimestamp());
             else
@@ -176,7 +178,7 @@ internal sealed class OverlayView
     {
         while (true)
         {
-            int s = _seq.ReadBegin();
+            int s = _overlaySeq.ReadBegin();
             PoseHistory? h = null;
             var ws = _windows;
             int n = Math.Min(_count, ws.Length);
@@ -186,7 +188,7 @@ internal sealed class OverlayView
                     h = ws[i].History;
                     break;
                 }
-            if (_seq.ReadRetry(s)) continue;
+            if (_overlaySeq.ReadRetry(s)) continue;
             return h;
         }
     }
@@ -196,7 +198,7 @@ internal sealed class OverlayView
     {
         while (true)
         {
-            int s = _seq.ReadBegin();
+            int s = _overlaySeq.ReadBegin();
             Window w = default;
             var ws = _windows;
             int n = Math.Min(_count, ws.Length);
@@ -206,7 +208,7 @@ internal sealed class OverlayView
                     w = ws[i];
                     break;
                 }
-            if (_seq.ReadRetry(s)) continue;
+            if (_overlaySeq.ReadRetry(s)) continue;
             return w.HasPose ? [w.W, w.X, w.Y, w.Z] : null;
         }
     }
@@ -216,7 +218,7 @@ internal sealed class OverlayView
     {
         while (true)
         {
-            int s = _seq.ReadBegin();
+            int s = _overlaySeq.ReadBegin();
             long rx = _rxUs, busy = _busyUs, silent = _silentSinceUs, off = long.MinValue;
             var ws = _windows;
             int n = Math.Min(_count, ws.Length);
@@ -226,7 +228,7 @@ internal sealed class OverlayView
                     off = ws[i].OffLevelUs;
                     break;
                 }
-            if (_seq.ReadRetry(s)) continue;
+            if (_overlaySeq.ReadRetry(s)) continue;
             return OverlayRest.RestingOf(fade, nowUs, rx, busy, silent, off);
         }
     }
@@ -235,10 +237,10 @@ internal sealed class OverlayView
     {
         while (true)
         {
-            int s = _seq.ReadBegin();
+            int s = _overlaySeq.ReadBegin();
             float dps = _liveDps;
             long at = _liveAtUs;
-            if (_seq.ReadRetry(s)) continue;
+            if (_overlaySeq.ReadRetry(s)) continue;
             return OverlayRest.LiveDpsOf(dps, at, nowUs);
         }
     }

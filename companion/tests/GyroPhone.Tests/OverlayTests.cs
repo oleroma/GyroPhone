@@ -5,12 +5,12 @@ namespace GyroPhone.Tests;
 /// <summary>OVERLAY / OVERLAY_LAYOUT: the same bytes the phone's OverlayFeedTest encodes.</summary>
 public class OverlayTests
 {
-    private const string LayoutBlob = "0160093804044d61696e000100010008001033036606800141";
-    private const string Frame = "040302010000803f000000bf0000803ee803000000200000000000000180030101003b010080004000000000000000000000000000000000" +
+    internal const string LayoutBlob = "0160093804044d61696e000100010008001033036606800141";
+    internal const string Frame = "040302010000803f000000bf0000803ee803000000200000000000000180030101003b010080004000000000000000000000000000000000" +
         "0100000000000000000000000000000000000000000000000000000000000000007fc1ff0000ff0000ff0000ff0000ff0000ff0000ff0000" +
         "0000803f00000000000000c0" + "000000400000000000000000" + "00000000000000000000000000000000";
 
-    private static byte[] Piece(ushort version, int index, int count, ReadOnlySpan<byte> data)
+    internal static byte[] Piece(ushort version, int index, int count, ReadOnlySpan<byte> data)
     {
         var p = new byte[Wire.OverlayLayoutPlain];
         Le.PutU16(p, 0, version);
