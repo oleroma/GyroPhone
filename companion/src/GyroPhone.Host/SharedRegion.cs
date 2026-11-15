@@ -71,6 +71,39 @@ public sealed unsafe class SharedRegion : IDisposable
         return Map(map, fresh: true);
     }
 
+    /// <summary>
+    /// The session's region, made by whichever process comes first and kept while either has it open: a companion
+    /// keeps it across an input process restart, an input process across a companion restart. Throws when one of
+    /// another layout is open (an older build still runs).
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public static SharedRegion CreateOrOpen(string name)
+    {
+        var map = MemoryMappedFile.CreateOrOpen(name, TotalBytes, MemoryMappedFileAccess.ReadWrite);
+        MemoryMappedViewAccessor? view = null;
+        try
+        {
+            view = map.CreateViewAccessor(0, TotalBytes, MemoryMappedFileAccess.ReadWrite);
+            byte* p = null;
+            view.SafeMemoryMappedViewHandle.AcquirePointer(ref p);
+            p += view.PointerOffset;
+            // A new mapping is zeros (a valid empty region): both sides writing the header at once write the same bytes.
+            int magic = System.Threading.Volatile.Read(ref *(int*)p);
+            if (magic != 0 && (magic != Magic || *(int*)(p + 4) != LayoutVersion))
+            {
+                view.SafeMemoryMappedViewHandle.ReleasePointer();
+                throw new InvalidDataException($"shared memory {name} is of another layout");
+            }
+            return new SharedRegion(p, map, view, native: false, fresh: magic == 0);
+        }
+        catch
+        {
+            view?.Dispose();
+            map.Dispose();
+            throw;
+        }
+    }
+
     /// <summary>Opens the region the input process made; throws when it isn't there or is of another layout.</summary>
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public static SharedRegion Open(string name)

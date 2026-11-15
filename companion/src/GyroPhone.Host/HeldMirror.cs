@@ -38,8 +38,10 @@ public sealed unsafe class HeldMirror
     {
         int s = Volatile.Read(ref SeqRef);
         if ((s & 1) == 0) return s;
+        // A write takes well under a microsecond; one that never ends was cut off by the input process crashing: give
+        // up after a while and take the bytes as they are (until the next input process resets them), so no reader hangs.
         var spin = new SpinWait();
-        while (((s = Volatile.Read(ref SeqRef)) & 1) != 0) spin.SpinOnce();
+        for (int i = 0; i < 50 && ((s = Volatile.Read(ref SeqRef)) & 1) != 0; i++) spin.SpinOnce();
         return s;
     }
 
@@ -50,6 +52,17 @@ public sealed unsafe class HeldMirror
     }
 
     // ---- written by the engine, under its lock ----
+
+    /// <summary>A new input process: nothing connected or held (and a write a crashed one left half done is ended).</summary>
+    public void Reset()
+    {
+        int s = Volatile.Read(ref SeqRef);
+        if ((s & 1) == 0) s++;
+        Volatile.Write(ref SeqRef, s);
+        Interlocked.MemoryBarrier();
+        new Span<byte>(_p + 4, BytesNeeded - 4).Clear();
+        Volatile.Write(ref SeqRef, s + 1);
+    }
 
     public void SetConnected(bool on)
     {

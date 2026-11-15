@@ -29,6 +29,9 @@ public sealed class LinkTimeline
     private int _head, _count;
     private readonly object _lock = new();
 
+    /// <summary>Also told of each second added (the input process hands them to the companion's Performance monitor).</summary>
+    public Action<LinkSecond>? Added { get; set; }
+
     public void Add(LinkSecond s)
     {
         lock (_lock)
@@ -37,6 +40,7 @@ public sealed class LinkTimeline
             _head = (_head + 1) % Keep;
             if (_count < Keep) _count++;
         }
+        Added?.Invoke(s);
     }
 
     /// <summary>The seconds that ended after <paramref name="fromUs"/> and at or before <paramref name="toUs"/>, oldest first.</summary>

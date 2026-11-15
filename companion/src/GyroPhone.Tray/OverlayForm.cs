@@ -24,7 +24,7 @@ internal sealed class OverlayForm : Form
     public static Func<IReadOnlyList<GyroPhone.Host.Perf.LinkSecond>>? FpsLinkSource;
     public static Func<(GyroPhone.Host.Perf.FrameView, string?, GyroPhone.Host.Perf.FrameWatchState, GyroPhone.Host.Perf.RecordingView?)>? FpsSource;
 
-    private readonly HostEngine _engine;
+    private readonly OverlayHost _engine;
     private readonly string _id;
     private readonly Action<string, Point> _clicked;
     private readonly Action<string> _picked;
@@ -116,7 +116,7 @@ internal sealed class OverlayForm : Form
     private long _restFadeAt;
     private int _alphaQueued;
 
-    public OverlayForm(HostEngine engine, string id, Action<string> log, Action<string, Point> clicked, Action<string> picked)
+    public OverlayForm(OverlayHost engine, string id, Action<string> log, Action<string, Point> clicked, Action<string> picked)
     {
         _engine = engine;
         _id = id;
@@ -176,13 +176,13 @@ internal sealed class OverlayForm : Form
         get
         {
             if (_engine == null) return null;
-            foreach (var o in _engine.Settings.Overlays)
+            foreach (var o in _engine.Ui.Overlays)
                 if (o.Id == _id) return o;
             return null;
         }
     }
 
-    private bool ClickThrough => !(_engine?.Settings.OverlayEdit ?? false);
+    private bool ClickThrough => !(_engine?.Ui.OverlayEdit ?? false);
 
     /// <summary>The picked window in Edit (also picked in the main window's list): drawn with a solid frame.</summary>
     public bool Selected
@@ -767,7 +767,7 @@ internal sealed class OverlayForm : Form
     /// </summary>
     private bool StepRestFade(long now)
     {
-        var rf = _engine.Settings.OverlayRestFade;
+        var rf = _engine.Ui.OverlayRestFade;
         // The FPS overlay doesn't show the phone: it never fades with it.
         bool resting = ClickThrough && Settings is not { Kind: OverlayKind.Fps } && _engine.OverlayResting(_id);
         float target = resting ? Math.Clamp(rf.FadeTo, 0.05f, 1f) : 1f;
