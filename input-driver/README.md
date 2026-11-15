@@ -24,9 +24,9 @@ It is separate from the pad driver (`driver/`, the DualSense): install either, b
 1. Run `install.cmd` from the unpacked package (`build\GyroPhoneInput-driver` after a PC build, or
    `GyroPhoneInput-driver.zip` from a release, unpacked anywhere). Windows asks for administrator
    rights once.
-2. Restart the GyroPhone companion. Performance › **Keyboard and mouse** says "Input driver" when
-   it's in use. The **Use SendInput** switch there goes back to SendInput without uninstalling, for
-   A/B tests.
+2. Restart the GyroPhone companion and turn on Performance › Keyboard and mouse › **Use input
+   driver** (off by default: SendInput delivers mouse moves more steadily, see below). That card
+   says "Through the input driver" when it's in use.
 
 Run `install.cmd` again to update the driver; exit the companion first, so install.cmd can restart the device and the new driver runs at once (otherwise it runs after the next Windows restart).
 
@@ -59,7 +59,7 @@ and the certificate, unless the pad driver still uses it.
 ## Risks
 
 - **Anti-cheat** might dislike a self-signed driver. The worst realistic case is a game refusing
-  to run while the device is there; flip **Use SendInput** on, or uninstall.
+  to run while the device is there; turn **Use input driver** off, or uninstall.
 - **Your PC trusts the certificate** (see the pad driver's README).
 - **Bugs** in the driver can't crash Windows: it runs in user mode. The worst case is the mouse and
   keyboard disappearing; the companion then goes back to SendInput.

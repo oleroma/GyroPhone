@@ -30,7 +30,7 @@ internal sealed class PerformancePage : Page
     private readonly SliderRow _keep;
     private readonly Button _save;
     private readonly Seg<int> _catchUp;
-    private readonly CheckBox _useSendInput;
+    private readonly CheckBox _useInputDriver;
     private readonly TextBlock _routeSub;
     private readonly TextBlock _logPath;
     private readonly TextBlock _buttonsSub;
@@ -150,11 +150,12 @@ internal sealed class PerformancePage : Page
         var (km, kb) = Parts.Card("Keyboard and mouse");
         _routeSub = Parts.Text("", "Sub");
         kb.Children.Add(_routeSub);
-        _useSendInput = Parts.Toggle("Use SendInput", app.ToggleUseSendInput,
-            "Sends keys and mouse through Windows' SendInput even though the input driver is installed, to compare the two " +
-            "(Diagnostics' slow hand-offs and delivery times). Switching lets go of every held key and button.");
-        _useSendInput.Margin = new Thickness(0, 10, 0, 0);
-        kb.Children.Add(_useSendInput);
+        _useInputDriver = Parts.Toggle("Use input driver", app.ToggleUseInputDriver,
+            "Sends keys and mouse through the input driver's virtual USB mouse and keyboard instead of SendInput. Off by default: " +
+            "Windows can hold the driver's moves up to ~20 ms while other programs are busy, SendInput's at most a few ms. " +
+            "Switching lets go of every held key and button.");
+        _useInputDriver.Margin = new Thickness(0, 10, 0, 0);
+        kb.Children.Add(_useInputDriver);
         var test = Parts.Button("Delivery test", app.OpenDeliveryTest);
         test.Margin = new Thickness(0, 12, 0, 0);
         test.HorizontalAlignment = HorizontalAlignment.Left;
@@ -191,17 +192,16 @@ internal sealed class PerformancePage : Page
         Parts.SetChecked(_diag, v.Diagnostics);
         _keep.Set(v.DiagnosticsMinutes);
         _catchUp.Set(v.CatchUpMs);
-        Parts.SetChecked(_useSendInput, v.UseSendInput);
-        Parts.Show(_useSendInput, v.InputDriver != InputDriverState.NotInstalled);
+        Parts.SetChecked(_useInputDriver, v.UseInputDriver);
+        Parts.Show(_useInputDriver, v.InputDriver != InputDriverState.NotInstalled);
         _routeSub.Text = v.InputDriver switch
         {
-            InputDriverState.Ready when !v.UseSendInput =>
-                "Through the input driver: a virtual USB mouse and keyboard, so a send never waits on Windows' input checks.",
-            InputDriverState.Ready => "Through SendInput (Use SendInput is on). The input driver is ready.",
-            InputDriverState.NotPlugged =>
+            InputDriverState.Ready when v.UseInputDriver =>
+                "Through the input driver: a virtual USB mouse and keyboard (Use input driver is on).",
+            InputDriverState.Ready => "Through SendInput. The input driver is installed and ready if you turn on Use input driver.",
+            InputDriverState.NotPlugged when v.UseInputDriver =>
                 "Through SendInput: the input driver is installed but its mouse and keyboard aren't plugged yet (tried every 5 s; see the log).",
-            _ => "Through SendInput. The optional input driver (install.cmd in GyroPhoneInput-driver) sends them as a virtual USB mouse and keyboard " +
-                "instead, which never waits on Windows' input checks.",
+            _ => "Through SendInput.",
         };
         _logPath.Text = $"Log: {v.LogPath}";
         var p = _app.Perf;

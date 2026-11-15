@@ -40,10 +40,12 @@ public sealed class HostSettings
     public int DiagnosticsMinutes { get; set; } = DefaultKeepMinutes;
     public const int MinKeepMinutes = 1, DefaultKeepMinutes = 3;
     /// <summary>
-    /// "Use SendInput" (Performance › Keyboard and mouse): keys and mouse through SendInput even when the optional input
-    /// driver (a virtual USB mouse and keyboard) is installed, for A/B latency tests. Without the driver it changes nothing.
+    /// "Use input driver" (Performance › Keyboard and mouse, off by default): keys and mouse through the optional input driver
+    /// (a virtual USB mouse and keyboard) instead of SendInput. Off by default: on Windows 11 the driver's moves are handled by
+    /// dwm's input thread, which can wait up to ~20 ms behind other programs holding Windows' shared window lock, while
+    /// SendInput hands them to the window in front itself (worst ~3.4 ms, 2026-11-15 trace). Without the driver it changes nothing.
     /// </summary>
-    public bool UseSendInput { get; set; }
+    public bool UseInputDriver { get; set; }
     /// <summary>"Use this PC's keys for Press a key" on the App page: off, the PC's keyboard, mouse and controller are never read for it.</summary>
     public bool PressKeyListen { get; set; } = true;
     /// <summary>"Notify when the phone listens for a key" on the App page: a tray notification each time the phone's "Press a key" opens.</summary>

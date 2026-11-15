@@ -46,7 +46,7 @@ public sealed record CompanionView(
     bool PressKeyListen = true,
     int DiagnosticsMinutes = 3,
     int DiagnosticsSaved = 0,
-    bool UseSendInput = false,
+    bool UseInputDriver = false,
     InputDriverState InputDriver = InputDriverState.NotInstalled);
 
 /// <summary>The optional input driver (a virtual USB mouse and keyboard), for Performance › Keyboard and mouse.</summary>
@@ -113,8 +113,8 @@ public interface ICompanion
     void TogglePressKeyNotice();
     /// <summary>"Catch-up time", ms (0 = off).</summary>
     void SetCatchUpMs(int ms);
-    /// <summary>"Use SendInput" (Performance › Keyboard and mouse): SendInput even when the input driver is installed.</summary>
-    void ToggleUseSendInput();
+    /// <summary>"Use input driver" (Performance › Keyboard and mouse): the input driver instead of SendInput, when it is installed.</summary>
+    void ToggleUseInputDriver();
     /// <summary>
     /// "Delivery test" (Performance › Keyboard and mouse): opens a window that reads raw mouse input in front, like a
     /// game, next to Diagnostics' background delivery probe, while it is open.

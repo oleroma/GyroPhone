@@ -130,7 +130,7 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
         _marker = new HeldKeysMarker(HeldKeysMarker.DefaultPath());
         var store = new SettingsStore(SettingsStore.DefaultPath(), lockedWaitMs);
         var settings = store.Load(Environment.MachineName, _log.Write);
-        _keyMouse = new KeyMouseRouter(new SendInputSink(_log.Write), settings.UseSendInput, _log.Write);
+        _keyMouse = new KeyMouseRouter(new SendInputSink(_log.Write), settings.UseInputDriver, _log.Write);
         _pad = PadSinks.Create(_log.Write, out var padError);
         _padError = padError;
         var protector = new DpapiKeyProtector();
@@ -315,7 +315,7 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
     {
         var s = _engine.Snapshot();
         return new InputStatus(s, InputSettingsView.Of(_engine.Settings), _server.State.ToString(), _bindRetrying, _bindWaitLong,
-            _keyError, _keyRetrying, _padError, _keyMouse.DriverReady && !_keyMouse.UseSendInput, _inputDriverInstalled,
+            _keyError, _keyRetrying, _padError, _keyMouse.DriverReady && _keyMouse.UseInputDriver, _inputDriverInstalled,
             _usb.Enabled, _usb.State.ToString(), _usb.Detail, _authorized?.LastScan,
             _keyMouse.SendInput.ShortWrites, _server.RxExceptions, _engine.PressLatencyNow(), ElevationProbe.IsSelfElevated,
             _keyFiles.Directory, _log.LastError, Volatile.Read(ref _diagSaved));
@@ -579,7 +579,7 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
 
     public void SetCatchUpMs(int ms) => _engine.SetCatchUpMs(ms);
 
-    public void SetUseSendInput(bool on) => _engine.SetUseSendInput(on, v => _keyMouse.UseSendInput = v);
+    public void SetUseInputDriver(bool on) => _engine.SetUseInputDriver(on, v => _keyMouse.UseInputDriver = v);
 
     public void OpenPairingWindow() => _engine.OpenPairingWindow();
 
