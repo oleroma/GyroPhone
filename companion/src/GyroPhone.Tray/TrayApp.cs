@@ -132,8 +132,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         _input.Connected += OnInputConnected;
         _input.Lost += () => Post(Refresh);
 
-        // Keep the Run entry pointing at this exe (it may have moved since it was enabled).
-        if (IsAutoStartOn()) TrySetAutoStart(true);
 
         _menu = new ContextMenuStrip();
         _statusItem = new ToolStripMenuItem("Starting…") { Enabled = false };
@@ -254,7 +252,12 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             ApplyDiagnostics();
             Refresh();
             // First run: the input process opened the pairing window because nothing is paired yet.
-            if (!_pairShownOnce && Snap.PairingWindowS > 0 && Snap.PairedPhones.Count == 0) OpenPairForm();
+            if (!_pairShownOnce)
+            {
+                if (Snap.PairingWindowS > 0 && Snap.PairedPhones.Count == 0) OpenPairForm();
+                // Keep the Run entry pointing at this exe (it may have moved since it was enabled).
+                if (Set.StartWithWindows) TrySetAutoStart(true);
+            }
             _pairShownOnce = true;
         });
     }
