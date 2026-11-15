@@ -47,6 +47,61 @@ public static class LinkPaths
     /// <summary>Both sides: "Phone hotspot · PC Wi-Fi".</summary>
     public static string Describe(LinkInfo l, PcAdapter? pc) => Phone(l, pc) + (pc != null ? $" · PC {pc.Name}" : "");
 
+    /// <summary>
+    /// The connection line of a PC Diagnostics save (built only at Save): the setup, both sides, the network's name
+    /// when the PC is on that Wi-Fi itself (<paramref name="ssid"/> reads it by adapter id), the PC adapter that
+    /// gets the phone's packets and the addresses on both ends. "PC hotspot 5 GHz ch 36 · PC adapter Local Area
+    /// Connection* 10 (Microsoft Wi-Fi Direct Virtual Adapter #2) 192.168.137.1 · phone 192.168.137.42".
+    /// </summary>
+    public static string Connection(LinkInfo? l, IPAddress? phone, Func<string, string?>? ssid = null)
+    {
+        if (phone == null) return "phone not connected";
+        if (IPAddress.IsLoopback(phone)) return (l is { } lc ? Phone(lc, null) : "USB cable (direct)") + $" · phone at {phone} (the cable's local socket)";
+        var pc = AdapterFor(phone);
+        var parts = new List<string>(6);
+        if (l is { } li)
+        {
+            parts.Add(Phone(li, pc));
+            if (Setup(li, pc) is { } setup) parts.Add("setup " + setup);
+        }
+        else parts.Add("phone link unknown (no LINK_INFO yet)");
+        if (pc == null) parts.Add("PC adapter not found for the phone's address");
+        else
+        {
+            string? name = pc.Hotspot ? null : pc.Wireless ? ssid?.Invoke(pc.Id) : null;
+            if (pc.Hotspot) parts.Add("network the PC's Mobile hotspot");
+            else if (name != null) parts.Add("network " + name);
+            var (desc, own) = Detail(pc.Id, phone);
+            parts.Add($"PC adapter {pc.Name}" + (desc != null ? $" ({desc})" : "") + (own != null ? $" {own}" : ""));
+        }
+        parts.Add($"phone {phone}");
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>The adapter's description and the PC's IPv4 address on the phone's subnet there.</summary>
+    private static (string? Desc, IPAddress? Own) Detail(string id, IPAddress phone)
+    {
+        try
+        {
+            uint p = Bits(phone);
+            foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (ni.Id != id) continue;
+                foreach (var u in ni.GetIPProperties().UnicastAddresses)
+                {
+                    if (u.Address.AddressFamily != AddressFamily.InterNetwork || u.PrefixLength is <= 0 or > 32) continue;
+                    uint mask = u.PrefixLength == 32 ? uint.MaxValue : ~(uint.MaxValue >> u.PrefixLength);
+                    if ((Bits(u.Address) & mask) == (p & mask)) return (ni.Description, u.Address);
+                }
+                return (ni.Description, null);
+            }
+        }
+        catch (Exception e) when (e is NetworkInformationException or PlatformNotSupportedException)
+        {
+        }
+        return (null, null);
+    }
+
     private static int? Channel(int mhz) => mhz switch
     {
         >= 2412 and <= 2472 => (mhz - 2407) / 5,

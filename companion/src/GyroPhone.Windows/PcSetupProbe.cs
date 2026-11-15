@@ -19,8 +19,11 @@ public static class PcSetupProbe
     private const int BssTypeAny = 3;
     /// <summary>sizeof(WLAN_BSS_ENTRY), and the offsets of its BSSID and centre frequency (kHz).</summary>
     private const int BssEntrySize = 360, BssBssidAt = 40, BssFreqAt = 92;
-    /// <summary>WLAN_CONNECTION_ATTRIBUTES: the BSSID and the signal quality (0..100) in its association attributes.</summary>
-    private const int ConnBssidAt = 560, ConnQualityAt = 576, ConnMinSize = 580;
+    /// <summary>
+    /// WLAN_CONNECTION_ATTRIBUTES: the SSID (DOT11_SSID: a length, then up to 32 bytes), the BSSID and the signal
+    /// quality (0..100) in its association attributes.
+    /// </summary>
+    private const int ConnSsidAt = 520, ConnBssidAt = 560, ConnQualityAt = 576, ConnMinSize = 580;
     /// <summary>Power mode "Best power efficiency" (the power slider's overlay).</summary>
     private static readonly Guid BestEfficiency = new("961cc777-2547-4f9d-8174-7d86181b8a7a");
 
@@ -75,17 +78,7 @@ public static class PcSetupProbe
 
     private static PcWifiRadio QueryRadio(string id)
     {
-        if (!Guid.TryParse(id, out var guid)) return default;
-        if (s_wlan == IntPtr.Zero)
-        {
-            if (s_wlanFailed) return default;
-            if (WlanOpenHandle(2, IntPtr.Zero, out _, out s_wlan) != 0)
-            {
-                s_wlan = IntPtr.Zero;
-                s_wlanFailed = true; // no WLAN service (a desktop without Wi-Fi)
-                return default;
-            }
-        }
+        if (!Guid.TryParse(id, out var guid) || !WlanOpen()) return default;
         int? rssi = null, freq = null;
         if (WlanQueryInterface(s_wlan, ref guid, OpcodeRssi, IntPtr.Zero, out int size, out IntPtr data, IntPtr.Zero) == 0)
         {
@@ -124,6 +117,52 @@ public static class PcSetupProbe
             }
         }
         return new PcWifiRadio(freq, rssi is < 0 ? rssi : null);
+    }
+
+    /// <summary>Opens the WLAN handle once (under <see cref="Gate"/>); false when there is no WLAN service.</summary>
+    private static bool WlanOpen()
+    {
+        if (s_wlan != IntPtr.Zero) return true;
+        if (s_wlanFailed) return false;
+        if (WlanOpenHandle(2, IntPtr.Zero, out _, out s_wlan) == 0) return true;
+        s_wlan = IntPtr.Zero;
+        s_wlanFailed = true; // no WLAN service (a desktop without Wi-Fi)
+        return false;
+    }
+
+    /// <summary>
+    /// The name (SSID) of the Wi-Fi network the PC's adapter <paramref name="id"/> is connected to, or null (not
+    /// Wi-Fi, not connected). Read only at a Diagnostics save.
+    /// </summary>
+    public static string? Ssid(string id)
+    {
+        if (!Guid.TryParse(id, out var guid)) return null;
+        lock (Gate)
+        {
+            try
+            {
+                if (!WlanOpen()) return null;
+                if (WlanQueryInterface(s_wlan, ref guid, OpcodeCurrentConnection, IntPtr.Zero, out int size, out IntPtr data, IntPtr.Zero) != 0)
+                    return null;
+                try
+                {
+                    if (size < ConnMinSize) return null;
+                    int n = Math.Clamp(Marshal.ReadInt32(data + ConnSsidAt), 0, 32);
+                    var b = new byte[n];
+                    Marshal.Copy(data + ConnSsidAt + 4, b, 0, n);
+                    return n == 0 ? null : System.Text.Encoding.UTF8.GetString(b);
+                }
+                finally
+                {
+                    WlanFreeMemory(data);
+                }
+            }
+            catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException)
+            {
+                s_wlanFailed = true;
+                return null;
+            }
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]

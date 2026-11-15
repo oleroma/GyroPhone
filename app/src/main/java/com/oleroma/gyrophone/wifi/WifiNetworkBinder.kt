@@ -6,7 +6,9 @@ import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.ScanResult
 import android.net.wifi.WifiInfo
+import android.net.wifi.WifiManager
 import android.util.Log
 import com.oleroma.gyrophone.core.net.NetAddresses
 import java.io.IOException
@@ -15,7 +17,15 @@ import java.net.Inet4Address
 import java.net.InetAddress
 
 /** The phone's Wi-Fi radio as last reported; null fields are unknown. */
-data class WifiRadioInfo(val rssiDbm: Int? = null, val linkMbps: Int? = null, val freqMhz: Int? = null) {
+data class WifiRadioInfo(
+    val rssiDbm: Int? = null,
+    val linkMbps: Int? = null,
+    val freqMhz: Int? = null,
+    /** The network's name, or null when Android hides it (it shows it only to apps with location access). */
+    val ssid: String? = null,
+    /** 4, 5, 6 or 7 (Wi-Fi 4 = 802.11n … Wi-Fi 7 = 802.11be), null if unknown or older. */
+    val wifiGeneration: Int? = null,
+) {
     /** 2, 5 or 6 (GHz), 0 if unknown. */
     val band: Int get() = when (freqMhz) {
         null -> 0
@@ -68,6 +78,14 @@ class WifiNetworkBinder(context: Context, private val onChanged: () -> Unit) {
                 rssiDbm = wi.rssi.takeIf { it > -127 && it < 0 },
                 linkMbps = (if (tx > 0) tx else wi.linkSpeed).takeIf { it > 0 },
                 freqMhz = wi.frequency.takeIf { it > 0 },
+                ssid = ssidOf(wi.ssid),
+                wifiGeneration = when (wi.wifiStandard) {
+                    ScanResult.WIFI_STANDARD_11N -> 4
+                    ScanResult.WIFI_STANDARD_11AC -> 5
+                    ScanResult.WIFI_STANDARD_11AX -> 6
+                    ScanResult.WIFI_STANDARD_11BE -> 7
+                    else -> null
+                },
             )
         }
 
@@ -150,5 +168,11 @@ class WifiNetworkBinder(context: Context, private val onChanged: () -> Unit) {
 
     companion object {
         private const val TAG = "WifiNetworkBinder"
+
+        /** "Home" from "\"Home\"", null for the hidden name Android gives apps without location access. */
+        fun ssidOf(raw: String?): String? {
+            if (raw == null || raw == WifiManager.UNKNOWN_SSID || raw.isBlank()) return null
+            return if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) raw.substring(1, raw.length - 1) else raw
+        }
     }
 }

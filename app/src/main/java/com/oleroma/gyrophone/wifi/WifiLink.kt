@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.ConnectivityManager
 import android.os.Build
 import android.os.Process
 import android.os.SystemClock
@@ -1450,6 +1451,67 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 
+    /**
+     * For a Diagnostics save (any thread, only at Save, never on the input path): how the phone reaches the PC now,
+     * in words. Router or PC hotspot is told by the network's gateway: on the PC's own hotspot (or a cable to the PC)
+     * the PC is the gateway. "router Wi-Fi · network Home · 5 GHz ch 36 · Wi-Fi 6 · -41 dBm · 1201 Mbps · PC 192.168.1.20 · phone wlan0 192.168.1.31"
+     */
+    fun connectionLine(): String {
+        val f = live
+        val pc = (f?.hostAddr ?: session?.hostAddr)?.address
+        val u = if (usbActive) usb else null
+        val cm = appContext.getSystemService(ConnectivityManager::class.java)
+        val parts = ArrayList<String>(8)
+        if (u != null) {
+            val pcGateway = gatewayIs(cm, u.name, pc)
+            parts += when {
+                u.hotspot -> "phone hotspot (the PC joined the phone's Wi-Fi hotspot)"
+                u.ethernet -> when (pcGateway) {
+                    true -> "cable to PC (Ethernet adapter on the phone)"
+                    false -> "cable to router (Ethernet adapter on the phone)"
+                    null -> "Ethernet cable (adapter on the phone; router or PC unknown)"
+                }
+                u.direct -> "cable to PC (USB direct)"
+                else -> "cable to PC (USB tethering)"
+            }
+        } else {
+            val net = binder.network
+            val info = binder.info
+            if (net == null) parts += "no Wi-Fi network"
+            else {
+                val iface = binder.interfaceName
+                parts += when (gatewayIs(cm, iface, pc)) {
+                    true -> "PC hotspot"
+                    false -> "router Wi-Fi"
+                    null -> "Wi-Fi (router or PC hotspot unknown)"
+                }
+                parts += "network " + (info.ssid ?: "name hidden by Android (GP has no location access)")
+                if (info.band != 0) parts += "${info.band} GHz" + (wifiChannel(info.freqMhz)?.let { " ch $it" } ?: "")
+                info.wifiGeneration?.let { parts += "Wi-Fi $it" }
+                info.rssiDbm?.let { parts += "$it dBm" }
+                info.linkMbps?.let { parts += "$it Mbps" }
+            }
+        }
+        parts += "PC " + (pc?.hostAddress ?: "not connected")
+        val ifName = u?.name ?: binder.interfaceName
+        val own = u?.address ?: ifName?.let { name ->
+            runCatching { java.net.NetworkInterface.getByName(name)?.inetAddresses?.toList()?.firstOrNull { it is java.net.Inet4Address } }.getOrNull()
+        }
+        if (ifName != null) parts += "phone ${if (u?.direct == true) "cable" else ifName} ${own?.hostAddress ?: ""}".trimEnd()
+        return parts.joinToString(" · ")
+    }
+
+    /** The default gateway of the network on [iface] is [pc] (true), is another address (false), or unknown (null). */
+    private fun gatewayIs(cm: ConnectivityManager?, iface: String?, pc: InetAddress?): Boolean? {
+        if (cm == null || iface == null || pc == null || pc.isLoopbackAddress) return null
+        @Suppress("DEPRECATION")
+        val lp = runCatching { cm.allNetworks.mapNotNull { cm.getLinkProperties(it) }.firstOrNull { it.interfaceName == iface } }.getOrNull()
+            ?: return null
+        val gw = lp.routes.firstOrNull { it.isDefaultRoute && it.gateway is java.net.Inet4Address && !it.gateway!!.isAnyLocalAddress }?.gateway
+            ?: return null
+        return gw == pc
+    }
+
     /** "5 GHz · 1201 Mbps · −51 dBm", leaving out what is unknown. */
     private fun radioDetail(): String {
         if (usbActive) return if (usbHotspot) "phone hotspot" else if (usbEthernet) "Ethernet" else if (usbDirect) "USB cable" else "USB tethering"
@@ -1502,6 +1564,16 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             is PairState.GotHost -> PairingMath.formatSas(s.sas)
             is PairState.AwaitUser -> PairingMath.formatSas(s.sas)
             is PairState.Confirming -> PairingMath.formatSas(s.sas)
+            else -> null
+        }
+
+        /** The Wi-Fi channel of a centre frequency, or null. */
+        fun wifiChannel(mhz: Int?): Int? = when (mhz) {
+            null -> null
+            in 2412..2472 -> (mhz - 2407) / 5
+            2484 -> 14
+            in 5160..5885 -> (mhz - 5000) / 5
+            in 5955..7115 -> (mhz - 5950) / 5
             else -> null
         }
 
