@@ -17,7 +17,7 @@ adaptive triggers come later.
 3. Start the game *after* the DualSense is plugged in (the phone connected with that output).
    Many games only look for controllers when they start.
 
-Run `install.cmd` again to update the driver.
+Run `install.cmd` again to update the driver; exit the companion first, so install.cmd can restart the device and the new driver runs at once (otherwise it runs after the next Windows restart).
 
 ## What install.cmd does
 

@@ -87,6 +87,17 @@ try {
     Write-Step 'Installing the driver on it...'
     $reboot = [GpSetup]::InstallDriver($GpHardwareId, $inf)
     $devices = @(Get-GpDevices)
+    # An update only takes effect once the device restarts: Windows keeps the old driver running till then.
+    if (-not $reboot) {
+        foreach ($d in $devices) {
+            Write-Step "Restarting $($d.InstanceId) so the new driver runs..."
+            & pnputil.exe /restart-device "$($d.InstanceId)" | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Step '  Windows could not restart it now (the companion may be holding it). Exit the companion and run install.cmd again, or restart Windows.'
+            }
+        }
+        $devices = @(Get-GpDevices)
+    }
     foreach ($d in $devices) { Write-Step "  $($d.FriendlyName): $($d.Status)" }
     if ($reboot) { Write-Step 'Windows wants a restart to finish.' }
     Write-Done 'Done. Choose "DualSense" as the output in the GyroPhone companion.'
