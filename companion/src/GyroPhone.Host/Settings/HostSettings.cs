@@ -203,6 +203,12 @@ public sealed class OverlayRestFade
     /// <summary>Also fade when no OVERLAY came for <see cref="QuietMs"/> (screen off, app closed, link stopped).</summary>
     public bool WhenSilent { get; set; } = true;
 
+    public void CopyFrom(OverlayRestFade o)
+    {
+        On = o.On; FlatWithinDeg = o.FlatWithinDeg; StillBelowDps = o.StillBelowDps; QuietMs = o.QuietMs;
+        FadeTo = o.FadeTo; FadeMs = o.FadeMs; WhenSilent = o.WhenSilent;
+    }
+
     public void Normalize()
     {
         FlatWithinDeg = Math.Clamp(float.IsFinite(FlatWithinDeg) ? FlatWithinDeg : 10f, 1f, 90f);

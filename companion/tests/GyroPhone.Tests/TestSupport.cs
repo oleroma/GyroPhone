@@ -373,6 +373,8 @@ internal sealed class Harness : IDisposable
     public readonly RecordingEvents Events = new();
     public readonly HostSettings Settings;
     public readonly HostEngine Engine;
+    /// <summary>The companion's overlay side on the same memory (one process here: the engine wakes it inline).</summary>
+    public readonly OverlayHost Overlays;
 
     public Harness(Func<int, byte[]>? random = null, Func<P256>? newKey = null, bool pairDefault = true,
         OutputMode mode = OutputMode.Xbox360, P256? hostKey = null, Action<Action>? padWorker = null)
@@ -383,6 +385,8 @@ internal sealed class Harness : IDisposable
         {
             PadWorker = padWorker ?? (job => job()),
         };
+        Overlays = new OverlayHost(Settings, Engine.Shared, new AutoResetEvent(false), (on, c, s) => Engine.SetOverlay(on, c, s), Clock);
+        Engine.OverlayWake = Overlays.Signal;
         Engine.AttachSender(Sender);
     }
 
