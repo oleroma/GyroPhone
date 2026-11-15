@@ -81,6 +81,8 @@ public class ZeroAllocationTests
         return list;
     }
 
+    private static string? where;
+
     private static long RunAndMeasure(bool diagnostics)
     {
         var settings = new HostSettings { HostId = Hex.Range(0x10, 16), HostName = "DESKTOP-OLEX", OutputMode = OutputMode.Xbox360, Diagnostics = diagnostics };
@@ -106,19 +108,30 @@ public class ZeroAllocationTests
         engine.AttachSender(sender);
         engine.SetOverlay(true);
 
-        // Twice: the first run warms everything up (first use, JIT), the second is measured.
+        // Twice: the first run warms everything up (first use, JIT), the second is measured, packet by packet, so a
+        // failure names where the memory was made.
         long allocated = 0;
         for (int run = 0; run < 2; run++)
         {
             var packets = Play(phone, 3000);
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            foreach (var d in packets)
+            allocated = 0;
+            int offenders = 0;
+            where = null;
+            for (int k = 0; k < packets.Count; k++)
             {
+                var d = packets[k];
                 clock.NowUs += 333;
+                long b0 = GC.GetAllocatedBytesForCurrentThread();
                 engine.OnDatagram(d, phone.Addr, clock.NowUs);
+                long b1 = GC.GetAllocatedBytesForCurrentThread();
                 engine.Flush(clock.NowUs);
+                long b2 = GC.GetAllocatedBytesForCurrentThread();
+                if (b2 == b0) continue;
+                allocated += b2 - b0;
+                offenders++;
+                where ??= $"packet {k} of {packets.Count} (type 0x{d[3]:X2}): {b1 - b0} B in OnDatagram, {b2 - b1} B in Flush";
             }
-            allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            if (where != null) where += $"; {offenders} packets made memory";
         }
         // It really played: every STATE was taken, moved the mouse and pressed keys, the pings were answered.
         Assert.True(engine.Connected);
@@ -131,12 +144,14 @@ public class ZeroAllocationTests
     [Fact]
     public void ThePlayPathMakesNoNewMemory()
     {
-        Assert.Equal(0, RunAndMeasure(diagnostics: false));
+        long made = RunAndMeasure(diagnostics: false);
+        Assert.True(made == 0, $"{made} B made while playing; first at {where}");
     }
 
     [Fact]
     public void ThePlayPathMakesNoNewMemoryWithDiagnosticsOn()
     {
-        Assert.Equal(0, RunAndMeasure(diagnostics: true));
+        long made = RunAndMeasure(diagnostics: true);
+        Assert.True(made == 0, $"{made} B made while playing; first at {where}");
     }
 }
