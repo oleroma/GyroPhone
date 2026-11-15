@@ -108,8 +108,9 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
             move.reset()
         }
         if (moves) {
+            move.held = held
             move.turn(yaw, pitch, roll, dtSeconds)
-            if (pressed) move.center()
+            if (pressed || held) move.center()
         }
     }
 

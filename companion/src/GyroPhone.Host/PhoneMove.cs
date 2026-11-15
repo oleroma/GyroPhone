@@ -6,8 +6,8 @@ namespace GyroPhone.Host;
 /// A phone can't know where it is: it only feels pushes. Pushes added up twice give a position,
 /// but their errors grow into meters within seconds, so this shows nudges only: the push less
 /// gravity (followed by the gyro, so a turn isn't taken for a move) adds up into a speed that fades
-/// on its own and a position that glides back to the middle once the phone is nearly still, and
-/// goes back at once on a ratchet press (<see cref="Center"/>). Fed once per OVERLAY with the
+/// and a position; once nearly still the speed stops at once and the position glides back to the
+/// middle. A ratchet press, and holding one, keeps it in the middle. Fed once per OVERLAY with the
 /// frame's averaged accelerometer reading. Frames as <see cref="OverlayPose"/>: x right, y up,
 /// z toward the player; the position is in the view (meters). Not thread safe.
 /// </summary>
@@ -19,9 +19,13 @@ public sealed class PhoneMove
     private const float MaxDt = 0.1f;
     private const float CalmG = 0.4f;
     private const float GFollowS = 0.5f;
-    private const float GFollowMovingS = 8f;
+    private const float GFollowMovingS = 20f;
+    /// <summary>Turning slower than this (deg/s) the accelerometer may set gravity.</summary>
+    private const float CalmDps = 20f;
+    /// <summary>Once still, the speed goes this fast.</summary>
+    private const float StopS = 0.03f;
     private const float Noise = 0.06f;
-    private const float SpeedFadeS = 0.5f;
+    private const float SpeedFadeS = 2f;
     private const float ShakeS = 0.08f;
     private const float StillForS = 0.1f;
     private const float MaxM = 0.5f;
@@ -29,15 +33,19 @@ public sealed class PhoneMove
     private float _gx, _gy, _gz;
     private bool _hasG;
     private float _vx, _vy, _vz;
-    private float _shake, _still;
+    private float _shake, _still, _spin;
 
     public float X { get; private set; }
     public float Y { get; private set; }
     public float Z { get; private set; }
 
-    /// <summary>Turned by the gyro (degrees on yaw, pitch, roll, as OVERLAY carries them): gravity turns with the phone.</summary>
-    public void Turn(float yawDeg, float pitchDeg, float rollDeg)
+    /// <summary>
+    /// Turned by the gyro (degrees on yaw, pitch, roll over <paramref name="dt"/> seconds, as OVERLAY carries them):
+    /// gravity turns with the phone.
+    /// </summary>
+    public void Turn(float yawDeg, float pitchDeg, float rollDeg, float dt)
     {
+        _spin = dt > 0f ? MathF.Sqrt(yawDeg * yawDeg + pitchDeg * pitchDeg + rollDeg * rollDeg) / dt : 0f;
         if (!_hasG) return;
         float ax = pitchDeg * DegToRad, ay = -yawDeg * DegToRad, az = -rollDeg * DegToRad;
         // A vector fixed in the world, seen from a phone turning by a: g -= a × g.
@@ -52,7 +60,8 @@ public sealed class PhoneMove
     /// the pose shown (row-major 3×3, phone into view). It glides back, 95% in <paramref name="returnSeconds"/>,
     /// once it shakes less than <paramref name="stillBelow"/> m/s².
     /// </summary>
-    public void Push(float upX, float upY, float upZ, float dt, float[]? view, float stillBelow, float returnSeconds)
+    /// <remarks>While a ratchet is <paramref name="held"/> it stays in the middle and nothing adds up.</remarks>
+    public void Push(float upX, float upY, float upZ, float dt, float[]? view, float stillBelow, float returnSeconds, bool held = false)
     {
         float x = upX * G, y = upY * G, z = upZ * G;
         if (!_hasG)
@@ -64,13 +73,18 @@ public sealed class PhoneMove
         dt = Math.Clamp(dt, 0f, MaxDt);
         if (dt == 0f) return;
         float l = MathF.Sqrt(x * x + y * y + z * z);
-        bool calm = MathF.Abs(l - G) < CalmG;
+        bool calm = MathF.Abs(l - G) < CalmG && _spin < CalmDps;
         float pull = Math.Min(dt / (calm ? GFollowS : GFollowMovingS), 1f);
         _gx += (x - _gx) * pull; _gy += (y - _gy) * pull; _gz += (z - _gz) * pull;
         float lx = x - _gx, ly = y - _gy, lz = z - _gz;
         float a = MathF.Sqrt(lx * lx + ly * ly + lz * lz);
         _shake += (a - _shake) * Math.Min(dt / ShakeS, 1f);
         if (a < Noise) lx = ly = lz = 0f;
+        if (held)
+        {
+            Center();
+            return;
+        }
         if (view != null)
         {
             float rx = view[0] * lx + view[1] * ly + view[2] * lz;
@@ -86,9 +100,11 @@ public sealed class PhoneMove
         _still = _shake < stillBelow ? _still + dt : 0f;
         if (_still >= StillForS)
         {
+            // Still: it has stopped (so a move doesn't swing back past where it ended), then glides back.
+            float stop = MathF.Exp(-dt / StopS);
+            _vx *= stop; _vy *= stop; _vz *= stop;
             float back = MathF.Exp(-3f * dt / Math.Max(returnSeconds, 0.05f));
             px *= back; py *= back; pz *= back;
-            _vx *= back; _vy *= back; _vz *= back;
         }
         float d = MathF.Sqrt(px * px + py * py + pz * pz);
         if (d > MaxM)
@@ -112,6 +128,6 @@ public sealed class PhoneMove
     {
         Center();
         _hasG = false;
-        _shake = 0f;
+        _shake = _spin = 0f;
     }
 }

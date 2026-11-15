@@ -9,9 +9,9 @@ import kotlin.math.sqrt
  *
  * A phone can't know where it is: it only feels pushes (the accelerometer). Pushes added up twice
  * give a position, but their small errors grow into meters within seconds. So this shows nudges
- * only: the push less gravity is added up into a speed (which fades on its own, so a wrong one
- * can't keep it going) and a position, which glides back to the middle once the phone is nearly
- * still, and goes back at once on [center] (a ratchet press).
+ * only: the push less gravity is added up into a speed and a position; once the phone is nearly
+ * still the speed stops at once (so a move ends where it ended, not swinging back) and the
+ * position glides back to the middle. A ratchet press, and holding one, keeps it in the middle ([held]).
  *
  * Gravity in the phone's frame is followed by the gyro ([turn], the gyro thread) and pulled
  * slowly toward the accelerometer's reading ([push], its own thread), so turning the phone isn't
@@ -44,10 +44,18 @@ class PhoneMove {
 
     private var lastNs = 0L
 
+    /** How fast the phone turned at the last gyro sample (deg/s): gravity is trusted from the accelerometer only while it barely turns. */
+    private var spin = 0f
+
+    /** A ratchet is held: it stays in the middle, nothing adds up. */
+    @Volatile var held = false
+
     /** Gyro rates in deg/s ([GyroMouse.motion], as [GyroPose.fuse] takes them) over [dt] seconds: turns gravity with the phone. */
     @Synchronized
     fun turn(yaw: Float, pitch: Float, roll: Float, dt: Float) {
-        if (!hasG || dt <= 0f) return
+        if (dt <= 0f) return
+        spin = sqrt(yaw * yaw + pitch * pitch + roll * roll)
+        if (!hasG) return
         val ax = pitch * DEG_TO_RAD * dt
         val ay = -yaw * DEG_TO_RAD * dt
         val az = -roll * DEG_TO_RAD * dt
@@ -79,9 +87,9 @@ class PhoneMove {
             return
         }
         if (dt == 0f) return
-        // Pulled toward the reading: firmly while it is about 1 g (nothing but gravity), barely while moving.
+        // Pulled toward the reading: firmly while it is about 1 g and the phone barely turns (nothing but gravity), barely else.
         val l = sqrt(x * x + y * y + z * z)
-        val calm = kotlin.math.abs(l - G) < CALM_G
+        val calm = kotlin.math.abs(l - G) < CALM_G && spin < CALM_DPS
         val pull = (dt / (if (calm) G_FOLLOW_S else G_FOLLOW_MOVING_S)).coerceAtMost(1f)
         gx += (x - gx) * pull; gy += (y - gy) * pull; gz += (z - gz) * pull
         var lx = x - gx
@@ -92,6 +100,10 @@ class PhoneMove {
         // Sensor noise and leftover gravity, not a move.
         if (a < NOISE) {
             lx = 0f; ly = 0f; lz = 0f
+        }
+        if (held) {
+            center()
+            return
         }
         if (view != null) {
             val rx = view[0] * lx + view[1] * ly + view[2] * lz
@@ -106,9 +118,11 @@ class PhoneMove {
         px += vx * dt; py += vy * dt; pz += vz * dt
         still = if (shake < stillBelow) still + dt else 0f
         if (still >= STILL_FOR_S) {
+            // Still: it has stopped (the speed goes at once, so a move doesn't swing back past where it ended), then glides back.
+            val stop = exp(-dt / STOP_S)
+            vx *= stop; vy *= stop; vz *= stop
             val back = exp(-3f * dt / returnSeconds.coerceAtLeast(0.05f))
             px *= back; py *= back; pz *= back
-            vx *= back; vy *= back; vz *= back
         }
         // Far beyond what a hand moves without the phone noticing: hold it there.
         val d = sqrt(px * px + py * py + pz * pz)
@@ -132,6 +146,7 @@ class PhoneMove {
         center()
         hasG = false
         shake = 0f
+        spin = 0f
         lastNs = 0L
     }
 
@@ -149,11 +164,15 @@ class PhoneMove {
         /** A reading within this of 1 g (m/s²) counts as gravity alone. */
         private const val CALM_G = 0.4f
         private const val G_FOLLOW_S = 0.5f
-        private const val G_FOLLOW_MOVING_S = 8f
+        private const val G_FOLLOW_MOVING_S = 20f
         /** Pushes below this (m/s²) are taken as noise. */
         private const val NOISE = 0.06f
-        /** How long the speed takes to fade to a third on its own, so drift can't build up. */
-        private const val SPEED_FADE_S = 0.5f
+        /** How long the speed takes to fade to a third on its own while moving, so drift can't build up for long. */
+        private const val SPEED_FADE_S = 2f
+        /** Once still, the speed goes this fast. */
+        private const val STOP_S = 0.03f
+        /** Turning slower than this (deg/s) the accelerometer may set gravity. */
+        private const val CALM_DPS = 20f
         private const val SHAKE_S = 0.08f
         /** Still that long before it glides back, so a pause mid-move doesn't pull it. */
         private const val STILL_FOR_S = 0.1f

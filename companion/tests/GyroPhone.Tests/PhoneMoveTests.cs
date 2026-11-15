@@ -10,7 +10,7 @@ public class PhoneMoveTests
     {
         for (int i = 0; i < (int)(seconds * 60); i++)
         {
-            m.Turn(0f, 0f, 0f);
+            m.Turn(0f, 0f, 0f, 1f / 60f);
             m.Push(0f, 1f + up, 0f, 1f / 60f, null, 0.3f, 1f);
         }
     }
