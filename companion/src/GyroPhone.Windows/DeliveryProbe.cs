@@ -12,9 +12,15 @@ namespace GyroPhone.Windows;
 /// Runs only while Diagnostics is on: its own thread with a hidden message-only window that reads raw mouse input
 /// (RIDEV_INPUTSINK), read-only: nothing is held back or changed. The input path only stores the move's start time and
 /// size in a preallocated ring (<see cref="Sent"/>: no lock, no allocation); this thread matches each raw input move from
-/// GyroPhone (no device behind it: SendInput; or the driver's own mouse) to the oldest stored move of the same size.
+/// GyroPhone (no device behind it: SendInput; or the driver's own mouse) to the oldest run of stored moves in a row that
+/// adds up to it. Windows 11 merges a device's moves for background raw input readers like this one (at most ~125 a
+/// second; the game in front gets each one), so on the input driver one raw move usually carries several of GyroPhone's,
+/// and its delay is timed from the newest of them.
 /// Once a second the input log's second line gets
-/// " delivery[driver] n 950 p50 0.12 p99 0.40 max 6.10 over2 3 unmatched 0" (ms; "over2": moves over 2 ms).
+/// " delivery[driver] n 125 p50 0.12 p99 0.40 max 6.10 over2 3 unmatched 0 merged 820" (ms; "n": raw moves matched;
+/// "over2": over 2 ms; "unmatched": GyroPhone moves that never showed up, which on a steady link means lost moves;
+/// "merged": GyroPhone moves that came inside another raw move; "stray": raw moves from GyroPhone's device that matched
+/// nothing).
 /// </para>
 /// <para>
 /// A process has one raw mouse input target: "Press a key" listening and the video latency test window take it while
@@ -42,7 +48,13 @@ public sealed class DeliveryProbe : IDisposable
     // The probe thread's own numbers for the current second, and the last second's text.
     private readonly List<long> _lat = new(4096);
     private string? _text;
-    private long _unmatched, _over2, _max;
+    private long _unmatched, _merged, _stray, _over2, _max;
+    // Raw moves waiting for their stored moves (probe thread only).
+    private const int PendingSize = 32, MaxSkip = 32, MaxRun = 128;
+    private readonly long[] _pendTicks = new long[PendingSize];
+    private readonly int[] _pendX = new int[PendingSize], _pendY = new int[PendingSize];
+    private readonly bool[] _pendDriver = new bool[PendingSize];
+    private int _pendingFirst, _pendingCount;
     private bool _sawDriver, _sawSendInput;
     private readonly byte[] _buffer = new byte[128];
 
@@ -155,7 +167,11 @@ public sealed class DeliveryProbe : IDisposable
         try
         {
             if (msg == WmInput) OnInput(lParam);
-            else if (msg == WmTimer) Roll();
+            else if (msg == WmTimer)
+            {
+                Settle(Stopwatch.GetTimestamp());
+                Roll();
+            }
             else if (msg == WmRegister) Register(hwnd);
         }
         catch (Exception)
@@ -185,33 +201,108 @@ public sealed class DeliveryProbe : IDisposable
         Match(now, x, y, driver);
     }
 
+    /// <summary>
+    /// Pairs raw input with stored moves. Windows 11 hands a background raw input reader (this probe; the game in front
+    /// still gets every report) a device's moves merged, at most about 125 times a second, so one raw move is the sum of a
+    /// run of stored moves in a row. SendInput moves come one by one. A raw move that matches no run yet waits a little
+    /// (its hand-off may not be stored yet) instead of being thrown away.
+    /// </summary>
     private void Match(long now, int x, int y, bool driver)
     {
-        long tail = _tail, head = Volatile.Read(ref _head);
-        for (long k = tail; k < head; k++)
-        {
-            int i = (int)(k & (RingSize - 1));
-            if (_dx[i] != x || _dy[i] != y) continue;
-            // Raw input comes in the order sent: moves before this one never showed up (clipped at the screen's edge,
-            // or sent before the probe started).
-            Volatile.Write(ref _tail, k + 1);
-            Record(now - _ticks[i], k - tail, driver);
-            return;
-        }
-        // Not one of the stored moves: drop the ones too old to still come.
-        long dropped = 0;
-        while (tail < head && now - _ticks[(int)(tail & (RingSize - 1))] > StaleTicks)
-        {
-            tail++;
-            dropped++;
-        }
-        Volatile.Write(ref _tail, tail);
-        if (dropped > 0) Record(-1, dropped, driver);
+        if (_pendingCount == PendingSize) DropPending();
+        int slot = (_pendingFirst + _pendingCount++) % PendingSize;
+        _pendTicks[slot] = now;
+        _pendX[slot] = x;
+        _pendY[slot] = y;
+        _pendDriver[slot] = driver;
+        Settle(now);
     }
 
-    private void Record(long lat, long unmatched, bool driver)
+    /// <summary>Matches waiting raw moves in order, and gives up on stored moves and raw moves too old to still pair.</summary>
+    private void Settle(long now)
+    {
+        long tail = _tail, head = Volatile.Read(ref _head);
+        while (_pendingCount > 0)
+        {
+            int p = _pendingFirst;
+            long at = _pendTicks[p];
+            // Stored moves too old to come with this raw move never showed up.
+            long dropped = 0;
+            while (tail < head && at - _ticks[(int)(tail & (RingSize - 1))] > StaleTicks)
+            {
+                tail++;
+                dropped++;
+            }
+            if (dropped > 0) Record(-1, dropped, 0, _pendDriver[p]);
+            if (TryRun(tail, head, _pendX[p], _pendY[p], out long first, out long last))
+            {
+                // Moves before the run never showed up; the run's newest move is the one this raw move delivered last.
+                Record(at - _ticks[(int)(last & (RingSize - 1))], first - tail, last - first, _pendDriver[p]);
+                tail = last + 1;
+                Volatile.Write(ref _tail, tail);
+                DropPendingFirst();
+                continue;
+            }
+            Volatile.Write(ref _tail, tail);
+            if (now - at <= StaleTicks) break; // its hand-off may not be stored yet
+            _stray++;
+            DropPendingFirst();
+        }
+        if (_pendingCount == 0)
+        {
+            // Nothing waiting: stored moves long past any raw move never showed up.
+            long dropped = 0;
+            while (tail < head && now - _ticks[(int)(tail & (RingSize - 1))] > 2 * StaleTicks)
+            {
+                tail++;
+                dropped++;
+            }
+            if (dropped > 0) Record(-1, dropped, 0, false);
+        }
+        Volatile.Write(ref _tail, tail);
+    }
+
+    /// <summary>The first run of stored moves in a row (starting at most <see cref="MaxSkip"/> in) that adds up to x, y.</summary>
+    private bool TryRun(long tail, long head, int x, int y, out long first, out long last)
+    {
+        long starts = Math.Min(head, tail + MaxSkip);
+        for (long s = tail; s < starts; s++)
+        {
+            int sx = 0, sy = 0;
+            long end = Math.Min(head, s + MaxRun);
+            for (long k = s; k < end; k++)
+            {
+                int i = (int)(k & (RingSize - 1));
+                sx += _dx[i];
+                sy += _dy[i];
+                if (sx == x && sy == y)
+                {
+                    first = s;
+                    last = k;
+                    return true;
+                }
+            }
+        }
+        first = last = -1;
+        return false;
+    }
+
+    private void DropPendingFirst()
+    {
+        _pendingFirst = (_pendingFirst + 1) % PendingSize;
+        _pendingCount--;
+    }
+
+    private void DropPending()
+    {
+        _stray++;
+        DropPendingFirst();
+    }
+
+    private void Record(long lat, long unmatched, long merged, bool driver)
     {
         _unmatched += unmatched;
+        _merged += merged;
         if (lat < 0) return;
         _lat.Add(lat);
         if (lat > _max) _max = lat;
@@ -223,7 +314,7 @@ public sealed class DeliveryProbe : IDisposable
     /// <summary>Each second on the probe thread: the second's numbers become the text <see cref="SecondText"/> hands out.</summary>
     private void Roll()
     {
-        if (_lat.Count == 0 && _unmatched == 0)
+        if (_lat.Count == 0 && _unmatched == 0 && _stray == 0)
         {
             _text = null;
             return;
@@ -235,9 +326,9 @@ public sealed class DeliveryProbe : IDisposable
         string route = _sawDriver && _sawSendInput ? "both" : _sawDriver ? "driver" : "SendInput";
         long over = Interlocked.Exchange(ref _overflow, 0);
         _text = string.Create(CultureInfo.InvariantCulture,
-            $" delivery[{route}] n {n} p50 {p50:0.00} p99 {p99:0.00} max {Ms(_max):0.00} over2 {_over2} unmatched {_unmatched}{(over > 0 ? $" full {over}" : "")}");
+            $" delivery[{route}] n {n} p50 {p50:0.00} p99 {p99:0.00} max {Ms(_max):0.00} over2 {_over2} unmatched {_unmatched} merged {_merged}{(_stray > 0 ? $" stray {_stray}" : "")}{(over > 0 ? $" full {over}" : "")}");
         _lat.Clear();
-        _unmatched = _over2 = _max = 0;
+        _unmatched = _merged = _stray = _over2 = _max = 0;
         _sawDriver = _sawSendInput = false;
     }
 

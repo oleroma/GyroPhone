@@ -89,18 +89,20 @@ public class EngineLockTests
         using var entered = new ManualResetEventSlim();
         using var go = new ManualResetEventSlim();
         // The UI holds the engine lock (a change of the keyboard and mouse route) while a moving STATE comes in.
-        var ui = Task.Run(() => h.Engine.ChangeKeyMouseRoute(() =>
+        // Own threads, not the thread pool: on a busy two-core CI machine the pool's threads are all blocked here (this
+        // test waits on the lock, the UI holds it), and the releasing task would only run once the 5 s wait is over.
+        var ui = Task.Factory.StartNew(() => h.Engine.ChangeKeyMouseRoute(() =>
         {
             entered.Set();
             go.Wait(5000);
-        }, "test"));
+        }, "test"), TaskCreationOptions.LongRunning);
         Assert.True(entered.Wait(5000));
-        var release = Task.Run(async () =>
+        var release = Task.Factory.StartNew(() =>
         {
-            await Task.Delay(30);
+            Thread.Sleep(30);
             h.Clock.AdvanceMs(5);
             go.Set();
-        });
+        }, TaskCreationOptions.LongRunning);
         long recv = h.Clock.NowUs;
         h.Engine.OnDatagram(phone.State(f => f.MouseTotalX += 20), phone.Addr, recv);
         h.Engine.Flush(h.Clock.NowUs);
