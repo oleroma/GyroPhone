@@ -71,6 +71,15 @@ public readonly record struct HostStatus(
 public readonly record struct PressTime(uint StateTimeUs, uint EventTimeUs);
 
 /// <summary>
+/// The phone's side of the link over one second, for a Performance record: STATEs and all packets its send thread
+/// sent, sends that failed or took 2 ms or more, the time in send (total and longest), how late the thread woke at
+/// worst, the longest gap between two STATEs, and the packets the whole phone sent. <see cref="TimeUs"/>: the
+/// second's end, low 32 bits of the phone's µs clock (as STATE's). Times in µs.
+/// </summary>
+public readonly record struct PhoneStats(uint TimeUs, ushort States, ushort Packets, ushort Failed, ushort SlowSends,
+    uint SendTotalUs, uint SendMaxUs, uint WakeLateMaxUs, uint StateGapMaxUs, uint PhoneTxPackets);
+
+/// <summary>
 /// One input held on the PC while the phone listens (CAPTURED): a key by HID usage, a mouse button (0 left, 1 right,
 /// 2 middle, 3 back, 4 forward), a wheel notch (code 0, <see cref="Arg"/> +1 up / -1 down), a controller button by its
 /// XInput bit, or a controller axis pushed past half way (code 0..5: left x, y, right x, y, left, right trigger; y down;

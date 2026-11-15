@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using GyroPhone.Host;
+using GyroPhone.Host.Split;
 using GyroPhone.Protocol;
 using GyroPhone.Protocol.Crypto;
 
@@ -23,9 +24,8 @@ namespace GyroPhone.Ui;
 /// </summary>
 public sealed class PairWindow : Window
 {
-    private readonly HostEngine _engine;
+    private readonly IPairing _engine;
     private readonly string _hostName;
-    private readonly KeyFiles? _keyFiles;
     private readonly Image _qr;
     private readonly FrameworkElement _qrPanel;
     private bool _qrShown;
@@ -40,11 +40,10 @@ public sealed class PairWindow : Window
     /// <summary>After Allow: when, which phone, and each paired phone's LastSeenUtc then, to spot the one that pairs.</summary>
     private (DateTime Utc, string Name, Dictionary<string, DateTime> Before)? _allowed;
 
-    public PairWindow(HostEngine engine, string hostName, KeyFiles? keyFiles, string title, ImageSource? icon)
+    public PairWindow(IPairing engine, string hostName, string title, ImageSource? icon)
     {
         _engine = engine;
         _hostName = hostName;
-        _keyFiles = keyFiles;
         Title = title;
         Icon = icon;
         SizeToContent = SizeToContent.WidthAndHeight;
@@ -272,7 +271,7 @@ public sealed class PairWindow : Window
     /// <summary>A new one-time QR code (hidden when this PC has no key).</summary>
     private void ShowNewQr()
     {
-        var token = _keyFiles == null ? null : _engine.OpenQrPairing(_keyFiles.AddAuthorized);
+        var token = _engine.OpenQrPairing();
         if (token == null || _engine.HostPublicKey is not { } hostKey)
         {
             ShowQr(false);

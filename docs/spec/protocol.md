@@ -24,6 +24,7 @@ All integers little-endian. Every packet starts with a 12-byte **header**: `'G' 
 | KEY_ENROLL_ACK | 0x0A | H→P | 41 | reqId@12, tokenId@16, status@24, mac@25 (16) |
 | HELLO | 0x10 | P→H | 68 | phoneId@12, nP@28 (16), caps@44 (u32), maxRateHz@48 (u32), mac@52 (16) |
 | WELCOME | 0x11 | H→P | 80 | sid in header; hostId@12, nP@28, nH@44, outputMode@60, hostFlags@61, keepaliveMs@62 (u16), mac@64 (16) |
+| LOG_CTL | 0x7D | PC program → companion, loopback only | 16 | what@12 (1 Diagnostics on/off, 2 Save, 3 Keep minutes), value@13: `tools/gp-log.sh pc …`; from any other address it is dropped |
 | LINK_TEST_CTL | 0x7E | PC program → companion, loopback only | 16 | seconds@12 (u16, 0 = stop, at most 3600): starts or stops a [Link test](pc-companion.md#link-test); from any other address it is dropped |
 | ERROR | 0x7F | H→P | 16 | code@12 (u16), maxVersion@14 |
 
@@ -37,17 +38,19 @@ Sealed plaintext sizes:
 | PING | 0x21 | P→H | 8 | t1 u64: phone send time (µs) |
 | PONG | 0x30 | H→P | 24 | t1 (echoed), t2 host receive, t3 host send, u64 each: the phone works out the clock offset and round trip |
 | LINK_INFO | 0x22 | P→H | 22 | clock offset i64, rttMin u32, rate u16, rssi i8, band, link Mbps u16, MHz u16, flags, path u8 (UNKNOWN 0 from older phones, WIFI 1 the phone's Wi-Fi client, HOTSPOT 2 the phone's own hotspot, USB_TETHER 3, USB_DIRECT 4, ETHERNET 5) |
-| HOST_STATUS | 0x31 | H→P | 23 | lastSeq, rx/s, loss ‰, latency p50, p99, jitter, output mode, flags, flags2 (USB_DIRECT 1: "Use the phone over the USB cable" is on) |
+| HOST_STATUS | 0x31 | H→P | 23 | lastSeq, rx/s, loss ‰, latency p50, p99, jitter, output mode, flags, flags2 (USB_DIRECT 1: "Use the phone over the USB cable" is on; the PC's setup, for the phone's [Setup tips](phone-connection.md#setup-tips): PC_WIFI 2 the PC reaches the phone as a Wi-Fi client, PC_WIFI_24 4 on 2.4 GHz, PC_WIFI_WEAK 8 below −70 dBm, PC_ON_BATTERY 16, PC_POWER_SAVING 32 energy saver or "Best power efficiency". OVERLAY_SAMPLES 64: send OVERLAY_SAMPLES with each OVERLAY; PC_LOGGING 128: the PC's Diagnostics is on, the phone follows it and shows its red dot. Older phones ignore them) |
 | PAD_GYRO | 0x27 | P→H | 4 + 2 × buttons | ratchet/toggle buttons by pad place, toggle epoch |
 | PAD_GYRO_SET | 0x28 | P→H | 183 | u8 place, u8 0, a 181-byte gyro config block |
 | OVERLAY | 0x24 | P→H | 152 | pose input: raw motion, ratchet, non-gyro mouse, touches, presses (`OverlayFeed`) |
+| OVERLAY_SAMPLES | 0x2C | P→H | 264 | each gyro sample's turn since the last OVERLAY, sent just before it with the same phone time while HOST_STATUS flags2 has OVERLAY_SAMPLES: u32 phone time, u8 count (≤32), 3 bytes 0, then per sample i16 yaw, pitch, roll (millidegrees) and u16 dt (10 µs). They add up to the OVERLAY's turn; the PC uses them only when they do (a pointer that paints follows every sample; the Speed graph's speeds) |
 | OVERLAY_LAYOUT | 0x25 | P→H | 200 | the workspace layout, in chunks (`OverlayFeed`) |
 | MOTION | 0x29 | P→H | 120 | raw gyro and accelerometer for the PC's DualShock 4 or DualSense (below) |
 | RUMBLE | 0x32 | H→P | 4 | large u8, small u8 motor, pattern u8: MOTORS 0 (the game's rumble on the virtual controller, held until the next RUMBLE; sent on change, at most 100 Hz) or BUZZ 1 (a notice buzz and double beep when a Performance test record starts or ends, sent twice; motors unused). Older phones ignore it |
 | FOREGROUND | 0x33 | H→P | 66 | reserved, never sent |
 | KEY_LABELS | 0x34 | H→P | 100 | layout id u32, then a u16 character per character key (`KeyLabels.USAGES`: 0x04..0x27, 0x2D..0x31, 0x33..0x38, 0x64; 0 = types nothing): what each key types on the PC's current layout, sent with every HOST_STATUS. Older phones drop it as an unknown type |
 | PRESS_TIME | 0x2A | P→H | 8 | STATE time u32, input event time u32 (both the phone's µs clock, low 32 bits): sent while TEST_MODE has PRESS_TIMES, after the STATE that first carries a new press or release ([Latency test](pc-latency-test.md#measure-buttons)) |
-| TEST_MODE | 0x35 | H→P | 4 | u8 flags: PRESS_TIMES 1 ("Measure buttons"), LATENCY_SCREEN 2 (the latency test window is open: the pad shows its markers), LINK_TEST 4 (a Link test runs: the phone sends fake moving input marked LINK_TEST); 3 reserved. Sent on change, with every HOST_STATUS while a flag is set, and with the 3 after one ends. Older phones drop it |
+| PHONE_STATS | 0x2D | P→H | 32 | phone time u32 (the second's end, µs clock low 32 bits), u16 STATEs sent, u16 packets sent, u16 failed sends, u16 sends of 2 ms or more, u32 µs in send, u32 longest send µs, u32 latest send-thread wake µs, u32 longest gap between STATEs µs, u32 packets the whole phone sent: once a second while TEST_MODE has PHONE_STATS (a Performance record runs). Older PCs drop it |
+| TEST_MODE | 0x35 | H→P | 4 | u8 flags: PRESS_TIMES 1 ("Measure buttons"), 2 unused (was the video latency test's markers), LINK_TEST 4 (a Link test runs: the phone sends fake moving input marked LINK_TEST), PHONE_STATS 8 (Diagnostics is on: the phone sends PHONE_STATS each second), a Diagnostics save counter in 0x70 (the PC saved: the phone saves too); 1 reserved. Sent on change, with every HOST_STATUS while a flag is set, and with the 3 after one ends. Older phones drop it |
 | KEEP_AWAKE | 0x36 | H→P | 4 | zeros. Sent every 10 ms during a session over Wi-Fi (not USB, Ethernet or loopback) so the PC's Wi-Fi never dozes in power save, which would batch the phone's packets at the 100 ms beacon. The phone drops it unopened (it has no size there), as older phones do |
 | CAPTURE | 0x2B | P→H | 4 | u8 flags: ON 1. Sent at once and every second while the mapping editor's "Press a key" listens, then off three times 100 ms apart; the PC stops listening 3 s after the last ON, or when the session ends |
 | CAPTURED | 0x37 | H→P | 64 | u8 count (≤ 15), u8 0, then 15 × (kind u8, arg i8, code u16): what is held on the PC while it listens: KEY 1 (HID usage), MOUSE 2 (0 left, 1 right, 2 middle, 3 back, 4 forward), WHEEL 3 (arg +1 up / -1 down), PAD_BUTTON 4 (XInput bit), PAD_AXIS 5 (code 0..5 left x, y, right x, y, left, right trigger, y down; arg the way, past half way). On change and every 200 ms; a press stays listed 150 ms after it was last seen, so a tap between two 50 ms ticks or one lost packet still arrives. Older phones drop it |
@@ -65,7 +68,7 @@ STATE's mouse and wheel values are **cumulative wrapping totals**, so a lost pac
 - **Announce flags**: PAIRING_OPEN 1, VIGEM_OK 2, PAIRED_WITH_YOU 4, BUSY 8, KEY_MATCH 16, KNOWS_YOUR_KEY 32.
 - **Host flags** (WELCOME): VIGEM 1, FOREGROUND 2, HIRES_WHEEL 4, PC_GYRO 16, MOTION 32. The host sends VIGEM, HIRES_WHEEL, PC_GYRO and MOTION.
 - **Caps** (HELLO): RUMBLE 1, FOREGROUND 2. **Output modes**: 0 none, 1 Xbox 360, 2 DualShock 4, 3 DualSense (the companion's own driver).
-- **LINK_INFO flags**: LOW_LATENCY 1, USB 2, USB_DIRECT 4, DEBUG_TRACE 8, a debug save counter in 0x70, ETHERNET 0x80 (a wired Ethernet adapter on the phone).
+- **LINK_INFO flags**: LOW_LATENCY 1, USB 2, USB_DIRECT 4, DEBUG_TRACE 8 (the phone's Diagnostics is on), a Diagnostics save counter in 0x70, ETHERNET 0x80 (a wired Ethernet adapter on the phone).
 - **HOST_STATUS flags**: VIGEM 1, PAD_PLUGGED 2, PAUSED 4, ELEVATED_FG 8, NET_PUBLIC 16, OVERLAY 32, OVERLAY_COMPASS 64, OVERLAY_TOTALS 128.
 - **PAIR_ACK**: OK 0, BAD_COMMIT 1, CLOSED 2, BUSY 3, COOLDOWN 4, UNKNOWN_ATTEMPT 5. **PAIR_DONE**: ACCEPTED 0, DENIED 1, TIMEOUT 2, BAD_CONFIRM 3, PENDING 4. **KEY_ENROLL_ACK**: OK 0, EXPIRED 1, USED 2, NO_KEY 3.
 - **ERROR**: VERSION 1, NOT_PAIRED 2, SESSION_UNKNOWN 3. Sent only for requests of at least 16 bytes, at most 10 per second per IP and 50 overall.

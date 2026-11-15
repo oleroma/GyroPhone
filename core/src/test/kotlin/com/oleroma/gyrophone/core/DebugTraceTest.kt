@@ -56,10 +56,10 @@ class DebugTraceTest {
         assertEquals(listOf("pad LX 50%", "pad LX 0%"), texts(t))
     }
 
-    @Test fun saveKeepsTheLast30sWithWallTimes() {
+    @Test fun saveKeepsTheLast3MinutesWithWallTimes() {
         val t = trace()
         t.note("old")
-        now += 31_000_000_000L
+        now += 181_000_000_000L
         t.note("new")
         val lines = t.save("phone", listOf("x: y")).lines().filter { it.isNotEmpty() }
         assertTrue(lines[0].startsWith("# GyroPhone debug recording, side phone"))
@@ -73,10 +73,28 @@ class DebugTraceTest {
         e.trace = t
         e.setKey(AndroidKey.BUTTON_A, true)
         e.snapshot()
+        // The input paths only queue; nothing is made into text until the diagnostics thread drains.
+        assertTrue(texts(t).none { it.startsWith("any device:") })
+        t.drain()
         val log = texts(t)
         assertTrue(log.toString(), log.any { it.startsWith("any device: A down → ") && "Gamepad A" in it })
         assertTrue(log.toString(), "pad A down" in log)
         assertTrue(log.toString(), log.any { it.startsWith("layer: Base") })
+    }
+
+    @Test fun everyMappingThatPressesIsLoggedOnAndOff() {
+        val e = MappingEngine(controllerProfile)
+        val t = trace()
+        e.trace = t
+        e.setKey(AndroidKey.BUTTON_A, true)
+        e.snapshot()
+        e.snapshot() // still pressing: no second line
+        e.setKey(AndroidKey.BUTTON_A, false)
+        e.snapshot()
+        t.drain()
+        val log = texts(t)
+        assertEquals(log.toString(), 1, log.count { it.startsWith("on: ") && "A" in it && "Gamepad A" in it })
+        assertEquals(log.toString(), 1, log.count { it.startsWith("off: ") && "Gamepad A" in it })
     }
 
     @Test fun heldInputsListsKeysHeld() {
@@ -85,5 +103,13 @@ class DebugTraceTest {
         assertEquals(listOf("A"), e.heldInputs())
         e.setKey(AndroidKey.BUTTON_A, false)
         assertEquals(emptyList<String>(), e.heldInputs())
+    }
+
+    @Test fun queuedOutputIsComparedWhenDrained() {
+        val t = trace()
+        t.queueOutput(HidState(gamepad = GamepadState(buttons = 1 shl GamepadButton.A.bit)))
+        assertEquals(emptyList<String>(), texts(t))
+        t.drain()
+        assertEquals(listOf("pad A down"), texts(t))
     }
 }

@@ -1,0 +1,3 @@
+# Parts that never go on the "latest" release, only on build pre-releases (update-latest).
+# The OpenCV DLLs are only for the latency test.
+*.dll

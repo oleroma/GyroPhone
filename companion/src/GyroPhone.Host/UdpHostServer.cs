@@ -90,6 +90,7 @@ public sealed class UdpHostServer : IDatagramSender, IDisposable
 
     private void RxLoop()
     {
+        GcWatch.NameCurrentThread("gp-rx");
         try
         {
             _onRxThreadStart?.Invoke();

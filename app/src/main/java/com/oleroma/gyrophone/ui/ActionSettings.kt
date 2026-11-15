@@ -3,7 +3,9 @@ package com.oleroma.gyrophone.ui
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
+import androidx.compose.ui.Alignment
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -13,6 +15,10 @@ import com.oleroma.gyrophone.core.model.AxisGlide
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.ButtonGyro
 import com.oleroma.gyrophone.core.model.GyroMode
+import com.oleroma.gyrophone.core.model.GyroSpace
+import com.oleroma.gyrophone.core.model.How
+import com.oleroma.gyrophone.core.model.MapOptions
+import com.oleroma.gyrophone.core.model.ButtonHow
 import com.oleroma.gyrophone.core.model.GyroCurve
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.TouchpadSettings
@@ -220,6 +226,11 @@ private fun buttonGyroGear(g: ButtonGyroLevel, key: String, axis: MotionAxis): @
             onReset = { g.edit { it.withMode(axis, null) } },
             hint = "While this is held${g.where}. Unset, the workspace's.",
         ) { m -> g.edit { it.withMode(axis, m) } }
+        GyroSpaceRow(
+            axis, g.inUse.ownSpace(axis) ?: g.parent.spaceOf(axis), g.own.ownSpace(axis) != null,
+            onReset = { g.edit { it.withSpace(axis, null) } },
+            hint = "While this is held${g.where}. Unset, the workspace's.",
+        ) { sp -> g.edit { it.withSpace(axis, sp) } }
         val hint = "While this is held: how fast ${axis.label.lowercase()} turns${g.where}. Unset, it follows this button's " +
             "Gyro sensitivity (in Settings), else the workspace's."
         val own = g.own.own(axis) != null || g.own.ownScale(axis) != null
@@ -299,6 +310,10 @@ internal fun touchControlSettings(
     // The settings its actions share, as categories: its gyro, a touchpad button's surface, a stick's own.
     val heldCategories = gyro?.let { g ->
         listOf(
+            category(runtime, "buttonHow", "Press", "How its chips press: Held, Once, Toggle or Repeat", prefKey = "button.How") {
+                ButtonHowRow(control.how, control.repeat) { h, n -> update { it.copy(how = h, repeat = n) } }
+                if (control.how == How.TOGGLE) ButtonToggleRows(control, key, update)
+            },
             category(runtime, "buttonGyro", "Gyro", "Gyro sensitivity and acceleration while held", prefKey = "button.Gyro") {
                 ButtonGyroSensitivity(g, key)
             },
@@ -414,6 +429,12 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
             children = level.kids(k("Mode")),
             hint = "Unset, it follows the gyro mode in Settings." + if (g.mode == GyroMode.SENSOR_OFF) " Gyro is off there now." else "",
         ) { m -> level.edit { it.copy(gyro = it.gyro.withMode(axis, m)) } }
+        GyroSpaceRow(
+            axis, g.spaceOf(axis), level.isOwn(k("Space")),
+            onReset = { level.reset(k("Space")) },
+            children = level.kids(k("Space")),
+            hint = "Unset, it follows the Gyro space in Settings (${g.gyroSpace.label}).",
+        ) { sp -> level.edit { it.copy(gyro = it.gyro.withSpace(axis, sp)) } }
         val sensHint = "How fast ${axis.label.lowercase()} turns; scrolling and sticks go faster or slower with it too. " +
             "Unset, it follows the shared Sensitivity (${gyroShow(g)(g.sensitivity)}) in Settings."
         val sensOwn = level.isOwn(k("Sensitivity")) || level.isOwn(k("Scale"))
@@ -462,7 +483,7 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
     }
 }
 
-/** The ⚙ of sideways ([x]) or forward and back tilt at [level]: its range and deadzone, its own or the shared ones. */
+/** The ⚙ of sideways ([x]) or forward and back tilt at [level]: its range and deadzone (and sideways, the compass lying flat), its own or the shared ones. */
 private fun tiltGear(level: WorkspaceLevel, key: String, x: Boolean): @Composable () -> Unit = ui {
     val g = level.ws.gyro
     val what = if (x) "Sideways tilt" else "Forward and back tilt"
@@ -486,6 +507,13 @@ private fun tiltGear(level: WorkspaceLevel, key: String, x: Boolean): @Composabl
             children = level.kids(dzKey),
             hint = "Leaning less than this counts as level. Unset, the shared Tilt deadzone in Settings.",
         ) { v -> level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXDeadzoneDeg = v) else it.gyro.copy(tiltYDeadzoneDeg = v)) } }
+        if (x) {
+            val ck = WorkspaceDefaults.gyroKey("tiltCompass")
+            OverrideSwitch(
+                "Use compass when flat", "Lying flat, sideways tilt (a steering wheel) has no gravity to say where straight is. On, the compass holds straight where the phone went flat; off, the gyro alone carries it, drifting very slowly (Set orientation makes the way it points straight). Laptops, speakers, metal and magnetic cases can bend the compass, so straight may wander.",
+                g.tiltCompass, overridden = level.isOwn(ck), onReset = { level.reset(ck) }, children = level.kids(ck),
+            ) { v -> level.edit { it.copy(gyro = it.gyro.copy(tiltCompass = v)) } }
+        }
     }
 }
 
@@ -521,6 +549,34 @@ private fun RatchetModeRow(
 }
 
 /**
+ * Gyro [axis]'s space for its mappings ([GyroSpace]): Local, World, and for yaw Player. [space]: the
+ * one in effect (Player off yaw shows as Local: it changes nothing there).
+ */
+@Composable
+private fun GyroSpaceRow(
+    axis: MotionAxis,
+    space: GyroSpace,
+    overridden: Boolean,
+    onReset: () -> Unit,
+    hint: String,
+    children: ChildInfo? = null,
+    onSet: (GyroSpace) -> Unit,
+) {
+    val choices = GyroSpace.choicesFor(axis)
+    val shown = if (space in choices) space else GyroSpace.LOCAL
+    val what = when (shown) {
+        GyroSpace.LOCAL -> "Local: ${axis.label.lowercase()} about the phone's own axis."
+        GyroSpace.WORLD -> "World: ${axis.label.lowercase()} measured against gravity, however the phone is held."
+        GyroSpace.PLAYER -> "Player: yaw blends the phone's yaw and roll by how it leans, so turning stays level when you tilt or lie down."
+    }
+    OverrideRow("${axis.label}: space", overridden, onReset, "$what $hint", children = children) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (sp in choices) FilterChip(selected = shown == sp, onClick = { onSet(sp) }, label = { Text(sp.label) })
+        }
+    }
+}
+
+/**
  * The ⚙ of a physical control's actions in [preset]: a key's long press and double tap timings,
  * its own over the workspace [ws]'s. [update] changes the preset.
  */
@@ -536,7 +592,14 @@ internal fun physicalSettings(
         ButtonGyroLevel(ws, set, preset.held(h.id)?.gyro.orEmpty()) { change -> update { p -> p.withHeld(h.id, h.sources, set, change) } }
     }
     val key = preset.id + ":" + held?.id
-    val items = if (level == null) emptyList() else listOf(
+    val keyCode = held?.sources?.firstNotNullOfOrNull { ButtonHow.keyOf(it) }
+    val howItem = keyCode?.let { k ->
+        category(runtime, "heldHow", "Press", "How its chips press: Held, Once, Toggle or Repeat", prefKey = "physical.How") {
+            val t = preset.timing(k)
+            ButtonHowRow(t?.how, t?.repeat ?: 2) { h, n -> update { p -> p.withTiming(k) { it.copy(how = h, repeat = n) } } }
+        }
+    }
+    val items = listOfNotNull(howItem) + if (level == null) emptyList() else listOf(
         category(runtime, "heldGyro", "Gyro", "Gyro sensitivity and acceleration while held", prefKey = "physical.Held", defaultOpen = true) {
             ButtonGyroSensitivity(level, key)
         },
@@ -553,6 +616,75 @@ internal fun physicalSettings(
             },
             shared = if (items.isEmpty()) null else ui { ReorderableSections(runtime, "physical", items) },
             items = items,
+        )
+    }
+}
+
+/**
+ * A button's How ([TouchControl.how], [KeyTiming.how]): what its chips do when they don't set their
+ * own. [onSet] gets the new How (null = Held) and Repeat count.
+ */
+@Composable
+private fun ButtonHowRow(how: How?, repeat: Int, onSet: (How?, Int) -> Unit) {
+    val shown = how ?: How.HELD
+    OverrideRow(
+        "How", how != null && how != How.HELD, { onSet(null, 2) },
+        "Every chip of this button that doesn't set its own How follows this one (a chip's own How shows ↺ to follow again). " +
+            "Toggle also keeps this button's own gyro cards and gyro settings on from one touch to the next. " +
+            "Chips that move something (a stick, the mouse, a sensitivity) stay Held, except Toggle on Position and Move.",
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (h in How.entries) FilterChip(
+                selected = shown == h, onClick = { onSet(h.takeUnless { it == How.HELD }, repeat) }, label = { Text(h.label) },
+            )
+        }
+        if (shown == How.REPEAT) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (n in MapOptions.MIN_REPEAT..MapOptions.MAX_REPEAT) FilterChip(
+                selected = repeat == n, onClick = { onSet(How.REPEAT, n) }, label = { Text("×$n") },
+            )
+        }
+    }
+}
+
+/**
+ * A Toggle button's Initial state (On / Off, what it is when the workspace opens and goes back
+ * to) and "Also ends on" (what turns it back besides a touch).
+ */
+@Composable
+private fun ButtonToggleRows(control: TouchControl, key: String, update: ((TouchControl) -> TouchControl) -> Unit) {
+    OverrideRow(
+        "Initial state", control.initialOn, { update { it.copy(initialOn = false) } },
+        "On or Off when the workspace opens. Each touch turns it to the other state; an ending below turns it back to this one. " +
+            "While it is On, its chips on its press press and its gyro cards and gyro settings are on.",
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(selected = !control.initialOn, onClick = { update { it.copy(initialOn = false) } }, label = { Text("Off") })
+            FilterChip(selected = control.initialOn, onClick = { update { it.copy(initialOn = true) } }, label = { Text("On") })
+        }
+    }
+    val any = control.endsOnLetGo || control.endsOnNextInput || control.endsOnSame || control.endsAfterMs > 0
+    OverrideRow(
+        "Also ends on", any,
+        { update { it.copy(endsOnLetGo = false, endsOnNextInput = false, endsOnSame = false, endsAfterMs = 0) } },
+        "Besides a touch, what turns the button back to its Initial state. Chips that follow its Toggle go back with it.",
+    ) {
+        @Composable
+        fun check(label: String, on: Boolean, set: (TouchControl, Boolean) -> TouchControl) =
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = on, onCheckedChange = { v -> update { set(it, v) } })
+                Text(label, style = MaterialTheme.typography.bodyMedium)
+            }
+        check("\"Let go\" mapping (any button mapped to (Let go))", control.endsOnLetGo) { c, v -> c.copy(endsOnLetGo = v) }
+        check("Next input (another key or button pressed and let go)", control.endsOnNextInput) { c, v -> c.copy(endsOnNextInput = v) }
+        check("Same keystroke (one of its keys pressed by another mapping)", control.endsOnSame) { c, v -> c.copy(endsOnSame = v) }
+        var timer by remember(key, control.endsAfterMs) { mutableStateOf(control.endsAfterMs / 1000f) }
+        Text("Timer: " + if (timer <= 0f) "off" else "%.1f s".format(timer), style = MaterialTheme.typography.labelLarge)
+        Slider(
+            value = timer,
+            onValueChange = { timer = (it * 10f).roundToInt() / 10f },
+            valueRange = 0f..MapOptions.MAX_TOGGLE_MS / 1000f,
+            onValueChangeFinished = { update { it.copy(endsAfterMs = (timer * 1000f).roundToInt()) } },
+            typedTitle = "Timer (s)",
         )
     }
 }

@@ -4,23 +4,28 @@ import android.content.Context
 import com.oleroma.gyrophone.core.debug.DebugTrace
 import com.oleroma.gyrophone.link.LinkState
 import com.oleroma.gyrophone.link.LinkStats
-import com.oleroma.gyrophone.link.TransportKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.concurrent.thread
 
 /**
- * The debugging tools of the phone: the Settings switch, the [DebugTrace] the engine logs into
- * while it is on, the once-a-second link line, recordings ([record]) and the text `dumpsys` prints
- * ([dump]). While the switch is off there is no trace and nothing is logged.
+ * Settings › Performance › **Diagnostics**: one switch for every log on the phone. On, the [DebugTrace] keeps
+ * what came in and what it did, what went out, ratchet timings ([GamepadRuntime.ratchetTiming]), the gyro
+ * displays' draw times and a link line each second, for the last [keepMinutes] minutes, in memory only;
+ * [save] writes them to a file (and the PC saves its side). Off, there is no trace and nothing is measured.
+ *
+ * The switch follows the PC's (HOST_STATUS `PC_LOGGING`, see [WifiLink]) and the PC follows it (LINK_INFO
+ * `DEBUG_TRACE`), so both sides log together; a Save on either side saves both.
+ *
+ * The input paths only queue raw events ([DebugTrace.queue], [DebugTrace.queueOutput]); the `gp-diag` thread
+ * turns them into lines every [DRAIN_MS] ms and adds the link line once a second.
  */
 class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private val scope: CoroutineScope) {
     private val appContext = context.applicationContext
@@ -32,46 +37,74 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
 
     private val _enabled = MutableStateFlow(prefs.getBoolean(KEY_ON, false))
 
-    /** The Settings switch "Debug tools". */
+    /** The Settings switch "Diagnostics". */
     val enabled: StateFlow<Boolean> = _enabled
+
+    private val _keepMinutes = MutableStateFlow(prefs.getInt(KEY_KEEP, DEFAULT_KEEP).coerceIn(MIN_KEEP, MAX_KEEP))
+
+    /** How many minutes Diagnostics keeps (and a Save writes), 1 to 30. */
+    val keepMinutes: StateFlow<Int> = _keepMinutes
 
     /** The log while [enabled]; null otherwise. */
     @Volatile var trace: DebugTrace? = null
         private set
 
     private var job: Job? = null
+    private var worker: Thread? = null
 
     /** Applies the stored switch; called once the runtime is wired. */
     fun init() {
+        // The PC's switch and Save (on the receive thread: handed to a thread of their own).
+        runtime.wifi.onPcDiagnostics = { on -> thread(name = "gp-diag-switch", isDaemon = true) { setEnabled(on) } }
+        runtime.wifi.onPcSave = { saveInBackground(fromPc = true) }
         if (_enabled.value) turnOn()
     }
 
+    /** The switch, from Settings, adb or the PC. */
+    @Synchronized
     fun setEnabled(on: Boolean) {
+        if (on == _enabled.value && (trace != null) == on) return
         prefs.edit().putBoolean(KEY_ON, on).apply()
         _enabled.value = on
         if (on) turnOn() else turnOff()
+    }
+
+    fun setKeepMinutes(minutes: Int) {
+        val m = minutes.coerceIn(MIN_KEEP, MAX_KEEP)
+        prefs.edit().putInt(KEY_KEEP, m).apply()
+        _keepMinutes.value = m
     }
 
     @Synchronized
     private fun turnOn() {
         if (trace != null) return
         val t = DebugTrace()
-        t.note("debug tools on · GyroPhone $version")
+        t.note("diagnostics on · GyroPhone $version")
         trace = t
         runtime.engine.trace = t
         runtime.wifi.debugTrace = true
+        runtime.ratchetTiming.enabled = true
         job = scope.launch {
-            launch {
-                var last: String? = null
-                runtime.linkState.collect { s ->
-                    val line = describe(s)
-                    if (line != last) t.link(line)
-                    last = line
-                }
+            var last: String? = null
+            runtime.linkState.collect { s ->
+                val line = describe(s)
+                if (line != last) t.link(line)
+                last = line
             }
-            while (isActive) {
-                delay(1000)
-                t.secondTick(if (runtime.linkState.value is LinkState.Connected) linkLine(runtime.linkStats()) else null)
+        }
+        worker = thread(name = "gp-diag", isDaemon = true, priority = Thread.MIN_PRIORITY) {
+            var nextSecond = System.nanoTime() + 1_000_000_000L
+            try {
+                while (trace === t) {
+                    Thread.sleep(DRAIN_MS)
+                    t.drain()
+                    val now = System.nanoTime()
+                    if (now >= nextSecond) {
+                        nextSecond = now + 1_000_000_000L
+                        t.secondTick(if (runtime.linkState.value is LinkState.Connected) linkLine(runtime.linkStats()) else null)
+                    }
+                }
+            } catch (_: InterruptedException) {
             }
         }
     }
@@ -79,48 +112,61 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
     @Synchronized
     private fun turnOff() {
         job?.cancel(); job = null
+        worker?.interrupt(); worker = null
         runtime.engine.trace = null
         runtime.wifi.debugTrace = false
+        runtime.ratchetTiming.enabled = false
         trace = null
     }
 
     /**
-     * Saves the last 30 s to a file in the app's external files (`files/debug/`), and asks the PC to save
-     * its side at the same moment when the link is Wi-Fi or USB. Returns the file, or null when
-     * debugging is off.
+     * Saves the kept minutes to a file in the app's external files (`files/debug/`) and, unless the PC asked for
+     * it ([fromPc]), asks the PC to save its side at the same moment. Returns the file, or null when Diagnostics
+     * is off.
      */
-    fun record(): File? {
+    fun save(fromPc: Boolean = false): File? {
         val t = trace ?: return null
-        t.note("recording saved")
-        val wifi = runtime.transport.value == TransportKind.WIFI && runtime.linkState.value is LinkState.Connected
-        if (wifi) runtime.wifi.requestDebugSave()
+        t.note(if (fromPc) "saved (the PC asked)" else "saved")
+        val connected = runtime.linkState.value is LinkState.Connected
+        if (!fromPc && connected) runtime.wifi.requestDebugSave()
         dir.mkdirs()
         val name = "phone-" + SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) + ".txt"
         val f = File(dir, name)
-        f.writeText(t.save("phone", header() + listOf("pc asked to save its side: " + if (wifi) "yes" else "no")))
-        // Keep the newest 20 recordings.
+        val pcSide = if (fromPc) "the PC asked for this save" else "pc asked to save its side: " + if (connected) "yes" else "no"
+        f.writeText(t.save("phone", header() + listOf("kept: ${_keepMinutes.value} min", pcSide), _keepMinutes.value * 60_000_000_000L))
+        // Keep the newest 20 saves.
         dir.listFiles()?.sortedByDescending { it.name }?.drop(MAX_FILES)?.forEach { it.delete() }
         return f
     }
 
-    /** What `adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService` prints. */
+    /** [save] on its own thread (it writes a file of up to a few MB), then [done] with the file there. */
+    fun saveInBackground(fromPc: Boolean = false, done: (File?) -> Unit = {}) {
+        thread(name = "gp-diag-save", isDaemon = true) { done(runCatching { save(fromPc) }.getOrNull()) }
+    }
+
+    /**
+     * What `adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService` prints.
+     * Args: `on`, `off`, `save`, `keep <minutes>`, `events <n>` (tools/gp-log.sh wraps them).
+     */
     fun dump(args: Array<out String>): String = buildString {
         if ("on" in args) setEnabled(true)
         if ("off" in args) setEnabled(false)
+        args.indexOf("keep").takeIf { it >= 0 }?.let { i -> args.getOrNull(i + 1)?.toIntOrNull()?.let { setKeepMinutes(it) } }
         appendLine("GyroPhone $version")
         for (h in header()) appendLine(h)
         val t = trace
         if (t == null) {
-            appendLine("debug tools: off (args: on | off | record | events [n])")
+            appendLine("diagnostics: off (args: on | off | save | keep <1-30> | events <n>)")
             return@buildString
         }
-        appendLine("debug tools: on")
-        if ("record" in args) appendLine("recording: " + (record()?.absolutePath ?: "debug tools are off"))
+        appendLine("diagnostics: on, keeping ${_keepMinutes.value} min")
+        if ("save" in args) appendLine("saved: " + (save()?.absolutePath ?: "diagnostics are off"))
+        t.drain()
         val n = args.indexOf("events").takeIf { it >= 0 }?.let { args.getOrNull(it + 1)?.toIntOrNull() } ?: 60
         appendLine("--- last $n events (ms ago, kind, text)")
         val now = System.nanoTime()
         for (e in t.latest(n)) appendLine("${(now - e.nanos) / 1_000_000}\t${e.kind.tag}\t${e.text}")
-        appendLine("--- recordings in ${dir.absolutePath}")
+        appendLine("--- saves in ${dir.absolutePath}")
         dir.listFiles()?.sortedByDescending { it.name }?.forEach { appendLine(it.name) }
     }
 
@@ -145,7 +191,12 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
     }
 
     companion object {
-        private const val KEY_ON = "debug_tools"
+        private const val KEY_ON = "diagnostics"
+        private const val KEY_KEEP = "diagnostics_keep_minutes"
+        const val MIN_KEEP = 1
+        const val MAX_KEEP = 30
+        const val DEFAULT_KEEP = 3
+        private const val DRAIN_MS = 50L
         private const val MAX_FILES = 20
 
         fun describe(s: LinkState): String = when (s) {

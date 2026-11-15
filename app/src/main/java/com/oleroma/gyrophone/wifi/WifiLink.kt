@@ -149,10 +149,6 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** What is held on the PC while [pressCapture] (CAPTURED); empty when the session ends. Called on the link's thread. */
     @Volatile var onPcPresses: ((List<PcPress>) -> Unit)? = null
 
-    private val _latencyScreen = MutableStateFlow(false)
-    /** The PC's latency test window is open (TEST_MODE): the pad shows the tracking markers. */
-    val latencyScreen: StateFlow<Boolean> = _latencyScreen
-
     private val _linkTest = MutableStateFlow(false)
     /** The PC runs a Link test (TEST_MODE): the pump sends fake input, the pad shows a note. */
     val linkTest: StateFlow<Boolean> = _linkTest
@@ -162,11 +158,24 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         set(v) {
             field = v
             pump.pressTimes = v and TestModeFlags.PRESS_TIMES != 0
-            _latencyScreen.value = v and TestModeFlags.LATENCY_SCREEN != 0
             pump.linkTest = v and TestModeFlags.LINK_TEST != 0
+            pump.phoneStats = v and TestModeFlags.PHONE_STATS != 0
             _linkTest.value = v and TestModeFlags.LINK_TEST != 0
+            // A Save on the PC: its counter changed since the last TEST_MODE that had one.
+            val save = if (v and TestModeFlags.PHONE_STATS != 0) (v and TestModeFlags.DIAG_SAVE_MASK) shr TestModeFlags.DIAG_SAVE_SHIFT else -1
+            if (save >= 0 && pcSaves >= 0 && save != pcSaves) onPcSave?.invoke()
+            pcSaves = save
         }
-    private val accessory = AccessoryBridge(appContext)
+
+    /** The PC's Diagnostics save counter last seen (-1: none yet, or the PC's Diagnostics off). */
+    @Volatile private var pcSaves = -1
+
+    /** Diagnostics: the PC switched its Diagnostics (true on or false off); on the receive thread. */
+    @Volatile var onPcDiagnostics: ((Boolean) -> Unit)? = null
+
+    /** Diagnostics: Save was pressed on the PC; on the receive thread. */
+    @Volatile var onPcSave: (() -> Unit)? = null
+    private val accessory = AccessoryBridge(appContext).also { pump.direct = it }
 
     private val _state = MutableStateFlow<LinkState>(LinkState.Off)
     override val state: StateFlow<LinkState> = _state
@@ -338,12 +347,31 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     // Read by the pump (LINK_INFO) and the UI (stats).
     @Volatile private var clockOffsetUs = 0L
     @Volatile private var rttMinUs = -1L
+    private val _pcLogging = MutableStateFlow(false)
+
+    /** Diagnostics is on in the connected companion (the pad's red dot); false with no PC. */
+    val pcLogging: StateFlow<Boolean> = _pcLogging
+
+    /** The PC's Diagnostics bit last seen this session, or null before the first HOST_STATUS. */
+    private var pcDiagSeen: Boolean? = null
+
     @Volatile private var hostStatus: HostStatus? = null
         set(v) {
             field = v
             overlay.wanted = v != null && v.flags and HostStatusFlags.OVERLAY != 0
             overlay.compassWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_COMPASS != 0
             overlay.totalsWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_TOTALS != 0
+            overlay.samplesWanted = overlay.wanted && v!!.flags2 and HostStatusFlags2.OVERLAY_SAMPLES != 0
+            val pcDiag = v != null && v.flags2 and HostStatusFlags2.PC_LOGGING != 0
+            _pcLogging.value = pcDiag
+            // The phone's switch follows the PC's when it changes; at a session's start, on wins on either side
+            // (the PC follows the phone's LINK_INFO the same way), so a misfire right at the start is logged.
+            if (v == null) pcDiagSeen = null
+            else {
+                val seen = pcDiagSeen
+                if ((seen == null && pcDiag && !debugTrace) || (seen != null && seen != pcDiag)) onPcDiagnostics?.invoke(pcDiag)
+                pcDiagSeen = pcDiag
+            }
             if (v != null) motion.padTakesMotion = OutputMode.takesMotion(v.outputMode) && v.flags and HostStatusFlags.PAD_PLUGGED != 0
             else motion.padTakesMotion = false
         }
@@ -504,6 +532,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             ethernet = usbActive && usbEthernet,
             vigemOk = hs?.let { it.flags and HostStatusFlags.VIGEM_OK != 0 }
                 ?: welcomeHostFlags?.let { it and HostFlags.VIGEM_OK != 0 },
+            pcSetup = hs?.flags2,
         )
     }
 
@@ -1352,7 +1381,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** Bumped by [requestDebugSave]; LINK_INFO carries its low bits so the PC saves when they change. */
     @Volatile private var debugSaves = 0
 
-    /** Asks the PC to save its last 30 s of debug log now, next to the phone's recording. */
+    /** Asks the PC to save its last 3 minutes of debug log now, next to the phone's recording. */
     fun requestDebugSave() {
         debugSaves++
         pump.requestLinkInfo()

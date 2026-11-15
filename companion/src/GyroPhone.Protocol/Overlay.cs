@@ -100,6 +100,9 @@ public sealed class OverlayFrame
     public bool IsPressed(int i) => i is >= 0 and < 128 && (Pressed[i >> 3] & (1 << (i & 7))) != 0;
     public bool IsLatched(int i) => i is >= 0 and < 128 && (Latched[i >> 3] & (1 << (i & 7))) != 0;
 
+    /// <summary>Where <see cref="Axes"/> sits in an OVERLAY's plain bytes.</summary>
+    public const int AxesOffset = 30;
+
     /// <summary>Decodes the wire fields; the pose (<see cref="Qw"/>..) is left as it is.</summary>
     public void Decode(ReadOnlySpan<byte> b)
     {
@@ -114,7 +117,7 @@ public sealed class OverlayFrame
         NorthX = Le.I16(b, 24) / 32767f;
         NorthY = Le.I16(b, 26) / 32767f;
         NorthZ = Le.I16(b, 28) / 32767f;
-        Axes = b[30];
+        Axes = b[AxesOffset];
         RatchetPresses = b[31];
         LayoutVersion = Le.U16(b, 32);
         Flags = b[34];
@@ -214,6 +217,51 @@ public sealed class OverlayFrame
         Array.Copy(PadSticks, o.PadSticks, PadSticks.Length);
         Array.Copy(StickIndex, o.StickIndex, StickIndex.Length);
         Array.Copy(StickXY, o.StickXY, StickXY.Length);
+    }
+}
+
+/// <summary>
+/// OVERLAY_SAMPLES: each gyro sample's turn in the OVERLAY sent right after it (the same phone time), oldest first, so a
+/// pointer overlay paints along every sample as the phone's does. u32 phone time; u8 count (up to <see cref="Max"/>);
+/// 3 bytes 0; per sample i16 yaw, pitch, roll (thousandths of a degree) and u16 its time (10 us units).
+/// </summary>
+public sealed class OverlaySamples
+{
+    public const int Max = 32;
+    public uint PhoneTimeUs;
+    public int Count;
+    /// <summary>Yaw, pitch, roll (degrees) and seconds per sample.</summary>
+    public readonly float[] Turns = new float[Max * 4];
+    private bool _has;
+
+    public void Decode(ReadOnlySpan<byte> b)
+    {
+        PhoneTimeUs = Le.U32(b, 0);
+        Count = Math.Min((int)b[4], Max);
+        for (int k = 0; k < Count; k++)
+        {
+            int p = 8 + k * 8;
+            Turns[k * 4] = Le.I16(b, p) / 1000f;
+            Turns[k * 4 + 1] = Le.I16(b, p + 2) / 1000f;
+            Turns[k * 4 + 2] = Le.I16(b, p + 4) / 1000f;
+            Turns[k * 4 + 3] = Le.U16(b, p + 6) / 100_000f;
+        }
+        _has = true;
+    }
+
+    /// <summary>They go with <paramref name="f"/> (sent just before it), and add up to its turn (no frame lost between).</summary>
+    public bool Matches(OverlayFrame f)
+    {
+        if (!_has || Count == 0 || PhoneTimeUs != f.PhoneTimeUs) return false;
+        float y = 0, p = 0, r = 0, t = 0;
+        for (int k = 0; k < Count; k++)
+        {
+            y += Turns[k * 4]; p += Turns[k * 4 + 1]; r += Turns[k * 4 + 2]; t += Turns[k * 4 + 3];
+        }
+        // Rounding on the wire: a few thousandths of a degree per sample, 10 us per sample.
+        float tol = 0.002f * Count + 0.05f;
+        return MathF.Abs(t - f.TurnSeconds) < 0.00002f * Count + 0.0005f
+            && MathF.Abs(y - f.TurnYaw) < tol && MathF.Abs(p - f.TurnPitch) < tol && MathF.Abs(r - f.TurnRoll) < tol;
     }
 }
 

@@ -180,6 +180,8 @@ internal fun MappingChipDialog(
     value: ChipValue? = null,
     /** A chip on a Position input: its next touch already ends a Toggle, so there is no Tap end. */
     position: Boolean = false,
+    /** Its button's How ([ButtonHow]) as this chip takes it, when it is a button's chip; null = none to follow. */
+    buttonHow: How? = null,
 ) {
     var perDp by remember { mutableStateOf(value?.let { it.shown(it.perDp ?: it.defaultPerDp) } ?: 0f) }
     val o0 = options ?: MapOptions()
@@ -188,7 +190,9 @@ internal fun MappingChipDialog(
     var rTo by remember { mutableStateOf(r0?.let { range.shown(it.to) } ?: 0f) }
     var t by remember { mutableStateOf(trigger) }
     var w by remember { mutableIntStateOf(where) }
-    var how by remember { mutableStateOf(o0.mode) }
+    // Without a How of its own a button's chip follows the button's.
+    var ownHow by remember { mutableStateOf(buttonHow == null || o0.how != null || o0.toggle) }
+    var how by remember { mutableStateOf(if (ownHow) o0.mode else buttonHow ?: How.HELD) }
     var cycle by remember { mutableStateOf(o0.cycle) }
     var repeat by remember { mutableIntStateOf(o0.repeat.coerceIn(MapOptions.MIN_REPEAT, MapOptions.MAX_REPEAT)) }
     var start by remember { mutableIntStateOf(o0.startDelayMs) }
@@ -304,7 +308,12 @@ internal fun MappingChipDialog(
                             endsOnLetGo = value.initial.endsOnLetGo
                         }
                         how = x
+                        ownHow = true
                     }, label = { Text(x.label) })
+                }
+                if (buttonHow != null) {
+                    if (ownHow) TextButton(onClick = { ownHow = false; how = buttonHow }) { Text("↺ Follow the button (${buttonHow.label})") }
+                    else hint("Follows the button's How (${buttonHow.label}). Pick one to set its own.")
                 }
                 hint(
                     when {
@@ -325,7 +334,10 @@ internal fun MappingChipDialog(
                 if (t == Trigger.DOUBLE_TAP) {
                     hint("With a Held chip and others on Double tap, the second touch decides: a quick lift fires the others, staying down or moving fires the Held one.")
                 }
-                if (shown == How.TOGGLE) {
+                if (shown == How.TOGGLE && !ownHow) {
+                    hint("It follows the button's Toggle: on its press it is on while the button is on, and it ends as the button's Also ends on says (the button's Press settings).")
+                }
+                if (shown == How.TOGGLE && ownHow) {
                     Text("Also ends on", style = MaterialTheme.typography.titleSmall)
                     // A value chip: a tap on a Position input sets the value, so only Move ends on one; no keystroke to match.
                     if (if (value != null) value.move else !position) checkRow(
@@ -370,10 +382,12 @@ internal fun MappingChipDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                val toggle = how == How.TOGGLE
+                // A chip following its button's Toggle ends as the button does: no endings of its own.
+                val toggle = how == How.TOGGLE && ownHow
                 val o = MapOptions(
                     // At a lift Held and Once are the same short press: kept as Held (no options).
-                    how = if (how == How.ONCE && !t.holds) How.HELD else how, cycle = cycle && value == null,
+                    how = (if (how == How.ONCE && !t.holds) How.HELD else how).takeIf { ownHow && (buttonHow != null || it != How.HELD) },
+                    cycle = cycle && value == null,
                     startDelayMs = if (value == null) start else 0, endDelayMs = if (value == null) end else 0,
                     minHoldMs = if (value == null) minHold else MapOptions.DEFAULT_MIN_HOLD_MS,
                     endsOnTap = toggle && endsOnTap && (if (value != null) value.move else !position),
