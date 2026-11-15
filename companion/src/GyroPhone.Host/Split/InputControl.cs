@@ -27,8 +27,8 @@ public interface IInputControl
     /// <summary>Looks for the gamepad driver again; null when found, else why not.</summary>
     string? RetryDriver();
     void SetCatchUpMs(int ms);
-    /// <summary>"Use SendInput" even when the input driver is installed.</summary>
-    void SetUseSendInput(bool on);
+    /// <summary>"Use input driver": keys and mouse through the input driver when it is installed (off: SendInput).</summary>
+    void SetUseInputDriver(bool on);
 
     // Pairing
     void OpenPairingWindow();
@@ -128,13 +128,13 @@ public sealed record InputSettingsView(
     bool MeasureButtons,
     bool Diagnostics,
     int DiagnosticsMinutes,
-    bool UseSendInput,
+    bool UseInputDriver,
     bool PressKeyListen,
     bool PressKeyNotice,
     int CatchUpMs)
 {
     public static InputSettingsView Of(HostSettings s) => new(s.HostName, s.OutputMode, s.StartWithWindows, s.UsbDirect,
-        s.MeasureButtons, s.Diagnostics, s.DiagnosticsMinutes, s.UseSendInput, s.PressKeyListen, s.PressKeyNotice, s.CatchUpMs);
+        s.MeasureButtons, s.Diagnostics, s.DiagnosticsMinutes, s.UseInputDriver, s.PressKeyListen, s.PressKeyNotice, s.CatchUpMs);
 }
 
 /// <summary>A Diagnostics line from the input process (event "debug").</summary>

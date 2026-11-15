@@ -165,9 +165,9 @@ public sealed class HidInputSink : IDisposable
 }
 
 /// <summary>
-/// The engine's keyboard and mouse sink: the input driver when it's installed and plugged (<see cref="Retry"/>), unless "Use SendInput"
-/// (Performance) is on; SendInput otherwise. Inject runs under the engine lock; <see cref="UseSendInput"/> is changed
-/// only through the engine (<c>HostEngine.SetUseSendInput</c>), which lets go of everything first, so no key stays held
+/// The engine's keyboard and mouse sink: SendInput, unless "Use input driver" (Performance) is on and the driver is installed
+/// and plugged (<see cref="Retry"/>). Inject runs under the engine lock; <see cref="UseInputDriver"/> is changed
+/// only through the engine (<c>HostEngine.SetUseInputDriver</c>), which lets go of everything first, so no key stays held
 /// on the route it leaves.
 /// </summary>
 public sealed class KeyMouseRouter : IKeyMouseSink, IDisposable
@@ -175,24 +175,36 @@ public sealed class KeyMouseRouter : IKeyMouseSink, IDisposable
     private readonly SendInputSink _sendInput;
     private readonly Action<string>? _log;
     private HidInputSink? _driver;
-    private volatile bool _useSendInput;
+    private volatile bool _useInputDriver;
     private volatile bool _viaDriver;
 
-    public KeyMouseRouter(SendInputSink sendInput, bool useSendInput, Action<string>? log)
+    public KeyMouseRouter(SendInputSink sendInput, bool useInputDriver, Action<string>? log)
     {
         _sendInput = sendInput;
-        _useSendInput = useSendInput;
+        _useInputDriver = useInputDriver;
         _log = log;
     }
 
     /// <summary>The input driver is installed and its devices are plugged.</summary>
     public bool DriverReady => _driver?.Plugged == true;
 
-    /// <summary>"Use SendInput" (Performance): SendInput even when the driver is there, for A/B tests.</summary>
-    public bool UseSendInput
+    /// <summary>"Use input driver" (Performance): keys and mouse through the driver when it is there; off (the default), SendInput.</summary>
+    public bool UseInputDriver => _useInputDriver;
+
+    /// <summary>
+    /// Switches "Use input driver". On plugs the driver's mouse and keyboard now (when it's installed); off unplugs them, so
+    /// no idle virtual mouse and keyboard stay in Windows and nothing holds the device (its uninstall can remove it).
+    /// Called through <c>HostEngine.SetUseInputDriver</c>, under the engine lock, after everything held was let go.
+    /// </summary>
+    public void SetUseInputDriver(bool on)
     {
-        get => _useSendInput;
-        set => _useSendInput = value;
+        _useInputDriver = on;
+        if (on) Retry();
+        else
+        {
+            _driver?.Dispose();
+            _driver = null;
+        }
     }
 
     public SendInputSink SendInput => _sendInput;
@@ -202,7 +214,7 @@ public sealed class KeyMouseRouter : IKeyMouseSink, IDisposable
     public bool Inject(ReadOnlySpan<InjectEvent> events)
     {
         var d = _driver;
-        if (d != null && d.Plugged && !_useSendInput)
+        if (d != null && d.Plugged && _useInputDriver)
         {
             _viaDriver = true;
             // Gone underneath: false, so the engine sends the held set again (now through SendInput).
@@ -213,12 +225,13 @@ public sealed class KeyMouseRouter : IKeyMouseSink, IDisposable
     }
 
     /// <summary>
-    /// Plugs the driver's mouse and keyboard when it's installed and they aren't plugged yet: once this instance owns
-    /// the port (an instance on its way out may still hold them), and again when the driver turns up later. Called
-    /// through <c>HostEngine.ChangeKeyMouseRoute</c>, under the engine lock.
+    /// Plugs the driver's mouse and keyboard when "Use input driver" is on, it's installed and they aren't plugged yet:
+    /// once this instance owns the port (an instance on its way out may still hold them), and again when the driver turns
+    /// up later. Called through <c>HostEngine.ChangeKeyMouseRoute</c>, under the engine lock.
     /// </summary>
     public bool Retry()
     {
+        if (!_useInputDriver) return false;
         if (DriverReady) return true;
         _driver?.Dispose();
         _driver = HidInputSink.Create(_log);

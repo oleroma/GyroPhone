@@ -1533,20 +1533,20 @@ public sealed class HostEngine
     public Action<long, int, int>? MoveSent { get; set; }
 
     /// <summary>
-    /// "Use SendInput" (Performance): saves it and lets <paramref name="apply"/> switch the keyboard and mouse route, under
+    /// "Use input driver" (Performance): saves it and lets <paramref name="apply"/> switch the keyboard and mouse route, under
     /// the engine lock and after letting go of every key and button on the route it leaves; the next STATE presses what is
     /// held again on the new one.
     /// </summary>
-    public void SetUseSendInput(bool on, Action<bool> apply)
+    public void SetUseInputDriver(bool on, Action<bool> apply)
     {
         using (Lock(ByUi))
         {
-            if (on != _settings.UseSendInput)
+            if (on != _settings.UseInputDriver)
             {
-                _settings.UseSendInput = on;
+                _settings.UseInputDriver = on;
                 _settingsDirty = true;
             }
-            ChangeKeyMouseRouteLocked(() => apply(on), on ? "Use SendInput on" : "Use SendInput off");
+            ChangeKeyMouseRouteLocked(() => apply(on), on ? "Use input driver on" : "Use input driver off");
         }
     }
 

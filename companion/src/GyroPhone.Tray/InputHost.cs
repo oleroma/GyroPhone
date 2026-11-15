@@ -130,7 +130,7 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
         _marker = new HeldKeysMarker(HeldKeysMarker.DefaultPath());
         var store = new SettingsStore(SettingsStore.DefaultPath(), lockedWaitMs);
         var settings = store.Load(Environment.MachineName, _log.Write);
-        _keyMouse = new KeyMouseRouter(new SendInputSink(_log.Write), settings.UseSendInput, _log.Write);
+        _keyMouse = new KeyMouseRouter(new SendInputSink(_log.Write), settings.UseInputDriver, _log.Write);
         _pad = PadSinks.Create(_log.Write, out var padError);
         _padError = padError;
         var protector = new DpapiKeyProtector();
@@ -315,7 +315,7 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
     {
         var s = _engine.Snapshot();
         return new InputStatus(s, InputSettingsView.Of(_engine.Settings), _server.State.ToString(), _bindRetrying, _bindWaitLong,
-            _keyError, _keyRetrying, _padError, _keyMouse.DriverReady && !_keyMouse.UseSendInput, _inputDriverInstalled,
+            _keyError, _keyRetrying, _padError, _keyMouse.DriverReady && _keyMouse.UseInputDriver, _inputDriverInstalled,
             _usb.Enabled, _usb.State.ToString(), _usb.Detail, _authorized?.LastScan,
             _keyMouse.SendInput.ShortWrites, _server.RxExceptions, _engine.PressLatencyNow(), ElevationProbe.IsSelfElevated,
             _keyFiles.Directory, _log.LastError, Volatile.Read(ref _diagSaved));
@@ -424,12 +424,20 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
         StateChanged();
     }
 
-    /// <summary>Plugs the input driver's mouse and keyboard when it's installed and they aren't plugged (off the input path).</summary>
+    /// <summary>
+    /// Notes whether the input driver is installed (Performance shows "Use input driver" only then) and, while that switch
+    /// is on, plugs its mouse and keyboard when they aren't plugged (off the input path).
+    /// </summary>
     private void CheckInputDriver()
     {
         if (Volatile.Read(ref _exited) != 0 || _keyMouse.DriverReady) return;
-        _inputDriverInstalled = HidInputSink.Installed;
-        if (_server.State != ServerState.Running || !_inputDriverInstalled) return;
+        bool installed = HidInputSink.Installed;
+        if (installed != _inputDriverInstalled)
+        {
+            _inputDriverInstalled = installed;
+            StateChanged();
+        }
+        if (_server.State != ServerState.Running || !installed || !_keyMouse.UseInputDriver) return;
         bool ok = false;
         _engine.ChangeKeyMouseRoute(() => ok = _keyMouse.Retry(), "input driver plugged");
         if (ok) StateChanged();
@@ -579,7 +587,7 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
 
     public void SetCatchUpMs(int ms) => _engine.SetCatchUpMs(ms);
 
-    public void SetUseSendInput(bool on) => _engine.SetUseSendInput(on, v => _keyMouse.UseSendInput = v);
+    public void SetUseInputDriver(bool on) => _engine.SetUseInputDriver(on, _keyMouse.SetUseInputDriver);
 
     public void OpenPairingWindow() => _engine.OpenPairingWindow();
 

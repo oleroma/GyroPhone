@@ -55,7 +55,7 @@ internal static class Program
 
         var store = new SettingsStore(SettingsStore.DefaultPath());
         var settings = store.Load(Environment.MachineName, log.Write);
-        using var keyMouse = new KeyMouseRouter(new SendInputSink(log.Write), settings.UseSendInput, log.Write);
+        using var keyMouse = new KeyMouseRouter(new SendInputSink(log.Write), settings.UseInputDriver, log.Write);
 
         IPadSink pad = NullPadSink.Instance;
         if (!noVigem)

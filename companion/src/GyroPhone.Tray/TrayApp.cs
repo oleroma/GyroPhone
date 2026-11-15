@@ -526,7 +526,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             set.PressKeyListen,
             set.DiagnosticsMinutes,
             Volatile.Read(ref _diagSaved),
-            set.UseSendInput,
+            set.UseInputDriver,
             st?.InputDriverReady == true ? InputDriverState.Ready : st?.InputDriverInstalled == true ? InputDriverState.NotPlugged : InputDriverState.NotInstalled);
     }
 
@@ -537,9 +537,9 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         Refresh();
     }
 
-    public void ToggleUseSendInput()
+    public void ToggleUseInputDriver()
     {
-        In.SetUseSendInput(!Set.UseSendInput);
+        In.SetUseInputDriver(!Set.UseInputDriver);
         Refresh();
     }
 

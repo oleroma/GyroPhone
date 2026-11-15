@@ -101,7 +101,7 @@ try {
     }
     foreach ($d in $devices) { Write-Step "  $($d.FriendlyName): $($d.Status)" }
     if ($reboot) { Write-Step 'Windows wants a restart to finish.' }
-    Write-Done 'Done. Start (or restart) the GyroPhone companion: it sends keys and mouse through this driver from then on.'
+    Write-Done 'Done. Start (or restart) the GyroPhone companion and turn on Performance > Keyboard and mouse > Use input driver to send keys and mouse through it.'
     $code = 0
 } catch {
     Write-Fail $_.Exception.Message
