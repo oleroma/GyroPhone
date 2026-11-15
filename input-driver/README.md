@@ -28,7 +28,7 @@ It is separate from the pad driver (`driver/`, the DualSense): install either, b
    it's in use. The **Use SendInput** switch there goes back to SendInput without uninstalling, for
    A/B tests.
 
-Run `install.cmd` again to update the driver.
+Run `install.cmd` again to update the driver; exit the companion first, so install.cmd can restart the device and the new driver runs at once (otherwise it runs after the next Windows restart).
 
 ## What install.cmd does
 
