@@ -124,6 +124,10 @@ import com.oleroma.gyrophone.core.model.MappingPresets
 import com.oleroma.gyrophone.core.model.PresetChip
 import com.oleroma.gyrophone.core.model.PresetLevel
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.WorkspaceDefaults
+import com.oleroma.gyrophone.core.model.ButtonGyro
+import com.oleroma.gyrophone.core.model.ButtonHow
+import com.oleroma.gyrophone.core.model.KeyTiming
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.HoldMode
@@ -162,9 +166,13 @@ private const val MIN_SPLIT = 0.25f
 private const val MAX_SPLIT = 0.75f
 private const val PREF_SPLIT = "map.split"
 private const val PREF_RECENT = "map.recent"
-private const val PREF_ORDER = "map.order."
-/** The card order last arranged by hand, per control kind: Sort > Custom brings it back. */
-private const val PREF_CUSTOM = "map.custom."
+internal const val PREF_ORDER = "map.order."
+/**
+ * The card order last arranged by hand, per control kind: Sort > Custom brings it back. A touch
+ * button keeps its own orders ([TouchControl.cardOrder]); these are the touchpad's and the
+ * physical controls', and what buttons took over once ([GamepadRuntime.moveCardOrders]).
+ */
+internal const val PREF_CUSTOM = "map.custom."
 private val recentSerializer = ListSerializer(OutputTarget.serializer())
 private val prefJson = Json { ignoreUnknownKeys = true }
 
@@ -312,8 +320,8 @@ private fun actionTitle(control: TouchControl, input: BindableInput): String {
     return s.fingers.toString() + "f " + if (d != null) "Swipe " + Bindings.slotLabel(d.ordinal) else input.label
 }
 
-/** Remembered card orders are per control kind. */
-private fun kindKey(c: TouchControl) = when {
+/** Remembered card orders of controls with no order of their own are per control kind. */
+internal fun kindKey(c: TouchControl) = when {
     c.isTouchpadStandIn -> "touchpad"
     c.physicalDevice != null -> "device." + if (c.kind == TouchKind.STICK) "stick" else "button"
     c.kind == TouchKind.STICK -> "stick"
@@ -322,15 +330,21 @@ private fun kindKey(c: TouchControl) = when {
 }
 
 /** A card's key in the remembered order: its label, surface ones (and a swipe button's hold) without the finger count. */
-private fun orderKey(control: TouchControl, input: BindableInput): String =
+internal fun orderKey(control: TouchControl, input: BindableInput): String =
     when {
-        isSurface(input) -> "f:" + input.label.replace(Regex("^[0-9]f "), "")
+        isSurface(input) -> "f:" + input.label.replace(FINGERS_PREFIX, "")
         control.swipes && input.sources.first() is InputSource.Touch -> "f:" + SurfaceInput.HOLD.label
         else -> actionLabel(control, input)
     }
 
+private val FINGERS_PREFIX = Regex("^[0-9]f ")
+
+/** [c]'s actions ([Bindings.touchInputs]) in its own card order ([TouchControl.cardOrder]): its first card first. */
+internal fun cardsInOrder(c: TouchControl): List<BindableInput> =
+    Bindings.touchInputs(c).let { if (c.cardOrder.isEmpty()) it else sorted(c, it, c.cardOrder) }
+
 /** [inputs] in the remembered [order]; unknown ones last, in their own order. */
-private fun sorted(control: TouchControl, inputs: List<BindableInput>, order: List<String>): List<BindableInput> =
+internal fun sorted(control: TouchControl, inputs: List<BindableInput>, order: List<String>): List<BindableInput> =
     inputs.sortedBy { order.indexOf(orderKey(control, it)).let { i -> if (i < 0) Int.MAX_VALUE else i } }
 
 private fun loadRecent(runtime: GamepadRuntime): List<OutputTarget> =
@@ -384,6 +398,8 @@ private fun presetsFor(
     }
     // Roll and pitch move the mouse. A physical control has no gyro of its own here.
     if (!physical) add(MapPreset("Gyro mouse", PresetLevel.BUTTON, toChips(Bindings.gyroMouseMappings(control.id))))
+    // Turning the phone like a wheel steers the left stick.
+    if (!physical) add(MapPreset("Steering wheel", PresetLevel.BUTTON, toChips(Bindings.steeringWheelMappings(control.id))))
 }
 
 /**
@@ -475,6 +491,10 @@ internal fun ControlMappingScreen(
      * id). Its Motion tab then maps gyro axes while it is held; null = no Motion tab.
      */
     physicalMotionId: String? = null,
+    /** That physical key's or button's own gyro settings while held ([HeldButton.gyro]), for its gyro cards' space. */
+    physicalGyro: List<ButtonGyro>? = null,
+    /** A physical device's keys' own settings ([KeyTiming]): their How, which their chips follow; null = not a physical control. */
+    physicalTimings: List<KeyTiming>? = null,
     /** The actions' own settings (their ⚙) and the shared ones (Settings); null = none. */
     settings: MappingSettings? = null,
     /**
@@ -499,6 +519,36 @@ internal fun ControlMappingScreen(
 ) {
     // The edited set seen as Base, so the Base-only Bindings helpers edit it.
     val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
+
+    /** The How (null = Held) and Repeat count of the button or key [src] belongs to, or null when it is no button's. */
+    fun buttonHowOf(src: InputSource): Pair<How?, Int>? {
+        ButtonHow.keyOf(src)?.let { k -> if (physicalTimings != null) return physicalTimings.firstOrNull { it.keyCode == k }.let { it?.how to (it?.repeat ?: 2) } }
+        return if (control.kind == TouchKind.BUTTON && ButtonHow.ownerOf(src) == control.id) control.how to control.repeat else null
+    }
+
+    /** The How chip [target] on [src] follows from its button (Held where it can't take the button's), or null when it is no button's. */
+    fun chipButtonHow(src: InputSource, target: OutputTarget): How? {
+        val h = (buttonHowOf(src) ?: return null).first ?: How.HELD
+        return if (h == How.HELD || ButtonHow.takes(target, src, h)) h else How.HELD
+    }
+
+    /**
+     * Gyro card [src]'s title: "Local pitch", "World yaw" or "Player yaw", by the space it measures in
+     * (its button's own while held, else the layer's or workspace's).
+     */
+    fun gyroCardTitle(input: BindableInput, src: InputSource.Gyro): String {
+        val ws = workspace ?: runtime.engine.workspace
+        val sets = if (editSet == MappingSet.BASE) listOf(MappingSet.BASE) else listOf(MappingSet.BASE, editSet)
+        val parent = WorkspaceDefaults.layered(ws, MappingSet.BASE, sets.drop(1)).gyro
+        val own = when {
+            src.id.isEmpty() -> null
+            physicalGyro != null -> sets.fold(ButtonGyro()) { r, s -> physicalGyro.firstOrNull { it.set == s }?.let { r.under(it) } ?: r }
+            src.id == control.id -> control.gyroIn(sets)
+            else -> null
+        }
+        val space = own?.ownSpace(src.axis) ?: parent.spaceOf(src.axis)
+        return space.title(src.axis)
+    }
     val parentView = remember(inherited) { inherited.map { it.copy(set = MappingSet.BASE) }.distinct() }
 
     /** [input] firing on [t] (itself for Hold). */
@@ -592,23 +642,27 @@ internal fun ControlMappingScreen(
     val extras = remember(inputs) { inputs.flatMap { it.extra }.distinct() }
 
     var fingers by remember(control.id) { mutableIntStateOf(1) }
+    // A touch button (or stick) keeps its own card order; the touchpad and physical controls one per kind.
+    val ownOrder = onControlChange != null && !control.isTouchpadStandIn && control.physicalDevice == null && physicalInputs == null
     var order by remember(control.id) {
-        mutableStateOf(runtime.uiPref(PREF_ORDER + kindKey(control))?.split("\n").orEmpty())
+        mutableStateOf(if (ownOrder) control.cardOrder else runtime.uiPref(PREF_ORDER + kindKey(control))?.split("\n").orEmpty())
     }
     var custom by remember(control.id) {
-        mutableStateOf(runtime.uiPref(PREF_CUSTOM + kindKey(control))?.split("\n").orEmpty())
+        mutableStateOf(if (ownOrder) control.customOrder else runtime.uiPref(PREF_CUSTOM + kindKey(control))?.split("\n").orEmpty())
     }
     var sortMenu by remember { mutableStateOf(false) }
     var confirmDefault by remember { mutableStateOf(false) }
 
-    /** Saves [next] as the card order of this kind of control (and, [byHand], as its custom order). */
+    /** Saves [next] as the card order of this control (or its kind, [ownOrder]) and, [byHand], as its custom order. */
     fun saveOrder(next: List<String>, byHand: Boolean = false) {
         order = next
-        runtime.setUiPref(PREF_ORDER + kindKey(control), next.joinToString("\n"))
-        if (byHand) {
-            custom = next
-            runtime.setUiPref(PREF_CUSTOM + kindKey(control), next.joinToString("\n"))
+        if (byHand) custom = next
+        if (ownOrder) {
+            onControlChange?.invoke { c -> c.copy(cardOrder = next, customOrder = if (byHand) next else c.customOrder) }
+            return
         }
+        runtime.setUiPref(PREF_ORDER + kindKey(control), next.joinToString("\n"))
+        if (byHand) runtime.setUiPref(PREF_CUSTOM + kindKey(control), next.joinToString("\n"))
     }
     /** The card of touching the button (or stick) itself: its Area and Outside chips show on it. */
     fun isTouchCard(s: InputSource) = s == InputSource.Touch(control.id) ||
@@ -768,7 +822,8 @@ internal fun ControlMappingScreen(
         snackbar.currentSnackbarData?.dismiss()
         redo.add(allMappings to (if (was != null) currentControl else null))
         emit(prev)
-        if (was != null) onControlChange?.invoke { was }
+        // Undo brings back a preset's settings, not the card order arranged since.
+        if (was != null) onControlChange?.invoke { was.copy(cardOrder = it.cardOrder, customOrder = it.customOrder) }
     }
 
     fun redoLast() {
@@ -776,7 +831,7 @@ internal fun ControlMappingScreen(
         snackbar.currentSnackbarData?.dismiss()
         undo.add(allMappings to (if (was != null) currentControl else null))
         emit(next)
-        if (was != null) onControlChange?.invoke { was }
+        if (was != null) onControlChange?.invoke { was.copy(cardOrder = it.cardOrder, customOrder = it.customOrder) }
     }
 
     /**
@@ -812,6 +867,15 @@ internal fun ControlMappingScreen(
         if (t is OutputTarget.TouchSens) {
             val base = runtime.engine.workspace.touchpad.sensitivity
             next = next.map { if (Bindings.belongs(it, input) && it.target == t && it.range == null) it.copy(range = AxisRange(base * 0.8f, base * 1.2f)) else it }
+        }
+        val newRange = when (t) {
+            OutputTarget.TapTime -> TAP_TIME_RANGE
+            is OutputTarget.GyroGlide -> GLIDE_RANGE
+            is OutputTarget.TiltRange -> TILT_RANGE
+            else -> null
+        }
+        if (newRange != null) {
+            next = next.map { if (Bindings.belongs(it, input) && it.target == t && it.range == null) it.copy(range = newRange) else it }
         }
         if (t is OutputTarget.GyroSens) {
             // It needs a range to do anything: around the sensitivity it would change.
@@ -1039,9 +1103,14 @@ internal fun ControlMappingScreen(
         }
     }
 
-    /** The options of [chip] of [card] in [m]; null = none, or not there. */
-    fun chipOptions(m: List<Mapping>, card: BindableInput, chip: RowItem.Chip): MapOptions? =
-        Bindings.entry(m, trig(chipInput(card, chip), chip.trigger), chip.target, chip.n)?.options
+    /** The options of [chip] of [card] in [m], with its button's How where it follows it; null = none, or not there. */
+    fun chipOptions(m: List<Mapping>, card: BindableInput, chip: RowItem.Chip): MapOptions? {
+        val ti = trig(chipInput(card, chip), chip.trigger)
+        val o = Bindings.entry(m, ti, chip.target, chip.n)?.options
+        val src = ti.sources.firstOrNull() ?: return o
+        val (h, n) = buttonHowOf(src) ?: return o
+        return ButtonHow.options(o, chip.target, src, h, n)
+    }
 
     /** A chip's range as its text shows it ("10–85 %"), or null. */
     fun chipRangeText(m: List<Mapping>, card: BindableInput, chip: RowItem.Chip): String? {
@@ -1054,6 +1123,8 @@ internal fun ControlMappingScreen(
                 if (c > 0f) "%.2f–%.2f".format(GameSens.rws(r.from, c), GameSens.rws(r.to, c)) else "%.1f–%.1f".format(r.from, r.to)
             }
             is OutputTarget.TouchSens -> "%.2f–%.2f".format(r.from, r.to)
+            OutputTarget.TapTime, is OutputTarget.GyroGlide -> "%.0f–%.0f ms".format(r.from, r.to)
+            is OutputTarget.TiltRange -> "%.0f–%.0f°".format(r.from, r.to)
             else -> null
         }
     }
@@ -1499,7 +1570,7 @@ internal fun ControlMappingScreen(
                         Column(Modifier.animateItem(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 FilterChip(selected = fingers != 0, onClick = { fingers = 1 }, label = { Text("Button") })
-                                FilterChip(selected = fingers == 0, onClick = { fingers = 0 }, label = { Text("Motion") })
+                                FilterChip(selected = fingers == 0, onClick = { fingers = 0 }, label = { Text("Gyro") })
                             }
                             if (fingers == 0) {
                                 Text(
@@ -1530,7 +1601,7 @@ internal fun ControlMappingScreen(
                                     )
                                 }
                                 if (physicalInputs == null) {
-                                    FilterChip(selected = fingers == 0, onClick = { fingers = 0 }, label = { Text("Motion") })
+                                    FilterChip(selected = fingers == 0, onClick = { fingers = 0 }, label = { Text("Gyro") })
                                 }
                             }
                             if (fingers == 0) {
@@ -1655,6 +1726,7 @@ internal fun ControlMappingScreen(
                             isAxisCard(src) -> "Move"
                             isSurface(input) && (src as InputSource.Surface).input == SurfaceInput.HOLD -> "Touch"
                             isSurface(input) -> input.label
+                            src is InputSource.Gyro -> gyroCardTitle(input, src)
                             else -> actionLabel(control, input)
                         },
                         row = row,
@@ -2010,7 +2082,7 @@ internal fun ControlMappingScreen(
                                         val touch = !physical && !control.isTouchpadStandIn
                                         runtime.addToLibrary(
                                             LibraryButton(
-                                                ButtonLibrary.newId(library.map { it.id }), control.copy(group = null, sizeSync = null),
+                                                ButtonLibrary.newId(library.map { it.id }), control.copy(group = null, sizeSync = null, toggleSync = null),
                                                 mappings = if (touch) own else emptyList(), name = name,
                                                 chips = if (touch) emptyList() else buttonChips(view),
                                             ),
@@ -2143,7 +2215,7 @@ internal fun ControlMappingScreen(
             title = { Text("Default order?") },
             text = {
                 Text(
-                    "Every action of every " + controlKindName(control).lowercase() +
+                    (if (ownOrder) "Every action of this " else "Every action of every ") + controlKindName(control).lowercase() +
                             " goes back to its default place. The order you arranged by hand is lost.",
                 )
             },
@@ -2275,6 +2347,7 @@ internal fun ControlMappingScreen(
             range = chipRange(chip.target, Bindings.entry(view, ti, chip.target, chip.n)?.range, runtime.engine.workspace.gyro),
             value = chipValue(chip.target, zi.sources.first(), Bindings.entry(view, ti, chip.target, chip.n), runtime.engine.workspace.gyro),
             position = zi.sources.first() is InputSource.Finger,
+            buttonHow = ti.sources.firstOrNull()?.let { chipButtonHow(it, chip.target) },
             onApply = { tr, o, w, r, pd ->
                 chipDialog = null
                 val target = (chip.target as? OutputTarget.SetOrientation)?.copy(granular = granular) ?: chip.target
@@ -3197,12 +3270,23 @@ private fun chipValue(target: OutputTarget, source: InputSource, e: Bindings.Ent
             ) else ChipValue(init, move, e?.perDp, def, 1f, 0.005f, { "%.3f".format(it) })
         }
         is OutputTarget.TouchSens -> ChipValue(init, move, e?.perDp, def, 0.1f, 0.001f, { "%.3f".format(it) })
+        OutputTarget.TapTime, is OutputTarget.GyroGlide -> ChipValue(init, move, e?.perDp, def, 10f, 0.1f, { "%.1f ms".format(it) })
+        is OutputTarget.TiltRange -> ChipValue(init, move, e?.perDp, def, 1f, 0.01f, { "%.2f°".format(it) })
         else -> ChipValue(
             init, move, e?.perDp, def, 5f, 0.05f, { "%.2f %%".format(it) },
             shown = { it * 100f }, stored = { it / 100f },
         )
     }
 }
+
+/** A new Tap time chip's range (ms). */
+private val TAP_TIME_RANGE = AxisRange(150f, 600f)
+
+/** A new Gyro glide chip's range (ms). */
+private val GLIDE_RANGE = AxisRange(150f, 600f)
+
+/** A new Tilt range chip's range (degrees). */
+private val TILT_RANGE = AxisRange(15f, 45f)
 
 /** Touch sensitivity typed into a range goes up to this. */
 private const val MAX_TOUCH_SENS_TYPED = 50f
@@ -3248,6 +3332,38 @@ private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings
                 current, AxisRange(base * 0.8f, base * 1.2f), null, 0f..10f, 0f..MAX_TOUCH_SENS_TYPED, 0.05f, { "%.2f".format(it) },
                 "The touchpad's Move sensitivity at the input's 0 and at full; it changes evenly between them while " +
                     "the input is active and goes back when it lets go (unless a Toggle keeps it). Drag one handle past the other to reverse it.",
+            )
+        }
+
+        OutputTarget.TapTime -> {
+            val lo = Workspace.MIN_LONG_PRESS_MS.toFloat()
+            val hi = Workspace.MAX_LONG_PRESS_MS.toFloat()
+            ChipRange(
+                current, TAP_TIME_RANGE, null, lo..hi, lo..hi, 10f, { "%.0f ms".format(it) },
+                "The Tap time at the input's 0 and at full: how long a tap may last, and the gap of a double tap, for " +
+                    "the workspace's buttons, touchpad and keys without their own. It changes the taps to come while the " +
+                    "input is active and goes back when it lets go (unless a Toggle keeps it). Drag one handle past the other to reverse it.",
+            )
+        }
+
+        is OutputTarget.GyroGlide -> {
+            val lo = GyroSettings.MIN_GLIDE_MS
+            val hi = GyroSettings.MAX_GLIDE_MS
+            ChipRange(
+                current, GLIDE_RANGE, null, lo..hi, lo..hi, 5f, { "%.0f ms".format(it) },
+                "The gyro's inertia glide at the input's 0 and at full: how long the view glides on after a ratchet " +
+                    "turns the gyro off. Inertia must be on (Settings › Gyro). It changes while the input is active and goes " +
+                    "back when it lets go (unless a Toggle keeps it). Drag one handle past the other to reverse it.",
+            )
+        }
+
+        is OutputTarget.TiltRange -> {
+            val lo = GyroSettings.MIN_TILT_RANGE_DEG
+            val hi = GyroSettings.MAX_TILT_RANGE_DEG
+            ChipRange(
+                current, TILT_RANGE, null, lo..hi, lo..hi, 1f, { "%.0f°".format(it) },
+                "The tilt range at the input's 0 and at full: how far you tilt the phone for a full Tilt. It changes " +
+                    "while the input is active and goes back when it lets go (unless a Toggle keeps it). Drag one handle past the other to reverse it.",
             )
         }
 

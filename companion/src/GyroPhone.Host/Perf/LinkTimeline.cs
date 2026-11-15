@@ -24,7 +24,7 @@ public readonly record struct LinkSecond(long AtUs, int Rx, int Lost, int Late, 
 /// </summary>
 public sealed class LinkTimeline
 {
-    public const int Keep = 1200;
+    public const int Keep = 1860; // Diagnostics keeps up to 30 minutes, plus a minute of slack
     private readonly LinkSecond[] _ring = new LinkSecond[Keep];
     private int _head, _count;
     private readonly object _lock = new();

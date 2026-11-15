@@ -65,6 +65,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
     LaunchedEffect(transport) {
         while (true) { stats = runtime.linkStats(); delay(1000) }
     }
+    val tips = rememberSetupTips(runtime)
     val retry by rememberUpdatedState(onRetry)
     val wifi = transport == TransportKind.WIFI
 
@@ -94,7 +95,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
             }
             when (transport) {
                 TransportKind.BLUETOOTH -> BluetoothPanel(runtime, retry)
-                TransportKind.WIFI -> WifiPanel(runtime, stats)
+                TransportKind.WIFI -> WifiPanel(runtime)
             }
         },
         if (wifi) category(runtime, "keyPairing", "Key pairing", "Connect without a code: keys, trusted PCs, connect automatically") {
@@ -184,7 +185,7 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
             }
         },
     )
-    SearchableSettings(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)) {
+    SearchableSettings(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), header = { SetupTipsCard(tips) }) {
         Hint("Long press a tab to move it.")
         ReorderableSections(runtime, "connection", items)
     }

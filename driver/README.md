@@ -37,6 +37,8 @@ the PC trusts is enough to install it.
 
 Run `uninstall.cmd`. It removes the device, the driver from Windows' driver store, the certificate
 (from all three stores) and the signed copy. The PC is back to how it was before `install.cmd`.
+The certificate is shared with the optional input driver (`input-driver/`, the virtual mouse and
+keyboard): while that one is installed, uninstalling this one keeps the certificate for it.
 
 ## Risks
 

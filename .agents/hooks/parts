@@ -6,7 +6,7 @@
 # app doesn't rebuild or reinstall the companion, and the other way around.
 #   apk:       app/, core/ and the Gradle files
 #   companion: companion/, plus the protocol test vectors in core/ that its tests read
-#   driver:    driver/ (the optional GyroPhone pad driver; built on Windows only)
+#   driver:    driver/ and input-driver/ (the optional pad driver and input driver; built on Windows only)
 # Without a base, merges into main made by "agent-merge --unbuilt" (title ending in "(unbuilt)")
 # right before this branch left main count as this branch's changes, so their parts get built now.
 # Docs, media/ and tools/ belong to no part. Any other change (hooks, workflows, ...) prints
@@ -31,9 +31,9 @@ if [ -n "$base" ]; then
   while IFS= read -r f; do
     case "$f" in
       core/src/test/resources/protocol/*) apk=1 companion=1 ;;
-      app/* | core/* | gradle/* | gradlew | gradlew.bat | build.gradle.kts | settings.gradle.kts | gradle.properties | keystore/*) apk=1 ;;
+      app/* | core/* | gradle/* | gradlew | gradlew.bat | build.gradle.kts | settings.gradle.kts | gradle.properties) apk=1 ;;
       companion/*) companion=1 ;;
-      driver/*) driver=1 ;;
+      driver/* | input-driver/*) driver=1 ;;
       *.md | media/* | tools/* | .gitignore | .gitattributes) ;;
       *) apk=1 companion=1 driver=1 ;;
     esac

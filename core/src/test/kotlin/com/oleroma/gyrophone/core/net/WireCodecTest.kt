@@ -126,6 +126,19 @@ class WireCodecTest {
         assertFalse(PacketType.isPhoneToHost(PacketType.TEST_MODE))
     }
 
+    @Test fun phoneStatsBytesMatchThePcs() {
+        val buf = ByteArray(64)
+        val p = PhoneStats(0x01020304, 500, 620, 1, 2, 3000, 2500, 7000, 150_000, 640)
+        val n = WireCodec.encodeSealedPlain(p, buf, 0)
+        assertEquals(Wire.PHONE_STATS_PLAIN, n)
+        // Same bytes as the PC's PhoneStatsRoundTrip.
+        assertEquals("04030201f4016c02010002 00b80b0000c4090000581b0000f0490200 80020000".replace(" ", ""),
+            buf.copyOf(n).joinToString("") { "%02x".format(it) })
+        assertEquals(p, WireCodec.decodeSealedPlain(PacketType.PHONE_STATS, buf, 0, n))
+        assertTrue(PacketType.isPhoneToHost(PacketType.PHONE_STATS))
+        assertEquals(8, TestModeFlags.PHONE_STATS)
+    }
+
     @Test fun keyLabelsNameKeysByWhatThePcTypes() {
         // Italian: the key above Enter (US backslash) types ù, the one left of 1 (US grave) types backslash.
         val chars = IntArray(KeyLabels.USAGES.size)

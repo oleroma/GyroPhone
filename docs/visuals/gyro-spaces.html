@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Interactive explainer of the Local, World and Player gyro spaces (same formulas as core GyroMouse.inSpace). Open in a browser. -->
+<title>Gyro Spaces Explained</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap">
+<style>
+[hidden]{display:none!important}
+/* Layout: phone stage on the left, three space panels + mix panel on the right; stacks on phones */
+:root{
+  --bg:#f3f5f7; --card:#ffffff; --fg:#17202a; --muted:#5d6b78; --line:#d9dfe5;
+  --local:#6b7f95; --world:#0f8f7a; --player:#c9781a; --mix:#7a4fd0; --grav:#c0392b;
+  --display:"Space Grotesk",system-ui,sans-serif; --body:"Inter",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#11161b; --card:#1a2128; --fg:#e7edf2; --muted:#9aa8b5; --line:#2c3640;
+  --local:#93a6bb; --world:#3cc7ad; --player:#f0a24a; --mix:#a98bf0; --grav:#ef6b5c; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#11161b; --card:#1a2128; --fg:#e7edf2; --muted:#9aa8b5; --line:#2c3640;
+  --local:#93a6bb; --world:#3cc7ad; --player:#f0a24a; --mix:#a98bf0; --grav:#ef6b5c; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 40px}
+.wrap{max-width:1150px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+h1{font-family:var(--display);font-size:28px;margin:0;text-wrap:balance}
+h2{font-family:var(--display);font-size:18px;margin:0}
+p{margin:0;max-width:68ch;color:var(--muted)}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:20px}
+@media (max-width:820px){.grid{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+canvas{width:100%;max-width:100%;display:block}
+.view{aspect-ratio:1/0.8;border-radius:8px;background:var(--bg)}
+.views{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+@media (max-width:820px){.views{grid-template-columns:minmax(0,1fr)}}
+.ctl{display:grid;grid-template-columns:auto auto auto;gap:6px 8px;align-items:center;justify-content:start}
+.ctl button{min-width:52px;touch-action:none;user-select:none;-webkit-user-select:none}
+.cursors{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media (max-width:900px){.cursors{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:460px){.cursors{grid-template-columns:minmax(0,1fr)}}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.lbl{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+button{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:6px 11px;cursor:pointer}
+button[aria-pressed="true"]{border-color:var(--fg);background:var(--fg);color:var(--bg)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--mix);outline-offset:2px}
+input[type=range]{flex:1;min-width:120px;accent-color:var(--fg)}
+.sl{display:flex;gap:10px;align-items:center;font-variant-numeric:tabular-nums}
+.sl span.v{width:46px;text-align:right}
+.spaces{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:520px){.spaces{grid-template-columns:minmax(0,1fr)}}
+.sp{border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.sp h3{font-family:var(--display);font-size:16px;margin:0;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.sp h3 small{font-family:var(--body);font-size:12px;font-weight:500;color:var(--muted)}
+.sp canvas{aspect-ratio:4/3;border-radius:6px;background:var(--bg)}
+.bars{display:grid;grid-template-columns:auto minmax(0,1fr) 42px;gap:4px 8px;align-items:center;font-size:13px;font-variant-numeric:tabular-nums}
+.bar{height:8px;background:var(--bg);border-radius:4px;position:relative;overflow:hidden}
+.bar i{position:absolute;top:0;bottom:0;border-radius:4px}
+.bar::after{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--line)}
+.note{font-size:13px;color:var(--muted);min-height:2.6em}
+.mixpick{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px}
+.mixpick button{padding:3px 8px;font-size:13px}
+.key{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--muted)}
+.key b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header style="display:flex;flex-direction:column;gap:6px">
+    <h1>Local, World and Player gyro spaces</h1>
+    <p>Turn the phone on the left (held in landscape, as when gaming) with two sets of sliders: Each slider turns the phone from where it is now: Local around its own axes as they point now, World around real-world axes (gravity, the long side laid level, the short side laid level). It shows the phone's own axes. The right view is the game camera the gyro steers in the chosen space: it turns and looks up and down but never rolls. Local reads turns about the phone's own axes; World about gravity, the long side laid level and the short side laid level; Player about a yaw axis made from gravity, with the phone's own pitch and roll. Every turn is split into yaw, pitch and roll along those axes (bars), and the game cameras below show what a gyro mouse setup (by default yaw → camera yaw, pitch → camera pitch; change it under Mapping) does with it.</p>
+  </header>
+
+  <div class="views">
+    <section class="card">
+      <h2>Real phone</h2>
+      <canvas id="real" class="view" width="800" height="640" aria-label="The real phone, with gravity"></canvas>
+      <div class="key"><span><b style="background:var(--world)"></b>Yaw axis</span><span><b style="background:var(--player)"></b>Pitch axis</span><span><b style="background:var(--local)"></b>Roll axis</span><span><b style="background:var(--fg)"></b>Top edge</span></div>
+      <div id="ctl" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div class="row"><button id="zero">Back to flat</button></div>
+    </section>
+    <section class="card">
+      <h2>Game camera</h2>
+      <canvas id="virt" class="view" width="800" height="640" aria-label="The game camera steered by the chosen space"></canvas>
+      <div class="row"><span class="lbl">Space</span><span class="row" id="vspace"></span></div>
+      <div class="mixpick" id="mixyaw"></div><div class="mixpick" id="mixpitch"></div><div class="mixpick" id="mixroll"></div>
+      <div class="lbl" style="margin-top:4px">Mapping</div>
+      <div class="mixpick" id="mapyaw"></div><div class="mixpick" id="mappitch"></div>
+      <div class="lbl" style="margin-top:4px" id="recipeh">What the axes are made of now</div>
+      <div class="bars" id="recipe" style="grid-template-columns:auto minmax(0,1fr)"></div>
+      <div class="bars" id="vbars"></div>
+      <div class="note" id="vnote">Move a slider on the left to turn the phone.</div>
+      
+      <div class="row"><button id="reset">Level cameras (start steering from here)</button></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>World vs Player: the lines they turn around</h2>
+    <p>Both spaces turn yaw around an "up" line. <b style="color:var(--world)">World</b> uses true up, gravity. <b style="color:var(--player)">Player</b> takes gravity and drops the part that runs along the phone's long side (the dashed line), so its up always stands square to that side, between the phone's own yaw and roll axes. So Player's up ignores how far one end of the phone dips. Then it boosts the turn ×1.41, but never past the phone's own yaw and roll together. For pitch, World uses the long side laid level, while Player uses the long side as it is, so when one end dips, Player's pitch line dips with it.</p>
+    <div class="views">
+      <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
+        <canvas id="cmp" class="view" width="800" height="640" aria-label="The phone with World's and Player's yaw axes"></canvas>
+        <div class="row" id="cmpposes"></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
+        <div class="note" id="cmpangle"></div>
+        <div style="overflow-x:auto"><table id="cmptable" style="border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:14px"></table></div>
+        <p style="font-size:13px">How much yaw and pitch each space reads from one full degree of each turn, with the phone held as now. Flat or only tilted back, the two lines are the same and the spaces differ only by the boost. Dip one end and they part: World follows gravity, Player stays square to the phone's long side.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Game camera in each space</h2>
+    <p>Like a shooter's camera: yaw turns it, pitch looks up and down (stopping at straight up or down), and it never rolls, so roll from the phone is simply lost here. One phone degree turns the camera one degree. <b>Level cameras</b> points every camera level and ahead from wherever the phone is now, as if you started steering from this hold.</p>
+    <div class="cursors" id="spaces"></div>
+  </section>
+
+  <section class="card">
+    <h2>How each space uses gravity</h2>
+    <p><b style="color:var(--local)">Local</b> ignores gravity: yaw, pitch and roll are the phone's own three turns, so turning a tilted phone leaks into roll.</p>
+    <p><b style="color:var(--world)">World</b> rebuilds yaw, pitch and roll around real-world lines: yaw is only the part of the turn around gravity, pitch around the phone's long side laid level, roll around its short side laid level.</p>
+    <p><b style="color:var(--player)">Player</b> changes yaw only. Its yaw axis is gravity with the part along the phone's pitch axis removed, so it always lies between the phone's yaw and roll axes: phone yaw and phone roll both count as turning, weighted by how gravity leans between them, eased ×1.41 but never more than both together. Pitch and roll stay the phone's own. It matches World while gravity has no part along the pitch axis (only pitch changed from flat); they differ once one end of the phone dips.</p>
+    <p><b style="color:var(--mix)">Mix</b> is the idea from the thread: each axis picks its own space (roll stays the phone's own).</p>
+  </section>
+</div>
+
+<script>
+const D=Math.PI/180;
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const rot=(v,k,t)=>{const c=Math.cos(t),s=Math.sin(t),kv=cross(k,v),d=dot(k,v);return v.map((x,i)=>x*c+kv[i]*s+k[i]*d*(1-c))};
+const rotF=(F,k,t)=>({R:rot(F.R,k,t),U:rot(F.U,k,t),T:rot(F.T,k,t)});
+const ortho=F=>{let T=F.T.map(x=>x/Math.hypot(...F.T));let R=cross(F.U,T);R=R.map(x=>x/Math.hypot(...R));return {R,U:cross(T,R),T}};
+// World: x right, y forward (away from you), z up. Phone frame: R = long side to the right, U = short side up the screen, T = out of the screen.
+const BASE={R:[1,0,0],U:[0,1,0],T:[0,0,1]};
+function pose(pitch){return rotF(BASE,[1,0,0],pitch*D)}
+
+// GyroMouse.inSpace, same formulas. w* = turn rate about the phone's R, U, T.
+function spaces(wr,wu,wt,P){
+  const up=[P.R[2],P.U[2],P.T[2]];
+  const local={yaw:wt,pitch:wr,roll:wu};
+  const yawW=wr*up[0]+wu*up[1]+wt*up[2];
+  let r=[1-up[0]*up[0],-up[0]*up[1],-up[0]*up[2]];const n=Math.hypot(...r);let world;
+  if(n<0.05) world={yaw:yawW,pitch:wr,roll:wu};
+  else{r=r.map(x=>x/n);const t=cross(up,r),w=[wr,wu,wt];world={yaw:yawW,pitch:dot(w,r),roll:dot(w,t)}}
+  const pw=wu*up[1]+wt*up[2],most=Math.hypot(wu,wt);
+  const player={yaw:Math.sign(pw)*Math.min(Math.abs(pw)*1.41,most),pitch:wr,roll:wu};
+  return {local,world,player};
+}
+
+const RATE=120*D;
+const AX=["yaw","pitch","roll","wyaw","wpitch","wroll"];
+const state={space:"world",mix:{yaw:"world",pitch:"local",roll:"local"},map:{yaw:{src:"yaw",inv:false},pitch:{src:"pitch",inv:false}},ang:{yaw:0,pitch:0,roll:0,wyaw:0,wpitch:0,wroll:0},tgt:{yaw:0,pitch:0,roll:0,wyaw:0,wpitch:0,wroll:0},moving:false};
+// Real phone from slider angles: pitch about its long side, then roll about its short side, then yaw through the screen.
+// Local sliders turn the phone about its own axes; World sliders then turn it about real-world axes:
+// roll about the forward line, pitch about the level line to the right, yaw about gravity (last, so pitch and roll follow the heading).
+function fromAngles(a){let F=rotF(BASE,BASE.R,a.pitch*D);F=rotF(F,F.U,a.roll*D);F=rotF(F,F.T,a.yaw*D);
+  F=rotF(F,[0,1,0],a.wroll*D);F=rotF(F,[1,0,0],a.wpitch*D);return rotF(F,[0,0,1],a.wyaw*D)}
+let P,V,cur;
+function reset(){P=fromAngles(state.ang);V={R:[...P.R],U:[...P.U],T:[...P.T]};cur={};["local","world","player","mix"].forEach(k=>cur[k]={x:0,y:0,trail:[[0,0]]});cur.main={x:0,y:0,trail:[[0,0]]}}
+const ctl=document.getElementById("ctl");
+[["h","Local: around the phone's own axes"],["yaw","Yaw","through the screen"],["pitch","Pitch","along the long side"],["roll","Roll","along the short side"],
+ ["h","World: around real-world axes"],["wyaw","Yaw","around gravity"],["wpitch","Pitch","long side, laid level"],["wroll","Roll","short side, laid level"]].forEach(([k,n,sub])=>{
+  if(k==="h"){const h=document.createElement("div");h.className="lbl";h.style.marginTop="6px";h.textContent=n;ctl.appendChild(h);return}
+  const d=document.createElement("div");d.className="sl";
+  d.style.cssText="flex-direction:column;align-items:stretch;gap:2px";d.innerHTML=`<div style="display:flex;justify-content:space-between;gap:8px"><label for="s-${k}"><b>${n}</b> <span style="color:var(--muted);font-size:12px">${sub}</span></label><span id="v-${k}" style="font-variant-numeric:tabular-nums">0°</span></div><input id="s-${k}" type="range" min="-180" max="180" value="0" style="width:100%;margin:0">`;
+  ctl.appendChild(d);const inp=d.querySelector("input");inp.oninput=()=>{state.tgt[k]=+inp.value;document.getElementById("v-"+k).textContent=inp.value+"°"};
+});
+document.getElementById("zero").onclick=()=>{P={R:[...BASE.R],U:[...BASE.U],T:[...BASE.T]};AX.forEach(k=>{state.tgt[k]=0;state.ang[k]=0;document.getElementById("s-"+k).value=0;document.getElementById("v-"+k).textContent="0°"})};
+document.getElementById("reset").onclick=reset;
+
+const NAMES={local:"Local",world:"World",player:"Player",mix:"Mix"};
+function spaceButtons(){const el=document.getElementById("vspace");el.innerHTML="";Object.keys(NAMES).forEach(k=>{const b=document.createElement("button");b.textContent=NAMES[k];b.setAttribute("aria-pressed",state.space===k);b.onclick=()=>{state.space=k;spaceButtons();mapButtons("yaw");mapButtons("pitch")};el.appendChild(b)});
+  ["yaw","pitch","roll"].forEach(a=>document.getElementById("mix"+a).hidden=state.space!=="mix")}
+function mixButtons(ax){const el=document.getElementById("mix"+ax);el.innerHTML=`<span style="width:42px">${ax[0].toUpperCase()+ax.slice(1)}</span>`;
+  ["local","world","player"].forEach(s=>{const b=document.createElement("button");b.textContent=NAMES[s];b.setAttribute("aria-pressed",state.mix[ax]===s);b.onclick=()=>{state.mix[ax]=s;mixButtons(ax)};el.appendChild(b)})}
+spaceButtons();mixButtons("yaw");mixButtons("pitch");mixButtons("roll");
+// Which input axis drives camera yaw and camera pitch, and whether it is inverted.
+function mapButtons(out){const el=document.getElementById("map"+out),m=state.map[out];el.innerHTML=`<span style="width:110px">Camera ${out} ←</span>`;
+  const sn=state.space==="mix"?"":NAMES[state.space]+" ";[["yaw",sn+"yaw"],["pitch",sn+"pitch"],["roll",sn+"roll"],["none","None"]].forEach(([k,n])=>{const b=document.createElement("button");b.textContent=n;b.setAttribute("aria-pressed",m.src===k);b.onclick=()=>{m.src=k;mapButtons(out)};el.appendChild(b)});
+  const inv=document.createElement("button");inv.textContent="Invert";inv.setAttribute("aria-pressed",m.inv);inv.onclick=()=>{m.inv=!m.inv;mapButtons(out)};el.appendChild(inv)}
+mapButtons("yaw");mapButtons("pitch");
+// Each of the chosen space's axes as a share of the phone's own yaw, pitch and roll, for the pose now.
+function recipe(){
+  const one=(wr,wu,wt)=>{const r=spaces(wr,wu,wt,P);r.mix={yaw:r[state.mix.yaw].yaw,pitch:r[state.mix.pitch].pitch,roll:r[state.mix.roll].roll};return r[state.space]};
+  const py=one(0,0,1),pp=one(1,0,0),prl=one(0,1,0);
+  const f=(x,n)=>Math.abs(x)<0.005?"":`${x<0?"− ":"+ "}${Math.abs(x).toFixed(2)} × phone ${n}`;
+  const sn=state.space==="mix"?"Mix":NAMES[state.space];
+  return ["yaw","pitch","roll"].map(k=>{let t=[f(py[k],"yaw"),f(pp[k],"pitch"),f(prl[k],"roll")].filter(Boolean).join(" ").replace(/^\+ /,"");
+    if(!t)t="0";
+    const src=state.space==="mix"?state.mix[k]:state.space;
+    if(k==="yaw"&&src==="player"){const up=[P.R[2],P.U[2],P.T[2]];t="("+([f(up[2],"yaw"),f(up[1],"roll")].filter(Boolean).join(" ").replace(/^\+ /,"")||"0")+") × 1.41, never more than phone yaw and roll together"}
+    return [sn+" "+k,t]});
+}
+const mapped=(r,out)=>{const m=state.map[out];return m.src==="none"?0:(m.inv?-1:1)*r[m.src]};
+
+const spEl=document.getElementById("spaces");
+Object.keys(NAMES).forEach(id=>{const d=document.createElement("div");d.className="sp";d.id="sp-"+id;
+  d.innerHTML=`<h3 style="color:var(--${id})">${NAMES[id]}</h3><canvas width="400" height="300" aria-label="${NAMES[id]} game camera view"></canvas>`;spEl.appendChild(d)});
+
+function bars(el,v,color){el.innerHTML="";[["Yaw","yaw"],["Pitch","pitch"],["Roll","roll"]].forEach(([n,k])=>{const x=v[k],w=Math.min(1,Math.abs(x))*50;
+  el.insertAdjacentHTML("beforeend",`<span>${n}</span><div class="bar"><i style="background:${color};left:${x<0?50-w:50}%;width:${w}%"></i></div><span style="text-align:right">${Math.round(x*100)}%</span>`)})}
+
+// True isometric: x, y and z shortened equally at 120°; viewer behind, right and above.
+function project(p,W,H){const s=W*0.24,c=Math.cos(30*D),n=Math.sin(30*D);return [W/2+(p[0]-p[1])*c*s,H*0.6-(p[2]+(p[0]+p[1])*n)*s]}
+function arrow(g,a,b,color,W,H,width=4,label){const A=project(a,W,H),B=project(b,W,H);g.strokeStyle=color;g.fillStyle=color;g.lineWidth=width;g.beginPath();g.moveTo(...A);g.lineTo(...B);g.stroke();
+  const ang=Math.atan2(B[1]-A[1],B[0]-A[0]);g.beginPath();g.moveTo(...B);g.lineTo(B[0]-15*Math.cos(ang-0.4),B[1]-15*Math.sin(ang-0.4));g.lineTo(B[0]-15*Math.cos(ang+0.4),B[1]-15*Math.sin(ang+0.4));g.fill();
+  if(label){g.font="600 22px Inter, sans-serif";g.fillText(label,B[0]+8,B[1]-6)}}
+// The three axes a space measures yaw, pitch and roll around, in the phone's frame (R, U, T).
+function spaceAxes(sp,P){
+  const up=[P.R[2],P.U[2],P.T[2]],own=[[0,0,1],[1,0,0],[0,1,0]];
+  if(sp==="local")return own;
+  if(sp==="world"){let r=[1-up[0]*up[0],-up[0]*up[1],-up[0]*up[2]];const n=Math.hypot(...r);
+    if(n<0.05)return [up,own[1],own[2]];r=r.map(x=>x/n);return [up,r,cross(up,r)]}
+  const n=Math.hypot(up[1],up[2])||1;return [[0,up[1]/n,up[2]/n],own[1],own[2]];
+}
+function virtAxes(){const sp=state.space,name={local:"Local",world:"World",player:"Player"};
+  const y=sp==="mix"?state.mix.yaw:sp,p=sp==="mix"?state.mix.pitch:sp,rl=sp==="mix"?"local":sp;
+  return [[spaceAxes(y,P)[0],1.15,name[y]+" yaw"+(y==="world"?" (gravity)":"")],[spaceAxes(p,P)[1],1.25,name[p]+" pitch"],[spaceAxes(rl,P)[2],0.85,name[rl]+" roll"]]}
+// World vs Player: both yaw axes on the phone, Player's as gravity flattened onto the yaw-roll plane.
+function drawCompare(){
+  const up=[P.R[2],P.U[2],P.T[2]],pl=[0,up[1],up[2]],n=Math.hypot(pl[1],pl[2])||1,pn=pl.map(x=>x/n);
+  const wp=spaceAxes("world",P)[1];
+  drawPhone("cmp",P,[[up,1.25,"World yaw = gravity"],[pn,0.95,"Player yaw"],[wp,1.0,"World pitch",css("--world")],[[1,0,0],0.8,"Player pitch",css("--player")]]);
+  const cv=document.getElementById("cmp"),g=cv.getContext("2d"),W=cv.width,H=cv.height,F=P;
+  const toW=a=>[0,1,2].map(j=>F.R[j]*a[0]+F.U[j]*a[1]+F.T[j]*a[2]);
+  // gravity squashed onto it
+  g.setLineDash([8,8]);g.strokeStyle=css("--muted");g.lineWidth=2;g.beginPath();g.moveTo(...project(toW(up.map(x=>x*1.25)),W,H));g.lineTo(...project(toW(pl.map(x=>x*1.25)),W,H));g.stroke();g.setLineDash([]);
+  const key=up.map(x=>x.toFixed(3)).join();if(key===state.cmpKey)return;state.cmpKey=key;
+  const ang=Math.acos(Math.max(-1,Math.min(1,dot(up,pn))))/D;
+  document.getElementById("cmpangle").textContent=ang<0.5?"Right now both lines point the same way.":`Right now Player's up leans ${Math.round(ang)}° away from true up.`;
+  const rows=[["Turn around gravity (your body turns)",[0,0,1]],["Phone's own yaw",P.T],["Phone's own roll",P.U],["Phone's own pitch",P.R]];
+  const pc=x=>`${Math.round(Math.abs(x)*100)}%`;
+  document.getElementById("cmptable").innerHTML=`<tr style="text-align:left;color:var(--muted)"><th style="padding:4px 8px 4px 0;font-weight:500">Turn</th><th style="padding:4px 8px;color:var(--world)">World yaw</th><th style="padding:4px 8px;color:var(--player)">Player yaw</th><th style="padding:4px 8px;color:var(--world)">World pitch</th><th style="padding:4px 8px;color:var(--player)">Player pitch</th></tr>`+
+    rows.map(([name,w])=>{const r=spaces(dot(w,P.R),dot(w,P.U),dot(w,P.T),P);return `<tr style="border-top:1px solid var(--line)"><td style="padding:6px 8px 6px 0">${name}</td><td style="padding:6px 8px">${pc(r.world.yaw)}</td><td style="padding:6px 8px">${pc(r.player.yaw)}</td><td style="padding:6px 8px">${pc(r.world.pitch)}</td><td style="padding:6px 8px">${pc(r.player.pitch)}</td></tr>`}).join("");
+}
+function drawPhone(id,F,gravity){
+  const cv=document.getElementById(id),g=cv.getContext("2d"),W=cv.width,H=cv.height;g.clearRect(0,0,W,H);
+  g.strokeStyle=css("--line");g.lineWidth=1;
+  for(let i=-2;i<=2;i++){g.beginPath();g.moveTo(...project([i*0.6,-1.2,-1.1],W,H));g.lineTo(...project([i*0.6,1.2,-1.1],W,H));g.stroke();g.beginPath();g.moveTo(...project([-1.2,i*0.6,-1.1],W,H));g.lineTo(...project([1.2,i*0.6,-1.1],W,H));g.stroke()}
+  g.fillStyle=css("--muted");g.font="20px Inter, sans-serif";g.fillText("you are behind, looking forward",16,H-16);
+  const hw=0.9,hh=0.45,c=(a,b)=>[0,1,2].map(i=>F.R[i]*a+F.U[i]*b);
+  const pts=[c(-hw,-hh),c(hw,-hh),c(hw,hh),c(-hw,hh)].map(q=>project(q,W,H));
+  // screen side visible if it faces the viewer (behind, right, above)
+  const facing=dot(F.T,[-1,1,-1])<0;
+  g.fillStyle=facing?css("--card"):css("--line");g.strokeStyle=css("--fg");g.lineWidth=3;
+  g.beginPath();pts.forEach((q,i)=>i?g.lineTo(...q):g.moveTo(...q));g.closePath();g.fill();g.stroke();
+  g.lineWidth=8;g.beginPath();g.moveTo(...project(c(-hw,hh),W,H));g.lineTo(...project(c(hw,hh),W,H));g.stroke();
+  // axes: [direction in the phone's frame (R, U, T), length, label]; default the phone's own
+  const axes=gravity||[[[0,0,1],0.8,"yaw"],[[1,0,0],1.25,"pitch"],[[0,1,0],0.75,"roll"]];
+  const cols=[css("--world"),css("--player"),css("--local")];
+  axes.forEach(([a,len,lab,colr],i)=>{const v=[0,1,2].map(j=>(F.R[j]*a[0]+F.U[j]*a[1]+F.T[j]*a[2])*len);arrow(g,[0,0,0],v,colr||cols[i],W,H,gravity?5:3,lab)})
+}
+// Game camera: heading and pitch only, never roll. 1 phone degree = 1 camera degree.
+// Drawn in the same isometric view as the phones: a camera body, its lens and the view pyramid (90° × 59°, 16:9).
+function drawCursor(id,c){drawCamera(document.querySelector("#sp-"+id+" canvas"),c,css("--"+id),0.17,19)}
+function drawCamera(cv,c,col,zoom,fs){const g=cv.getContext("2d"),W=cv.width,H=cv.height;
+  const h=c.x,p=-c.y;
+  const F=[Math.sin(h)*Math.cos(p),Math.cos(h)*Math.cos(p),Math.sin(p)],R=[Math.cos(h),-Math.sin(h),0],U=cross(R,F);
+  const S=W*zoom,cs=Math.cos(30*D),sn=Math.sin(30*D);
+  const pr=v=>[W/2+(v[0]-v[1])*cs*S,H*0.5-(v[2]+(v[0]+v[1])*sn)*S];
+  const at=(f,r,u)=>[0,1,2].map(i=>F[i]*f+R[i]*r+U[i]*u);
+  g.clearRect(0,0,W,H);
+  g.strokeStyle=css("--line");g.lineWidth=1;
+  for(let i=-2;i<=2;i++){g.beginPath();g.moveTo(...pr([i*0.7,-1.4,-1]));g.lineTo(...pr([i*0.7,1.4,-1]));g.stroke();g.beginPath();g.moveTo(...pr([-1.4,i*0.7,-1]));g.lineTo(...pr([1.4,i*0.7,-1]));g.stroke()}
+  // "ahead" mark on the floor
+  g.fillStyle=css("--muted");g.font="18px Inter, sans-serif";g.textAlign="center";g.fillText("ahead ↗",...pr([0,1.45,-1]));
+  const poly=(pts,fill,stroke,lw=2)=>{g.beginPath();pts.map(pr).forEach((q,i)=>i?g.lineTo(...q):g.moveTo(...q));g.closePath();if(fill){g.fillStyle=fill;g.fill()}if(stroke){g.strokeStyle=stroke;g.lineWidth=lw;g.stroke()}};
+  // view pyramid from the lens
+  const L=1.15,hw=L*Math.tan(45*D),hh=hw*9/16,apex=at(0.32,0,0),far=[at(L,-hw,-hh),at(L,hw,-hh),at(L,hw,hh),at(L,-hw,hh)];
+  g.globalAlpha=0.16;poly(far,col);for(let i=0;i<4;i++)poly([apex,far[i],far[(i+1)%4]],col);g.globalAlpha=1;
+  for(let i=0;i<4;i++){g.strokeStyle=col;g.lineWidth=1.5;g.beginPath();g.moveTo(...pr(apex));g.lineTo(...pr(far[i]));g.stroke()}
+  poly(far,null,col,2);
+  // horizon line across the far frame (where level would be)
+  // camera body: a box behind the lens
+  const b=(f,r,u)=>at(f,r*0.32,u*0.2),box=[[-0.25,-1,-1],[-0.25,1,-1],[-0.25,1,1],[-0.25,-1,1],[0.31,-1,-1],[0.31,1,-1],[0.31,1,1],[0.31,-1,1]].map(v=>b(...v));
+  const faces=[[0,1,2,3],[4,5,6,7],[0,1,5,4],[3,2,6,7],[0,3,7,4],[1,2,6,5]];
+  const view=[-1,-1,1],mid=[0,1,2].map(i=>box.reduce((s,v)=>s+v[i],0)/8);// toward the viewer in this isometric view
+  faces.forEach(f=>{const a=box[f[0]],b2=box[f[1]],c2=box[f[2]];let nrm=cross(b2.map((x,i)=>x-a[i]),c2.map((x,i)=>x-a[i]));
+    const ctr=[0,1,2].map(i=>f.reduce((s,k)=>s+box[k][i],0)/4);if(dot(nrm,ctr.map((x,i)=>x-mid[i]))<0)nrm=nrm.map(x=>-x);
+    if(dot(nrm,view)>0)poly(f.map(k=>box[k]),css("--card"),css("--fg"),2)});
+  // lens
+  const lens=[];for(let i=0;i<16;i++){const t=i/16*2*Math.PI;lens.push(at(0.32,Math.cos(t)*0.11,Math.sin(t)*0.11))}
+  poly(lens,col,css("--fg"),2);
+  let hd=Math.round(h/D)%360;if(hd<0)hd+=360;g.textAlign="left";g.fillStyle=css("--muted");g.font=fs+"px Inter, sans-serif";
+  g.fillText(`turned ${hd>180?(360-hd)+"° left":hd+"° right"} · looking ${p>=0?Math.round(p/D)+"° up":Math.round(-p/D)+"° down"}`,10,H-10);
+}
+
+let prev=performance.now();
+function loop(now){
+  // Sliders map straight to the pose: the whole change is applied this frame, in steps of at most 1°
+  // so each space reads the turn as it happens.
+  // Each slider turns the phone from where it is now, about the axis it names right now
+  // (the phone's own axis, or a real-world one), in steps of at most 1°.
+  const d=AX.map(k=>state.tgt[k]-state.ang[k]),n=Math.ceil(Math.max(...d.map(Math.abs)));
+  if(n>0){
+    const sum={};["local","world","player","mix"].forEach(k=>sum[k]={yaw:0,pitch:0,roll:0});let total=0;
+    const flatRight=()=>{let r=[P.R[0],P.R[1],0];const m=Math.hypot(...r);if(m<1e-3){r=[P.T[0],P.T[1],0];const m2=Math.hypot(...r)||1;return r.map(x=>x/m2)}return r.map(x=>x/m)};
+    const axisOf={yaw:()=>P.T,pitch:()=>P.R,roll:()=>P.U,wyaw:()=>[0,0,1],wpitch:()=>flatRight(),wroll:()=>cross([0,0,1],flatRight())};
+    for(let s=0;s<n;s++){AX.forEach((k,i)=>{const a=d[i]/n*D;if(Math.abs(a)<1e-9)return;
+      const ax=axisOf[k](),w=ax.map(x=>x*a);
+      const r=spaces(dot(w,P.R),dot(w,P.U),dot(w,P.T),P);r.mix={yaw:r[state.mix.yaw].yaw,pitch:r[state.mix.pitch].pitch,roll:r[state.mix.roll].roll};
+      total+=Math.abs(a);
+      r.main=r[state.space];Object.keys(cur).forEach(id=>{if(sum[id])["yaw","pitch","roll"].forEach(q=>sum[id][q]+=r[id][q]);const c=cur[id];c.x-=mapped(r[id],"yaw");c.y-=mapped(r[id],"pitch");const lim=89*D;c.y=Math.max(-lim,Math.min(lim,c.y))});
+      P=ortho(rotF(P,ax,a));});}
+    state.ang={...state.tgt};
+    if(total>1e-6){state.split={};Object.keys(sum).forEach(id=>{state.split[id]={};["yaw","pitch","roll"].forEach(q=>state.split[id][q]=sum[id][q]/total)})}
+  }
+  {const rc=recipe(),rk=JSON.stringify(rc);if(rk!==state.rk){state.rk=rk;document.getElementById("recipe").innerHTML=rc.map(([a,b])=>`<span>${a} =</span><span>${b}</span>`).join("")}}
+  const q=state.split?state.split[state.space]:{yaw:0,pitch:0,roll:0};
+  const key=state.space+JSON.stringify(q);
+  if(key!==state.lastKey){state.lastKey=key;bars(document.getElementById("vbars"),q,css("--"+state.space));
+    const tot=Math.abs(q.yaw)+Math.abs(q.pitch)+Math.abs(q.roll);
+    document.getElementById("vnote").textContent=!state.split?"Move a slider on the left to turn the phone.":tot<0.01?"This space reads nothing from the last turn.":"How the last turn split into this space's yaw, pitch and roll.";}
+  drawPhone("real",P,null);drawCompare();drawCamera(document.getElementById("virt"),cur.main,css("--"+state.space),0.2,22);
+  ["local","world","player","mix"].forEach(id=>drawCursor(id,cur[id]));
+  requestAnimationFrame(loop);
+}
+{const el=document.getElementById("cmpposes");
+  [["Flat",0,0],["Tilted back 60°",60,0],["Tilted back 60°, one end dipped 35°",60,35],["Upright, one end dipped 35°",90,35]].forEach(([n,pt,rl])=>{
+    const b=document.createElement("button");b.textContent=n;b.onclick=()=>{let F=rotF(BASE,BASE.R,pt*D);P=ortho(rotF(F,F.U,-rl*D))};el.appendChild(b)});}
+reset();requestAnimationFrame(loop);
+</script>
+
+</body>
+</html>
