@@ -123,6 +123,7 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
 
         override fun axes(values: FloatArray) {
             if (runtime.wifi.overlay.wanted) overlayAxes(values)
+            if (runtime.stickWatch.on) watchAxes(values)
             if (runtime.pressListener != null || runtime.learnListener != null) {
                 ui?.usbAxes(this, values.copyOf())
                 return
@@ -135,6 +136,15 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
                 ids[n] = AndroidAxis.polled[i]; vals[n] = v; n++
             }
             runtime.engine.setAxes(device, ids, vals, n)
+        }
+
+        private fun watchAxes(v: FloatArray) {
+            fun at(axis: Int) = v[AndroidAxis.polled.indexOf(axis)]
+            runtime.stickWatch.set(
+                at(AndroidAxis.X), at(AndroidAxis.Y),
+                if (zStick) at(AndroidAxis.Z) else at(AndroidAxis.RX),
+                if (zStick) at(AndroidAxis.RZ) else at(AndroidAxis.RY),
+            )
         }
 
         private fun overlayAxes(v: FloatArray) {

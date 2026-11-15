@@ -40,7 +40,7 @@ Mappings use the same model as touch ([Mapping system](phone-mapping.md)): every
 
 ## Stick and trigger tuning
 
-`StickTuning` per stick, in the preset: the stick is one round vector; nothing below **inner deadzone** 0.10, full from **outer** 0.95; between them shaped by the **curve** (Linear, Soft = squared, Aggressive = square root) and scaled by **sensitivity** 1.0. The **Outer** inputs fire past **outer ring** 0.85. Directions are pies around each axis, **135°** wide by default (30–180°; over 90° overlap so a diagonal presses both).
+`StickTuning` per stick, in the preset: the stick is one round vector; nothing below **inner deadzone** 0.10, full from **outer** 0.95; between them shaped by the **curve** (Linear, Soft = squared, Aggressive = square root) and scaled by **sensitivity** 1.0. The **Outer** inputs fire past **outer ring** 0.85. Directions are pies around each axis, **135°** wide by default (30–180°; over 90° overlap so a diagonal presses both). The stick's ⚙ shows a **picture** above its sliders (`ui/StickPie.kt`), like the touchpad's pies: the four direction pies, the inner deadzone (a hole in the middle), the outer deadzone (a grey band at the rim) and the Outer ring (dashed), redrawn while a slider is dragged. Opened from one direction's card, that pie is bright and the others faint. A dot follows the real stick while the ⚙ is open (the controller readers copy the sticks into `runtime.StickWatch` only meanwhile), or the finger on the circle, and the text beside it says what that way presses (directions, how far past the deadzone, and Outer).
 
 `TriggerTuning`: **Press** from 0.5 of the pull, **Full pull** from 0.95.
 

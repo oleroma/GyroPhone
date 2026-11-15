@@ -172,6 +172,9 @@ class GamepadRuntime(context: Context) {
     val bluetooth = BluetoothLink(appContext, hid, pump)
     val wifi = WifiLink(appContext, engine)
 
+    /** The controller's sticks for a stick's settings picture, only while one is open. */
+    val stickWatch = StickWatch()
+
     private val _transport = MutableStateFlow(
         prefs.getString(KEY_TRANSPORT, null)?.let { name -> TransportKind.entries.firstOrNull { it.name == name } }
             ?: TransportKind.BLUETOOTH,
