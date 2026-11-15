@@ -34,6 +34,8 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.StickAxis
+import com.oleroma.gyrophone.core.model.AxisHalf
+import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.Trigger
@@ -607,7 +609,7 @@ internal fun physicalSettings(
             ButtonTouchpadSpeed(level, key)
         },
     )
-    return physicalActionSettings(preset, ws, update).let { a ->
+    return physicalActionSettings(runtime, preset, ws, update).let { a ->
         MappingSettings(
             // A gyro axis of its Motion tab: its ratchet, sensitivity (or factor), acceleration and glide while held.
             action = { input ->
@@ -693,6 +695,7 @@ private fun ButtonToggleRows(control: TouchControl, key: String, update: ((Touch
 internal class PhysicalHeld(val id: String, val sources: List<InputSource>)
 
 private fun physicalActionSettings(
+    runtime: GamepadRuntime,
     preset: DevicePreset,
     ws: Workspace,
     update: ((DevicePreset) -> DevicePreset) -> Unit,
@@ -705,7 +708,17 @@ private fun physicalActionSettings(
         val own = src?.let { preset.timing(it.keyCode) }
         val key = preset.id + ":" + src?.keyCode
         when {
-            stickId != null -> ui { StickTuningSettings(preset, stickId, update) }
+            stickId != null -> {
+                // The card's own direction, bright in the picture (a whole axis: none).
+                val x = axis?.axis == PhysicalSticks.sticks.getValue(stickId).first
+                val only = when (axis?.half) {
+                    null -> null
+                    AxisHalf.FULL -> null
+                    AxisHalf.POSITIVE -> if (x) Direction.RIGHT else Direction.DOWN
+                    AxisHalf.NEGATIVE -> if (x) Direction.LEFT else Direction.UP
+                }
+                ui { StickTuningSettings(runtime, preset, stickId, only, update) }
+            }
             triggerId != null -> ui { TriggerTuningSettings(preset, triggerId, update) }
             else -> when (src?.gesture) {
                 ButtonGesture.TAP, ButtonGesture.LONG_PRESS, ButtonGesture.DOUBLE_TAP -> ui {
@@ -725,28 +738,43 @@ private fun physicalActionSettings(
     shared = null,
 )
 
-/** A physical stick's tuning in [preset] (stick [id]): deadzones, curve, sensitivity, Outer ring and direction pies. */
+/**
+ * A physical stick's tuning in [preset] (stick [id]): its picture ([StickPiePicture], [only]: the
+ * direction whose card opened it), deadzones, curve, sensitivity, Outer ring and direction pies.
+ */
 @Composable
-private fun StickTuningSettings(preset: DevicePreset, id: String, update: ((DevicePreset) -> DevicePreset) -> Unit) {
+private fun StickTuningSettings(
+    runtime: GamepadRuntime,
+    preset: DevicePreset,
+    id: String,
+    only: Direction?,
+    update: ((DevicePreset) -> DevicePreset) -> Unit,
+) {
     val t = preset.stick(id)
     val d = StickTuning()
     fun set(f: (StickTuning) -> StickTuning) = update { p -> p.withStick(id, f(p.stick(id))) }
     val key = preset.id + ":" + id + ":"
+    // What a slider being dragged would set, shown in the picture before it is let go.
+    var live by remember(key) { mutableStateOf<StickTuning?>(null) }
+    fun liveOf(f: (StickTuning, Float) -> StickTuning): (Float?) -> Unit = { v -> live = v?.let { f(t, it) } }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             "The whole stick's feel, kept in the preset. Every mapping of this stick follows it.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        NotSearching { StickPiePicture(live ?: t, runtime.stickWatch, right = id == "rs", only) }
         OverrideSlider(
             key + "inner", "Inner deadzone %.0f%%", t.inner * 100, 0f..40f, 1f, t.inner != d.inner,
             { set { it.copy(inner = d.inner) } },
             "Nothing happens until the stick is pushed this far, the same in every direction.",
+            onLive = liveOf { s, v -> s.copy(inner = v / 100) },
         ) { v -> set { it.copy(inner = v / 100) } }
         OverrideSlider(
             key + "outer", "Outer deadzone %.0f%%", t.outer * 100, 60f..100f, 1f, t.outer != d.outer,
             { set { it.copy(outer = d.outer) } },
             "From this far on the stick counts as pushed all the way.",
+            onLive = liveOf { s, v -> s.copy(outer = (v / 100).coerceAtLeast(s.inner + 0.05f)) },
         ) { v -> set { it.copy(outer = (v / 100).coerceAtLeast(t.inner + 0.05f)) } }
         OverrideRow(
             "Curve", t.curve != d.curve, { set { it.copy(curve = d.curve) } },
@@ -767,16 +795,19 @@ private fun StickTuningSettings(preset: DevicePreset, id: String, update: ((Devi
             key + "ring", "Outer ring %.0f%%", t.outerRing * 100, 30f..100f, 1f, t.outerRing != d.outerRing,
             { set { it.copy(outerRing = d.outerRing) } },
             "The Outer cards fire while the stick is pushed past this, for example Shift to sprint.",
+            onLive = liveOf { s, v -> s.copy(outerRing = v / 100) },
         ) { v -> set { it.copy(outerRing = v / 100) } }
         OverrideSlider(
             key + "pieX", "Left and right pies %.0f°", t.pieX, StickTuning.MIN_PIE..StickTuning.MAX_PIE, 5f, t.pieX != d.pieX,
             { set { it.copy(pieX = d.pieX) } },
             "How wide Left and Right are. Wider than 90° overlaps Up and Down, so a diagonal presses both.",
+            onLive = liveOf { s, v -> s.copy(pieX = v) },
         ) { v -> set { it.copy(pieX = v) } }
         OverrideSlider(
             key + "pieY", "Up and down pies %.0f°", t.pieY, StickTuning.MIN_PIE..StickTuning.MAX_PIE, 5f, t.pieY != d.pieY,
             { set { it.copy(pieY = d.pieY) } },
             "How wide Up and Down are.",
+            onLive = liveOf { s, v -> s.copy(pieY = v) },
         ) { v -> set { it.copy(pieY = v) } }
     }
 }

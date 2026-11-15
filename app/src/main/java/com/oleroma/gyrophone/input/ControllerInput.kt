@@ -293,6 +293,13 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         }
         src.seen = true
         if (runtime.wifi.overlay.wanted) overlayAxes(src.zStick, src.last)
+        if (runtime.stickWatch.on) {
+            val v = src.last
+            runtime.stickWatch.set(
+                v[POLLED_X], v[POLLED_Y],
+                if (src.zStick) v[POLLED_Z] else v[POLLED_RX], if (src.zStick) v[POLLED_RZ] else v[POLLED_RY],
+            )
+        }
         if (learn != null) {
             if (learned != null) {
                 runtime.learnListener = null
