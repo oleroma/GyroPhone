@@ -9,7 +9,7 @@ name: Fallback build
 # Every job has a timeout-minutes. Keep its actions on the Node 24 runtime.
 # Only the parts the branch changed since main are tested and built (.agents/hooks/parts):
 # the APK with the Kotlin core's tests on Linux, the companion with its tests on Windows, the
-# only place all companion projects run. Both share one build number.
+# only place all companion projects run, and the pad driver on Windows. They share one build number.
 on:
   workflow_dispatch:
     inputs:
@@ -165,9 +165,50 @@ jobs:
             --title "$VERSION" --notes "$(bash .agents/release-notes "$GITHUB_SHA" "${TAG#build/}" "CI fallback build of $GITHUB_REF_NAME ($GITHUB_SHA)")" ||
             gh release upload "$TAG" "${files[@]}"
 
+  # The optional pad driver: built on Windows with the Visual Studio C++ tools the runner has and
+  # the WDK from NuGet (hooks/build), zipped, and added to the same pre-release.
+  driver:
+    needs: number
+    if: contains(needs.number.outputs.parts, 'driver')
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # the pre-release
+    outputs:
+      version: ${{ steps.build.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Build
+        id: build
+        env:
+          BUILD_NUMBER: ${{ needs.number.outputs.n }}
+        run: |
+          set -o pipefail
+          bash .agents/hooks/build driver | tee "$RUNNER_TEMP/build.out"
+          file="$(tr -d '\r' <"$RUNNER_TEMP/build.out" | sed -n 's/^build-file: \([^ ]*\) .*/\1/p' | head -n 1)"
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+          echo "version=$(tr -d '\r' <"$RUNNER_TEMP/build.out" | sed -n 's/^build-file: [^ ]* \([^ ]*\)$/\1/p' | head -n 1)" >> "$GITHUB_OUTPUT"
+          echo "$(basename "$file")  SHA-256 \`$(sha256sum "$file" | cut -d' ' -f1)\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # On the same pre-release as the APK and the companion; whichever job comes first makes it.
+      - name: Publish the driver
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: build/${{ needs.number.outputs.n }}
+          FILE: ${{ steps.build.outputs.file }}
+          VERSION: ${{ steps.build.outputs.version }}
+        run: >-
+          gh release create "$TAG" "$FILE" --verify-tag --prerelease
+          --title "$VERSION" --notes "$(bash .agents/release-notes "$GITHUB_SHA" "${TAG#build/}" "CI fallback build of $GITHUB_REF_NAME ($GITHUB_SHA)")"
+          || gh release upload "$TAG" "$FILE"
+
   # Runs only when every build job that ran passed (a part the branch didn't change is skipped).
   built:
-    needs: [number, android, companion]
+    needs: [number, android, companion, driver]
     if: always() && !inputs.checks && !failure() && !cancelled()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -178,7 +219,7 @@ jobs:
       - name: Mark the commit built
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.android.outputs.version || needs.companion.outputs.version }}
+          VERSION: ${{ needs.android.outputs.version || needs.companion.outputs.version || needs.driver.outputs.version }}
         run: >-
           test -n "$VERSION" &&
           gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"
