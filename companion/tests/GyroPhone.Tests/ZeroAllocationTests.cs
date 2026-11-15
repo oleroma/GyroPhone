@@ -108,11 +108,14 @@ public class ZeroAllocationTests
         engine.AttachSender(sender);
         engine.SetOverlay(true);
 
-        // Twice: the first run warms everything up (first use, JIT), the second is measured, packet by packet, so a
-        // failure names where the memory was made.
+        // The first run warms everything up (first use, JIT). Then up to three measured runs, packet by packet, so a
+        // failure names where the memory was made: the path is clean when one of them made none. A run can catch a
+        // one-off on this thread that isn't the play path's (seen on Windows: about 1.4 KB once, in a different test
+        // each time, most likely .NET's own work when a method gets hot); memory the play path makes shows in every run.
         long allocated = 0;
-        for (int run = 0; run < 2; run++)
+        for (int run = 0; run < 4; run++)
         {
+            if (run >= 2 && allocated == 0) break;
             var packets = Play(phone, 3000);
             allocated = 0;
             int offenders = 0;
@@ -131,7 +134,7 @@ public class ZeroAllocationTests
                 offenders++;
                 where ??= $"packet {k} of {packets.Count} (type 0x{d[3]:X2}): {b1 - b0} B in OnDatagram, {b2 - b1} B in Flush";
             }
-            if (where != null) where += $"; {offenders} packets made memory";
+            if (where != null) where += $"; {offenders} packets made memory in run {run}";
         }
         // It really played: every STATE was taken, moved the mouse and pressed keys, the pings were answered.
         Assert.True(engine.Connected);
