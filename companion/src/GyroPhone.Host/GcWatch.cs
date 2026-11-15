@@ -26,6 +26,9 @@ public sealed class GcWatch : EventListener
     private long _suspendTicks = -1;
     private int _gen = -1, _reason = -1, _type = -1;
     private ulong _startedBy;
+    // The runtime also stops every thread for things other than a cleanup (and a stop may have begun before the
+    // events came on): only a stop that a cleanup started inside is logged, so every line has its details.
+    private bool _cleanupStarted;
 
     public GcWatch(Action<string> write)
     {
@@ -77,12 +80,15 @@ public sealed class GcWatch : EventListener
                     _reason = ToInt(e, "Reason");
                     _type = ToInt(e, "Type");
                     _startedBy = (ulong)e.OSThreadId;
+                    _cleanupStarted = true;
                     break;
                 case GcSuspendEEBegin:
                     _suspendTicks = e.TimeStamp.Ticks;
+                    _cleanupStarted = false;
                     break;
                 case GcRestartEEEnd:
-                    if (_suspendTicks < 0) break;
+                    if (_suspendTicks < 0 || !_cleanupStarted) break;
+                    _cleanupStarted = false;
                     double ms = (e.TimeStamp.Ticks - _suspendTicks) / (double)TimeSpan.TicksPerMillisecond;
                     _suspendTicks = -1;
                     _write(Line(ms));
