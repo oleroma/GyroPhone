@@ -536,7 +536,7 @@ class GamepadRuntime(context: Context) {
 
     /** Some gyro display holds its pose to gravity, or may fade when the phone rests (and so needs the accelerometer). */
     private val needsGravity: Boolean get() = wifi.overlay.wanted ||
-        (!visualsCovered && (vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity } || (vis.restFade.on && gyroFeeds.isNotEmpty()))) ||
+        (!visualsCovered && (vis.gyroNeedsGravity || gyroFeeds.any { it.display.needsGravity || it.display.showsMove } || (vis.restFade.on && gyroFeeds.isNotEmpty()))) ||
         cardsSpaced()
 
     // [cardsSpaced]'s answer and the workspace it is for (made again only when that changes).

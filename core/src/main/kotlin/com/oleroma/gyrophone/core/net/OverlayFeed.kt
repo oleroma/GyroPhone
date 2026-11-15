@@ -47,8 +47,8 @@ data class OverlayLayout(
  *
  * OVERLAY plaintext (152 bytes, little endian): u32 phone time (us); f32 × 3 yaw, pitch, roll
  * turned since the last OVERLAY (degrees, as [com.oleroma.gyrophone.core.engine.GyroMouse.motion]
- * gives them); u16 the time those samples cover (10 us units); i16 × 3 the newest accelerometer
- * reading in the phone frame, right, up, toward the player ([G_SCALE] = 1 g); i16 × 3 the newest
+ * gives them); u16 the time those samples cover (10 us units); i16 × 3 the accelerometer readings
+ * since the last OVERLAY, averaged (the newest average when none came), in the phone frame, right, up, toward the player ([G_SCALE] = 1 g); i16 × 3 the newest
  * magnetometer reading in that frame (unit length × 32767); u8 the gyro axes moving the mouse
  * ([com.oleroma.gyrophone.core.engine.MappingEngine.gyroBit]); u8 ratchet presses so far (wraps);
  * u16 layout version; u8 flags ([FLAG_POSE], [FLAG_PAD_SHOWN], [FLAG_GYRO_ACTIVE], [FLAG_UP],
@@ -157,6 +157,10 @@ class OverlayFeed {
     @Volatile var cameraMap: Int = com.oleroma.gyrophone.core.engine.GyroDisplayFeed.DEFAULT_CAMERA_MAP
     private val upXYZ = FloatArray(3)
     private var hasUp = false
+
+    /** The accelerometer readings since the last OVERLAY, added up: it carries their average (the PC's Show movement adds them up). */
+    private val upSum = FloatArray(3)
+    private var upCount = 0
     private val northXYZ = FloatArray(3)
     private var hasNorth = false
     private val cameraDeg = FloatArray(3)
@@ -214,6 +218,7 @@ class OverlayFeed {
         totalTurn.fill(0.0); totalCamera.fill(0.0); totalSeconds = 0.0
         gyroAtNs = Long.MIN_VALUE
         hasUp = false; hasNorth = false
+        upSum.fill(0f); upCount = 0
         ratchetHeld = false
     }
 
@@ -262,7 +267,8 @@ class OverlayFeed {
     fun up(x: Float, y: Float, z: Float, g: Float) {
         if (g == 0f) return
         synchronized(lock) {
-            upXYZ[0] = x / g; upXYZ[1] = y / g; upXYZ[2] = z / g
+            upSum[0] += x / g; upSum[1] += y / g; upSum[2] += z / g
+            upCount++
             hasUp = true
         }
     }
@@ -376,6 +382,11 @@ class OverlayFeed {
                 out.putU16(off + 16, (turnSeconds * 100_000f).roundToInt().coerceIn(0, 0xFFFF))
             }
             turnYaw = keepYaw; turnPitch = keepPitch; turnRoll = keepRoll; turnSeconds = keepSeconds
+            if (upCount > 0) {
+                for (i in 0 until 3) upXYZ[i] = upSum[i] / upCount
+                upSum.fill(0f)
+                upCount = 0
+            }
             for (i in 0 until 3) {
                 out.putI16(off + 18 + i * 2, (upXYZ[i] * G_SCALE).roundToInt().coerceIn(-32767, 32767))
                 out.putI16(off + 24 + i * 2, (northXYZ[i] * 32767f).roundToInt().coerceIn(-32767, 32767))

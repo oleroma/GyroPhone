@@ -203,6 +203,13 @@ internal fun GyroDisplaySettingsScreen(
                     Hint("Arrows along the phone's own right, up and screen directions.")
                     SwitchRow("Axonometric view", d.axonometric, AXON_HINT) { set(d.copy(axonometric = it)) }
                     SwitchRow("Perspective", d.perspective, "Nearer parts show bigger, as a camera sees them. Off: flat, every part the same size wherever it is.") { set(d.copy(perspective = it)) }
+                    SwitchRow("Show movement", d.move, "The phone also slides when you nudge it: up, down, left, right, and bigger or smaller toward and away. Short moves only: the phone feels pushes, not where it is, so once it is nearly still it glides back to the middle. Every ratchet press puts it back at once.") { set(d.copy(move = it)) }
+                    if (d.move) {
+                        PercentSlider("Movement amount", d.moveAmount, 0.25f..4f) { set(d.copy(moveAmount = it)) }
+                        FloatSlider("Still below %.2f m/s²", d.moveStillBelow, 0.05f..2f, 0.05f) { set(d.copy(moveStillBelow = it)) }
+                        Hint("Shaking less than this counts as still, and it glides back. Higher: it goes back sooner, even while you move slowly.")
+                        FloatSlider("Returns in %.1f s", d.moveReturnSeconds, 0.2f..5f, 0.1f) { set(d.copy(moveReturnSeconds = it)) }
+                    }
                 }
 
                 GyroDisplayKind.RATCHET_RING ->

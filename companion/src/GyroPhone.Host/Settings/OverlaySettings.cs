@@ -153,6 +153,15 @@ public sealed class OverlaySettings
     public bool Equator { get; set; } = true;
     public bool ScreenMark { get; set; } = true;
     public bool TopMark { get; set; } = true;
+    /// <summary>
+    /// Phone: shows the phone's short moves too (<see cref="PhoneMove"/>), <see cref="MoveAmount"/> times as far
+    /// (1 = 10 cm moves it half its length), gliding back to the middle within <see cref="MoveReturnSeconds"/>
+    /// once it shakes less than <see cref="MoveStillBelow"/> m/s², and back at once on a ratchet press. As the phone's GyroDisplay.move.
+    /// </summary>
+    public bool ShowMove { get; set; }
+    public float MoveAmount { get; set; } = 1f;
+    public float MoveStillBelow { get; set; } = 0.3f;
+    public float MoveReturnSeconds { get; set; } = 1f;
     /// <summary>Phone and 3D shape: seen from a fixed angle (30° round, 30° above) with the world's axes, as the laser pointer is, instead of face-on.</summary>
     public bool Axonometric { get; set; }
     /// <summary>Phone, 3D shape and pointer: seen in perspective (nearer parts bigger, eye LaserTrace.CameraDistance radii away); off, flat. As the phone's GyroDisplay.perspective.</summary>

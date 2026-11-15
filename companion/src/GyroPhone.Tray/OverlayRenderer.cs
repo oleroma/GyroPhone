@@ -183,6 +183,8 @@ internal static class OverlayRenderer
     /// <summary>Camera distance, in slab units (the slab's long side is about 2.2).</summary>
     private const float CameraZ = 5.5f;
     private const float Thickness = 0.09f;
+    /// <summary>Show movement: the phone is drawn this much smaller to leave room to slide, at most this far (half phone lengths), and grows this much per half length nearer. As the phone's.</summary>
+    private const float MoveFit = 0.7f, MoveMax = 0.5f, MoveZoom = 0.35f;
     private const float Bezel = 0.035f;
     /// <summary>Label size as a fraction of the screen's short side (about 14 sp on the phone).</summary>
     private const float LabelSize = 0.04f;
@@ -232,7 +234,7 @@ internal static class OverlayRenderer
         {
             case OverlayKind.Phone:
                 if (axon) WorldAxes(g, area, false, 0.62f);
-                DrawPhone(g, area, scene, settings, live, m, axon ? 0.8f : 1f);
+                DrawPhone(g, area, scene, settings, live, m, (axon ? 0.8f : 1f) * (settings.ShowMove ? MoveFit : 1f));
                 if (axon) WorldAxes(g, area, true, 0.62f);
                 return;
             case OverlayKind.Shape:
@@ -343,6 +345,16 @@ internal static class OverlayRenderer
         float k = Math.Max(1f, half * MathF.Sqrt(CameraZ * CameraZ - radius * radius) / (CameraZ * radius));
         var cx = area.X + area.Width / 2f;
         var cy = area.Y + area.Height / 2f;
+        // Show movement: slid by the phone's short moves (10 cm = half its length at amount 1), bigger when nearer.
+        if (live && settings.ShowMove)
+        {
+            float amount = Math.Clamp(settings.MoveAmount, 0.25f, 4f) * 10f;
+            static float Soft(float v) => MoveMax * MathF.Tanh(v / MoveMax);
+            float halfLen = longSide / 2f * k;
+            cx += Soft(f.MoveX * amount) * halfLen;
+            cy -= Soft(f.MoveY * amount) * halfLen;
+            k *= 1f + MoveZoom * Soft(f.MoveZ * amount);
+        }
 
         PointF Project((float X, float Y, float Z) p)
         {

@@ -158,6 +158,7 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
     // The pose each display showed when it last moved visibly ([VISIBLE_TURN]).
     private val seen = HashMap<String, FloatArray>()
     private val pose = FloatArray(9)
+    private val shiftSig = FloatArray(3)
     // The parallax edge where it was last drawn, and where it would be now ([VisState.edgeState]).
     private val edgeDrawn = FloatArray(EDGE_STATE)
     private val edgeNow = FloatArray(EDGE_STATE)
@@ -249,6 +250,11 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
             sig = sig * 31 + (f?.trace?.version ?: 0L)
             sig = sig * 31 + (f?.laser?.version ?: 0L)
             if (f == null) continue
+            // Show movement: redrawn when it moved a millimetre.
+            if (f.display.showsMove) {
+                f.move.shift(shiftSig)
+                for (i in 0..2) sig = sig * 31 + Math.round(shiftSig[i] * 1000f)
+            }
             // Held, firing or aiming change what a pointer paints even on a still phone.
             sig = sig * 31 + (if (f.ratchetHeld) 1 else 0) + (if (f.firing) 2 else 0) + (if (f.aiming) 4 else 0)
             val d = f.display
@@ -496,6 +502,8 @@ private fun movedVisibly(was: FloatArray, now: FloatArray): Boolean {
 
 /** Buffers reused from frame to frame, so drawing allocates little. */
 private class VisState {
+    /** Show movement's offset now (m, view frame). */
+    val shiftNow = FloatArray(3)
     val portrait = PhoneModel(landscape = false)
     val landscape = PhoneModel(landscape = true)
     val raw = FloatArray(9)
@@ -599,7 +607,21 @@ private class VisState {
                 val model = if (size.width >= size.height) landscape else portrait
                 model.perspective = d.perspective
                 // The model's long side is 2 units, its box about 2.3 of them.
-                val unit = minOf(box.width, box.height) / 2.3f
+                var unit = minOf(box.width, box.height) / 2.3f
+                // Show movement: drawn smaller to leave room to slide, then slid by its short moves, bigger when nearer.
+                if (d.showsMove) unit *= MOVE_FIT
+                val center = if (feed != null && d.showsMove) {
+                    val half = unit
+                    feed.move.shift(shiftNow)
+                    // 10 cm = 1 unit (half the phone's length) at amount 1, eased off toward [MOVE_MAX].
+                    val k = d.moveAmount * 10f
+                    fun soft(v: Float, max: Float) = max * kotlin.math.tanh(v / max)
+                    val sx = soft(shiftNow[0] * k, MOVE_MAX)
+                    val sy = soft(shiftNow[1] * k, MOVE_MAX)
+                    val sz = soft(shiftNow[2] * k, MOVE_MAX)
+                    unit *= 1f + MOVE_ZOOM * sz
+                    Offset(box.center.x + sx * half, box.center.y - sy * half)
+                } else box.center
                 if (d.ghosts) {
                     val g = ghosts.getOrPut(id) { Ghosts() }
                     if (now - g.t >= GHOST_MS) {
@@ -611,17 +633,17 @@ private class VisState {
                     // Oldest first, fainter the older.
                     for (i in g.count downTo 1) {
                         val at = ((g.head - i + GHOSTS) % GHOSTS) * 9
-                        model.drawOutline(this, g.poses, at, path, box.center, unit, col(GyroDisplayColor.PHONE_EDGE).copy(alpha = col(GyroDisplayColor.PHONE_EDGE).alpha * 0.4f * (1f - (i - 1f) / GHOSTS)))
+                        model.drawOutline(this, g.poses, at, path, center, unit, col(GyroDisplayColor.PHONE_EDGE).copy(alpha = col(GyroDisplayColor.PHONE_EDGE).alpha * 0.4f * (1f - (i - 1f) / GHOSTS)))
                     }
                 } else ghosts.remove(id)
-                if (d.axonometric) worldAxes(box.center, unit * 1.25f, false, op, d.perspective)
+                if (d.axonometric) worldAxes(center, unit * 1.25f, false, op, d.perspective)
                 model.draw(
-                    this, m, path, box.center, unit,
+                    this, m, path, center, unit,
                     col(GyroDisplayColor.PHONE_FRONT), col(GyroDisplayColor.PHONE_BACK), col(GyroDisplayColor.PHONE_SIDE),
                     col(GyroDisplayColor.PHONE_EDGE),
                     if (d.axes) arrayOf(col(GyroDisplayColor.PHONE_X), col(GyroDisplayColor.PHONE_Y), col(GyroDisplayColor.PHONE_Z)) else null,
                 )
-                if (d.axonometric) worldAxes(box.center, unit * 1.25f, true, op, d.perspective)
+                if (d.axonometric) worldAxes(center, unit * 1.25f, true, op, d.perspective)
             }
 
             GyroDisplayKind.RATCHET_RING -> drawRing(box, live, col(GyroDisplayColor.RING_TEXT),
@@ -2199,6 +2221,15 @@ private val GIMBAL_RADII = doubleArrayOf(0.95, 0.82, 0.69)
 
 private const val GHOSTS = 6
 private const val GHOST_MS = 45L
+
+/** Show movement: the farthest the phone slides, in half phone lengths of the smaller phone ([MOVE_FIT]). */
+private const val MOVE_MAX = 0.5f
+
+/** Show movement: the phone is drawn this much smaller, so it has room to slide in its box. */
+private const val MOVE_FIT = 0.7f
+
+/** Show movement: how much bigger it grows per half phone length toward the viewer. */
+private const val MOVE_ZOOM = 0.35f
 
 /** How long a pointer's Aim display takes to ease fully in or out. */
 private const val AIM_EASE_MS = 120f

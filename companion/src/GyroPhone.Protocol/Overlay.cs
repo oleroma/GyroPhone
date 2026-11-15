@@ -34,7 +34,7 @@ public sealed class OverlayFrame
     public uint PhoneTimeUs;
     /// <summary>Yaw, pitch and roll turned since the last OVERLAY (degrees) over <see cref="TurnSeconds"/>.</summary>
     public float TurnYaw, TurnPitch, TurnRoll, TurnSeconds;
-    /// <summary>The newest accelerometer reading in the phone frame (right, up, toward the player), in g.</summary>
+    /// <summary>The accelerometer readings since the last OVERLAY, averaged, in the phone frame (right, up, toward the player), in g.</summary>
     public float UpX, UpY, UpZ;
     /// <summary>The newest magnetometer reading in the phone frame, unit length.</summary>
     public float NorthX, NorthY, NorthZ;
@@ -58,6 +58,8 @@ public sealed class OverlayFrame
     public float RwsYaw, RwsPitch, RwsRoll;
     /// <summary>The pose the PC made (not on the wire): phone frame (x right, y up, z out of the screen) to the player's view.</summary>
     public float Qw = 1, Qx, Qy, Qz;
+    /// <summary>Not on the wire: the 3D phone's Show movement offset (meters in the view: x right, y up, z toward the player).</summary>
+    public float MoveX, MoveY, MoveZ;
     /// <summary>Not on the wire: the trackball axes (bit 0 yaw, 1 pitch, 2 roll) the gyro turned just now, to light them up.</summary>
     public int PoseActive;
     public ushort LayoutVersion;
@@ -205,6 +207,7 @@ public sealed class OverlayFrame
         o.CameraYaw = CameraYaw; o.CameraPitch = CameraPitch; o.CameraRoll = CameraRoll;
         o.RwsYaw = RwsYaw; o.RwsPitch = RwsPitch; o.RwsRoll = RwsRoll;
         o.Qw = Qw; o.Qx = Qx; o.Qy = Qy; o.Qz = Qz;
+        o.MoveX = MoveX; o.MoveY = MoveY; o.MoveZ = MoveZ;
         o.PoseActive = PoseActive;
         o.LayoutVersion = LayoutVersion;
         o.Flags = Flags;

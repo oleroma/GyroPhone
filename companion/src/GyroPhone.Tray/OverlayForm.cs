@@ -744,6 +744,9 @@ internal sealed class OverlayForm : Form
     {
         bool live = _engine.Connected && age is >= 0 and < 1_500_000;
         if (!live || !_drawnLive || !_scene.Frame.SameShown(_drawnFrame)) return true;
+        // Show movement: it slid a millimetre.
+        var a = _scene.Frame;
+        if (MathF.Abs(a.MoveX - _drawnFrame.MoveX) + MathF.Abs(a.MoveY - _drawnFrame.MoveY) + MathF.Abs(a.MoveZ - _drawnFrame.MoveZ) >= 0.001f) return true;
         var s = Settings;
         float scale = s == null || s.FollowsCamera ? 1f : Math.Clamp(s.MotionScale, 0.25f, 4f);
         return OverlayPacing.TurnShows(OverlayFrame.TurnBetween(_drawnFrame, _scene.Frame), _drawnSize, scale);

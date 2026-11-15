@@ -1,0 +1,164 @@
+package com.oleroma.gyrophone.core.engine
+
+import kotlin.math.exp
+import kotlin.math.sqrt
+
+/**
+ * The phone's short moves (up, down, left, right, toward and away), for the 3D phone display's
+ * "Show movement" ([com.oleroma.gyrophone.core.model.GyroDisplay.move]).
+ *
+ * A phone can't know where it is: it only feels pushes (the accelerometer). Pushes added up twice
+ * give a position, but their small errors grow into meters within seconds. So this shows nudges
+ * only: the push less gravity is added up into a speed (which fades on its own, so a wrong one
+ * can't keep it going) and a position, which glides back to the middle once the phone is nearly
+ * still, and goes back at once on [center] (a ratchet press).
+ *
+ * Gravity in the phone's frame is followed by the gyro ([turn], the gyro thread) and pulled
+ * slowly toward the accelerometer's reading ([push], its own thread), so turning the phone isn't
+ * taken for moving it. A few multiplies per sample, off the input path.
+ *
+ * Frames: the phone's own (x right, y up, z toward the player), as [GyroPose]; [shift] turns the
+ * push into the display's view with the pose shown before adding it up, so the offset is where
+ * the phone moved on screen.
+ */
+class PhoneMove {
+    // Gravity in the phone's frame (m/s²), and whether there is one yet.
+    private var gx = 0f
+    private var gy = 0f
+    private var gz = 0f
+    private var hasG = false
+
+    // Speed and position in the view (m/s, m).
+    private var vx = 0f
+    private var vy = 0f
+    private var vz = 0f
+    private var px = 0f
+    private var py = 0f
+    private var pz = 0f
+
+    /** The push less gravity (m/s²), smoothed: under the still threshold, it glides back. */
+    private var shake = 0f
+
+    /** Seconds the phone has been nearly still. */
+    private var still = 0f
+
+    private var lastNs = 0L
+
+    /** Gyro rates in deg/s ([GyroMouse.motion], as [GyroPose.fuse] takes them) over [dt] seconds: turns gravity with the phone. */
+    @Synchronized
+    fun turn(yaw: Float, pitch: Float, roll: Float, dt: Float) {
+        if (!hasG || dt <= 0f) return
+        val ax = pitch * DEG_TO_RAD * dt
+        val ay = -yaw * DEG_TO_RAD * dt
+        val az = -roll * DEG_TO_RAD * dt
+        // A vector fixed in the world, seen from a phone turning by a: g -= a × g.
+        val nx = gx - (ay * gz - az * gy)
+        val ny = gy - (az * gx - ax * gz)
+        val nz = gz - (ax * gy - ay * gx)
+        gx = nx; gy = ny; gz = nz
+    }
+
+    /**
+     * An accelerometer reading ([ax], [ay], [az] in the phone's frame, gravity [g] in its units) at
+     * [nowNs]; [view] the pose shown now (row-major 3×3, phone into view), null for none.
+     * [returnSeconds]: 95% of the way back in that long once the phone is still below
+     * [stillBelow] m/s².
+     */
+    @Synchronized
+    fun push(ax: Float, ay: Float, az: Float, g: Float, nowNs: Long, view: FloatArray?, stillBelow: Float, returnSeconds: Float) {
+        if (g <= 0f) return
+        val k = G / g
+        val x = ax * k
+        val y = ay * k
+        val z = az * k
+        val dt = if (lastNs == 0L) 0f else ((nowNs - lastNs) / 1e9f).coerceIn(0f, MAX_DT)
+        lastNs = nowNs
+        if (!hasG) {
+            gx = x; gy = y; gz = z
+            hasG = true
+            return
+        }
+        if (dt == 0f) return
+        // Pulled toward the reading: firmly while it is about 1 g (nothing but gravity), barely while moving.
+        val l = sqrt(x * x + y * y + z * z)
+        val calm = kotlin.math.abs(l - G) < CALM_G
+        val pull = (dt / (if (calm) G_FOLLOW_S else G_FOLLOW_MOVING_S)).coerceAtMost(1f)
+        gx += (x - gx) * pull; gy += (y - gy) * pull; gz += (z - gz) * pull
+        var lx = x - gx
+        var ly = y - gy
+        var lz = z - gz
+        val a = sqrt(lx * lx + ly * ly + lz * lz)
+        shake += (a - shake) * (dt / SHAKE_S).coerceAtMost(1f)
+        // Sensor noise and leftover gravity, not a move.
+        if (a < NOISE) {
+            lx = 0f; ly = 0f; lz = 0f
+        }
+        if (view != null) {
+            val rx = view[0] * lx + view[1] * ly + view[2] * lz
+            val ry = view[3] * lx + view[4] * ly + view[5] * lz
+            val rz = view[6] * lx + view[7] * ly + view[8] * lz
+            lx = rx; ly = ry; lz = rz
+        }
+        val fade = exp(-dt / SPEED_FADE_S)
+        vx = (vx + lx * dt) * fade
+        vy = (vy + ly * dt) * fade
+        vz = (vz + lz * dt) * fade
+        px += vx * dt; py += vy * dt; pz += vz * dt
+        still = if (shake < stillBelow) still + dt else 0f
+        if (still >= STILL_FOR_S) {
+            val back = exp(-3f * dt / returnSeconds.coerceAtLeast(0.05f))
+            px *= back; py *= back; pz *= back
+            vx *= back; vy *= back; vz *= back
+        }
+        // Far beyond what a hand moves without the phone noticing: hold it there.
+        val d = sqrt(px * px + py * py + pz * pz)
+        if (d > MAX_M) {
+            val s = MAX_M / d
+            px *= s; py *= s; pz *= s
+        }
+    }
+
+    /** Back to the middle at once (a ratchet press), at rest. */
+    @Synchronized
+    fun center() {
+        vx = 0f; vy = 0f; vz = 0f
+        px = 0f; py = 0f; pz = 0f
+        still = 0f
+    }
+
+    /** Starts again: no gravity yet (the accelerometer stopped, the display was switched). */
+    @Synchronized
+    fun reset() {
+        center()
+        hasG = false
+        shake = 0f
+        lastNs = 0L
+    }
+
+    /** Where the phone is now in the view (meters; x right, y up, z toward the player) into [out]. */
+    @Synchronized
+    fun shift(out: FloatArray) {
+        out[0] = px; out[1] = py; out[2] = pz
+    }
+
+    companion object {
+        /** Standard gravity in m/s². */
+        const val G = 9.80665f
+        private const val DEG_TO_RAD = (Math.PI / 180.0).toFloat()
+        private const val MAX_DT = 0.05f
+        /** A reading within this of 1 g (m/s²) counts as gravity alone. */
+        private const val CALM_G = 0.4f
+        private const val G_FOLLOW_S = 0.5f
+        private const val G_FOLLOW_MOVING_S = 8f
+        /** Pushes below this (m/s²) are taken as noise. */
+        private const val NOISE = 0.06f
+        /** How long the speed takes to fade to a third on its own, so drift can't build up. */
+        private const val SPEED_FADE_S = 0.5f
+        private const val SHAKE_S = 0.08f
+        /** Still that long before it glides back, so a pause mid-move doesn't pull it. */
+        private const val STILL_FOR_S = 0.1f
+        private const val MAX_M = 0.5f
+        /** Default still threshold, m/s². */
+        const val STILL_BELOW = 0.3f
+    }
+}

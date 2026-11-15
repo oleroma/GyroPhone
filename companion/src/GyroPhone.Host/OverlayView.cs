@@ -28,6 +28,7 @@ internal sealed class OverlayView
         public string Id;
         public bool HasPose;
         public float W, X, Y, Z;
+        public float MoveX, MoveY, MoveZ;
         public long Active0, Active1, Active2;
         public long OffLevelUs;
         public bool PcHandles;
@@ -64,6 +65,7 @@ internal sealed class OverlayView
                 if (p != null)
                 {
                     w.W = p.W; w.X = p.X; w.Y = p.Y; w.Z = p.Z;
+                    w.MoveX = p.Move.X; w.MoveY = p.Move.Y; w.MoveZ = p.Move.Z;
                     p.CopyActiveAt(active);
                     w.Active0 = active[0]; w.Active1 = active[1]; w.Active2 = active[2];
                 }
@@ -105,6 +107,7 @@ internal sealed class OverlayView
                     if (pose = w.HasPose)
                     {
                         into.Qw = w.W; into.Qx = w.X; into.Qy = w.Y; into.Qz = w.Z;
+                        into.MoveX = w.MoveX; into.MoveY = w.MoveY; into.MoveZ = w.MoveZ;
                         active[0] = w.Active0; active[1] = w.Active1; active[2] = w.Active2;
                     }
                     break;
@@ -116,6 +119,7 @@ internal sealed class OverlayView
             else
             {
                 into.Qw = 1; into.Qx = into.Qy = into.Qz = 0;
+                into.MoveX = into.MoveY = into.MoveZ = 0;
                 into.PoseActive = 0;
             }
             return rx;

@@ -90,6 +90,16 @@ data class GyroDisplay(
     val levelDeg: Int = 0,
     val ghosts: Boolean = false,
     val axes: Boolean = false,
+    /**
+     * PHONE: shows short moves too (up, down, left, right, toward and away; [com.oleroma.gyrophone.core.engine.PhoneMove]),
+     * [moveAmount] times as far (1 = 10 cm moves it half the phone's length), gliding back to the
+     * middle within [moveReturnSeconds] once the phone shakes less than [moveStillBelow] m/s²,
+     * and back at once on every ratchet press.
+     */
+    val move: Boolean = false,
+    val moveAmount: Float = 1f,
+    val moveStillBelow: Float = 0.3f,
+    val moveReturnSeconds: Float = 1f,
     /** GRAPH: its full height, ± this many deg/s. */
     val graphRange: Int = 360,
     val graphSeconds: Int = 3,
@@ -375,6 +385,9 @@ data class GyroDisplay(
         laserSnakeLight = snakeLight, laserSnakeLightFrom = snakeLightFrom, laserSnakeShine = snakeShine,
         laserSnakeFireBrush = snakeFireBrush, laserSnakeAimBrush = snakeAimBrush,
     ).change()
+
+    /** It shows the phone's short moves ([move]), and so needs the accelerometer. */
+    val showsMove: Boolean get() = kind == GyroDisplayKind.PHONE && move
 
     /** It holds its pose to gravity (and so needs the accelerometer). */
     val needsGravity: Boolean get() = kind.pose && gravity && !followsCamera

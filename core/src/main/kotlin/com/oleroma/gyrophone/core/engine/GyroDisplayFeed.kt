@@ -31,6 +31,14 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     /** The pose the pose kinds show ([GyroDisplayKind.pose]): turned by the gyro, or against the world with gravity. */
     val pose = GyroPose()
 
+    /** The phone's short moves (PHONE with [GyroDisplay.move]). */
+    val move = PhoneMove()
+    private var wasMove = display.showsMove
+
+    /** The pose shown, for [up] (the accelerometer's thread). */
+    private val upQ = FloatArray(4)
+    private val upView = FloatArray(9)
+
     /** The graph's speeds (GRAPH only). */
     val trace: GyroTrace? = if (display.kind == GyroDisplayKind.GRAPH) GyroTrace() else null
 
@@ -94,6 +102,15 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     ) {
         feedPose(yaw, pitch, roll, dtSeconds, axes, pressed, held, gyro)
         if (laser != null) record()
+        val moves = display.showsMove
+        if (moves != wasMove) {
+            wasMove = moves
+            move.reset()
+        }
+        if (moves) {
+            move.turn(yaw, pitch, roll, dtSeconds)
+            if (pressed) move.center()
+        }
     }
 
     private fun feedPose(
@@ -243,6 +260,7 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
      * latency markers): one held to gravity settles onto it again at once ([GyroPose.resettle]).
      */
     fun resume() {
+        move.reset()
         if (display.needsGravity) pose.resettle()
     }
 
@@ -406,7 +424,13 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
 
     /** An accelerometer reading in the phone's frame (right, up, toward the player) and gravity [g] in its units. */
     fun up(x: Float, y: Float, z: Float, g: Float) {
-        if (display.needsGravity) pose.setUp(x, y, z, g)
+        val d = display
+        if (d.needsGravity) pose.setUp(x, y, z, g)
+        if (d.showsMove) {
+            pose.quaternion(upQ)
+            shownMatrix(upQ, restIn(d), 1f, upView)
+            move.push(x, y, z, g, System.nanoTime(), upView, d.moveStillBelow, d.moveReturnSeconds)
+        }
     }
 
     /** A magnetometer reading in the phone's frame, as [up]. */

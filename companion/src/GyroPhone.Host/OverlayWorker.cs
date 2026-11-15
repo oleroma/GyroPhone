@@ -243,6 +243,7 @@ internal sealed class OverlayWorker
             // A pointer that paints follows every gyro sample (the samples sent just before this frame).
             if (o.FollowsSamples && _samples.Matches(f)) pose.FeedSamples(f, o, _samples, _sub, s.RxMs);
             else pose.Feed(f, o);
+            pose.FeedMove(f, o);
         }
         if (graph) FeedSpeeds(f);
         // Set orientation on the phone: every overlay shown starts again from its new base orientation.
