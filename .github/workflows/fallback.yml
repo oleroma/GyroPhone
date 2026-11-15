@@ -189,22 +189,25 @@ jobs:
         run: |
           set -o pipefail
           bash .agents/hooks/build driver | tee "$RUNNER_TEMP/build.out"
-          file="$(tr -d '\r' <"$RUNNER_TEMP/build.out" | sed -n 's/^build-file: \([^ ]*\) .*/\1/p' | head -n 1)"
-          echo "file=$file" >> "$GITHUB_OUTPUT"
+          # One build-file line per driver (pad and input); all of them are published.
+          files="$(tr -d '\r' <"$RUNNER_TEMP/build.out" | sed -n 's/^build-file: \([^ ]*\) .*/\1/p' | tr '\n' ' ')"
+          echo "files=$files" >> "$GITHUB_OUTPUT"
           echo "version=$(tr -d '\r' <"$RUNNER_TEMP/build.out" | sed -n 's/^build-file: [^ ]* \([^ ]*\)$/\1/p' | head -n 1)" >> "$GITHUB_OUTPUT"
-          echo "$(basename "$file")  SHA-256 \`$(sha256sum "$file" | cut -d' ' -f1)\`" >> "$GITHUB_STEP_SUMMARY"
+          for file in $files; do
+            echo "$(basename "$file")  SHA-256 \`$(sha256sum "$file" | cut -d' ' -f1)\`" >> "$GITHUB_STEP_SUMMARY"
+          done
 
       # On the same pre-release as the APK and the companion; whichever job comes first makes it.
-      - name: Publish the driver
+      - name: Publish the drivers
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: build/${{ needs.number.outputs.n }}
-          FILE: ${{ steps.build.outputs.file }}
+          FILES: ${{ steps.build.outputs.files }}
           VERSION: ${{ steps.build.outputs.version }}
         run: >-
-          gh release create "$TAG" "$FILE" --verify-tag --prerelease
+          gh release create "$TAG" $FILES --verify-tag --prerelease
           --title "$VERSION" --notes "$(bash .agents/release-notes "$GITHUB_SHA" "${TAG#build/}" "CI fallback build of $GITHUB_REF_NAME ($GITHUB_SHA)")"
-          || gh release upload "$TAG" "$FILE"
+          || gh release upload "$TAG" $FILES
 
   # Runs only when every build job that ran passed (a part the branch didn't change is skipped).
   built:
