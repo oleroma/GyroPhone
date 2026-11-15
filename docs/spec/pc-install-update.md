@@ -2,13 +2,13 @@
 
 ## Where it lives
 
-The companion is one self-contained exe at a fixed path, **`%LOCALAPPDATA%\Programs\GyroPhone\GyroPhoneCompanion.exe`**, with OpenCV's two native DLLs beside it (used only by the latency test, so kept out of the exe), so its firewall rule and Run entries stay valid across updates. Settings and keys are in `%APPDATA%\GyroPhone` and survive updates ([Companion](pc-companion.md)). No installer, no admin rights needed except for the firewall rule and, for the FPS overlay, setting up the FPS helper once ([Companion](pc-companion.md), Performance).
+The companion is one self-contained exe at a fixed path, **`%LOCALAPPDATA%\Programs\GyroPhone\GyroPhoneCompanion.exe`** so its firewall rule and Run entries stay valid across updates. Settings and keys are in `%APPDATA%\GyroPhone` and survive updates ([Companion](pc-companion.md)). No installer, no admin rights needed except for the firewall rule and, for the FPS overlay, setting up the FPS helper once ([Companion](pc-companion.md), Performance).
 
 ## Installing a build
 
 `.agents/hooks/install` (run on the PC by `agent-install` after `agent-build pc`, see [Build and release](build-release.md)):
 
-1. **Companion**: copies the new exe in only when the installed one is from another build (the exe is stamped `<version>-<commit>`; `VERSION.txt` names the build in place). A running exe is never touched: the new build waits next to it as **`GyroPhoneCompanion.exe.new`**. With no companion or watcher running it is copied straight in. Before the exe, OpenCV's DLLs are copied next to it when they differ from the installed ones; one that can't be replaced (a running companion loaded it for the latency test) waits as **`<dll>.new`**.
+1. **Companion**: copies the new exe in only when the installed one is from another build (the exe is stamped `<version>-<commit>`; `VERSION.txt` names the build in place). A running exe is never touched: the new build waits next to it as **`GyroPhoneCompanion.exe.new`**. With no companion or watcher running it is copied straight in. Before the exe, any DLLs that ship beside it (none at present) are copied next to it when they differ from the installed ones; one that can't be replaced (a running companion loaded it) waits as **`<dll>.new`**. Older builds shipped OpenCV's DLLs there for the video latency test; an installed copy is simply left unused.
 2. **Key files**: copies the phone's `phone.pub` (over adb) to `%APPDATA%\GyroPhone\authorized_phones\` and the PC's `host.pub` to the phone's `keys/trusted_hosts/`, so the phone connects over Wi-Fi with no code. Only public keys move. A PC whose companion never ran gets its key from `GyroPhoneCompanion.exe --init-keys` (makes the key and exits, no window).
 3. It never starts or closes the apps.
 

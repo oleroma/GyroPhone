@@ -172,8 +172,6 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
             StateChanged();
         };
         _engine.DebugSaveRequested = () => _out.Post("debug-save");
-        RawInputShared.IsOwnDevice = OwnInputDevice.Is;
-        RawInputShared.RawMouseReleased = DeliveryProbe.RawMouseReleased;
         SetDeliveryProbe(settings.Diagnostics);
         if (hostKey != null) _authorized = new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);
         PowerQos.TryDisableForProcess(_log.Write);
@@ -598,7 +596,6 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
 
     public void SetMeasureButtons(bool on) => _engine.SetMeasureButtons(on);
 
-    public void SetLatencyScreen(bool on) => _engine.SetLatencyScreen(on);
 
     public void SetLinkWatch(bool on) => _engine.SetLinkWatch(on);
 

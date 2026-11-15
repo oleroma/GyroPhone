@@ -18,7 +18,7 @@ namespace GyroPhone.Tray;
 /// moved, this finisher's own path is gone, so everything after the move uses only assemblies already loaded
 /// (the runtime's own, this one, FileLog's) and starts processes through CreateProcess directly, not
 /// <see cref="Process.Start(ProcessStartInfo)"/>, which may load more.</para>
-/// <para>Then it moves in OpenCV's DLLs that wait beside the exe as "&lt;dll&gt;.new"
+/// <para>Then it moves in any DLLs that ship beside the exe (none at present) and wait as "&lt;dll&gt;.new"
 /// (<see cref="UpdateInfo.WaitingDlls"/>), which the old instance may have held. If the move fails, it starts the
 /// old build again with <see cref="FailedArg"/>, which then doesn't retry this .new until it is installed again.</para>
 /// </summary>
@@ -32,7 +32,7 @@ internal static class UpdateFinisher
     private const int ExitWaitMs = 30_000;
     private const int CopyTries = 40;
     private const int CopyRetryMs = 500;
-    // The waiting DLLs are optional (latency test only), so they hold up the restart for at most 5 s each.
+    // The waiting DLLs are optional, so they hold up the restart for at most 5 s each.
     private const int DllMoveTries = 10;
 
     /// <summary>The product version of a waiting build, or null when there is none (or it can't be read yet).</summary>
@@ -129,7 +129,7 @@ internal static class UpdateFinisher
                     Start(exe, moved ? $"{Program.RestartedArg} {Program.UpdatedArg}" : $"{Program.RestartedArg} {FailedArg}", log);
                 }
                 // Only with the new exe in place: the old build keeps the DLLs it came with. After the companion
-                // starts: it doesn't load them until the latency test opens.
+                // starts: it loads them only when it needs them.
                 if (moved) MoveWaitingDlls(dlls, log);
                 if (tray)
                 {
@@ -196,7 +196,7 @@ internal static class UpdateFinisher
     /// <summary>
     /// Puts each waiting "&lt;dll&gt;.new" in place of its DLL by renaming it (no copy of the big file on the
     /// restart path), retrying for a few seconds while an exiting instance still holds it. One that can't be
-    /// moved stays waiting (logged): only the latency test uses these DLLs, and the next update tries again.
+    /// moved stays waiting (logged), and the next update tries again.
     /// </summary>
     private static void MoveWaitingDlls(IReadOnlyList<(string Waiting, string Target)> dlls, FileLog log)
     {

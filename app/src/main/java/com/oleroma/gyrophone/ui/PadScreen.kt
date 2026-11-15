@@ -797,14 +797,6 @@ fun PadScreen(
     val blackSeconds by runtime.blackScreenSeconds.collectAsStateWithLifecycle()
     val blackRequests by runtime.blackScreenRequests.collectAsStateWithLifecycle()
     var black by remember { mutableStateOf(false) }
-    // The PC's latency test window is open: tracking markers over the pad until it closes or "Hide
-    // markers". While they show, the pad never goes black and the screen stays on (the person films
-    // without touching it).
-    val latencyScreen by runtime.wifi.latencyScreen.collectAsStateWithLifecycle()
-    var latencyHidden by remember { mutableStateOf(false) }
-    LaunchedEffect(latencyScreen) { if (!latencyScreen) latencyHidden = false }
-    val markersShown = !editing && !hidden && latencyScreen && !latencyHidden
-    LaunchedEffect(markersShown) { if (markersShown) black = false }
     // The PC runs a Link test: the phone sends fake input, so a note covers the pad and the screen stays on.
     val linkTest by runtime.wifi.linkTest.collectAsStateWithLifecycle()
     // The last screen touch (uptime ms) and the fingers down now, seen before the pad's handlers.
@@ -814,7 +806,7 @@ fun PadScreen(
     LaunchedEffect(blackRequests) {
         if (blackRequests != seenRequests[0]) {
             seenRequests[0] = blackRequests
-            if (!editing && !hidden && !markersShown) black = true
+            if (!editing && !hidden) black = true
         }
     }
     LaunchedEffect(editing, hidden) { if (editing || hidden) black = false }
@@ -827,8 +819,8 @@ fun PadScreen(
             if (!editing && !hidden) setFullscreen(!isFullscreen)
         }
     }
-    LaunchedEffect(blackIdle, blackSeconds, editing, hidden, black, markersShown) {
-        if (!blackIdle || editing || hidden || black || markersShown) return@LaunchedEffect
+    LaunchedEffect(blackIdle, blackSeconds, editing, hidden, black) {
+        if (!blackIdle || editing || hidden || black) return@LaunchedEffect
         lastTouchMs[0] = SystemClock.uptimeMillis()
         val idleMs = blackSeconds * 1000L
         while (true) {
@@ -840,15 +832,15 @@ fun PadScreen(
         }
         black = true
     }
-    // The black pad or the latency markers cover the gyro displays, the parallax edge and the
-    // overlays: they stop drawing, and the runtime stops feeding them (and the sensors only they need).
-    val covered = black || markersShown
+    // The black pad covers the gyro displays, the parallax edge and the overlays: they stop
+    // drawing, and the runtime stops feeding them (and the sensors only they need).
+    val covered = black
     LaunchedEffect(covered) { runtime.setVisualsCovered(covered) }
     DisposableEffect(Unit) { onDispose { runtime.setVisualsCovered(false) } }
     // A black pad keeps the screen on even with Keep the screen on off: if the phone locked, the app
     // would stop reading the controller.
-    DisposableEffect(view, keepAwake, black, markersShown, linkTest, hidden) {
-        view.keepScreenOn = !hidden && (keepAwake || black || markersShown || linkTest)
+    DisposableEffect(view, keepAwake, black, linkTest, hidden) {
+        view.keepScreenOn = !hidden && (keepAwake || black || linkTest)
         onDispose { view.keepScreenOn = false }
     }
     // Play-mode touch reaches the engine as it arrives, not once per frame. Asked on the decor view:
@@ -2252,8 +2244,6 @@ fun PadScreen(
         // A small red dot while Diagnostics is on, here or in the companion (switched by hand or by an agent).
         if (!hidden) LogOnDot(runtime, Modifier.align(Alignment.TopStart))
 
-
-        if (markersShown) LatencyMarkers { latencyHidden = true }
 
         if (linkTest && !editing) LinkTestNote()
 

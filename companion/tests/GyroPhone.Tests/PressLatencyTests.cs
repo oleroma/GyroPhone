@@ -93,8 +93,8 @@ public class PressLatencyTests
         Assert.Equal("04030201d0c0b0a0", Convert.ToHexString(b).ToLowerInvariant());
         Assert.Equal(new PressTime(0x01020304, 0xA0B0C0D0), WireCodec.DecodePressTime(b));
         Span<byte> t = stackalloc byte[Wire.TestModePlain];
-        WireCodec.EncodeTestMode(TestModeFlags.PressTimes | TestModeFlags.LatencyScreen, t);
-        Assert.Equal("03000000", Convert.ToHexString(t).ToLowerInvariant());
+        WireCodec.EncodeTestMode(TestModeFlags.PressTimes | TestModeFlags.LinkTest, t);
+        Assert.Equal("05000000", Convert.ToHexString(t).ToLowerInvariant());
         Assert.Equal(Wire.Header + 8 + Wire.GcmTag, PacketType.Size(PacketType.PressTime));
         Assert.Equal(Wire.Header + 4 + Wire.GcmTag, PacketType.Size(PacketType.TestMode));
     }

@@ -12,15 +12,13 @@ namespace GyroPhone.Ui;
 /// <summary>
 /// Performance (docs/spec/pc-companion.md, "Performance"): everything measured, and only while this page is on
 /// screen. The phone link live (the way its packets go, packets, latency with a graph, trouble marks, Measure
-/// buttons), Diagnostics (one switch for every log, here and on the phone; a Save adds a record to Results), and the
-/// video Latency test. The
+/// buttons), and Diagnostics (one switch for every log, here and on the phone; a Save adds a record to Results). The
 /// game's frames show only while an FPS overlay is on: it is the only thing that watches them.
 /// </summary>
 internal sealed class PerformancePage : Page
 {
     private readonly ICompanion _app;
     private readonly StackPanel _root = new();
-    private readonly LatencyPage _latency;
     private readonly Border _permission;
     private readonly TextBlock _permissionText;
     private readonly Button _setUp;
@@ -49,7 +47,7 @@ internal sealed class PerformancePage : Page
     {
         _app = app;
         _root.Children.Add(Parts.Text("Performance", "H1"));
-        var intro = Parts.Text("The phone link live, Diagnostics, and the video latency test. " +
+        var intro = Parts.Text("The phone link live and Diagnostics. " +
             "Measured only while this page is open (and while Diagnostics is on).", "Sub");
         intro.Margin = new Thickness(0, 0, 0, 14);
         _root.Children.Add(intro);
@@ -139,10 +137,6 @@ internal sealed class PerformancePage : Page
         sb.Children.Add(openRow);
         _root.Children.Add(res);
 
-        // Latency test (video)
-        _latency = new LatencyPage(app, owner, icon);
-        _root.Children.Add(_latency.View);
-
         // Speed settings
         var (mouse, mb) = Parts.Card("Mouse");
         mb.Children.Add(Parts.Text("Catch-up time"));
@@ -175,7 +169,6 @@ internal sealed class PerformancePage : Page
     {
         _shown = on;
         _app.Perf.Check(on);
-        _latency.Shown(on);
     }
 
     private void SetUp()
@@ -306,8 +299,6 @@ internal sealed class PerformancePage : Page
             _resultsKey = key;
             BuildResults(runs);
         }
-
-        _latency.Refresh(v);
     }
 
     private static string Ms(uint us) => us == HostStatus.Unknown ? "–" : $"{us / 1000.0:0.0} ms";

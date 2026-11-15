@@ -9,7 +9,7 @@ The repo has two **parts** (`.agents/hooks/parts`), built only when a branch cha
 | Part | Sources | Build file |
 |---|---|---|
 | `apk` | `app/`, `core/`, the Gradle files | `app/build/outputs/apk/release/gyrophone-<version>.apk` (release build, arm64-v8a) |
-| `companion` | `companion/`, plus the protocol test vectors in `core/` | `companion/out/GyroPhoneCompanion.exe` (self-contained single-file .NET 8, win-x64), plus OpenCV's `OpenCvSharpExtern.dll` and `opencv_videoio_ffmpeg*.dll` beside it |
+| `companion` | `companion/`, plus the protocol test vectors in `core/` | `companion/out/GyroPhoneCompanion.exe` (self-contained single-file .NET 8, win-x64) |
 
 Docs, `media/` and `tools/` belong to no part. Any other change (hooks, workflows) builds both, and so does a branch that changed no part. The companion builds only on Windows; an unchanged companion exe is reused with its older version.
 
@@ -22,7 +22,7 @@ App: `applicationId com.oleroma.gyrophone`, minSdk 35, target/compile SDK 36, si
 ## Hooks
 
 - **quick-test**: before the build. `apk`: the Kotlin `core` unit tests (including the shared protocol and gyro-math vectors). `companion`: the companion's tests (on Linux only the cross-platform projects).
-- **build**: `./gradlew :app:assembleRelease`; `dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishReadyToRun=true` for every build, branch or `main`. ReadyToRun spares compiling the companion's own code at each start; the exe isn't compressed, so its parts are mapped in place instead of unpacked at each start (a bigger file, a faster start). OpenCV's native DLLs (about 95 MB, latency test only) are kept out of the exe (`ExcludeFromSingleFile` in `GyroPhone.Tray.csproj`), so no start has to write them out to `%TEMP%\.net`; the publish lists them in `companion/out/side-files.txt`. Prints `build-file: <path> <version>` for the APK, the exe and each of those DLLs.
+- **build**: `./gradlew :app:assembleRelease`; `dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishReadyToRun=true` for every build, branch or `main`. ReadyToRun spares compiling the companion's own code at each start; the exe isn't compressed, so its parts are mapped in place instead of unpacked at each start (a bigger file, a faster start). A DLL marked `ExcludeFromSingleFile` would ship beside the exe as a build file of its own, listed in `companion/out/side-files.txt`; none is since the video latency test (with OpenCV's DLLs) moved out to `tools/latency-test`, which no build includes. Prints `build-file: <path> <version>` for the APK, the exe and any such DLL.
 - **full-check**: after the build. Android lint for the app (`lintRelease`, the build the phone gets; `assembleRelease` doesn't run lint itself); the companion has none.
 - **install**: on the PC after the APK is on the phone: installs the companion with its DLLs and swaps the key files ([Install and update](pc-install-update.md)).
 

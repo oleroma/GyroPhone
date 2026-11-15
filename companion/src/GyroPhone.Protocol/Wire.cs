@@ -277,8 +277,7 @@ public static class TestModeFlags
 {
     /// <summary>"Measure buttons" is on: the phone sends PRESS_TIME for each press and release.</summary>
     public const byte PressTimes = 1 << 0;
-    /// <summary>The latency test window is open: the phone's pad shows the tracking markers.</summary>
-    public const byte LatencyScreen = 1 << 1;
+    // 1 << 1 is unused: it was the video latency test's markers, now a separate tool (tools/latency-test).
     /// <summary>A Link test runs: the phone sends fake moving input at its full rate, marked <see cref="StateFlags.LinkTest"/>.</summary>
     public const byte LinkTest = 1 << 2;
     /// <summary>Diagnostics is on: the phone measures its side of the link and sends PHONE_STATS once a second.</summary>

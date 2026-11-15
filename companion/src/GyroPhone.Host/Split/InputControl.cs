@@ -56,9 +56,8 @@ public interface IInputControl
     void SetPressKeyListen(bool on);
     void SetPressKeyNotice(bool on);
 
-    // Latency and Performance
+    // Measure buttons and Performance
     void SetMeasureButtons(bool on);
-    void SetLatencyScreen(bool on);
     /// <summary>The Performance page shows the link (the phone's stats are wanted each second).</summary>
     void SetLinkWatch(bool on);
 

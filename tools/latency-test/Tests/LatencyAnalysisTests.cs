@@ -145,7 +145,7 @@ public class LatencyAnalysisTests
         const int w = 360, h = 640;
         string path = Path.Combine(Path.GetTempPath(), $"gp-latency-{Guid.NewGuid():N}.avi");
         using var dict = CvAruco.GetPredefinedDictionary(PredefinedDictionaryType.Dict4X4_50);
-        // The phone's screen, portrait, as LatencyMarkers draws it: a 16-cell grid in the top half,
+        // The phone's screen, portrait, as markers.png has it: a 16-cell grid in the top half,
         // each marker a light grey quiet zone around its black 6 × 6 square.
         using var screen = new Mat(1300, 600, MatType.CV_8UC3, Scalar.Black);
         const int cell = 34, x0 = 28, y0 = 20;
@@ -191,6 +191,29 @@ public class LatencyAnalysisTests
             writer.Write(img);
         }
         return path;
+    }
+
+    /// <summary>
+    /// The marker image the phone shows (tools/latency-test/markers.png): all four markers are found,
+    /// on the 16-cell grid the analyser expects (black squares 8 cells apart).
+    /// </summary>
+    [Fact]
+    public void MarkerImageHasTheFourMarkersOnTheGrid()
+    {
+        using var img = Cv2.ImRead(Path.Combine(AppContext.BaseDirectory, "markers.png"), ImreadModes.Grayscale);
+        Assert.False(img.Empty());
+        using var small = new Mat();
+        Cv2.Resize(img, small, new Size(), 0.3, 0.3, InterpolationFlags.Area);
+        using var dict = CvAruco.GetPredefinedDictionary(PredefinedDictionaryType.Dict4X4_50);
+        using var detector = new ArucoDetector(dict, new DetectorParameters(), new RefineParameters());
+        detector.DetectMarkers(small, out var corners, out var ids, out _);
+        Assert.Equal([0, 1, 2, 3], ids.Order().ToArray());
+        var topLeft = ids.Zip(corners).ToDictionary(p => p.First, p => p.Second[0]);
+        double side = Math.Abs(corners[0][1].X - corners[0][0].X) / 6;
+        Assert.Equal(8, (topLeft[1].X - topLeft[0].X) / side, 0.3);
+        Assert.Equal(8, (topLeft[2].Y - topLeft[0].Y) / side, 0.3);
+        Assert.Equal(topLeft[0].Y, topLeft[1].Y, 2.0);
+        Assert.Equal(topLeft[0].X, topLeft[2].X, 2.0);
     }
 
     [Fact]

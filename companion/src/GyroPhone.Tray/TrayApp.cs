@@ -530,7 +530,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             st?.InputDriverReady == true ? InputDriverState.Ready : st?.InputDriverInstalled == true ? InputDriverState.NotPlugged : InputDriverState.NotInstalled);
     }
 
-    public void SetLatencyScreen(bool on) => In.SetLatencyScreen(on);
 
     public void SetCatchUpMs(int ms)
     {
