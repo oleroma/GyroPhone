@@ -115,6 +115,11 @@ public interface ICompanion
     void SetCatchUpMs(int ms);
     /// <summary>"Use SendInput" (Performance › Keyboard and mouse): SendInput even when the input driver is installed.</summary>
     void ToggleUseSendInput();
+    /// <summary>
+    /// "Delivery test" (Performance › Keyboard and mouse): opens a window that reads raw mouse input in front, like a
+    /// game, next to Diagnostics' background delivery probe, while it is open.
+    /// </summary>
+    void OpenDeliveryTest();
 
     // Performance
     /// <summary>The Performance page's frame watcher, link seconds and test records.</summary>

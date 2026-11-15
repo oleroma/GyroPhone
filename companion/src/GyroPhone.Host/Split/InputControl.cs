@@ -60,6 +60,13 @@ public interface IInputControl
     void SetMeasureButtons(bool on);
     /// <summary>The Performance page shows the link (the phone's stats are wanted each second).</summary>
     void SetLinkWatch(bool on);
+    /// <summary>
+    /// The Delivery test window is open (<paramref name="on"/>) and in front (<paramref name="counting"/>): the engine's
+    /// mouse moves also go to the shared <see cref="MoveRing"/>, and the delivery probe adds up the test's moves.
+    /// </summary>
+    void SetDeliveryTest(bool on, bool counting);
+    /// <summary>The delivery probe's numbers for the running Delivery test, or null without one.</summary>
+    DeliveryNumbers? DeliveryTestNumbers();
 
     // Overlays
     /// <summary>What the companion's overlays ask of the phone (<see cref="HostEngine.SetOverlay"/>).</summary>

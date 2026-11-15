@@ -81,6 +81,7 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
     private bool _inputDriverInstalled;
     private DeliveryProbe? _probe;
     private readonly object _probeGate = new();
+    private bool _diagOn, _testOn;
     private int _diagSaved;
     private readonly ManualResetEventSlim _exit = new();
     private int _exited;
@@ -165,7 +166,11 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
         // The Performance monitor is the companion's: each second of the link and the phone goes there.
         _engine.Recorder!.Timeline = new LinkTimeline { Added = s => _out.Post("link-second", s) };
         _engine.PhoneTimeline = new PhoneTimeline { Added = s => _out.Post("phone-second", s) };
-        _engine.Recorder!.SecondNote = () => _probe?.SecondText();
+        _engine.Recorder!.SecondNote = () =>
+        {
+            string? text = _probe?.SecondText();
+            return _diagOn ? text : null; // a Delivery test alone adds nothing to the log
+        };
         _engine.DiagnosticsChanged = on =>
         {
             SetDeliveryProbe(on);
@@ -470,20 +475,59 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
     {
         lock (_probeGate)
         {
-            if (on == (_probe != null)) return;
-            if (on)
-            {
-                _probe = new DeliveryProbe(_log.Write);
-                _probe.Start();
-                _engine.MoveSent = _probe.Sent;
-            }
-            else
-            {
-                _engine.MoveSent = null;
-                _probe!.Dispose();
-                _probe = null;
-            }
+            _diagOn = on;
+            UpdateProbe();
         }
+    }
+
+    /// <summary>
+    /// The probe runs while Diagnostics is on or a Delivery test runs; the engine's moves go to it, and to the shared
+    /// ring the test window reads while a test runs. Off, the input path stores nothing. Under <see cref="_probeGate"/>.
+    /// </summary>
+    private void UpdateProbe()
+    {
+        bool want = _diagOn || _testOn;
+        if (want && _probe == null)
+        {
+            _probe = new DeliveryProbe(_log.Write);
+            _probe.Start();
+        }
+        if (_probe != null)
+            _probe.SlowLine = _diagOn ? text => { if (_engine.Debug.Enabled) _engine.Debug.Add(DebugTrace.Kind.Note, text); } : null;
+        var probe = want ? _probe : null;
+        var ring = _region.Moves;
+        _engine.MoveSent = probe == null ? null
+            : _testOn ? (t, x, y) => { probe.Sent(t, x, y); ring.Put(t, x, y); }
+            : probe.Sent;
+        if (!want && _probe != null)
+        {
+            _probe.Dispose();
+            _probe = null;
+        }
+    }
+
+    public void SetDeliveryTest(bool on, bool counting)
+    {
+        lock (_probeGate)
+        {
+            if (on != _testOn)
+            {
+                _testOn = false;
+                UpdateProbe(); // the ring gets nothing while it is emptied
+                if (on) _region.Moves.Reset();
+                _testOn = on;
+                UpdateProbe();
+                if (on) _probe!.StartTest(counting);
+                else _probe?.StopTest();
+                _log.Write($"input: delivery test {(on ? "started" : "stopped")}");
+            }
+            else if (on) _probe?.CountTest(counting);
+        }
+    }
+
+    public DeliveryNumbers? DeliveryTestNumbers()
+    {
+        lock (_probeGate) return _testOn ? _probe?.TestNumbers() : null;
     }
 
     // =====================================================================================
@@ -494,6 +538,7 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
     {
         _companionPid = companionPid;
         _log.Write($"input: companion attached (pid {companionPid})");
+        SetDeliveryTest(false, false); // a test window went with the companion before
         StateChanged();
         return new InputHello(Version, Environment.ProcessId, _regionName, SharedRegion.LayoutVersion, _overlayWakeName, Status());
     }

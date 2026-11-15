@@ -19,6 +19,7 @@ public sealed class FileLog : IDisposable
     private volatile bool _closing;
     private readonly Thread _thread;
     private readonly Action<string>? _echo;
+    private readonly Mutex _fileLock;
 
     public FileLog(string? directory = null, Action<string>? echo = null, string fileName = "companion.log", long maxBytes = 1_000_000)
     {
@@ -26,6 +27,7 @@ public sealed class FileLog : IDisposable
         Path = System.IO.Path.Combine(Directory, fileName);
         _maxBytes = maxBytes;
         _echo = echo;
+        _fileLock = new Mutex(false, LockName(Path));
         // Normal, not below: a writer starved by a busy PC would only let lines pile up (Write never waits on it).
         _thread = new Thread(Run) { Name = "gp-log", IsBackground = true, Priority = ThreadPriority.Normal };
         _thread.Start();
@@ -96,16 +98,39 @@ public sealed class FileLog : IDisposable
     }
 
     /// <summary>
-    /// Appends one line and returns the file's length. The tray and the watcher write the same file, so
-    /// it is opened only for the line and shared, including for the other one's rotation.
+    /// Appends one line and returns the file's length. The companion, the input process and the watcher write the
+    /// same file, so it is opened only for the line and shared, including for another one's rotation. Opening for
+    /// append only seeks to the end, so two processes writing at once would write over each other's line: a mutex
+    /// named after the file (this log thread only waits on it, never a caller) lets one write at a time.
     /// </summary>
     private long Append(string text)
     {
-        using var f = new FileStream(Path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
-        var bytes = System.Text.Encoding.UTF8.GetBytes(text);
-        f.Write(bytes);
-        return f.Length;
+        bool owned = false;
+        try
+        {
+            try
+            {
+                owned = _fileLock.WaitOne(500);
+            }
+            catch (AbandonedMutexException)
+            {
+                owned = true; // a writer died holding it: the file is still fine to append to
+            }
+            using var f = new FileStream(Path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+            f.Write(bytes);
+            return f.Length;
+        }
+        finally
+        {
+            if (owned) _fileLock.ReleaseMutex();
+        }
     }
+
+    /// <summary>One name per log file for every process of this user's session.</summary>
+    private static string LockName(string path) =>
+        @"Local\GyroPhoneLog-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(path.ToUpperInvariant())), 0, 8);
 
     private void Rotate()
     {
@@ -123,6 +148,6 @@ public sealed class FileLog : IDisposable
     {
         _closing = true;
         _wake.Set();
-        _thread.Join(1000);
+        if (_thread.Join(1000)) _fileLock.Dispose();
     }
 }

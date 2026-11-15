@@ -155,6 +155,13 @@ internal sealed class PerformancePage : Page
             "(Diagnostics' slow hand-offs and delivery times). Switching lets go of every held key and button.");
         _useSendInput.Margin = new Thickness(0, 10, 0, 0);
         kb.Children.Add(_useSendInput);
+        var test = Parts.Button("Delivery test", app.OpenDeliveryTest);
+        test.Margin = new Thickness(0, 12, 0, 0);
+        test.HorizontalAlignment = HorizontalAlignment.Left;
+        kb.Children.Add(test);
+        kb.Children.Add(Parts.Text("Opens a window that reads the mouse the way a game in front does. Wave the phone over it for " +
+            "about a minute: it shows how many of GyroPhone's moves reach it in over 2 ms, next to Diagnostics' background " +
+            "delivery probe for the same moves. Runs only while the window is open, and only counts while it is in front.", "Hint"));
         _root.Children.Add(km);
 
         // The companion's own log
