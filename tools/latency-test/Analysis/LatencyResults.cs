@@ -25,7 +25,7 @@ public sealed record LatencyRun(
     string? Tag = null,
     double LongestFreezeMs = 0)
 {
-    /// <param name="tag">Who timed it when not the page: "claude" for Claude's own runs of the analyser.</param>
+    /// <param name="tag">Who timed it when not Olex: "claude" for Claude's own runs (latency-test.bat --tag claude).</param>
     public static LatencyRun From(VideoAnalysis a, string video, string link, string phone, int monitorHz, string app, string? tag = null) =>
         new(DateTime.Now, a.Fit.LatencyMs, a.Fit.SpreadMs, a.Fit.Twists, a.Fps, a.Fit.Correlation, link, phone, monitorHz, app,
             Path.GetFileName(video), a.PhoneCurve, a.BarCurve, a.TimedFromS, a.TimedToS,
@@ -48,8 +48,8 @@ public sealed record LatencyRun(
 
 /// <summary>
 /// The latency test's results, newest first: one JSON file per timed video in
-/// Documents\GyroPhone\Latency with results.html, the readable page of them all (see <see cref="LatencyReport"/>). Runs saved from outside the
-/// page (tagged) show up there too.
+/// Documents\GyroPhone\Latency with results.html, the readable page of them all (see <see cref="LatencyReport"/>). Claude's own runs are
+/// tagged.
 /// </summary>
 public static class LatencyResults
 {

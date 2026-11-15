@@ -149,10 +149,6 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** What is held on the PC while [pressCapture] (CAPTURED); empty when the session ends. Called on the link's thread. */
     @Volatile var onPcPresses: ((List<PcPress>) -> Unit)? = null
 
-    private val _latencyScreen = MutableStateFlow(false)
-    /** The PC's latency test window is open (TEST_MODE): the pad shows the tracking markers. */
-    val latencyScreen: StateFlow<Boolean> = _latencyScreen
-
     private val _linkTest = MutableStateFlow(false)
     /** The PC runs a Link test (TEST_MODE): the pump sends fake input, the pad shows a note. */
     val linkTest: StateFlow<Boolean> = _linkTest
@@ -162,7 +158,6 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         set(v) {
             field = v
             pump.pressTimes = v and TestModeFlags.PRESS_TIMES != 0
-            _latencyScreen.value = v and TestModeFlags.LATENCY_SCREEN != 0
             pump.linkTest = v and TestModeFlags.LINK_TEST != 0
             pump.phoneStats = v and TestModeFlags.PHONE_STATS != 0
             _linkTest.value = v and TestModeFlags.LINK_TEST != 0

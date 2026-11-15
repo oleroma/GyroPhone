@@ -228,7 +228,7 @@ The companion's protocol and engine tests run on Linux and macOS too. The tray a
 dotnet publish companion/src/GyroPhone.Tray -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishReadyToRun=true -o out
 ```
 
-OpenCV's native DLLs (for the latency test) land beside the exe in `out`, and the exe needs them there.
+The video latency test is a separate tool in `tools/latency-test` (start `latency-test.bat`); it isn't part of the companion or any release.
 
 ## Project layout
 

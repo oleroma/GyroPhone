@@ -104,7 +104,7 @@ class WireCodecTest {
             LinkInfo(-1, 100, 1000, -90, 6, 2402, 5955, 1), LinkInfo(5, 1, 500, -40, 5, 866, 5180, 0, LinkPath.HOTSPOT),
             HostStatus(7, 1000, 0, -1, -1, 0, 2, 31),
             KeyLabels(0x04100410, IntArray(KeyLabels.USAGES.size) { 0x20 + it * 3 }),
-            PressTime(0x01020304, 0xA0B0C0D0.toInt()), TestMode(TestModeFlags.PRESS_TIMES or TestModeFlags.LATENCY_SCREEN),
+            PressTime(0x01020304, 0xA0B0C0D0.toInt()), TestMode(TestModeFlags.PRESS_TIMES or TestModeFlags.LINK_TEST),
         )
         for (p in packets) {
             val n = WireCodec.encodeSealedPlain(p, buf, 3)

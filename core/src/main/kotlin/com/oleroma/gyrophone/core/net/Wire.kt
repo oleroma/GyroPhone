@@ -398,8 +398,7 @@ object TestModeFlags {
     /** "Measure buttons" is on: the phone sends PRESS_TIME for each press and release. */
     const val PRESS_TIMES = 1
 
-    /** The PC's latency test window is open: the pad shows the tracking markers. */
-    const val LATENCY_SCREEN = 2
+    // 2 is unused: it was the video latency test's markers, now a separate tool (tools/latency-test).
 
     /** The PC runs a Link test: the phone sends fake moving input at its full rate, marked [StateFlags.LINK_TEST]. */
     const val LINK_TEST = 4

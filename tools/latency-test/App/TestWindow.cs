@@ -5,39 +5,43 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using GyroPhone.Latency;
 
-namespace GyroPhone.Ui;
+namespace GyroPhone.LatencyTest;
 
 /// <summary>
-/// The latency test window: black, with one tall green bar that moves left and right by the mouse
-/// movement GyroPhone injects (Windows raw input with no device: SendInput), so it follows what a
-/// game gets. A real mouse is ignored. While the phone twists, the bar follows the mouse exactly
-/// (1:1: a fixed middle and scale), since any re-centring or squeezing would shift the bar's
-/// motion in time and skew the result. The middle and scale are set again only between takes,
-/// when the mouse has rested for <see cref="RestS"/>: the bar jumps back to the middle and the
+/// The test window: black, with one tall green bar that moves left and right by the mouse movement
+/// GyroPhone injects (Windows raw input with no device: SendInput; or the input driver's own mouse),
+/// so it follows what a game gets. A real mouse is ignored. While the phone twists, the bar follows
+/// the mouse exactly (1:1: a fixed middle and scale), since any re-centring or squeezing would shift
+/// the bar's motion in time and skew the result. The middle and scale are set again only between
+/// takes, when the mouse has rested for <see cref="RestS"/>: the bar jumps back to the middle and the
 /// next take's swing fills the window. Where the bar would leave the window it is hidden rather
-/// than held at the edge, so the analyser leaves those frames out. While it is open the phone
-/// shows its markers.
+/// than held at the edge, so the analyser leaves those frames out. A video dropped on the window is
+/// timed, and the line at the bottom says how it went.
 /// </summary>
-internal sealed class LatencyTestWindow : Window
+internal sealed class TestWindow : Window
 {
     private const int WmInput = 0x00FF;
     private const uint RidInput = 0x10000003;
     private const uint RidevInputSink = 0x00000100, RidevRemove = 0x00000001;
+    private const string Hint = "Hold the phone in front of this window, the marker image open on its screen, and twist your wrist left and right. Film from behind your hand, along the forearm, in slow motion. If the bar disappears, rest a moment and it comes back. Then drop the video here. Esc closes.";
 
     private readonly Canvas _canvas = new() { Background = Brushes.Black, ClipToBounds = true };
     private readonly Rectangle _bar = new() { Fill = new SolidColorBrush(Color.FromRgb(0x2C, 0xFF, 0x8A)) };
     private readonly TextBlock _hint;
+    private readonly string? _tag;
     private HwndSource? _source;
     private readonly byte[] _buffer = new byte[64];
+    private bool _busy;
 
     /// <summary>The mouse resting this long ends a take: the middle and scale are set again.</summary>
     private const double RestS = 0.4;
 
     // Where the injected mouse has gone (counts), the middle it swings about, and how far a swing
-    // goes (counts to 40% of the width), kept between windows. Within a take: the take's biggest swing.
+    // goes (counts to 40% of the width). Within a take: the take's biggest swing.
     private double _x, _mid;
-    private static double s_swing = 200;
+    private double _swing = 200;
     private double _takeSwing;
     private bool _inTake;
     // Where the mouse last moved noticeably, and when.
@@ -45,21 +49,49 @@ internal sealed class LatencyTestWindow : Window
     private long _restTicks = Environment.TickCount64;
     private readonly System.Windows.Threading.DispatcherTimer _rest = new() { Interval = TimeSpan.FromMilliseconds(50) };
 
-    /// <summary>The refresh rate of the screen this window was last on (Hz), 0 before it was shown.</summary>
-    public static int LastMonitorHz { get; private set; }
+    /// <summary>Where the refresh rate of the test window's screen is kept for videos timed later from the console.</summary>
+    private static string HzFile => System.IO.Path.Combine(LatencyResults.Folder, "monitor-hz.txt");
 
-    public LatencyTestWindow(ImageSource? icon)
+    /// <summary>The refresh rate of the screen the test window was last on (Hz), 0 when unknown.</summary>
+    public static int MonitorHz()
     {
+        try
+        {
+            return File.Exists(HzFile) && int.TryParse(File.ReadAllText(HzFile).Trim(), out int hz) ? hz : 0;
+        }
+        catch (IOException)
+        {
+            return 0;
+        }
+    }
+
+    private static void KeepMonitorHz(int hz)
+    {
+        if (hz <= 0 || hz == MonitorHz()) return;
+        try
+        {
+            Directory.CreateDirectory(LatencyResults.Folder);
+            File.WriteAllText(HzFile, hz.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        catch (IOException)
+        {
+            // Only the result's "monitor" line misses it.
+        }
+    }
+
+    public TestWindow(string? tag)
+    {
+        _tag = tag;
         Title = "GyroPhone latency test";
-        Icon = icon;
         Width = 1100;
         Height = 700;
         Background = Brushes.Black;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        AllowDrop = true;
         _canvas.Children.Add(_bar);
         _hint = new TextBlock
         {
-            Text = "Hold the phone in front of this window, screen toward you, and twist your wrist left and right. Film from behind your hand, along the forearm. If the bar disappears, rest a moment and it comes back. Esc closes.",
+            Text = Hint,
             Foreground = new SolidColorBrush(Color.FromRgb(0x6B, 0x73, 0x85)),
             FontSize = 14,
             TextAlignment = TextAlignment.Center,
@@ -72,17 +104,20 @@ internal sealed class LatencyTestWindow : Window
         {
             if (e.Key == Key.Escape) Close();
         };
+        Drop += (_, e) =>
+        {
+            if (e.Data.GetData(DataFormats.FileDrop) is string[] { Length: > 0 } files) TimeVideo(files[0]);
+        };
         SourceInitialized += (_, _) =>
         {
-            Theme.TitleBar(this);
             _source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
             _source.AddHook(Hook);
             Register(_source.Handle, RidevInputSink);
-            LastMonitorHz = MonitorHz(_source.Handle);
+            KeepMonitorHz(MonitorHzOf(_source.Handle));
         };
         LocationChanged += (_, _) =>
         {
-            if (_source != null) LastMonitorHz = MonitorHz(_source.Handle);
+            if (_source != null) KeepMonitorHz(MonitorHzOf(_source.Handle));
         };
         _rest.Tick += (_, _) => EndTakeWhenRested();
         _rest.Start();
@@ -91,9 +126,21 @@ internal sealed class LatencyTestWindow : Window
             _rest.Stop();
             Register(IntPtr.Zero, RidevRemove);
             _source?.RemoveHook(Hook);
-            GyroPhone.Host.Abstractions.RawInputShared.RawMouseReleased();
         };
         Place();
+    }
+
+    /// <summary>Times a dropped video off the UI thread; the bottom line shows its progress, then the result.</summary>
+    private async void TimeVideo(string path)
+    {
+        if (_busy) return;
+        _busy = true;
+        _hint.Foreground = Brushes.White;
+        _hint.Text = "Reading the video…";
+        var (_, message) = await Task.Run(() => Program.Time(path, _tag,
+            p => Dispatcher.BeginInvoke(new Action(() => { if (_busy) _hint.Text = $"Reading the video… {p * 100:0}%"; }))));
+        _busy = false;
+        _hint.Text = message + " Drop another video to time it, or Esc to close.";
     }
 
     private IntPtr Hook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -107,7 +154,7 @@ internal sealed class LatencyTestWindow : Window
             if (GetRawInputData(lParam, RidInput, h.AddrOfPinnedObject(), ref size, (uint)header) == unchecked((uint)-1)) return IntPtr.Zero;
             var hdr = Marshal.PtrToStructure<RawInputHeader>(h.AddrOfPinnedObject());
             // Mouse (type 0), from GyroPhone (SendInput: no device; or the input driver's own mouse), relative.
-            if (hdr.Type != 0 || (hdr.Device != IntPtr.Zero && !GyroPhone.Host.Abstractions.RawInputShared.IsOwnDevice(hdr.Device))) return IntPtr.Zero;
+            if (hdr.Type != 0 || (hdr.Device != IntPtr.Zero && !OwnMouse.Is(hdr.Device))) return IntPtr.Zero;
             ushort flags = BitConverter.ToUInt16(_buffer, header);
             if ((flags & 1) != 0) return IntPtr.Zero;
             int dx = BitConverter.ToInt32(_buffer, header + 12);
@@ -129,14 +176,14 @@ internal sealed class LatencyTestWindow : Window
     private void EndTakeWhenRested()
     {
         long now = Environment.TickCount64;
-        if (Math.Abs(_x - _restX) > s_swing * 0.05)
+        if (Math.Abs(_x - _restX) > _swing * 0.05)
         {
             (_restX, _restTicks) = (_x, now);
             return;
         }
         if (!_inTake || now - _restTicks < RestS * 1000) return;
         _inTake = false;
-        if (_takeSwing > 20) s_swing = _takeSwing;
+        if (_takeSwing > 20) _swing = _takeSwing;
         _takeSwing = 0;
         _mid = _x;
         Place();
@@ -148,10 +195,10 @@ internal sealed class LatencyTestWindow : Window
         double w = _canvas.ActualWidth > 0 ? _canvas.ActualWidth : Width;
         double hgt = _canvas.ActualHeight > 0 ? _canvas.ActualHeight : Height;
         double off = _x - _mid;
-        if (Math.Abs(off) > s_swing * 0.05) _inTake = true;
+        if (Math.Abs(off) > _swing * 0.05) _inTake = true;
         _takeSwing = Math.Max(_takeSwing, Math.Abs(off));
         double barW = Math.Max(24, w / 30);
-        double x = w / 2 + off / s_swing * (w * 0.4) - barW / 2;
+        double x = w / 2 + off / _swing * (w * 0.4) - barW / 2;
         _bar.Width = barW;
         _bar.Height = hgt;
         _bar.Visibility = x < 0 || x > w - barW ? Visibility.Hidden : Visibility.Visible;
@@ -159,7 +206,7 @@ internal sealed class LatencyTestWindow : Window
         Canvas.SetTop(_bar, 0);
         _hint.Width = w - 40;
         Canvas.SetLeft(_hint, 20);
-        Canvas.SetTop(_hint, hgt - 60);
+        Canvas.SetTop(_hint, hgt - 80);
     }
 
     private static void Register(IntPtr hwnd, uint flags)
@@ -168,7 +215,7 @@ internal sealed class LatencyTestWindow : Window
         RegisterRawInputDevices([d], 1, (uint)Marshal.SizeOf<RawInputDevice>());
     }
 
-    private static int MonitorHz(IntPtr hwnd)
+    private static int MonitorHzOf(IntPtr hwnd)
     {
         var mon = MonitorFromWindow(hwnd, 2);
         var info = new MonitorInfoEx { Size = Marshal.SizeOf<MonitorInfoEx>() };

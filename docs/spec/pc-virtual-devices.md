@@ -47,7 +47,7 @@ The default, and the fallback without the optional input driver (below).
 - **Own container**: the driver's device says it's removable, and the mouse and keyboard carry their own container id (`GpiContainerId` in `driver.c`), so Windows takes them for a separate box, like a plugged-in USB mouse. Without it they counted as part of the PC, and Windows dropped their left clicks while any key was held, its guard against palms on a laptop touchpad while typing (seen 2026-11-15 on Olex's laptop; right clicks, keys, SendInput and an external USB mouse were unaffected). The container id alone wasn't enough: Windows kept the devices in the PC's container while their parent was in it.
 - **Wheels** carry a resolution multiplier (feature report 1, 1 or 120): Windows sets it to 120 when the mouse appears, so one count is 1/120 notch, as WHEEL_DELTA. Until it does, the driver adds the 1/120 steps up and sends whole notches.
 - **Differences from SendInput**: held keys auto-repeat like a real keyboard's (Windows' typematic; KeyRepeat's extra volume downs change nothing in the report); input reaches elevated windows (the engine's UIPI handling then has nothing to resend); Pause goes as keyboard usage 0x48.
-- **Raw input readers** skip the driver's own devices as they skip SendInput's input (`OwnInputDevice`, by device name): "Press a key" never takes GyroPhone's output for a PC key; the video latency test's bar and the delivery probe count them as GyroPhone's.
+- **Raw input readers** skip the driver's own devices as they skip SendInput's input (`OwnInputDevice`, by device name): "Press a key" never takes GyroPhone's output for a PC key; the delivery probe and the video latency test tool's bar (`tools/latency-test`) count them as GyroPhone's.
 
 ## PC gyro mode
 

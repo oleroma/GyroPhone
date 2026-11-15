@@ -23,8 +23,8 @@ namespace GyroPhone.Windows;
 /// nothing).
 /// </para>
 /// <para>
-/// A process has one raw mouse input target: "Press a key" listening and the video latency test window take it while
-/// they run, and the probe registers again when they give it up (<see cref="RawMouseReleased"/>).
+/// A process has one raw mouse input target: "Press a key" listening takes it while it runs, and the probe registers
+/// again when it gives it up (<see cref="RawMouseReleased"/>).
 /// </para>
 /// </summary>
 public sealed class DeliveryProbe : IDisposable

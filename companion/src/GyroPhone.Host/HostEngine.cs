@@ -209,10 +209,9 @@ public sealed class HostEngine
 
     // Phone overlay: asked for in HOST_STATUS while on (the companion's overlays say what they want, SetOverlay).
     private bool _overlayOn, _overlayCompass, _overlaySamples;
-    // Latency tests: "Measure buttons" (PRESS_TIME) and the latency test window (the phone's markers).
+    // "Measure buttons" (PRESS_TIME).
     private readonly PressLatency _press = new();
     private bool MeasuringButtons => _settings.MeasureButtons;
-    private bool _latencyScreen;
     /// <summary>Host time a Link test ends; long.MinValue: none.</summary>
     private long _linkTestUntilUs = long.MinValue;
     /// <summary>HOST_STATUSes still to carry a TEST_MODE of 0 after the last test ended.</summary>
@@ -1749,18 +1748,6 @@ public sealed class HostEngine
         }
     }
 
-    /// <summary>The latency test window is open: the phone's pad shows its tracking markers (told at once).</summary>
-    public void SetLatencyScreen(bool on)
-    {
-        using (Lock(ByUi))
-        {
-            if (on == _latencyScreen) return;
-            _latencyScreen = on;
-            _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
-            if (_sessions.Active is { } a) SendTestMode(a);
-        }
-    }
-
     /// <summary>Where PHONE_STATS go (the Performance monitor's), or null.</summary>
     public Perf.PhoneTimeline? PhoneTimeline { get; set; }
 
@@ -2417,7 +2404,6 @@ public sealed class HostEngine
     {
         byte flags = 0;
         if (MeasuringButtons) flags |= TestModeFlags.PressTimes;
-        if (_latencyScreen) flags |= TestModeFlags.LatencyScreen;
         if (_linkTestUntilUs != long.MinValue) flags |= TestModeFlags.LinkTest;
         if (_settings.Diagnostics) flags |= (byte)(TestModeFlags.PhoneStats | (_diagSaves << TestModeFlags.DiagSaveShift));
         return flags;

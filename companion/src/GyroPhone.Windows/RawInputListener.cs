@@ -9,8 +9,7 @@ namespace GyroPhone.Windows;
 /// "Press a key" on the phone: reads this PC's keyboard and mouse through raw input (RIDEV_INPUTSINK, on a hidden
 /// message-only window on its own thread) while the phone listens. Raw input only reads: every key and click still
 /// goes to Windows and the game as usual (no hook, nothing held back). Keyboard input with no device behind it (SendInput,
-/// ours included) is skipped. The latency test window reads raw mouse input too; a process has one raw input
-/// target per device kind, so while both run the latency window's mouse bar stops until it is opened again.
+/// ours included) is skipped.
 /// </summary>
 public sealed class RawInputListener : IKeyMouseListener, IDisposable
 {
