@@ -1,6 +1,7 @@
 <#
   Removes the GyroPhone pad driver from this PC and everything install.ps1 added: the device, the
-  driver in Windows' driver store, this PC's signing certificate (from all three stores) and the
+  driver in Windows' driver store, this PC's signing certificate (from all three stores, unless the
+  input driver still uses it) and the
   signed copy in %ProgramData%\GyroPhone\driver. Run uninstall.cmd; it asks for admin once.
 #>
 $ErrorActionPreference = 'Stop'
@@ -30,6 +31,10 @@ Try-Step 'Removing the driver from the driver store' {
 }
 
 Try-Step 'Removing the certificate' {
+    if (Test-OtherDriver) {
+        Write-Step 'Kept the certificate: the GyroPhone input driver still uses it.'
+        return
+    }
     foreach ($store in 'Root', 'TrustedPublisher', 'My') {
         foreach ($c in @(Get-GpCertificates -Store $store)) {
             Remove-Item "Cert:\LocalMachine\$store\$($c.Thumbprint)" -DeleteKey:($store -eq 'My') -Force

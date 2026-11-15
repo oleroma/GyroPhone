@@ -30,7 +30,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     private readonly IClock _clock = StopwatchClock.Instance;
     private readonly long _startUs;
     private readonly Control _ui;
-    private readonly SendInputSink _keyMouse;
+    private readonly KeyMouseRouter _keyMouse;
     private readonly HeldKeysMarker _marker;
     private readonly HostEngine _engine;
     private readonly UdpHostServer _server;
@@ -71,6 +71,12 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     // Read by the wheel hook's thread too.
     private volatile string? _selectedOverlay;
     private int _refreshQueued;
+    // Diagnostics' delivery probe (raw input read-only), only while Diagnostics is on.
+    private DeliveryProbe? _probe;
+    private readonly object _probeGate = new();
+    // Refreshes since the input driver was last looked for.
+    private int _inputDriverTicks;
+    private bool _inputDriverInstalled;
     private bool? _firewallOk;
     private bool? _usbRuleOk;
     /// <summary>Why key file pairing is off (the host key could not be loaded), or null.</summary>
@@ -95,11 +101,12 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         _ = _ui.Handle; // create the window handle so BeginInvoke works from other threads
         _log.Write($"starting {Application.ProductVersion}, elevated {ElevationProbe.IsSelfElevated}");
 
-        _keyMouse = new SendInputSink(_log.Write);
         _marker = new HeldKeysMarker(HeldKeysMarker.DefaultPath());
 
         var store = new SettingsStore(SettingsStore.DefaultPath(), Program.LockedFileWaitMs);
         var settings = store.Load(Environment.MachineName, _log.Write);
+        // SendInput, or the optional input driver once this instance owns the port (OnBound).
+        _keyMouse = new KeyMouseRouter(new SendInputSink(_log.Write), settings.UseSendInput, _log.Write);
         _pad = PadSinks.Create(_log.Write, out _padError);
         var protector = new DpapiKeyProtector();
         _keyFiles = new KeyFiles(KeyFiles.DefaultDirectory(), Program.LockedFileWaitMs);
@@ -129,14 +136,24 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         // Diagnostics (Performance tab, or the phone's switch): the load each second, the overlay draw times.
         _engine.DiagnosticsChanged = on =>
         {
+            SetDeliveryProbe(on);
             _perf.SetDiagnostics(on, _engine.Settings.DiagnosticsMinutes);
             OverlayTiming.On = on;
             Post(Refresh);
         };
         _perf.SetDiagnostics(_engine.Settings.Diagnostics, _engine.Settings.DiagnosticsMinutes);
         OverlayTiming.On = _engine.Settings.Diagnostics;
+        RawInputShared.IsOwnDevice = OwnInputDevice.Is;
+        RawInputShared.RawMouseReleased = DeliveryProbe.RawMouseReleased;
+        SetDeliveryProbe(_engine.Settings.Diagnostics);
         _perf.PathNow = () => LinkPath()?.Text;
-        _engine.Recorder!.SecondNote = _perf.SecondNote;
+        _engine.Recorder!.SecondNote = () => (_perf.SecondNote(), _probe?.SecondText()) switch
+        {
+            (null, null) => null,
+            (var a, null) => a,
+            (null, var b) => b,
+            (var a, var b) => a + b,
+        };
         OverlayForm.FpsSource = () => (_perf.View(), _perf.GameName, _perf.State, _perf.Recording);
         OverlayForm.FpsLinkSource = () =>
         {
@@ -249,8 +266,11 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _server.Stop(); // bound just as the app exited
             return;
         }
-        int recovered = HeldKeysMarker.Recover(_marker.Path, _keyMouse);
+        // Keys a crashed run left held went through SendInput (a crashed run's driver devices are gone, and Windows let
+        // go of what they held), so they are let go through SendInput.
+        int recovered = HeldKeysMarker.Recover(_marker.Path, _keyMouse.SendInput);
         if (recovered > 0) _log.Write($"released {recovered} inputs left held by a previous run");
+        CheckInputDriver();
         _engine.Start(_clock.NowUs);
         _watchdog.Start();
         _usb.Start();
@@ -354,6 +374,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     {
         Volatile.Write(ref _refreshQueued, 0);
         if (Volatile.Read(ref _exited) != 0) return;
+        if (++_inputDriverTicks >= 5) CheckInputDriver();
         var s = _engine.Snapshot();
         bool serverOk = _server.State == ServerState.Running;
         bool padWanted = s.OutputMode != OutputMode.None;
@@ -504,7 +525,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _engine.Settings.PressKeyNotice,
             _engine.Settings.PressKeyListen,
             _engine.Settings.DiagnosticsMinutes,
-            Volatile.Read(ref _diagSaved));
+            Volatile.Read(ref _diagSaved),
+            _engine.Settings.UseSendInput,
+            _keyMouse.DriverReady ? InputDriverState.Ready : _inputDriverInstalled ? InputDriverState.NotPlugged : InputDriverState.NotInstalled);
     }
 
     public void SetLatencyScreen(bool on) => _engine.SetLatencyScreen(on);
@@ -512,6 +535,49 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     public void SetCatchUpMs(int ms)
     {
         _engine.SetCatchUpMs(ms);
+        Refresh();
+    }
+
+    /// <summary>Starts or stops Diagnostics' delivery probe with Diagnostics (any thread).</summary>
+    private void SetDeliveryProbe(bool on)
+    {
+        lock (_probeGate)
+        {
+            if (on == (_probe != null)) return;
+            if (on)
+            {
+                _probe = new DeliveryProbe(_log.Write);
+                _probe.Start();
+                _engine.MoveSent = _probe.Sent;
+            }
+            else
+            {
+                _engine.MoveSent = null;
+                _probe!.Dispose();
+                _probe = null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Plugs the optional input driver's mouse and keyboard when it's installed and they aren't plugged (at start once
+    /// the port is ours, then every 5 s from the UI timer: installed later, or back after it went away). Off the input
+    /// path: the lookup runs here, and only an actual change takes the engine lock.
+    /// </summary>
+    private void CheckInputDriver()
+    {
+        _inputDriverTicks = 0;
+        if (_keyMouse.DriverReady) return;
+        _inputDriverInstalled = HidInputSink.Installed;
+        if (_server.State != ServerState.Running || !_inputDriverInstalled) return;
+        bool ok = false;
+        _engine.ChangeKeyMouseRoute(() => ok = _keyMouse.Retry(), "input driver plugged");
+        if (ok) Refresh();
+    }
+
+    public void ToggleUseSendInput()
+    {
+        _engine.SetUseSendInput(!_engine.Settings.UseSendInput, on => _keyMouse.UseSendInput = on);
         Refresh();
     }
 
@@ -1307,7 +1373,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         b.AppendLine($"Running as:   {Environment.UserDomainName}\\{Environment.UserName}, {_exePath}");
         var c = s.Counters;
         b.AppendLine();
-        b.AppendLine($"datagrams {c.Datagrams}  states {c.States}  injections {c.Injections}  SendInput short {_keyMouse.ShortWrites}");
+        b.AppendLine($"datagrams {c.Datagrams}  states {c.States}  injections {c.Injections}  SendInput short {_keyMouse.SendInput.ShortWrites}  keys and mouse via {(_keyMouse.DriverReady && !_keyMouse.UseSendInput ? "input driver" : "SendInput")}");
         b.AppendLine($"dropped {c.Dropped}  bad auth {c.BadAuth}  errors sent {c.Errors}  unknown keys {c.UnknownUsages}  exceptions {c.Exceptions + _server.RxExceptions}");
         return b.ToString();
     }
@@ -1773,6 +1839,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             int version = _engine.HeldSnapshot(held, out byte mb);
             _marker.Update(version, held, mb);
             (_pad as IDisposable)?.Dispose();
+            SetDeliveryProbe(false);
+            _keyMouse.Dispose();
             _log.Write("stopped");
         }
         catch (Exception e)

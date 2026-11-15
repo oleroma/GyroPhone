@@ -1100,9 +1100,10 @@ public sealed class HostEngine
         byte beforeMouse = _injectedMouse;
         _injectedKeys.CopyTo(before);
         int unknown = 0;
+        int mdx = Math.Clamp(dx, -Wire.MaxMouseDelta, Wire.MaxMouseDelta), mdy = Math.Clamp(dy, -Wire.MaxMouseDelta, Wire.MaxMouseDelta);
         int n = InputDiff.Diff(_injectedKeys, _pending.Keys, ref _injectedMouse, _pending.MouseButtons,
-            Math.Clamp(dx, -Wire.MaxMouseDelta, Wire.MaxMouseDelta),
-            Math.Clamp(dy, -Wire.MaxMouseDelta, Wire.MaxMouseDelta),
+            mdx,
+            mdy,
             Math.Clamp(dw, -Wire.MaxWheelDeltaHires, Wire.MaxWheelDeltaHires),
             Math.Clamp(dh, -Wire.MaxWheelDeltaHires, Wire.MaxWheelDeltaHires),
             _inject, ref unknown);
@@ -1113,6 +1114,9 @@ public sealed class HostEngine
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
             bool took = _keyMouse.Inject(_inject.AsSpan(0, n));
             _handOff.SendInputTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+            _handOff.Route = _keyMouse.Route;
+            // Diagnostics' delivery probe: when this move's hand-off started (numbers only).
+            if (MoveSent is { } sent && (mdx | mdy) != 0 && took) sent(t0, mdx, mdy);
             if (!took)
             {
                 // Windows dropped them: the ups are sent again once it takes input.
@@ -1698,6 +1702,54 @@ public sealed class HostEngine
             _catchUp.MaxUs = ms * 1000L;
             _settingsDirty = true;
         }
+    }
+
+    /// <summary>
+    /// Diagnostics' delivery probe on Windows: told each mouse move's hand-off start (Stopwatch ticks) and size, under the
+    /// engine lock on the input path, so it must only store numbers. Null while Diagnostics is off.
+    /// </summary>
+    public Action<long, int, int>? MoveSent { get; set; }
+
+    /// <summary>
+    /// "Use SendInput" (Performance): saves it and lets <paramref name="apply"/> switch the keyboard and mouse route, under
+    /// the engine lock and after letting go of every key and button on the route it leaves; the next STATE presses what is
+    /// held again on the new one.
+    /// </summary>
+    public void SetUseSendInput(bool on, Action<bool> apply)
+    {
+        using (Lock(ByUi))
+        {
+            if (on != _settings.UseSendInput)
+            {
+                _settings.UseSendInput = on;
+                _settingsDirty = true;
+            }
+            ChangeKeyMouseRouteLocked(() => apply(on), on ? "Use SendInput on" : "Use SendInput off");
+        }
+    }
+
+    /// <summary>Changes the keyboard and mouse route (the input driver found or lost) under the engine lock, letting go of everything first.</summary>
+    public void ChangeKeyMouseRoute(Action change, string why)
+    {
+        using (Lock(ByUi))
+        {
+            ChangeKeyMouseRouteLocked(change, why);
+        }
+    }
+
+    private void ChangeKeyMouseRouteLocked(Action change, string why)
+    {
+        bool delivered = true;
+        while (InputDiff.AnyHeld(_injectedKeys, _injectedMouse))
+        {
+            int n = InputDiff.ReleaseAll(_injectedKeys, ref _injectedMouse, _releaseEvents);
+            if (n > 0) delivered &= _keyMouse.Inject(_releaseEvents.AsSpan(0, n));
+            _heldVersion++;
+        }
+        if (!delivered) _events.Log("keys and mouse: letting go before the route change didn't all arrive");
+        change();
+        _events.Log($"keys and mouse: {why}");
+        _events.StateChanged();
     }
 
     /// <summary>What a left click on the tray icon does; the tray reads it from <see cref="Settings"/>.</summary>

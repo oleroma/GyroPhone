@@ -32,6 +32,8 @@ internal sealed class PerformancePage : Page
     private readonly SliderRow _keep;
     private readonly Button _save;
     private readonly Seg<int> _catchUp;
+    private readonly CheckBox _useSendInput;
+    private readonly TextBlock _routeSub;
     private readonly TextBlock _logPath;
     private readonly TextBlock _buttonsSub;
     private readonly TextBlock _busyLine, _diagSub;
@@ -150,6 +152,17 @@ internal sealed class PerformancePage : Page
         mb.Children.Add(Parts.Text("When Wi-Fi loses or holds up a stretch of gyro or mouse movement, it is played out over up to this long instead of landing as one jump. New movement always goes out at once. Off: the old one-step jump.", "Hint"));
         _root.Children.Add(mouse);
 
+        // Keyboard and mouse: SendInput or the optional input driver
+        var (km, kb) = Parts.Card("Keyboard and mouse");
+        _routeSub = Parts.Text("", "Sub");
+        kb.Children.Add(_routeSub);
+        _useSendInput = Parts.Toggle("Use SendInput", app.ToggleUseSendInput,
+            "Sends keys and mouse through Windows' SendInput even though the input driver is installed, to compare the two " +
+            "(Diagnostics' slow hand-offs and delivery times). Switching lets go of every held key and button.");
+        _useSendInput.Margin = new Thickness(0, 10, 0, 0);
+        kb.Children.Add(_useSendInput);
+        _root.Children.Add(km);
+
         // The companion's own log
         var (debug, db) = Parts.Card("Log");
         _logPath = Parts.Text("", "Sub");
@@ -178,6 +191,18 @@ internal sealed class PerformancePage : Page
         Parts.SetChecked(_diag, v.Diagnostics);
         _keep.Set(v.DiagnosticsMinutes);
         _catchUp.Set(v.CatchUpMs);
+        Parts.SetChecked(_useSendInput, v.UseSendInput);
+        Parts.Show(_useSendInput, v.InputDriver != InputDriverState.NotInstalled);
+        _routeSub.Text = v.InputDriver switch
+        {
+            InputDriverState.Ready when !v.UseSendInput =>
+                "Through the input driver: a virtual USB mouse and keyboard, so a send never waits on Windows' input checks.",
+            InputDriverState.Ready => "Through SendInput (Use SendInput is on). The input driver is ready.",
+            InputDriverState.NotPlugged =>
+                "Through SendInput: the input driver is installed but its mouse and keyboard aren't plugged yet (tried every 5 s; see the log).",
+            _ => "Through SendInput. The optional input driver (install.cmd in GyroPhoneInput-driver) sends them as a virtual USB mouse and keyboard " +
+                "instead, which never waits on Windows' input checks.",
+        };
         _logPath.Text = $"Log: {v.LogPath}";
         var p = _app.Perf;
         var s = v.Status;

@@ -19,8 +19,10 @@ public struct HandOffCauses
     /// <summary>Who had the lock at the longest wait ("ui", "watchdog", ...); null without a wait.</summary>
     public string? LockHolder;
     private long _longestWaitTicks;
-    /// <summary>Stopwatch ticks inside the pad driver (ViGEm or the DualSense driver) and inside SendInput.</summary>
+    /// <summary>Stopwatch ticks inside the pad driver (ViGEm or the DualSense driver) and inside SendInput (or the input driver).</summary>
     public long PadTicks, SendInputTicks;
+    /// <summary>Where keys and mouse went: "SendInput" or "input driver" (<see cref="Abstractions.IKeyMouseSink.Route"/>).</summary>
+    public string? Route;
     /// <summary>How long the garbage collector paused every thread (us).</summary>
     public long GcPauseUs;
 
@@ -295,13 +297,15 @@ public sealed class InputRecorder
 
     /// <summary>
     /// "3.1 ms from receive to SendInput: engine lock 2.6 ms (ui had it), pad driver 0.2 ms, SendInput 0.1 ms,
+    /// ("input driver" in place of SendInput when keys and mouse go through it)
     /// garbage collection 0.0 ms, the rest 0.2 ms": each cause over 0.05 ms; the rest is gp-rx itself (waiting
     /// for a CPU, the burst's other packets).
     /// </summary>
     private string SlowText(long took, in HandOffCauses c)
     {
         _sb.Clear();
-        _sb.Append(CultureInfo.InvariantCulture, $"{took / 1000.0:0.0} ms from receive to SendInput:");
+        string route = c.Route ?? "SendInput";
+        _sb.Append(CultureInfo.InvariantCulture, $"{took / 1000.0:0.0} ms from receive to {route}:");
         long wait = Us(c.LockWaitTicks), pad = Us(c.PadTicks), send = Us(c.SendInputTicks), gc = Math.Max(0, c.GcPauseUs);
         int parts = 0;
         void Part(string what, long us, string? extra = null)
@@ -313,7 +317,7 @@ public sealed class InputRecorder
         }
         Part("engine lock", wait, c.LockHolder);
         Part("pad driver", pad);
-        Part("SendInput", send);
+        Part(route, send);
         Part("garbage collection", gc);
         Part("the rest", took - wait - pad - send - gc);
         if (parts == 0) _sb.Append(" no cause measured");

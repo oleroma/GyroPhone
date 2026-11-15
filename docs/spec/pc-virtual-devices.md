@@ -26,6 +26,8 @@ How a STATE becomes input a game sees. Over Bluetooth the phone is itself a HID 
 
 ## Keyboard and mouse (SendInput)
 
+The default, and the fallback without the optional input driver (below).
+
 `GyroPhone.Windows/SendInputSink.cs`, one SendInput call per injection:
 
 - `InputDiff` diffs what was injected against the new STATE: modifier downs, key downs, key ups, modifier ups, mouse buttons, move, wheel, horizontal wheel.
@@ -33,6 +35,18 @@ How a STATE becomes input a game sees. Over Bluetooth the phone is itself a HID 
 - Mouse moves are relative, from the difference of STATE's cumulative totals (`MouseDeltaTracker`), each step capped at 16384; after lost or late packets the missed stretch catches up over up to 16 ms (App page › **Catch-up time**, Off / 8 / 16 / 32 ms) while new motion still goes out at once, so the cursor travels through it instead of jumping (`MouseCatchUp`); buttons L, R, M, Back, Forward.
 - Wheels in 1/120 notch when the session has HIRES_WHEEL (STATE_HIRES), else whole notches.
 - **Key repeat** (`KeyRepeat`): held Volume Up/Down repeat after 400 ms every 50 ms, because Windows doesn't repeat injected keys.
+
+## Keyboard and mouse (input driver, optional)
+
+`input-driver/` is the optional **GyroPhone input driver**: a user-mode (UMDF 2) driver on Windows' Virtual HID Framework that shows a **USB mouse, keyboard and media keys** (one HID device, three top-level collections, `VID_1209&PID_6770`). Separate from the pad driver: its own package (`GyroPhoneInput-driver`), INF, `Root\GyroPhoneInput` device and device interface, installed and removed on its own. See `input-driver/README.md` for install, uninstall and risks.
+
+- **Why**: SendInput returns only after Windows ran every program's input checks; with a game open about 1 call in 600 waited 3–8 ms. A report to the driver returns at once (Windows runs those checks later on its own input thread, as for a real mouse), and Windows sees real device input, not input marked as injected. Input also reaches elevated windows. Diagnostics' delivery probe ([Companion](pc-companion.md)) measures what a game reading raw input gets either way.
+- **Install**: `install.cmd` as the pad driver's (after a PC build the install hook copies the package into the repo's `build\GyroPhoneInput-driver`; it never installs it). Both drivers use this PC's one signing certificate ("GyroPhone pad driver (this PC only)"): whichever is installed first makes it, and each `uninstall.cmd` keeps it while the other driver's device is there.
+- **Route** (`KeyMouseRouter`, the engine's `IKeyMouseSink`): the driver when it's installed and its devices are plugged, unless **Use SendInput** (Performance) is on; SendInput otherwise. The companion plugs the devices once it owns the port (an instance on its way out may still hold them) and looks again every 5 s from the UI timer (installed later, or back after it went away), off the input path. Switching the route (Use SendInput, the driver found) lets go of every key and button first, under the engine lock; the next STATE presses what is held again. The devices belong to the companion's handle: closed or crashed, they go away and Windows lets go of what they held. A failed submit (device gone) unplugs the sink and returns false, so the engine sends the held set again through SendInput.
+- **Reports** (`HidInputReports`, the same layout as `input-driver/src/gpinput_reports.h`): mouse 1 (buttons L R M back forward, X, Y, wheel, horizontal wheel, int16), keyboard 2 (one bit per usage 0x00–0xE7, the same bitmap as STATE's keys, any number at once), media 3 (play/pause, previous, next, mute, volume up, down: the usages `HidScanCodes` sends as virtual keys). A report holds the whole state, so one hand-off is usually one mouse report; a new report starts only where merging would change what Windows sees (a key or button changing twice, a modifier going down before the keys it shifts and up after them, a move before a click, a switch between keyboard and mouse with presses pending). All of a hand-off's reports go in one DeviceIoControl, straight to `VhfReadReportSubmit` in the driver (no queue or thread of ours); preallocated buffers, nothing allocated per packet.
+- **Wheels** carry a resolution multiplier (feature report 1, 1 or 120): Windows sets it to 120 when the mouse appears, so one count is 1/120 notch, as WHEEL_DELTA. Until it does, the driver adds the 1/120 steps up and sends whole notches.
+- **Differences from SendInput**: held keys auto-repeat like a real keyboard's (Windows' typematic; KeyRepeat's extra volume downs change nothing in the report); input reaches elevated windows (the engine's UIPI handling then has nothing to resend); Pause goes as keyboard usage 0x48.
+- **Raw input readers** skip the driver's own devices as they skip SendInput's input (`OwnInputDevice`, by device name): "Press a key" never takes GyroPhone's output for a PC key; the video latency test's bar and the delivery probe count them as GyroPhone's.
 
 ## PC gyro mode
 
@@ -47,4 +61,4 @@ The PC controller's own buttons still reach games directly (or through Steam Inp
 
 ## Key files
 
-`GyroPhone.Windows/ViGEmPadSink.cs`, `DualSensePadSink.cs`, `PadSinks.cs`, `GyroPhone.Protocol/Mapping/Ds4Report.cs`, `DualSenseReport.cs`, `driver/src/driver.c`, `driver/src/dualsense.h`, `MotionFrame.cs`, `SendInputSink.cs`, `XInputPcPad.cs`, `GyroPhone.Protocol/Mapping/PadMapper.cs`, `InputDiff.cs`, `HidScanCodes.cs`, `KeyRepeat.cs`, `InjectEvent.cs`, `GyroPhone.Protocol/MouseDeltaTracker.cs`, `MouseCatchUp.cs`, `StateFrame.cs`, `GyroMath.cs`, `GyroGate.cs`, `PcGyro.cs`, `PcGyroTail.cs`, `PadHeldHistory.cs`, `GyroPhone.Host/HostEngine.cs` (`Flush`, `OnPadGyro`).
+`GyroPhone.Windows/ViGEmPadSink.cs`, `DualSensePadSink.cs`, `PadSinks.cs`, `GyroPhone.Protocol/Mapping/Ds4Report.cs`, `DualSenseReport.cs`, `driver/src/driver.c`, `driver/src/dualsense.h`, `MotionFrame.cs`, `SendInputSink.cs`, `XInputPcPad.cs`, `GyroPhone.Protocol/Mapping/PadMapper.cs`, `InputDiff.cs`, `HidScanCodes.cs`, `KeyRepeat.cs`, `InjectEvent.cs`, `HidInputSink.cs` (with `KeyMouseRouter`), `HidInputReports.cs`, `OwnInputDevice.cs`, `input-driver/src/driver.c`, `input-driver/src/gpinput_reports.h`, `GyroPhone.Protocol/MouseDeltaTracker.cs`, `MouseCatchUp.cs`, `StateFrame.cs`, `GyroMath.cs`, `GyroGate.cs`, `PcGyro.cs`, `PcGyroTail.cs`, `PadHeldHistory.cs`, `GyroPhone.Host/HostEngine.cs` (`Flush`, `OnPadGyro`).

@@ -132,6 +132,8 @@ public sealed class RawInputListener : IKeyMouseListener, IDisposable
             };
             RegisterRawInputDevices(remove, (uint)remove.Length, (uint)Marshal.SizeOf<RawInputDevice>());
             DestroyWindow(hwnd);
+            // That took the process's raw mouse input away from Diagnostics' delivery probe too: it registers again.
+            DeliveryProbe.RawMouseReleased();
         }
         catch (Exception e)
         {
@@ -178,6 +180,8 @@ public sealed class RawInputListener : IKeyMouseListener, IDisposable
         IntPtr device = IntPtr.Size == 8 ? (IntPtr)BitConverter.ToInt64(_buffer, 8) : BitConverter.ToInt32(_buffer, 8);
         // No device behind it: injected (SendInput, ours too) for a key. A laptop's precision touchpad sends its
         // clicks with no device too, so a mouse button counts anyway: GyroPhone sends no clicks while the phone listens.
+        // The input driver's own mouse and keyboard are GyroPhone's output too, never the PC's keys.
+        if (OwnInputDevice.Is(device)) return;
         if (type == 1 && device != IntPtr.Zero) Keyboard(header);
         else if (type == 0) Mouse(header);
     }

@@ -45,7 +45,18 @@ public sealed record CompanionView(
     bool PressKeyNotice = true,
     bool PressKeyListen = true,
     int DiagnosticsMinutes = 3,
-    int DiagnosticsSaved = 0);
+    int DiagnosticsSaved = 0,
+    bool UseSendInput = false,
+    InputDriverState InputDriver = InputDriverState.NotInstalled);
+
+/// <summary>The optional input driver (a virtual USB mouse and keyboard), for Performance › Keyboard and mouse.</summary>
+public enum InputDriverState
+{
+    NotInstalled,
+    /// <summary>Installed, but its mouse and keyboard aren't plugged (another program has them, or it failed: see the log).</summary>
+    NotPlugged,
+    Ready,
+}
 
 /// <summary>
 /// The tray app as the windows see it. Every setter saves the setting and refreshes the open windows,
@@ -104,6 +115,8 @@ public interface ICompanion
     void TogglePressKeyNotice();
     /// <summary>"Catch-up time", ms (0 = off).</summary>
     void SetCatchUpMs(int ms);
+    /// <summary>"Use SendInput" (Performance › Keyboard and mouse): SendInput even when the input driver is installed.</summary>
+    void ToggleUseSendInput();
 
     // Performance
     /// <summary>The Performance page's frame watcher, link seconds and test records.</summary>
