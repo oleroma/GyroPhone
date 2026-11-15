@@ -543,6 +543,72 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         Refresh();
     }
 
+    // Performance › Delivery test: a window in front reading raw mouse input like a game, next to the delivery probe.
+    private readonly object _deliveryGate = new();
+    private DeliveryTestWindow? _deliveryTest;
+    private System.Threading.Timer? _deliveryTimer;
+    private volatile DeliveryNumbers? _deliveryProbe;
+    private volatile bool _deliveryFront;
+    private bool _deliveryFrontSent;
+
+    public void OpenDeliveryTest()
+    {
+        lock (_deliveryGate)
+        {
+            if (_deliveryTest is { } open)
+            {
+                open.Show();
+                return;
+            }
+            _deliveryProbe = null;
+            _deliveryFront = _deliveryFrontSent = false;
+            In.SetDeliveryTest(true, false);
+            var w = new DeliveryTestWindow(_region.Moves, () => _deliveryProbe,
+                front =>
+                {
+                    _deliveryFront = front;
+                    ThreadPool.QueueUserWorkItem(_ => DeliveryTick());
+                },
+                DeliveryTestClosed);
+            _deliveryTest = w;
+            _deliveryTimer = new System.Threading.Timer(_ => DeliveryTick(), null, 500, 500);
+            w.Show();
+        }
+    }
+
+    /// <summary>Off the window's thread: tells the input process whether the window is in front, and fetches the probe's numbers.</summary>
+    private void DeliveryTick()
+    {
+        lock (_deliveryGate)
+        {
+            if (_deliveryTest == null) return;
+            bool front = _deliveryFront;
+            if (front != _deliveryFrontSent)
+            {
+                In.SetDeliveryTest(true, front);
+                _deliveryFrontSent = front;
+            }
+            _deliveryProbe = In.DeliveryTestNumbers();
+        }
+    }
+
+    /// <summary>The test window closed (its thread): the summary goes to the log (and Diagnostics), and the test stops.</summary>
+    private void DeliveryTestClosed(string summary)
+    {
+        _log.Write(summary);
+        if (_debug.Enabled) _debug.Add(DebugTrace.Kind.Note, summary);
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            lock (_deliveryGate)
+            {
+                _deliveryTimer?.Dispose();
+                _deliveryTimer = null;
+                _deliveryTest = null;
+                In.SetDeliveryTest(false, false);
+            }
+        });
+    }
+
     public void ToggleDiagnostics()
     {
         In.SetDiagnostics(!Set.Diagnostics);
@@ -1689,6 +1755,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         _pairWindow?.Close();
         _mainWindow?.Close();
+        _deliveryTest?.Close();
         foreach (var f in _overlayForms.Values.ToList()) f.Close();
         _overlayWheel?.Dispose();
         _overlayWheel = null;

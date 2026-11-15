@@ -7,20 +7,22 @@ namespace GyroPhone.Host;
 /// The memory the input process and the companion both map (Windows: a named file mapping in the session): the
 /// input side writes, the companion reads, and neither ever waits on the other or makes anything to hand data over.
 /// Holds <see cref="HeldMirror"/> (held outputs and the PC controller, for the overlays), <see cref="OverlayInbox"/>
-/// (the phone's overlay packets) and <see cref="DebugQueue"/> (Diagnostics' raw events). Made by the input process,
+/// (the phone's overlay packets), <see cref="DebugQueue"/> (Diagnostics' raw events) and <see cref="MoveRing"/>
+/// (the mouse moves the Delivery test times). Made by the input process,
 /// opened by the companion with the name the input process tells it.
 /// </summary>
 public sealed unsafe class SharedRegion : IDisposable
 {
     private const int Magic = 0x31535047; // "GPS1"
     /// <summary>Bumped whenever the layout changes: a companion and an input process of different builds never share one.</summary>
-    public const int LayoutVersion = 1;
+    public const int LayoutVersion = 2;
 
     private const int HeaderBytes = 64;
     private static readonly int HeldOff = HeaderBytes;
     private static readonly int OverlayOff = Align(HeldOff + HeldMirror.BytesNeeded);
     private static readonly int DebugOff = Align(OverlayOff + OverlayInbox.BytesNeeded);
-    public static readonly int TotalBytes = Align(DebugOff + DebugQueue.BytesNeeded);
+    private static readonly int MovesOff = Align(DebugOff + DebugQueue.BytesNeeded);
+    public static readonly int TotalBytes = Align(MovesOff + MoveRing.BytesNeeded);
 
     private static int Align(int n) => (n + 4095) & ~4095;
 
@@ -44,11 +46,14 @@ public sealed unsafe class SharedRegion : IDisposable
         Held = new HeldMirror(p + HeldOff);
         Overlays = new OverlayInbox(p + OverlayOff);
         Debug = new DebugQueue(p + DebugOff);
+        Moves = new MoveRing(p + MovesOff);
     }
 
     public HeldMirror Held { get; }
     public OverlayInbox Overlays { get; }
     public DebugQueue Debug { get; }
+    /// <summary>The mouse moves while the Delivery test runs (written by the input process, read by the companion).</summary>
+    public MoveRing Moves { get; }
 
     /// <summary>The process that made it.</summary>
     public int OwnerPid => *(int*)(_base + 8);

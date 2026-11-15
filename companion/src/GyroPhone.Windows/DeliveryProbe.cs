@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using GyroPhone.Host;
 
 namespace GyroPhone.Windows;
 
@@ -23,6 +24,13 @@ namespace GyroPhone.Windows;
 /// nothing).
 /// </para>
 /// <para>
+/// While Diagnostics is on, each raw move over 2 ms also gets a line of its own (at most 20 a second, the rest counted
+/// in the second's text): "delivery slow 3.42 ms (driver): gap 12.0 ms since the move before, merged 3, front
+/// Discovery, probe slept 11.8 ms, read 0.02 ms after waking, 1st since waking". Made on the probe thread, never the
+/// input path. While a Delivery test runs it also adds up the test's moves (<see cref="StartTest"/>), so the test window
+/// in front can show both readers' numbers for the same moves.
+/// </para>
+/// <para>
 /// A process has one raw mouse input target: "Press a key" listening takes it while it runs, and the probe registers
 /// again when it gives it up (<see cref="RawMouseReleased"/>).
 /// </para>
@@ -30,39 +38,50 @@ namespace GyroPhone.Windows;
 public sealed class DeliveryProbe : IDisposable
 {
     private const int WmInput = 0x00FF, WmClose = 0x0010, WmTimer = 0x0113, WmRegister = 0x0400 + 0x47;
-    private const uint RidInput = 0x10000003, RidevInputSink = 0x00000100, RidevRemove = 0x00000001;
-    private const int RingSize = 4096;
+    private const uint RidevInputSink = 0x00000100, RidevRemove = 0x00000001;
+    private const uint QsAllInput = 0x04FF;
+    private const int MaxSlowLines = 20;
     private static readonly IntPtr HwndMessage = new(-3);
-    private static readonly long StaleTicks = Stopwatch.Frequency / 20; // 50 ms
-    private static readonly long Over2Ticks = Stopwatch.Frequency / 500;
 
     private static volatile DeliveryProbe? s_current;
 
     private readonly Action<string>? _log;
-    // The ring: written by the input path (one writer, under the engine lock), read by the probe thread.
-    private readonly long[] _ticks = new long[RingSize];
-    private readonly int[] _dx = new int[RingSize], _dy = new int[RingSize];
-    private long _head, _tail;
-    private long _overflow;
+    // The moves the input path handed off: written by the input path (one writer, under the engine lock), read here.
+    private readonly MoveRing _ring = new();
+    private readonly DeliveryMatcher _matcher;
 
     // The probe thread's own numbers for the current second, and the last second's text.
-    private readonly List<long> _lat = new(4096);
+    private readonly DeliveryTally _second = new();
     private string? _text;
-    private long _unmatched, _merged, _stray, _over2, _max;
-    // Raw moves waiting for their stored moves (probe thread only).
-    private const int PendingSize = 32, MaxSkip = 32, MaxRun = 128;
-    private readonly long[] _pendTicks = new long[PendingSize];
-    private readonly int[] _pendX = new int[PendingSize], _pendY = new int[PendingSize];
-    private readonly bool[] _pendDriver = new bool[PendingSize];
-    private int _pendingFirst, _pendingCount;
     private bool _sawDriver, _sawSendInput;
-    private readonly byte[] _buffer = new byte[128];
+    private int _slowLines, _slowSkipped;
+    // A Delivery test's numbers: added up here, read by the companion's call (another thread).
+    private readonly object _testLock = new();
+    private DeliveryTally? _test;
+    private volatile bool _testCounting;
+    private readonly RawMouse _raw = new();
+
+    // When this thread last woke from waiting for messages, how long it had waited, and messages handled since.
+    private long _wokeAt, _slept;
+    private int _sinceWake;
+    private long _readAt;
+    private IntPtr _lastFrontWindow;
+    private string _lastFront = "?";
 
     private Thread? _thread;
     private IntPtr _hwnd;
     private WndProc? _proc;
 
-    public DeliveryProbe(Action<string>? log) => _log = log;
+    public DeliveryProbe(Action<string>? log)
+    {
+        _log = log;
+        _matcher = new DeliveryMatcher(_ring, Delivered, Missed, Stray);
+    }
+
+    /// <summary>
+    /// While Diagnostics is on: takes one line per move over 2 ms (on the probe thread). Null: none made.
+    /// </summary>
+    public Action<string>? SlowLine { get; set; }
 
     public void Start()
     {
@@ -81,6 +100,7 @@ public sealed class DeliveryProbe : IDisposable
         if (h != IntPtr.Zero) PostMessage(h, WmClose, IntPtr.Zero, IntPtr.Zero);
         _thread?.Join(1000);
         _thread = null;
+        // The ring stays until nothing holds it: the input path may still be storing a move that came just now.
     }
 
     /// <summary>A raw input reader gave the process's raw mouse input up: the running probe takes it again.</summary>
@@ -91,26 +111,34 @@ public sealed class DeliveryProbe : IDisposable
     }
 
     /// <summary>A move's hand-off started at Stopwatch <paramref name="ticks"/>. Input path: no lock, no allocation.</summary>
-    public void Sent(long ticks, int dx, int dy)
-    {
-        long h = _head;
-        if (h - Volatile.Read(ref _tail) >= RingSize)
-        {
-            Interlocked.Increment(ref _overflow);
-            return;
-        }
-        int i = (int)(h & (RingSize - 1));
-        _ticks[i] = ticks;
-        _dx[i] = dx;
-        _dy[i] = dy;
-        Volatile.Write(ref _head, h + 1);
-    }
+    public void Sent(long ticks, int dx, int dy) => _ring.Put(ticks, dx, dy);
 
     /// <summary>
     /// The last second's delivery numbers for the input log's second line, or null when no move was matched or missed.
     /// Made on the probe thread; this only hands the text over (once).
     /// </summary>
     public string? SecondText() => Interlocked.Exchange(ref _text, null);
+
+    /// <summary>A Delivery test starts: its moves are added up from now (while <paramref name="counting"/>).</summary>
+    public void StartTest(bool counting)
+    {
+        lock (_testLock) _test = new DeliveryTally(16_384);
+        _testCounting = counting;
+    }
+
+    /// <summary>The test window is in front (its moves count) or not (paused).</summary>
+    public void CountTest(bool counting) => _testCounting = counting;
+
+    /// <summary>The Delivery test's numbers so far, or null without one.</summary>
+    public DeliveryNumbers? TestNumbers()
+    {
+        lock (_testLock) return _test?.Numbers();
+    }
+
+    public void StopTest()
+    {
+        lock (_testLock) _test = null;
+    }
 
     private void Run(ManualResetEventSlim ready)
     {
@@ -135,8 +163,20 @@ public sealed class DeliveryProbe : IDisposable
             Register(hwnd);
             SetTimer(hwnd, (UIntPtr)1, 1000, IntPtr.Zero);
             ready.Set();
-            while (GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
+            while (true)
             {
+                // Nothing waiting: GetMessage sleeps until something comes, so note when it went to sleep and woke.
+                bool sleeps = (GetQueueStatus(QsAllInput) >> 16) == 0;
+                long before = Stopwatch.GetTimestamp();
+                if (GetMessage(out var msg, IntPtr.Zero, 0, 0) <= 0) break;
+                _readAt = Stopwatch.GetTimestamp();
+                if (sleeps)
+                {
+                    _wokeAt = _readAt;
+                    _slept = _readAt - before;
+                    _sinceWake = 0;
+                }
+                else _sinceWake++;
                 if (msg.Message == WmClose && msg.Hwnd == hwnd) break;
                 DispatchMessage(ref msg);
             }
@@ -144,6 +184,8 @@ public sealed class DeliveryProbe : IDisposable
             RegisterRawInputDevices([remove], 1, (uint)Marshal.SizeOf<RawInputDevice>());
             DestroyWindow(hwnd);
             _hwnd = IntPtr.Zero;
+            // The class holds this probe's window procedure: the next probe registers its own.
+            UnregisterClass(cls.ClassName, cls.Instance);
         }
         catch (Exception e)
         {
@@ -166,10 +208,14 @@ public sealed class DeliveryProbe : IDisposable
     {
         try
         {
-            if (msg == WmInput) OnInput(lParam);
+            if (msg == WmInput)
+            {
+                long now = Stopwatch.GetTimestamp();
+                if (_raw.Read(lParam, out int x, out int y, out bool driver)) _matcher.Raw(now, x, y, driver);
+            }
             else if (msg == WmTimer)
             {
-                Settle(Stopwatch.GetTimestamp());
+                _matcher.Settle(Stopwatch.GetTimestamp());
                 Roll();
             }
             else if (msg == WmRegister) Register(hwnd);
@@ -181,154 +227,85 @@ public sealed class DeliveryProbe : IDisposable
         return DefWindowProc(hwnd, msg, wParam, lParam);
     }
 
-    private unsafe void OnInput(IntPtr lParam)
+    private void Delivered(Delivery d)
     {
-        long now = Stopwatch.GetTimestamp();
-        int header = 8 + 2 * IntPtr.Size;
-        uint size = (uint)_buffer.Length;
-        fixed (byte* p = _buffer)
-        {
-            if (GetRawInputData(lParam, RidInput, (IntPtr)p, ref size, (uint)header) == unchecked((uint)-1)) return;
-        }
-        if (BitConverter.ToUInt32(_buffer, 0) != 0) return; // mouse only
-        IntPtr device = IntPtr.Size == 8 ? (IntPtr)BitConverter.ToInt64(_buffer, 8) : BitConverter.ToInt32(_buffer, 8);
-        bool driver = device != IntPtr.Zero;
-        if (driver && !OwnInputDevice.Is(device)) return; // the PC's own mouse
-        // RAWMOUSE: usFlags u16, (pad) u16, ulButtons u32, ulRawButtons u32, lLastX i32, lLastY i32.
-        if ((BitConverter.ToUInt16(_buffer, header) & 1) != 0) return; // absolute: not ours
-        int x = BitConverter.ToInt32(_buffer, header + 12), y = BitConverter.ToInt32(_buffer, header + 16);
-        if (x == 0 && y == 0) return;
-        Match(now, x, y, driver);
-    }
-
-    /// <summary>
-    /// Pairs raw input with stored moves. Windows 11 hands a background raw input reader (this probe; the game in front
-    /// still gets every report) a device's moves merged, at most about 125 times a second, so one raw move is the sum of a
-    /// run of stored moves in a row. SendInput moves come one by one. A raw move that matches no run yet waits a little
-    /// (its hand-off may not be stored yet) instead of being thrown away.
-    /// </summary>
-    private void Match(long now, int x, int y, bool driver)
-    {
-        if (_pendingCount == PendingSize) DropPending();
-        int slot = (_pendingFirst + _pendingCount++) % PendingSize;
-        _pendTicks[slot] = now;
-        _pendX[slot] = x;
-        _pendY[slot] = y;
-        _pendDriver[slot] = driver;
-        Settle(now);
-    }
-
-    /// <summary>Matches waiting raw moves in order, and gives up on stored moves and raw moves too old to still pair.</summary>
-    private void Settle(long now)
-    {
-        long tail = _tail, head = Volatile.Read(ref _head);
-        while (_pendingCount > 0)
-        {
-            int p = _pendingFirst;
-            long at = _pendTicks[p];
-            // Stored moves too old to come with this raw move never showed up.
-            long dropped = 0;
-            while (tail < head && at - _ticks[(int)(tail & (RingSize - 1))] > StaleTicks)
-            {
-                tail++;
-                dropped++;
-            }
-            if (dropped > 0) Record(-1, dropped, 0, _pendDriver[p]);
-            if (TryRun(tail, head, _pendX[p], _pendY[p], out long first, out long last))
-            {
-                // Moves before the run never showed up; the run's newest move is the one this raw move delivered last.
-                Record(at - _ticks[(int)(last & (RingSize - 1))], first - tail, last - first, _pendDriver[p]);
-                tail = last + 1;
-                Volatile.Write(ref _tail, tail);
-                DropPendingFirst();
-                continue;
-            }
-            Volatile.Write(ref _tail, tail);
-            if (now - at <= StaleTicks) break; // its hand-off may not be stored yet
-            _stray++;
-            DropPendingFirst();
-        }
-        if (_pendingCount == 0)
-        {
-            // Nothing waiting: stored moves long past any raw move never showed up.
-            long dropped = 0;
-            while (tail < head && now - _ticks[(int)(tail & (RingSize - 1))] > 2 * StaleTicks)
-            {
-                tail++;
-                dropped++;
-            }
-            if (dropped > 0) Record(-1, dropped, 0, false);
-        }
-        Volatile.Write(ref _tail, tail);
-    }
-
-    /// <summary>The first run of stored moves in a row (starting at most <see cref="MaxSkip"/> in) that adds up to x, y.</summary>
-    private bool TryRun(long tail, long head, int x, int y, out long first, out long last)
-    {
-        long starts = Math.Min(head, tail + MaxSkip);
-        for (long s = tail; s < starts; s++)
-        {
-            int sx = 0, sy = 0;
-            long end = Math.Min(head, s + MaxRun);
-            for (long k = s; k < end; k++)
-            {
-                int i = (int)(k & (RingSize - 1));
-                sx += _dx[i];
-                sy += _dy[i];
-                if (sx == x && sy == y)
-                {
-                    first = s;
-                    last = k;
-                    return true;
-                }
-            }
-        }
-        first = last = -1;
-        return false;
-    }
-
-    private void DropPendingFirst()
-    {
-        _pendingFirst = (_pendingFirst + 1) % PendingSize;
-        _pendingCount--;
-    }
-
-    private void DropPending()
-    {
-        _stray++;
-        DropPendingFirst();
-    }
-
-    private void Record(long lat, long unmatched, long merged, bool driver)
-    {
-        _unmatched += unmatched;
-        _merged += merged;
-        if (lat < 0) return;
-        _lat.Add(lat);
-        if (lat > _max) _max = lat;
-        if (lat > Over2Ticks) _over2++;
-        if (driver) _sawDriver = true;
+        _second.Add(d);
+        if (d.Driver) _sawDriver = true;
         else _sawSendInput = true;
+        if (_testCounting)
+            lock (_testLock) _test?.Add(d);
+        if (d.Ticks > DeliveryTally.SlowTicks && SlowLine is { } line)
+        {
+            if (_slowLines >= MaxSlowLines) _slowSkipped++;
+            else
+            {
+                _slowLines++;
+                line(SlowText(d));
+            }
+        }
+    }
+
+    private void Missed(long n)
+    {
+        _second.Missed(n);
+        if (_testCounting)
+            lock (_testLock) _test?.Missed(n);
+    }
+
+    private void Stray()
+    {
+        _second.Stray();
+        if (_testCounting)
+            lock (_testLock) _test?.Stray();
+    }
+
+    /// <summary>One slow move's line, with what may explain it.</summary>
+    private string SlowText(in Delivery d)
+    {
+        double Ms(long t) => DeliveryTally.Ms(t);
+        string nth = _sinceWake switch { 0 => "1st", 1 => "2nd", 2 => "3rd", _ => $"{_sinceWake + 1}th" };
+        return string.Create(CultureInfo.InvariantCulture,
+            $"delivery slow {Ms(d.Ticks):0.00} ms ({(d.Driver ? "driver" : "SendInput")}): gap {Ms(d.GapTicks):0.0} ms since the move before, " +
+            $"merged {d.Merged}, front {Front()}, probe slept {Ms(_slept):0.0} ms, read {Ms(_readAt - _wokeAt):0.00} ms after waking, {nth} since waking");
+    }
+
+    /// <summary>The program in front (looked up again only when the front window changed).</summary>
+    private string Front()
+    {
+        var w = GetForegroundWindow();
+        if (w == _lastFrontWindow) return _lastFront;
+        _lastFrontWindow = w;
+        _lastFront = "none";
+        if (w == IntPtr.Zero) return _lastFront;
+        GetWindowThreadProcessId(w, out uint pid);
+        try
+        {
+            using var p = Process.GetProcessById((int)pid);
+            _lastFront = p.ProcessName;
+        }
+        catch (Exception)
+        {
+            _lastFront = $"pid {pid}";
+        }
+        return _lastFront;
     }
 
     /// <summary>Each second on the probe thread: the second's numbers become the text <see cref="SecondText"/> hands out.</summary>
     private void Roll()
     {
-        if (_lat.Count == 0 && _unmatched == 0 && _stray == 0)
+        long over = _ring.TakeOverflow();
+        int skipped = _slowSkipped;
+        _slowLines = _slowSkipped = 0;
+        if (_second.Empty)
         {
             _text = null;
             return;
         }
-        _lat.Sort();
-        double Ms(long t) => t * 1000.0 / Stopwatch.Frequency;
-        int n = _lat.Count;
-        double p50 = n > 0 ? Ms(_lat[n / 2]) : 0, p99 = n > 0 ? Ms(_lat[Math.Min(n - 1, n * 99 / 100)]) : 0;
+        var n = _second.Numbers();
         string route = _sawDriver && _sawSendInput ? "both" : _sawDriver ? "driver" : "SendInput";
-        long over = Interlocked.Exchange(ref _overflow, 0);
         _text = string.Create(CultureInfo.InvariantCulture,
-            $" delivery[{route}] n {n} p50 {p50:0.00} p99 {p99:0.00} max {Ms(_max):0.00} over2 {_over2} unmatched {_unmatched} merged {_merged}{(_stray > 0 ? $" stray {_stray}" : "")}{(over > 0 ? $" full {over}" : "")}");
-        _lat.Clear();
-        _unmatched = _merged = _stray = _over2 = _max = 0;
+            $" delivery[{route}] n {n.N} p50 {n.P50:0.00} p99 {n.P99:0.00} max {n.Max:0.00} over2 {n.Slow} unmatched {n.Unmatched} merged {n.Merged}{(n.Stray > 0 ? $" stray {n.Stray}" : "")}{(over > 0 ? $" full {over}" : "")}{(skipped > 0 ? $" slowlines-skipped {skipped}" : "")}");
+        _second.Clear();
         _sawDriver = _sawSendInput = false;
     }
 
@@ -376,11 +353,11 @@ public sealed class DeliveryProbe : IDisposable
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterRawInputDevices(RawInputDevice[] devices, uint count, uint size);
 
-    [DllImport("user32.dll")]
-    private static extern uint GetRawInputData(IntPtr rawInput, uint command, IntPtr data, ref uint size, uint headerSize);
-
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern ushort RegisterClassEx(ref WndClassEx cls);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool UnregisterClass(string className, IntPtr instance);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr CreateWindowEx(uint exStyle, string className, string windowName, uint style,
@@ -406,4 +383,13 @@ public sealed class DeliveryProbe : IDisposable
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr GetModuleHandle(string? name);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetQueueStatus(uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
 }
