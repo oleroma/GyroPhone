@@ -4,14 +4,15 @@ using GyroPhone.Protocol;
 namespace GyroPhone.Host;
 
 /// <summary>
-/// The overlay side of the phone's data, on its own thread (gp-overlay), away from the input thread: takes what
-/// <see cref="OverlayInbox"/> holds, turns each overlay window's pose (<see cref="OverlayPose"/>), keeps "Fade when
-/// phone rests" (<see cref="OverlayRest"/>), the Speed graph (<see cref="SpeedTrace"/>) and the layout, and
-/// publishes them for the windows through <see cref="OverlayView"/>. gp-rx only copies the bytes in.
+/// The overlay side of the phone's data, on its own thread (gp-overlay) in the companion, away from the input
+/// process: takes what <see cref="OverlayInbox"/> holds, turns each overlay window's pose (<see cref="OverlayPose"/>),
+/// keeps "Fade when phone rests" (<see cref="OverlayRest"/>), the Speed graph (<see cref="SpeedTrace"/>) and the
+/// layout, and publishes them for the windows through <see cref="OverlayView"/>. The input process only copies the
+/// bytes in and sets <c>wake</c>.
 /// <para>
-/// It works on its own copies of the overlay settings, handed over whole by the engine each time they change
+/// It works on its own copies of the overlay settings, handed over whole each time they change
 /// (<see cref="SetSettings"/>), so it never reads what a window is changing. What it changes in them itself
-/// (Level, Set orientation) goes back to the engine through <c>saveLevel</c>, as a window's click would.
+/// (Level, Set orientation) goes back through <c>saveLevel</c>, as a window's click would.
 /// </para>
 /// <para>
 /// Without <see cref="Start"/> (tests, the headless host) <see cref="Signal"/> does the work at once on the
@@ -26,7 +27,9 @@ internal sealed class OverlayWorker
     private readonly OverlayInbox _inbox;
     private readonly OverlayView _view;
     private readonly SaveLevel _saveLevel;
-    private readonly AutoResetEvent _wake = new(false);
+    private readonly EventWaitHandle _wake;
+    // Level asked for by a window or a shortcut (the companion's own side, not through the inbox).
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _levels = new();
     private Thread? _thread;
     private int _pumping;
 
@@ -45,11 +48,13 @@ internal sealed class OverlayWorker
     private SettingsSet _settings = new([], new OverlayRestFade());
     private SettingsSet? _nextSettings;
 
-    public OverlayWorker(OverlayInbox inbox, OverlayView view, SaveLevel saveLevel)
+    /// <summary>A worker for <paramref name="inbox"/>, woken by <paramref name="wake"/> (set by whoever puts something in).</summary>
+    public OverlayWorker(OverlayInbox inbox, OverlayView view, SaveLevel saveLevel, EventWaitHandle wake)
     {
         _inbox = inbox;
         _view = view;
         _saveLevel = saveLevel;
+        _wake = wake;
     }
 
     /// <summary>The Speed graph overlays' yaw, pitch and roll speeds (fed while one is shown).</summary>
@@ -70,6 +75,22 @@ internal sealed class OverlayWorker
     public void SetSettings(List<OverlaySettings> overlays, OverlayRestFade fade)
     {
         Volatile.Write(ref _nextSettings, new SettingsSet(overlays, fade));
+    }
+
+    /// <summary>Level overlay <paramref name="id"/> (its Level button, Level all, a shortcut).</summary>
+    public void Level(string id)
+    {
+        _levels.Enqueue(id);
+        Signal();
+    }
+
+    private int _skip;
+
+    /// <summary>Drops what waits in the inbox and starts again (a companion that attaches to a running input process).</summary>
+    public void SkipWaiting()
+    {
+        Volatile.Write(ref _skip, 1);
+        Signal();
     }
 
     /// <summary>Something waits in the inbox (or new settings).</summary>
@@ -108,6 +129,17 @@ internal sealed class OverlayWorker
         try
         {
             bool changed = false;
+            if (Interlocked.Exchange(ref _skip, 0) != 0)
+            {
+                _inbox.SkipAll();
+                Clear(Environment.TickCount64 * 1000, layoutToo: true);
+                changed = true;
+            }
+            while (_levels.TryDequeue(out var level))
+            {
+                LevelNow(level);
+                changed = true;
+            }
             while (true)
             {
                 if (Interlocked.Exchange(ref _nextSettings, null) is { } next)
@@ -122,8 +154,7 @@ internal sealed class OverlayWorker
                     Clear(Environment.TickCount64 * 1000, layoutToo: true);
                     changed = true;
                 }
-                var s = _inbox.Peek();
-                if (s == null) break;
+                if (!_inbox.TryPeek(out var s)) break;
                 try
                 {
                     changed |= Handle(s);
@@ -146,13 +177,13 @@ internal sealed class OverlayWorker
 
     private bool PoseKindChanged(string id, OverlaySettings o) => _poseKinds.TryGetValue(id, out var k) && k != o.Kind;
 
-    private bool Handle(OverlayInbox.Slot s)
+    private bool Handle(in OverlayInbox.Slot s)
     {
-        var plain = s.Data.AsSpan(0, s.Length);
+        var plain = s.Data;
         switch (s.Kind)
         {
             case OverlayInbox.Kind.Overlay:
-                return OnOverlay(plain, s);
+                return OnOverlay(plain, in s);
             case OverlayInbox.Kind.Samples:
                 _samples.Decode(plain);
                 return false;
@@ -170,9 +201,6 @@ internal sealed class OverlayWorker
             case OverlayInbox.Kind.Clear:
                 Clear(s.RxUs, s.Flag);
                 return true;
-            case OverlayInbox.Kind.Level:
-                if (s.Id != null) Level(s.Id);
-                return true;
         }
         return false;
     }
@@ -188,7 +216,7 @@ internal sealed class OverlayWorker
         if (layoutToo) _layout.Reset();
     }
 
-    private bool OnOverlay(ReadOnlySpan<byte> plain, OverlayInbox.Slot s)
+    private bool OnOverlay(ReadOnlySpan<byte> plain, in OverlayInbox.Slot s)
     {
         if (_totals.IsLate(plain)) return false;
         var f = _frame;
@@ -254,7 +282,7 @@ internal sealed class OverlayWorker
     /// With gravity that is the tilt now (saved as <see cref="OverlaySettings.Rest"/>); without (turned by the gyro
     /// since the last reset, or a trackball) the pose simply starts again from straight.
     /// </summary>
-    private void Level(string id)
+    private void LevelNow(string id)
     {
         var o = _settings.Overlays.Find(x => x.Id == id);
         if (o == null) return;

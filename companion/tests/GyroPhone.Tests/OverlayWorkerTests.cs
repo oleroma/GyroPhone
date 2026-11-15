@@ -23,23 +23,23 @@ public class OverlayWorkerTests
         var h = new Harness();
         var shape = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = true };
         h.Settings.Overlays.Add(shape);
-        h.Engine.StartOverlayThread();
+        h.Overlays.Start();
         var phone = h.NewPhone();
         h.Connect(phone);
-        h.Engine.SetOverlay(true);
+        h.Overlays.SetOverlay(true);
         h.Send(phone, phone.Sealed(PacketType.OverlayLayout, OverlayTests.Piece(1, 0, 1, Hex.B(OverlayTests.LayoutBlob))));
         h.Send(phone, phone.Sealed(PacketType.Overlay, Hex.B(OverlayTests.Frame)));
         var frame = new OverlayFrame();
         OverlayLayout? layout = null;
-        Assert.True(WaitFor(() => h.Engine.OverlaySnapshot(frame, out layout) >= 0 && layout != null));
+        Assert.True(WaitFor(() => h.Overlays.OverlaySnapshot(frame, out layout) >= 0 && layout != null));
         Assert.True(frame.IsPressed(0));
         Assert.Equal("Main", layout!.Workspace);
         var id = shape.Id;
-        Assert.True(WaitFor(() => h.Engine.OverlayPoseOf(id) != null));
+        Assert.True(WaitFor(() => h.Overlays.OverlayPoseOf(id) != null));
 
         // Off: everything goes.
-        h.Engine.SetOverlay(false);
-        Assert.True(WaitFor(() => h.Engine.OverlaySnapshot(frame, out _) == -1));
+        h.Overlays.SetOverlay(false);
+        Assert.True(WaitFor(() => h.Overlays.OverlaySnapshot(frame, out _) == -1));
     }
 
     [Fact]
@@ -57,12 +57,12 @@ public class OverlayWorkerTests
         // Read in order.
         for (int i = 0; i < OverlayInbox.Capacity; i++)
         {
-            var s = inbox.Peek();
-            Assert.NotNull(s);
-            Assert.Equal(i, s!.RxUs);
+            Assert.True(inbox.TryPeek(out var s));
+            Assert.Equal(i, s.RxUs);
+            Assert.Equal(Wire.OverlayPlain, s.Data.Length);
             inbox.Release();
         }
-        Assert.Null(inbox.Peek());
+        Assert.False(inbox.TryPeek(out _));
     }
 
     [Fact]

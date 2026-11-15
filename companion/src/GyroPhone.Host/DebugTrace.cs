@@ -10,8 +10,13 @@ namespace GyroPhone.Host;
 /// Logs only while <see cref="Enabled"/>, so the input path costs one bool check otherwise.
 /// <para>
 /// The input path never formats text: <see cref="OnInject"/>, <see cref="OnX360"/> and <see cref="OnDs4"/>
-/// only copy the raw events into a ready-made slot; <see cref="Drain"/> (the gp-diag thread, every 50 ms)
-/// turns them into lines. Thread-safe.
+/// only copy the raw events into a ready-made slot of a <see cref="DebugQueue"/>; <see cref="Drain"/> (the gp-diag
+/// thread, every 50 ms) turns them into lines. Thread-safe.
+/// </para>
+/// <para>
+/// Split in two processes, the input process's trace forwards (<c>forward</c>): its raw events go into the queue in
+/// shared memory and its lines to the companion, and it keeps no log of its own; the companion's trace drains that
+/// queue, makes the text and keeps the log that Save writes.
 /// </para>
 /// </summary>
 public sealed class DebugTrace
@@ -27,19 +32,27 @@ public sealed class DebugTrace
     private const long MotionEveryUs = 100_000;
     private const int AxisStepPct = 5;
     /// <summary>Raw events the input path may queue between two drains.</summary>
-    public const int Queue = 16_384;
+    public const int Queue = DebugQueue.Capacity;
 
     private readonly object _lock = new();
     private readonly Event[] _ring;
     private int _head, _count;
     private readonly Func<long> _nowUs;
+    private readonly DebugQueue _queue;
+    private readonly Action<long, Kind, string>? _forward;
 
     private volatile bool _on;
 
-    public DebugTrace(Func<long> nowUs, int capacity = 200_000)
+    /// <summary>
+    /// A trace whose raw events go through <paramref name="queue"/> (its own when null). With <paramref name="forward"/>
+    /// it keeps no log: every line goes there instead (the input process), and the queue is drained elsewhere.
+    /// </summary>
+    public DebugTrace(Func<long> nowUs, int capacity = 200_000, DebugQueue? queue = null, Action<long, Kind, string>? forward = null)
     {
         _nowUs = nowUs;
-        _ring = new Event[capacity];
+        _forward = forward;
+        _queue = queue ?? new DebugQueue();
+        _ring = new Event[forward == null ? capacity : 1];
     }
 
     /// <summary>Bumped on every event.</summary>
@@ -54,10 +67,17 @@ public sealed class DebugTrace
         lock (_switchLock)
         {
             if (on == _on) return;
+            if (_forward != null)
+            {
+                // The input process: the companion keeps the log and drains the queue.
+                _on = on;
+                if (on) Add(Kind.Note, "diagnostics on (" + why + ")");
+                return;
+            }
             if (on)
             {
                 lock (_lock) { _head = _count = 0; Version++; }
-                lock (_qLock) _qCount = 0;
+                lock (_drainLock) _queue.SkipAll();
                 _on = true;
                 Add(Kind.Note, "diagnostics on (" + why + ")");
                 // gp-diag: makes the queued events into lines every 50 ms, off the input path and the engine lock.
@@ -68,7 +88,7 @@ public sealed class DebugTrace
                 _on = false;
                 _timer?.Dispose();
                 _timer = null;
-                lock (_qLock) _qCount = 0;
+                lock (_drainLock) _queue.SkipAll();
             }
         }
     }
@@ -97,30 +117,11 @@ public sealed class DebugTrace
 
     // ---- the input path's queue ---------------------------------------------------------------
 
-    private enum Raw : byte { Inject, X360, Ds4 }
-
-    private struct Pending
-    {
-        public long Us;
-        public Raw Type;
-        public InjectEvent Inject;
-        public X360Frame X360;
-        public Ds4Frame Ds4;
-    }
-
+    // One writer at a time into the queue (gp-rx and the pad thread both write).
     private readonly object _qLock = new();
-    private readonly Pending[] _q = new Pending[Queue];
-    private int _qHead, _qCount;
 
     /// <summary>Raw events dropped because the queue was full (the diagnostics thread fell behind).</summary>
-    public long Dropped { get; private set; }
-
-    private ref Pending Slot()
-    {
-        // Under _qLock: the next free slot, or the last one (overwritten and counted) when full.
-        if (_qCount == Queue) { Dropped++; return ref _q[(_qHead + Queue - 1) % Queue]; }
-        return ref _q[(_qHead + _qCount++) % Queue];
-    }
+    public long Dropped => _queue.Dropped;
 
     /// <summary>The keyboard and mouse events one flush injected (copied; made into lines by <see cref="Drain"/>).</summary>
     public void OnInject(ReadOnlySpan<InjectEvent> events, long nowUs)
@@ -128,8 +129,9 @@ public sealed class DebugTrace
         lock (_qLock)
             foreach (var e in events)
             {
-                ref var p = ref Slot();
-                p.Us = nowUs; p.Type = Raw.Inject; p.Inject = e;
+                ref var p = ref _queue.Next(out bool fresh);
+                p.Us = nowUs; p.Kind = DebugRaw.Type.Inject; p.Inject = e;
+                if (fresh) _queue.Commit();
             }
     }
 
@@ -138,8 +140,9 @@ public sealed class DebugTrace
     {
         lock (_qLock)
         {
-            ref var p = ref Slot();
-            p.Us = nowUs; p.Type = Raw.X360; p.X360 = f;
+            ref var p = ref _queue.Next(out bool fresh);
+            p.Us = nowUs; p.Kind = DebugRaw.Type.X360; p.X360 = f;
+            if (fresh) _queue.Commit();
         }
     }
 
@@ -148,8 +151,9 @@ public sealed class DebugTrace
     {
         lock (_qLock)
         {
-            ref var p = ref Slot();
-            p.Us = nowUs; p.Type = Raw.Ds4; p.Ds4 = f;
+            ref var p = ref _queue.Next(out bool fresh);
+            p.Us = nowUs; p.Kind = DebugRaw.Type.Ds4; p.Ds4 = f;
+            if (fresh) _queue.Commit();
         }
     }
 
@@ -158,22 +162,15 @@ public sealed class DebugTrace
     /// <summary>Turns the queued raw events into lines, oldest first (one thread at a time).</summary>
     public void Drain()
     {
+        if (_forward != null) return;
         lock (_drainLock)
-            while (true)
+            while (_queue.TryTake(out var p))
             {
-                Pending p;
-                lock (_qLock)
+                switch (p.Kind)
                 {
-                    if (_qCount == 0) return;
-                    p = _q[_qHead];
-                    _qHead = (_qHead + 1) % Queue;
-                    _qCount--;
-                }
-                switch (p.Type)
-                {
-                    case Raw.Inject: _one[0] = p.Inject; FormatInject(_one, p.Us); break;
-                    case Raw.X360: FormatX360(p.X360, p.Us); break;
-                    case Raw.Ds4: FormatDs4(p.Ds4, p.Us); break;
+                    case DebugRaw.Type.Inject: _one[0] = p.Inject; FormatInject(_one, p.Us); break;
+                    case DebugRaw.Type.X360: FormatX360(p.X360, p.Us); break;
+                    case DebugRaw.Type.Ds4: FormatDs4(p.Ds4, p.Us); break;
                 }
             }
     }
@@ -183,6 +180,11 @@ public sealed class DebugTrace
     public void Add(Kind kind, string text, long us = long.MinValue)
     {
         if (us == long.MinValue) us = _nowUs();
+        if (_forward != null)
+        {
+            _forward(us, kind, text);
+            return;
+        }
         lock (_lock)
         {
             _ring[_head] = new Event(us, kind, text);

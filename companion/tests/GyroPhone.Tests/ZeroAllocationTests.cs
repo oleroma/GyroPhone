@@ -98,7 +98,10 @@ public class ZeroAllocationTests
             Recorder = new InputRecorder(_ => { }),
         };
         engine.AttachSender(sender);
-        engine.StartOverlayThread();
+        // The companion's overlay side on its own thread, as in the companion (here in the same process).
+        var overlays = new OverlayHost(settings, engine.Shared, new AutoResetEvent(false), (on, c, s) => engine.SetOverlay(on, c, s));
+        engine.OverlayWake = overlays.Signal;
+        overlays.Start();
 
         var phone = FakePhone.Paired(Harness.Phone1Id, "OnePlus 15", Harness.Phone1Key);
         var welcome = new FakeSender();
@@ -106,7 +109,7 @@ public class ZeroAllocationTests
         engine.OnDatagram(phone.Hello(), phone.Addr, clock.NowUs);
         Assert.True(phone.OnWelcome(welcome.Last!));
         engine.AttachSender(sender);
-        engine.SetOverlay(true);
+        overlays.SetOverlay(true);
 
         // The first run warms everything up (first use, JIT). Then up to three measured runs, packet by packet, so a
         // failure names where the memory was made: the path is clean when one of them made none. A run can catch a

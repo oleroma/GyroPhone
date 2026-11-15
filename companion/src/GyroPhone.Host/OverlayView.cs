@@ -4,17 +4,13 @@ using GyroPhone.Protocol;
 namespace GyroPhone.Host;
 
 /// <summary>
-/// The engine's published copy of what the overlay windows, the held-keys marker and the UI read
-/// many times a second: the newest OVERLAY and layout, each overlay window's pose, its "Fade when
-/// phone rests" state, the outputs a laser pointer shows held, the injected held set, and whether a
-/// session is up. The engine writes the input part under its lock (mostly gp-rx, after each Flush), and
-/// <see cref="OverlayWorker"/> the overlay part on its own thread; readers copy it without that lock (<see cref="SeqLock"/>), so a reader
-/// paused by Windows mid-copy can never keep the input thread waiting.
+/// The overlay side's published copy of what the overlay windows and the UI read many times a second: the newest
+/// OVERLAY and layout, each overlay window's pose and its "Fade when phone rests" state. <see cref="OverlayWorker"/>
+/// writes it on its own thread (gp-overlay); readers copy it without a lock (<see cref="SeqLock"/>), so a reader
+/// paused by Windows mid-copy never keeps the overlay thread waiting.
 /// </summary>
 internal sealed class OverlayView
 {
-    private readonly SeqLock _seq = new();
-    // The overlay part has its own writer (gp-overlay, OverlayWorker), so its own sequence lock.
     private readonly SeqLock _overlaySeq = new();
 
     // OVERLAY
@@ -27,16 +23,6 @@ internal sealed class OverlayView
     private Window[] _windows = new Window[8];
     private int _count;
 
-    // What a laser pointer's Fire and Aim displays read: the newest STATE's buttons, keys and triggers.
-    private readonly StateFrame _held = new();
-
-    // The injected held set (the held-keys marker, the Debug window).
-    private readonly byte[] _injectedKeys = new byte[StateFrame.KeyBitmapSize];
-    private byte _injectedMouse;
-    private int _heldVersion;
-
-    private volatile bool _connected, _padGyroOn;
-
     private struct Window
     {
         public string Id;
@@ -48,20 +34,7 @@ internal sealed class OverlayView
         public PoseHistory? History;
     }
 
-    // ---- written under the engine lock (the overlay part: by OverlayWorker) ----
-
-    public bool Connected
-    {
-        get => _connected;
-        set => _connected = value;
-    }
-
-    /// <summary>The phone's "Use PC controller for gyro ratchet" is on (the PC controller counts for Fire, Aim and handles).</summary>
-    public bool PadGyroOn
-    {
-        get => _padGyroOn;
-        set => _padGyroOn = value;
-    }
+    // ---- written by OverlayWorker ----
 
     /// <summary>The newest OVERLAY (<paramref name="rxUs"/> long.MinValue: none), layout, rest state and every window's pose.</summary>
     public void PublishOverlay(OverlayFrame f, long rxUs, OverlayLayout? layout, OverlayRest rest,
@@ -103,31 +76,7 @@ internal sealed class OverlayView
         }
     }
 
-    /// <summary>The newest STATE's buttons, hat, mouse buttons, triggers and keys (what <see cref="LaserFire.Held"/> reads).</summary>
-    public void PublishHeldOutputs(StateFrame s)
-    {
-        _seq.BeginWrite();
-        _held.Buttons = s.Buttons;
-        _held.Hat = s.Hat;
-        _held.MouseButtons = s.MouseButtons;
-        _held.Lt = s.Lt;
-        _held.Rt = s.Rt;
-        s.Keys.AsSpan().CopyTo(_held.Keys);
-        _seq.EndWrite();
-    }
-
-    public int HeldVersion => _heldVersion;
-
-    public void PublishInjected(byte[] keys, byte mouse, int version)
-    {
-        _seq.BeginWrite();
-        keys.AsSpan().CopyTo(_injectedKeys);
-        _injectedMouse = mouse;
-        _heldVersion = version;
-        _seq.EndWrite();
-    }
-
-    // ---- read from any thread, no engine lock ----
+    // ---- read from any thread, no lock ----
 
     /// <summary>
     /// Copies the newest OVERLAY into <paramref name="into"/> with window <paramref name="id"/>'s pose; returns
@@ -242,30 +191,6 @@ internal sealed class OverlayView
             long at = _liveAtUs;
             if (_overlaySeq.ReadRetry(s)) continue;
             return OverlayRest.LiveDpsOf(dps, at, nowUs);
-        }
-    }
-
-    /// <summary><see cref="LaserFire.Held"/> on the newest STATE and the PC controller's state given.</summary>
-    public bool Held(int code, uint pcHeld, float pcL2, float pcR2)
-    {
-        while (true)
-        {
-            int s = _seq.ReadBegin();
-            bool held = LaserFire.Held(code, _held, pcHeld, pcL2, pcR2);
-            if (!_seq.ReadRetry(s)) return held;
-        }
-    }
-
-    /// <summary>The injected held set into <paramref name="keys"/>; returns its version.</summary>
-    public int Injected(Span<byte> keys, out byte mouseButtons)
-    {
-        while (true)
-        {
-            int s = _seq.ReadBegin();
-            _injectedKeys.AsSpan().CopyTo(keys);
-            mouseButtons = _injectedMouse;
-            int v = _heldVersion;
-            if (!_seq.ReadRetry(s)) return v;
         }
     }
 }

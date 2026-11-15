@@ -16,8 +16,8 @@ public class EngineLockTests
         var h = new Harness();
         var phone = h.NewPhone();
         h.Connect(phone);
-        string id = h.Engine.AddOverlay(OverlayKind.Laser);
-        h.Engine.SetOverlay(true);
+        string id = h.Overlays.AddOverlay(OverlayKind.Laser);
+        h.Overlays.SetOverlay(true);
         h.Send(phone, phone.Sealed(PacketType.Overlay, new byte[Wire.OverlayPlain]));
         // The left button held: the Fire display reads it from then on.
         h.Send(phone, phone.State(f => f.MouseButtons = 1));
@@ -28,10 +28,10 @@ public class EngineLockTests
             readersDone = Finishes(() =>
             {
                 var f = new OverlayFrame();
-                Assert.True(h.Engine.OverlaySnapshot(f, id, out _) >= 0);
-                Assert.True(h.Engine.OutputHeld(LaserFire.Mouse));
-                h.Engine.OverlayResting(id);
-                h.Engine.OverlayStillnessDps();
+                Assert.True(h.Overlays.OverlaySnapshot(f, id, out _) >= 0);
+                Assert.True(h.Overlays.OutputHeld(LaserFire.Mouse));
+                h.Overlays.OverlayResting(id);
+                h.Overlays.OverlayStillnessDps();
                 Assert.True(h.Engine.Connected);
                 h.Engine.HeldSnapshot(new byte[StateFrame.KeyBitmapSize], out _);
                 _ = h.Engine.MouseCatchingUp;
@@ -54,7 +54,7 @@ public class EngineLockTests
         // silence drops the pending STATE, and Fire still shows what the phone sent last (as before the view).
         h.Send(phone, phone.State(f => f.MouseButtons = 1), flush: false);
         h.Tick(Wire.ReleaseTimeoutMs + 50);
-        Assert.True(h.Engine.OutputHeld(LaserFire.Mouse));
+        Assert.True(h.Overlays.OutputHeld(LaserFire.Mouse));
     }
 
     [Fact]
@@ -86,15 +86,14 @@ public class EngineLockTests
         h.Engine.Recorder = new InputRecorder(lines.Add);
         var phone = h.NewPhone();
         h.Connect(phone);
-        string id = h.Engine.AddOverlay(OverlayKind.Phone);
         using var entered = new ManualResetEventSlim();
         using var go = new ManualResetEventSlim();
-        // The UI holds the engine lock (a settings change) while a moving STATE comes in.
-        var ui = Task.Run(() => h.Engine.UpdateOverlaySettings(id, _ =>
+        // The UI holds the engine lock (a change of the keyboard and mouse route) while a moving STATE comes in.
+        var ui = Task.Run(() => h.Engine.ChangeKeyMouseRoute(() =>
         {
             entered.Set();
             go.Wait(5000);
-        }));
+        }, "test"));
         Assert.True(entered.Wait(5000));
         var release = Task.Run(async () =>
         {
