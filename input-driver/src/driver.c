@@ -48,6 +48,17 @@
 
 #define GPI_NOTCH 120
 
+/*
+ * The mouse and keyboard's own container: Windows groups devices into physical "boxes" by container
+ * id, and a device without one of its own counts as part of the PC. Windows then takes our mouse
+ * for the laptop's built-in pointing device and drops its left clicks while any key is held (its
+ * guard against palms brushing a touchpad while typing). With their own container they count as a
+ * separate box, like a USB mouse plugged in, and every click gets through.
+ * {B7D1E5A2-3C84-4F19-A6E0-5D2C8B91F473}
+ */
+static const GUID GpiContainerId =
+    { 0xb7d1e5a2, 0x3c84, 0x4f19, { 0xa6, 0xe0, 0x5d, 0x2c, 0x8b, 0x91, 0xf4, 0x73 } };
+
 typedef struct _GPI_CONTEXT {
     SRWLOCK Lock;
     VHFHANDLE Vhf;           /* the plugged mouse and keyboard, NULL when none */
@@ -189,6 +200,7 @@ static NTSTATUS GpiPlug(WDFDEVICE device, PGPI_CONTEXT ctx, WDFFILEOBJECT owner,
     config.VendorID = GPI_VENDOR_ID;
     config.ProductID = GPI_PRODUCT_ID;
     config.VersionNumber = GPI_VERSION;
+    config.ContainerID = GpiContainerId;
     config.VhfClientContext = ctx;
     config.EvtVhfAsyncOperationGetFeature = GpiEvtGetFeature;
     config.EvtVhfAsyncOperationSetFeature = GpiEvtSetFeature;
