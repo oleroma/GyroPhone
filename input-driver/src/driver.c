@@ -121,6 +121,18 @@ NTSTATUS GpiEvtDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INIT DeviceIn
     status = WdfDeviceCreate(&DeviceInit, &attributes, &device);
     if (!NT_SUCCESS(status)) return status;
 
+    /* Removable, so Windows gives this device (and the mouse and keyboard under it, which inherit
+       it) a container of its own instead of the PC's: Windows ignores a container id set on the
+       mouse and keyboard while their parent counts as part of the PC (see GpiContainerId).
+       SurpriseRemovalOK keeps it off "Safely Remove Hardware". */
+    {
+        WDF_DEVICE_PNP_CAPABILITIES caps;
+        WDF_DEVICE_PNP_CAPABILITIES_INIT(&caps);
+        caps.Removable = WdfTrue;
+        caps.SurpriseRemovalOK = WdfTrue;
+        WdfDeviceSetPnpCapabilities(device, &caps);
+    }
+
     ctx = GpiGetContext(device);
     InitializeSRWLock(&ctx->Lock);
     GpiResetReports(ctx);
