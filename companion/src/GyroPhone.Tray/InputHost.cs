@@ -424,12 +424,20 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
         StateChanged();
     }
 
-    /// <summary>Plugs the input driver's mouse and keyboard when it's installed and they aren't plugged (off the input path).</summary>
+    /// <summary>
+    /// Notes whether the input driver is installed (Performance shows "Use input driver" only then) and, while that switch
+    /// is on, plugs its mouse and keyboard when they aren't plugged (off the input path).
+    /// </summary>
     private void CheckInputDriver()
     {
         if (Volatile.Read(ref _exited) != 0 || _keyMouse.DriverReady) return;
-        _inputDriverInstalled = HidInputSink.Installed;
-        if (_server.State != ServerState.Running || !_inputDriverInstalled) return;
+        bool installed = HidInputSink.Installed;
+        if (installed != _inputDriverInstalled)
+        {
+            _inputDriverInstalled = installed;
+            StateChanged();
+        }
+        if (_server.State != ServerState.Running || !installed || !_keyMouse.UseInputDriver) return;
         bool ok = false;
         _engine.ChangeKeyMouseRoute(() => ok = _keyMouse.Retry(), "input driver plugged");
         if (ok) StateChanged();
@@ -579,7 +587,7 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
 
     public void SetCatchUpMs(int ms) => _engine.SetCatchUpMs(ms);
 
-    public void SetUseInputDriver(bool on) => _engine.SetUseInputDriver(on, v => _keyMouse.UseInputDriver = v);
+    public void SetUseInputDriver(bool on) => _engine.SetUseInputDriver(on, _keyMouse.SetUseInputDriver);
 
     public void OpenPairingWindow() => _engine.OpenPairingWindow();
 
