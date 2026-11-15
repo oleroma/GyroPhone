@@ -203,13 +203,6 @@ internal fun GyroDisplaySettingsScreen(
                     Hint("Arrows along the phone's own right, up and screen directions.")
                     SwitchRow("Axonometric view", d.axonometric, AXON_HINT) { set(d.copy(axonometric = it)) }
                     SwitchRow("Perspective", d.perspective, "Nearer parts show bigger, as a camera sees them. Off: flat, every part the same size wherever it is.") { set(d.copy(perspective = it)) }
-                    SwitchRow("Show movement", d.move, "The phone also slides when you nudge it: up, down, left, right, and bigger or smaller toward and away. Short moves only: the phone feels pushes, not where it is, so once it is nearly still it glides back to the middle. Every ratchet press puts it back at once.") { set(d.copy(move = it)) }
-                    if (d.move) {
-                        PercentSlider("Movement amount", d.moveAmount, 0.25f..4f) { set(d.copy(moveAmount = it)) }
-                        FloatSlider("Still below %.2f m/s²", d.moveStillBelow, 0.05f..2f, 0.05f) { set(d.copy(moveStillBelow = it)) }
-                        Hint("Shaking less than this counts as still, and it glides back. Higher: it goes back sooner, even while you move slowly.")
-                        FloatSlider("Returns in %.1f s", d.moveReturnSeconds, 0.2f..5f, 0.1f) { set(d.copy(moveReturnSeconds = it)) }
-                    }
                 }
 
                 GyroDisplayKind.RATCHET_RING ->
@@ -439,6 +432,20 @@ internal fun GyroDisplaySettingsScreen(
             }
         }
         val colours = if (!laser) null else category(runtime, "gyroDisplayColours", "Colours", "Each part's colour") { Colours() }
+        val move = if (d.kind != GyroDisplayKind.PHONE) null else category(runtime, "gyroDisplayMove", "Move", "Show movement, amount, sensitivity, still, return") {
+            SwitchRow("Show movement", d.move, "The phone also slides when you move it: up, down, left, right, and bigger or smaller toward and away. Short moves only: the phone feels pushes, not where it is, so once it is still it glides back to the middle. A held ratchet stops it and takes it back to the middle.") { set(d.copy(move = it)) }
+            if (d.move) {
+                PercentSlider("Movement amount", d.moveAmount, 0.25f..4f) { set(d.copy(moveAmount = it)) }
+                FloatSlider("Ignore pushes below %.2f m/s²", d.moveIgnoreBelow, 0f..1f, 0.01f) { set(d.copy(moveIgnoreBelow = it)) }
+                Hint("Sensitivity: smaller pushes don't count as movement (hand shake, sensor noise). Lower: it follows gentler moves but jitters more.")
+                FloatSlider("Still below %.2f m/s²", d.moveStillBelow, 0.05f..10f, 0.05f) { set(d.copy(moveStillBelow = it)) }
+                FloatSlider("Still for %.2f s", d.moveStillFor, 0f..3f, 0.05f) { set(d.copy(moveStillFor = it)) }
+                Hint("Shaking less than Still below for Still for counts as still: it stops and glides back. Higher Still below: it goes back sooner, even while you move slowly.")
+                FloatSlider("Returns in %.1f s", d.moveReturnSeconds, 0.2f..5f, 0.1f) { set(d.copy(moveReturnSeconds = it)) }
+                FloatSlider("On ratchet returns in %.2f s", d.moveRatchetSeconds, 0f..3f, 0.05f) { set(d.copy(moveRatchetSeconds = it)) }
+                Hint("While a ratchet is held it stops moving and goes back to the middle in this time; 0 is at once.")
+            }
+        }
         val turning = if (!d.kind.pose) null else category(runtime, "gyroDisplayTurning", "Turning", "Turns with, gravity, ease back, turn amount, Level", defaultOpen = true) {
             GroupTitle("Turns with")
             Chips(TurnsWith.entries.map { it.label to it }, d.turnsWith) { set(d.copy(turnsWith = it)) }
@@ -490,7 +497,7 @@ internal fun GyroDisplaySettingsScreen(
                 }
             }) { Text("Level") }
         }
-        val items = listOfNotNull(look, paint, snake, colours, turning)
+        val items = listOfNotNull(look, paint, snake, colours, move, turning)
         ReorderableSections(runtime, "gyroDisplay", items)
     }
     picking?.let { c ->

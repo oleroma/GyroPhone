@@ -24,10 +24,12 @@ public sealed class PhoneMove
     private const float CalmDps = 20f;
     /// <summary>Once still, the speed goes this fast.</summary>
     private const float StopS = 0.03f;
-    private const float Noise = 0.06f;
+    /// <summary>Default: pushes below this (m/s²) are taken as noise.</summary>
+    public const float Noise = 0.05f;
     private const float SpeedFadeS = 2f;
     private const float ShakeS = 0.08f;
-    private const float StillForS = 0.1f;
+    /// <summary>Default: still this long before it glides back.</summary>
+    public const float StillForS = 0.15f;
     private const float MaxM = 0.5f;
 
     private float _gx, _gy, _gz;
@@ -60,8 +62,13 @@ public sealed class PhoneMove
     /// the pose shown (row-major 3×3, phone into view). It glides back, 95% in <paramref name="returnSeconds"/>,
     /// once it shakes less than <paramref name="stillBelow"/> m/s².
     /// </summary>
-    /// <remarks>While a ratchet is <paramref name="held"/> it stays in the middle and nothing adds up.</remarks>
-    public void Push(float upX, float upY, float upZ, float dt, float[]? view, float stillBelow, float returnSeconds, bool held = false)
+    /// <remarks>
+    /// While a ratchet is <paramref name="held"/> it stays in the middle and nothing adds up. Pushes under
+    /// <paramref name="ignoreBelow"/> m/s² count as nothing (bigger ones lose that much); it must be still for
+    /// <paramref name="stillFor"/> seconds before it stops and glides back.
+    /// </remarks>
+    public void Push(float upX, float upY, float upZ, float dt, float[]? view, float stillBelow, float returnSeconds, bool held = false,
+        float stillFor = StillForS, float ignoreBelow = Noise, float ratchetSeconds = 0f)
     {
         float x = upX * G, y = upY * G, z = upZ * G;
         if (!_hasG)
@@ -79,10 +86,20 @@ public sealed class PhoneMove
         float lx = x - _gx, ly = y - _gy, lz = z - _gz;
         float a = MathF.Sqrt(lx * lx + ly * ly + lz * lz);
         _shake += (a - _shake) * Math.Min(dt / ShakeS, 1f);
-        if (a < Noise) lx = ly = lz = 0f;
+        // A soft dead zone: noise and tremor count as nothing, and a push's speeding up and slowing down lose the same.
+        float keep = a <= ignoreBelow || a == 0f ? 0f : (a - ignoreBelow) / a;
+        lx *= keep; ly *= keep; lz *= keep;
         if (held)
         {
-            Center();
+            // A held ratchet: nothing adds up; back to the middle in ratchetSeconds (at once at 0).
+            _vx = _vy = _vz = 0f;
+            _still = 0f;
+            if (ratchetSeconds <= 0f) X = Y = Z = 0f;
+            else
+            {
+                float back = MathF.Exp(-3f * dt / ratchetSeconds);
+                X *= back; Y *= back; Z *= back;
+            }
             return;
         }
         if (view != null)
@@ -98,7 +115,7 @@ public sealed class PhoneMove
         _vz = (_vz + lz * dt) * fade;
         float px = X + _vx * dt, py = Y + _vy * dt, pz = Z + _vz * dt;
         _still = _shake < stillBelow ? _still + dt : 0f;
-        if (_still >= StillForS)
+        if (_still >= stillFor)
         {
             // Still: it has stopped (so a move doesn't swing back past where it ended), then glides back.
             float stop = MathF.Exp(-dt / StopS);

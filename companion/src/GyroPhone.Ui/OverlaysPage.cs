@@ -45,8 +45,8 @@ internal sealed class OverlaysPage : Page
     private readonly Seg<int> _tabs;
     private int _tab;
     /// <summary>Tabs as on the phone: Window (PC only), Look, Paint, Snake, Colours and Turning; Paint, Snake and Colours only for the pointer.</summary>
-    private const int WindowTab = 0, LookTab = 1, PaintTab = 2, SnakeTab = 3, ColoursTab = 4, TurnTab = 5;
-    private readonly StackPanel _windowTab, _lookTab, _paintTab, _snakeTab, _coloursTab, _turnTab;
+    private const int WindowTab = 0, LookTab = 1, PaintTab = 2, SnakeTab = 3, ColoursTab = 4, TurnTab = 5, MoveTab = 6;
+    private readonly StackPanel _windowTab, _lookTab, _paintTab, _snakeTab, _coloursTab, _turnTab, _moveTab;
     /// <summary>The Colours card: in the Look tab, or the pointer's own Colours tab.</summary>
     private readonly Border _coloursCard;
 
@@ -56,7 +56,7 @@ internal sealed class OverlaysPage : Page
     private readonly SliderRow _opacity;
     private readonly CheckBox _showMove;
     private readonly StackPanel _moveRows;
-    private readonly SliderRow _moveAmount, _moveStill, _moveReturn;
+    private readonly SliderRow _moveAmount, _moveIgnore, _moveStill, _moveStillFor, _moveReturn, _moveRatchet;
     private readonly Seg<OverlayQuality> _quality;
     private readonly Seg<int> _fps;
 
@@ -270,7 +270,7 @@ internal sealed class OverlaysPage : Page
         {
             _tab = t;
             ShowTab();
-        }, true, ("Window", WindowTab), ("Look", LookTab), ("Paint", PaintTab), ("Snake", SnakeTab), ("Colours", ColoursTab), ("Turning", TurnTab));
+        }, true, ("Window", WindowTab), ("Look", LookTab), ("Paint", PaintTab), ("Snake", SnakeTab), ("Colours", ColoursTab), ("Move", MoveTab), ("Turning", TurnTab));
         // Tabs: the segmented buttons in the tab style.
         foreach (var rb in ((Panel)_tabs.View).Children.OfType<RadioButton>()) rb.Style = Parts.Style("Tab");
         tabBar.Child = _tabs.View;
@@ -281,7 +281,8 @@ internal sealed class OverlaysPage : Page
         _snakeTab = new StackPanel();
         _coloursTab = new StackPanel();
         _turnTab = new StackPanel();
-        foreach (var t in new[] { _windowTab, _lookTab, _paintTab, _snakeTab, _coloursTab, _turnTab }) _settings.Children.Add(t);
+        _moveTab = new StackPanel();
+        foreach (var t in new[] { _windowTab, _lookTab, _paintTab, _snakeTab, _coloursTab, _moveTab, _turnTab }) _settings.Children.Add(t);
 
         // Window tab
         var (show, sb) = Parts.Card();
@@ -318,18 +319,6 @@ internal sealed class OverlaysPage : Page
         pb.Children.Add(_trails);
         _phoneAxon = Parts.Toggle("Axonometric view", () => Change(o => o.Axonometric = !o.Axonometric), AxonHint);
         pb.Children.Add(_phoneAxon);
-        _showMove = Parts.Toggle("Show movement", () => Change(o => o.ShowMove = !o.ShowMove),
-            "The phone also slides when you nudge it: up, down, left, right, and bigger or smaller toward and away. Short moves only: the phone feels pushes, not where it is, so once it is nearly still it glides back to the middle. Every ratchet press puts it back at once.");
-        pb.Children.Add(_showMove);
-        _moveRows = new StackPanel();
-        _moveAmount = new SliderRow("Movement amount", 25, 400, 5, v => $"{v:0}%", v => Change(o => o.MoveAmount = (float)v / 100f));
-        _moveStill = new SliderRow("Still below", 0.05, 2, 0.05, v => $"{v:0.00} m/s²", v => Change(o => o.MoveStillBelow = (float)v));
-        _moveReturn = new SliderRow("Returns in", 0.2, 5, 0.1, v => $"{v:0.0} s", v => Change(o => o.MoveReturnSeconds = (float)v));
-        _moveRows.Children.Add(_moveAmount.View);
-        _moveRows.Children.Add(_moveStill.View);
-        _moveRows.Children.Add(Parts.Text("Shaking less than this counts as still, and it glides back. Higher: it goes back sooner, even while you move slowly.", "Hint"));
-        _moveRows.Children.Add(_moveReturn.View);
-        pb.Children.Add(_moveRows);
         pb.Children.Add(Parts.Divider());
         pb.Children.Add(Parts.Text("Controller handles"));
         _handles = new Seg<OverlayHandles>(h => Change(o => o.Handles = h), false,
@@ -344,6 +333,30 @@ internal sealed class OverlaysPage : Page
         pb.Children.Add(Parts.Text("PC: the controller plugged into this PC, while \"Use PC controller for gyro ratchet\" is on in the phone's Connection settings.", "Hint"));
         _phoneLook = phone;
         _lookTab.Children.Add(phone);
+
+        // Move tab (Phone only)
+        var (mv, mb) = Parts.Card("Movement");
+        _showMove = Parts.Toggle("Show movement", () => Change(o => o.ShowMove = !o.ShowMove),
+            "The phone also slides when you move it: up, down, left, right, and bigger or smaller toward and away. Short moves only: the phone feels pushes, not where it is, so once it is still it glides back to the middle. A held ratchet stops it and takes it back to the middle.");
+        mb.Children.Add(_showMove);
+        _moveRows = new StackPanel();
+        _moveAmount = new SliderRow("Movement amount", 25, 400, 5, v => $"{v:0}%", v => Change(o => o.MoveAmount = (float)v / 100f));
+        _moveIgnore = new SliderRow("Ignore pushes below", 0, 1, 0.01, v => $"{v:0.00} m/s²", v => Change(o => o.MoveIgnoreBelow = (float)v));
+        _moveStill = new SliderRow("Still below", 0.05, 10, 0.05, v => $"{v:0.00} m/s²", v => Change(o => o.MoveStillBelow = (float)v));
+        _moveStillFor = new SliderRow("Still for", 0, 3, 0.05, v => $"{v:0.00} s", v => Change(o => o.MoveStillFor = (float)v));
+        _moveReturn = new SliderRow("Returns in", 0.2, 5, 0.1, v => $"{v:0.0} s", v => Change(o => o.MoveReturnSeconds = (float)v));
+        _moveRows.Children.Add(_moveAmount.View);
+        _moveRows.Children.Add(_moveIgnore.View);
+        _moveRows.Children.Add(Parts.Text("Sensitivity: smaller pushes don't count as movement (hand shake, sensor noise). Lower: it follows gentler moves but jitters more.", "Hint"));
+        _moveRows.Children.Add(_moveStill.View);
+        _moveRows.Children.Add(_moveStillFor.View);
+        _moveRows.Children.Add(Parts.Text("Shaking less than Still below for Still for counts as still: it stops and glides back. Higher Still below: it goes back sooner, even while you move slowly.", "Hint"));
+        _moveRows.Children.Add(_moveReturn.View);
+        _moveRatchet = new SliderRow("On ratchet returns in", 0, 3, 0.05, v => $"{v:0.00} s", v => Change(o => o.MoveRatchetSeconds = (float)v));
+        _moveRows.Children.Add(_moveRatchet.View);
+        _moveRows.Children.Add(Parts.Text("While a ratchet is held it stops moving and goes back to the middle in this time; 0 is at once.", "Hint"));
+        mb.Children.Add(_moveRows);
+        _moveTab.Children.Add(mv);
 
         var (shape, shb) = Parts.Card("Shape");
         _shape = new Seg<OverlayShape>(s => Change(o => o.Shape = s), true,
@@ -777,11 +790,12 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_snakeTab, _tab == SnakeTab);
         Parts.Show(_coloursTab, _tab == ColoursTab);
         Parts.Show(_turnTab, _tab == TurnTab);
+        Parts.Show(_moveTab, _tab == MoveTab);
     }
 
     /// <summary>Paint, Snake and Colours tabs only for the pointer; other overlays keep their colours in Look.
     /// A tab that goes away falls back to Look.</summary>
-    private void ShowTabs(bool laser, bool still)
+    private void ShowTabs(bool laser, bool still, bool phone)
     {
         var home = laser ? _coloursTab : _lookTab;
         if (_coloursCard.Parent != home)
@@ -794,7 +808,8 @@ internal sealed class OverlaysPage : Page
         _tabs.Show(ColoursTab, laser);
         // The FPS overlay, Ratchet ring and Speed graph don't turn with the phone.
         _tabs.Show(TurnTab, !still);
-        bool gone = _tab switch { PaintTab or SnakeTab or ColoursTab => !laser, TurnTab => still, _ => false };
+        _tabs.Show(MoveTab, phone);
+        bool gone = _tab switch { PaintTab or SnakeTab or ColoursTab => !laser, TurnTab => still, MoveTab => !phone, _ => false };
         if (gone)
         {
             _tab = LookTab;
@@ -1029,6 +1044,9 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_moveRows, o.ShowMove);
         _moveAmount.Set(MathF.Round(o.MoveAmount * 100f));
         _moveStill.Set(o.MoveStillBelow);
+        _moveIgnore.Set(o.MoveIgnoreBelow);
+        _moveStillFor.Set(o.MoveStillFor);
+        _moveRatchet.Set(o.MoveRatchetSeconds);
         _moveReturn.Set(o.MoveReturnSeconds);
         Parts.SetChecked(_shapeAxon, o.Axonometric);
         _laserShape.Set(o.LaserRifle ? 1 : o.LaserCrosshair ? 2 : 0);
@@ -1175,7 +1193,7 @@ internal sealed class OverlaysPage : Page
         _diskRange.Set(o.DiskRange);
         Parts.SetChecked(_crosshair, o.Crosshair);
         ShowColors(o);
-        ShowTabs(laser, !o.Turns);
+        ShowTabs(laser, !o.Turns, o.Kind == OverlayKind.Phone);
 
         _turnsWith.Set(o.TurnsWith);
         _turnsHint.Text = o.TurnsWith switch

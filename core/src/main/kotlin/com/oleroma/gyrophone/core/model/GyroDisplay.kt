@@ -93,13 +93,17 @@ data class GyroDisplay(
     /**
      * PHONE: shows short moves too (up, down, left, right, toward and away; [com.oleroma.gyrophone.core.engine.PhoneMove]),
      * [moveAmount] times as far (1 = 10 cm moves it half the phone's length), gliding back to the
-     * middle within [moveReturnSeconds] once the phone shakes less than [moveStillBelow] m/s²,
-     * and back at once on every ratchet press.
+     * middle within [moveReturnSeconds] once the phone has shaken less than [moveStillBelow] m/s²
+     * for [moveStillFor] seconds, pushes under [moveIgnoreBelow] m/s² not counting as movement;
+     * a held ratchet stopping it and taking it back to the middle in [moveRatchetSeconds] (0 = at once).
      */
     val move: Boolean = false,
     val moveAmount: Float = 1f,
     val moveStillBelow: Float = 0.3f,
     val moveReturnSeconds: Float = 1f,
+    val moveStillFor: Float = 0.15f,
+    val moveIgnoreBelow: Float = 0.05f,
+    val moveRatchetSeconds: Float = 0f,
     /** GRAPH: its full height, ± this many deg/s. */
     val graphRange: Int = 360,
     val graphSeconds: Int = 3,

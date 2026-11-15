@@ -49,6 +49,7 @@ public sealed class OverlayPose
     public readonly PhoneMove Move = new();
     private bool _moving;
     private int _movePresses = -1;
+    private long _moveAt;
     private readonly float[] _view = new float[9];
 
     public float W => _w;
@@ -205,9 +206,13 @@ public sealed class OverlayPose
         bool pressed = _movePresses >= 0 && f.RatchetPresses != _movePresses;
         _movePresses = f.RatchetPresses;
         if (!on) return;
-        if (pressed || f.RatchetHeld) Move.Center();
-        if (!f.PoseLive || !f.HasUp) return;
-        Move.Turn(f.TurnYaw, f.TurnPitch, f.TurnRoll, f.TurnSeconds);
+        if ((pressed || f.RatchetHeld) && s.MoveRatchetSeconds <= 0f) Move.Center();
+        // Its own clock: the frame's accelerometer average covers the time since the last frame, gyro or not.
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        float dt = _moveAt == 0 ? 0f : Math.Min((now - _moveAt) / (float)System.Diagnostics.Stopwatch.Frequency, 0.1f);
+        _moveAt = now;
+        if (!f.HasUp) return;
+        if (f.PoseLive) Move.Turn(f.TurnYaw, f.TurnPitch, f.TurnRoll, f.TurnSeconds);
         float w = _w, x = _x, y = _y, z = _z;
         if (_rest is { Length: 4 } r)
         {
@@ -220,7 +225,7 @@ public sealed class OverlayPose
         m[0] = 1 - 2 * (y * y + z * z); m[1] = 2 * (x * y - w * z); m[2] = 2 * (x * z + w * y);
         m[3] = 2 * (x * y + w * z); m[4] = 1 - 2 * (x * x + z * z); m[5] = 2 * (y * z - w * x);
         m[6] = 2 * (x * z - w * y); m[7] = 2 * (y * z + w * x); m[8] = 1 - 2 * (x * x + y * y);
-        Move.Push(f.UpX, f.UpY, f.UpZ, f.TurnSeconds, m, s.MoveStillBelow, s.MoveReturnSeconds, f.RatchetHeld);
+        Move.Push(f.UpX, f.UpY, f.UpZ, dt, m, s.MoveStillBelow, s.MoveReturnSeconds, f.RatchetHeld, s.MoveStillFor, s.MoveIgnoreBelow, s.MoveRatchetSeconds);
     }
 
     /// <summary>One step of easing back over <paramref name="dt"/> seconds: the heading (always with gravity) or the whole pose.</summary>

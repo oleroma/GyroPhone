@@ -110,7 +110,7 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         if (moves) {
             move.held = held
             move.turn(yaw, pitch, roll, dtSeconds)
-            if (pressed || held) move.center()
+            if (held && display.moveRatchetSeconds <= 0f) move.center()
         }
     }
 
@@ -430,7 +430,7 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         if (d.showsMove) {
             pose.quaternion(upQ)
             shownMatrix(upQ, restIn(d), 1f, upView)
-            move.push(x, y, z, g, System.nanoTime(), upView, d.moveStillBelow, d.moveReturnSeconds)
+            move.push(x, y, z, g, System.nanoTime(), upView, d.moveStillBelow, d.moveReturnSeconds, d.moveStillFor, d.moveIgnoreBelow, d.moveRatchetSeconds)
         }
     }
 

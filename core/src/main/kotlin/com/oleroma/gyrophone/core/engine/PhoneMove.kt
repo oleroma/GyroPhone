@@ -11,7 +11,7 @@ import kotlin.math.sqrt
  * give a position, but their small errors grow into meters within seconds. So this shows nudges
  * only: the push less gravity is added up into a speed and a position; once the phone is nearly
  * still the speed stops at once (so a move ends where it ended, not swinging back) and the
- * position glides back to the middle. A ratchet press, and holding one, keeps it in the middle ([held]).
+ * position glides back to the middle. A held ratchet ([held]) stops it and takes it back to the middle, at once or over a set time.
  *
  * Gravity in the phone's frame is followed by the gyro ([turn], the gyro thread) and pulled
  * slowly toward the accelerometer's reading ([push], its own thread), so turning the phone isn't
@@ -69,11 +69,16 @@ class PhoneMove {
     /**
      * An accelerometer reading ([ax], [ay], [az] in the phone's frame, gravity [g] in its units) at
      * [nowNs]; [view] the pose shown now (row-major 3×3, phone into view), null for none.
-     * [returnSeconds]: 95% of the way back in that long once the phone is still below
-     * [stillBelow] m/s².
+     * Pushes under [ignoreBelow] m/s² count as nothing (and bigger ones lose that much), so hand
+     * tremor and sensor noise don't move it. Once it shakes less than [stillBelow] m/s² for
+     * [stillFor] seconds it stops, then goes 95% of the way back in [returnSeconds].
      */
     @Synchronized
-    fun push(ax: Float, ay: Float, az: Float, g: Float, nowNs: Long, view: FloatArray?, stillBelow: Float, returnSeconds: Float) {
+    fun push(
+        ax: Float, ay: Float, az: Float, g: Float, nowNs: Long, view: FloatArray?,
+        stillBelow: Float, returnSeconds: Float, stillFor: Float = STILL_FOR_S, ignoreBelow: Float = NOISE,
+        ratchetSeconds: Float = 0f,
+    ) {
         if (g <= 0f) return
         val k = G / g
         val x = ax * k
@@ -97,12 +102,20 @@ class PhoneMove {
         var lz = z - gz
         val a = sqrt(lx * lx + ly * ly + lz * lz)
         shake += (a - shake) * (dt / SHAKE_S).coerceAtMost(1f)
-        // Sensor noise and leftover gravity, not a move.
-        if (a < NOISE) {
-            lx = 0f; ly = 0f; lz = 0f
-        }
+        // Sensor noise, tremor and leftover gravity, not a move: taken off every push (a soft dead zone, so a push
+        // just over it doesn't jump in, and its speeding up and slowing down lose the same).
+        val keep = if (a <= ignoreBelow || a == 0f) 0f else (a - ignoreBelow) / a
+        lx *= keep; ly *= keep; lz *= keep
         if (held) {
-            center()
+            // A held ratchet: nothing adds up; back to the middle in [ratchetSeconds] (at once at 0).
+            vx = 0f; vy = 0f; vz = 0f
+            still = 0f
+            if (ratchetSeconds <= 0f) {
+                px = 0f; py = 0f; pz = 0f
+            } else {
+                val back = exp(-3f * dt / ratchetSeconds)
+                px *= back; py *= back; pz *= back
+            }
             return
         }
         if (view != null) {
@@ -117,7 +130,7 @@ class PhoneMove {
         vz = (vz + lz * dt) * fade
         px += vx * dt; py += vy * dt; pz += vz * dt
         still = if (shake < stillBelow) still + dt else 0f
-        if (still >= STILL_FOR_S) {
+        if (still >= stillFor) {
             // Still: it has stopped (the speed goes at once, so a move doesn't swing back past where it ended), then glides back.
             val stop = exp(-dt / STOP_S)
             vx *= stop; vy *= stop; vz *= stop
@@ -165,8 +178,8 @@ class PhoneMove {
         private const val CALM_G = 0.4f
         private const val G_FOLLOW_S = 0.5f
         private const val G_FOLLOW_MOVING_S = 20f
-        /** Pushes below this (m/s²) are taken as noise. */
-        private const val NOISE = 0.06f
+        /** Default: pushes below this (m/s²) are taken as noise. */
+        const val NOISE = 0.05f
         /** How long the speed takes to fade to a third on its own while moving, so drift can't build up for long. */
         private const val SPEED_FADE_S = 2f
         /** Once still, the speed goes this fast. */
@@ -174,8 +187,8 @@ class PhoneMove {
         /** Turning slower than this (deg/s) the accelerometer may set gravity. */
         private const val CALM_DPS = 20f
         private const val SHAKE_S = 0.08f
-        /** Still that long before it glides back, so a pause mid-move doesn't pull it. */
-        private const val STILL_FOR_S = 0.1f
+        /** Default: still that long before it glides back, so a pause mid-move doesn't pull it. */
+        const val STILL_FOR_S = 0.15f
         private const val MAX_M = 0.5f
         /** Default still threshold, m/s². */
         const val STILL_BELOW = 0.3f
