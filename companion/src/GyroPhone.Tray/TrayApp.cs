@@ -1270,7 +1270,11 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         sb.Append(s.LatP50Us == GyroPhone.Protocol.HostStatus.Unknown ? " · latency unknown" :
             $" · latency {s.LatP50Us / 1000.0:0.0} / {s.LatP99Us / 1000.0:0.0} ms (p50/p99) · jitter {s.JitterUs / 1000.0:0.0} ms");
         if (s.PhoneLink is { } l)
-            sb.Append($" · phone sends {l.SendRateHz}/s · round trip {l.RttMinUs / 1000.0:0.0} ms · {l.RssiDbm} dBm {l.LinkMbps} Mbps");
+            sb.Append($" · phone sends {l.SendRateHz}/s · round trip {l.RttMinUs / 1000.0:0.0} ms")
+              .Append(l.RssiDbm != 0 ? $" · {l.RssiDbm} dBm {l.LinkMbps} Mbps" : ""); // 0 on a cable: no radio
+        if (s.Connected)
+            sb.Append("\r\nconnection: ").Append(LinkPaths.Connection(s.PhoneLink,
+                IPAddress.TryParse(In.PhoneAddress(), out var phoneAt) ? phoneAt : null, PcSetupProbe.Ssid));
         sb.Append($"\r\npad: {_debug.CurrentPad}");
         var held = new List<string>();
         var scratch = new StateFrame();

@@ -170,9 +170,10 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         dir.listFiles()?.sortedByDescending { it.name }?.forEach { appendLine(it.name) }
     }
 
-    /** Header lines of a recording or dump: transport, link, gyro, workspace, layer, output now. */
+    /** Header lines of a recording or dump (built only at Save or a dump, never on the input path): transport, connection, link, gyro, workspace, layer, output now. */
     private fun header(): List<String> = buildList {
         add("transport: ${runtime.transport.value.name.lowercase()} · ${describe(runtime.linkState.value)}")
+        add("connection: " + if (runtime.transport.value == com.oleroma.gyrophone.link.TransportKind.WIFI) runtime.wifi.connectionLine() else "Bluetooth")
         add("link: " + linkLine(runtime.linkStats()))
         val g = runtime.gyroInfo.value
         add("gyro: ${g.source} · ${g.rateHz} Hz · " + if (g.active) "moving the mouse" else "idle")
