@@ -629,13 +629,18 @@ internal fun ControlMappingScreen(
     fun buttonChips(m: List<Mapping>) = MappingPresets.chipsOf(m, controlInputs, ::placeOf, keepFingers = true)
     val presetKind = remember(control) { ButtonLibrary.kindOf(control) }
     val userPresets by runtime.mappingPresets.collectAsStateWithLifecycle()
+    // Opened outside the pad's edit mode (a controller's buttons, Defaults): the active workspace's.
+    val liveProfile by runtime.activeProfile.collectAsStateWithLifecycle()
+    val liveIndex by runtime.workspaceIndex.collectAsStateWithLifecycle()
+    val namedSens = if (onNamedSens != null) namedSens else liveProfile.workspace(liveIndex).namedSens
     val namedTargets = namedSens.map { if (it.touch) OutputTarget.TouchSens(named = it.id) else OutputTarget.GyroSens(named = it.id) }
     // Chips and links name them from here while the workspace is edited.
-    SideEffect { if (onNamedSens != null && NamedSens.active != namedSens) NamedSens.active = namedSens }
+    SideEffect { if (NamedSens.active != namedSens) NamedSens.active = namedSens }
 
     /** The workspace changed by [change] (its named sensitivities). */
     fun editWorkspace(change: (Workspace) -> Workspace) {
-        onNamedSens?.invoke(change)
+        if (onNamedSens != null) onNamedSens(change)
+        else runtime.editActiveProfile { p -> p.updateWorkspace(runtime.workspaceIndex.value, change) }
     }
     val library by runtime.buttonLibrary.collectAsStateWithLifecycle()
     val builtins = remember(control, inputs) { presetsFor(control, inputs, physical, ::buttonChips) }
@@ -1947,7 +1952,7 @@ internal fun ControlMappingScreen(
                             )
                         }
                     }
-                    if (q.isEmpty() && tab == LibraryTab.SENSITIVITY && onNamedSens != null) {
+                    if (q.isEmpty() && tab == LibraryTab.SENSITIVITY) {
                         NamedSensManager(
                             namedSens,
                             onAdd = { touch ->
