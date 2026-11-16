@@ -54,6 +54,8 @@ object Wire {
     const val OVERLAY_LAYOUT_PLAIN = 200
     /** OVERLAY_SAMPLES: each gyro sample's turn in the OVERLAY that follows ([OverlayFeed.encodeSamples]). */
     const val OVERLAY_SAMPLES_PLAIN = 264
+    /** OVERLAY_FRAMES: one piece of what the pad shows over its buttons ([OverlayFeed.encodeFrames]), as OVERLAY_LAYOUT's. */
+    const val OVERLAY_FRAMES_PLAIN = OVERLAY_LAYOUT_PLAIN
     /** MOTION: the phone's raw gyro and accelerometer samples for the PC's DualShock 4 or DualSense ([MotionFeed]). */
     const val MOTION_PLAIN = MotionFeed.SIZE
     /** PRESS_TIME: u32 STATE time, u32 input event time (both low 32 bits of the phone's elapsed-realtime µs). */
@@ -164,6 +166,7 @@ object Wire {
         PacketType.OVERLAY -> OVERLAY_PLAIN
         PacketType.OVERLAY_LAYOUT -> OVERLAY_LAYOUT_PLAIN
         PacketType.OVERLAY_SAMPLES -> OVERLAY_SAMPLES_PLAIN
+        PacketType.OVERLAY_FRAMES -> OVERLAY_FRAMES_PLAIN
         PacketType.MOTION -> MOTION_PLAIN
         PacketType.PRESS_TIME -> PRESS_TIME_PLAIN
         PacketType.PHONE_STATS -> PHONE_STATS_PLAIN
@@ -214,6 +217,8 @@ object PacketType {
     const val OVERLAY_SAMPLES = 0x2C
     /** Once a second while TEST_MODE has [TestModeFlags.PHONE_STATS] (a Performance record runs): the phone's side of the link ([PhoneStats]). */
     const val PHONE_STATS = 0x2D
+    /** Sent while HOST_STATUS has [HostStatusFlags.OVERLAY], when they change and every second: the pad's button frames and bars, in pieces. Older PCs drop it. */
+    const val OVERLAY_FRAMES = 0x2E
     const val BYE = 0x2F
     const val PONG = 0x30
     const val HOST_STATUS = 0x31

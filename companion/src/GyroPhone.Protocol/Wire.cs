@@ -66,6 +66,8 @@ public static class Wire
     public const int OverlayLayoutPlain = 200;
     /// <summary>OVERLAY_SAMPLES: each gyro sample's turn in the OVERLAY that follows (<see cref="OverlaySamples"/>).</summary>
     public const int OverlaySamplesPlain = 264;
+    /// <summary>OVERLAY_FRAMES: one piece of the pad's button frames and bars (<see cref="OverlayMarks"/>), as OVERLAY_LAYOUT's.</summary>
+    public const int OverlayFramesPlain = OverlayLayoutPlain;
     /// <summary>MOTION: the phone's raw gyro and accelerometer samples for the DualShock 4 (<see cref="MotionFrame"/>).</summary>
     public const int MotionPlain = MotionFrame.Size;
     /// <summary>PRESS_TIME: u32 STATE time, u32 input event time (low 32 bits of the phone's µs clock).</summary>

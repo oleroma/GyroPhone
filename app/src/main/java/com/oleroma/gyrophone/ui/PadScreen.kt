@@ -71,6 +71,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -178,6 +179,7 @@ import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.core.model.withSets
 import com.oleroma.gyrophone.core.net.OverlayControl
 import com.oleroma.gyrophone.core.net.OverlayFeed
+import com.oleroma.gyrophone.core.net.OverlayFrames
 import com.oleroma.gyrophone.core.net.OverlayLayout
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.abs
@@ -216,6 +218,9 @@ private const val LAYER_POLL_MS = 100L
 
 /** How long a button keeps showing what it sent after it stops. */
 private const val LIVE_LINGER_MS = 700L
+
+/** How often the pad looks whether the PC's phone overlay is on (it then sends the frames). */
+private const val OVERLAY_ON_POLL_MS = 500L
 private val LIVE_LABEL_COLOR = Color(0xFFFFE08A)
 
 /** Edit mode: how much of a control (all of a smaller one) must stay on screen, in dp: about a fingertip. */
@@ -683,16 +688,11 @@ fun PadScreen(
         layered(ws.mappings, layers.set, layers.overrides).filterNot { Describe.isHaptic(it.target) }
             .groupBy { MappingProfiles.touchId(it.source) }
     }
-    // What each control really presses now, for the PC's phone overlay (live labels: the engine's
-    // mappings in use, held inputs carrying their old set's included). The pad shows it in the frames ([ValueBars]).
+    // What each control really presses now (the engine's mappings in use, held inputs carrying their old
+    // set's included): it lights the controls; the frames show it ([ValueBars], on the PC's phone overlay too).
     val labelCache = remember { LabelCache() }
     val inUseCache = remember { arrayOfNulls<List<Mapping>>(1) }
     val inUseShown = remember { arrayOf<List<Mapping>>(emptyList()) }
-    // The mappings on at the last poll, and the label text per control they make.
-    val activeCache = remember { arrayOf<List<Mapping>>(emptyList()) }
-    val activeText = remember { arrayOf<Map<String, String>>(emptyMap()) }
-    val liveLabels = remember { mutableStateMapOf<String, String>() }
-    val liveUntil = remember { HashMap<String, Long>() }
     val liveWatchUntil = remember { LongArray(1) }
     var liveWatching by remember { mutableStateOf(false) }
 
@@ -708,36 +708,6 @@ fun PadScreen(
         return inUseShown[0]
     }
 
-    fun refreshLive(active: List<Mapping>) {
-        val now = SystemClock.uptimeMillis()
-        if (!visuals.liveMappings || editing) {
-            liveLabels.clear(); liveUntil.clear()
-            return
-        }
-        val last = activeCache[0]
-        if (active.size != last.size || active.indices.any { active[it] !== last[it] }) {
-            activeCache[0] = active
-            // The touchpad's under "" (shown at the pad's top centre when the workspace asks).
-            activeText[0] = active.groupBy { MappingProfiles.touchId(it.source) ?: "" }
-                .mapValues { (_, ms) -> ms.map { Describe.shortTarget(it.target) }.distinct().joinToString(" + ") }
-                .filterValues { it.isNotEmpty() }
-        }
-        val texts = activeText[0]
-        for ((id, text) in texts) {
-            if (liveLabels[id] != text) liveLabels[id] = text
-            liveUntil[id] = now + LIVE_LINGER_MS
-        }
-        if (liveUntil.size > texts.size) {
-            val entries = liveUntil.entries.iterator()
-            while (entries.hasNext()) {
-                val (id, until) = entries.next()
-                if (id in texts || until >= now) continue
-                entries.remove()
-                if (id in liveLabels) liveLabels.remove(id)
-            }
-        }
-    }
-
     fun refreshHighlights() {
         val p = runtime.engine.pressedTouches()
         if (p != pressedIds) pressedIds = p
@@ -750,8 +720,7 @@ fun PadScreen(
         for (m in active) MappingProfiles.touchId(m.source)?.let(ids::add)
         for (m in shown) if (m.source.slides) MappingProfiles.touchId(m.source)?.takeIf { it in p }?.let(ids::add)
         if (ids != activeIds) activeIds = ids
-        refreshLive(active)
-        if (liveWatching && SystemClock.uptimeMillis() > liveWatchUntil[0] && liveLabels.isEmpty() && ids.isEmpty()) liveWatching = false
+        if (liveWatching && SystemClock.uptimeMillis() > liveWatchUntil[0] && ids.isEmpty()) liveWatching = false
     }
 
     /** A touch began or ended: watch the mappings for a while (gestures fire after lifts). */
@@ -2052,7 +2021,7 @@ fun PadScreen(
                     fun name(id: Int) = if (id == MappingSet.BASE) "Base" else ws.sets.firstOrNull { it.id == id }?.label ?: "Layer $id"
                     (listOf(name(layers.set)) + layers.overrides.map { "+ " + name(it) }).joinToString(" ")
                 }
-                // The layout without what changes on a press (live labels, held corners and sticks):
+                // The layout without what changes on a press (held corners and sticks, lit controls, frames):
                 // those are read outside composition below, so a press doesn't recompose the pad.
                 val overlayBase = OverlayLayout(
                     widthPx = w.roundToInt(),
@@ -2084,20 +2053,36 @@ fun PadScreen(
                     },
                 )
                 LaunchedEffect(overlayBase) {
-                    snapshotFlow {
-                        val controls = overlayBase.controls
-                        var live: ArrayList<OverlayControl>? = null
-                        for (i in controls.indices) {
-                            val c = controls[i]
-                            if (c.kind != OverlayControl.BUTTON && c.kind != OverlayControl.STICK) continue
-                            val l = liveLabels[c.id] ?: continue
-                            if (l != c.label) (live ?: ArrayList(controls).also { live = it })[i] = c.copy(label = l)
-                        }
-                        (live?.let { overlayBase.copy(controls = it) } ?: overlayBase) to (cornersHeld + heldSticks)
-                    }.collect { (layout, held) ->
-                        runtime.wifi.overlay.setLayout(layout)
-                        runtime.wifi.overlay.uiHeld = held
+                    runtime.wifi.overlay.setLayout(overlayBase)
+                    snapshotFlow { cornersHeld + heldSticks }.collect { runtime.wifi.overlay.uiHeld = it }
+                }
+                // Lit as the pad lights them: while one of their mappings is active.
+                LaunchedEffect(Unit) {
+                    try {
+                        snapshotFlow { activeIds }.collect { runtime.wifi.overlay.uiLit = it }
+                    } finally {
+                        runtime.wifi.overlay.uiLit = null
                     }
+                }
+                // The frames and bars as the pad shows them, built only while the PC's overlay is on.
+                val overlayOn by produceState(runtime.wifi.overlay.wanted) {
+                    while (true) {
+                        value = runtime.wifi.overlay.wanted
+                        delay(OVERLAY_ON_POLL_MS)
+                    }
+                }
+                val frameDensity = LocalDensity.current
+                val barColor = visuals.rulerColor.toInt()
+                LaunchedEffect(valueBars, overlayOn, frameDensity, barColor) {
+                    val vb = valueBars
+                    if (vb == null) {
+                        runtime.wifi.overlay.setFrames(OverlayFrames.NONE)
+                        return@LaunchedEffect
+                    }
+                    if (!overlayOn) return@LaunchedEffect
+                    val textPx = valueTextPx(frameDensity)
+                    val dp = frameDensity.density
+                    snapshotFlow { vb.frame }.collect { runtime.wifi.overlay.setFrames(vb.toOverlay(textPx, dp, barColor)) }
                 }
             }
             valueBars?.let { ValueFramesBehind(it, Modifier.fillMaxSize()) }

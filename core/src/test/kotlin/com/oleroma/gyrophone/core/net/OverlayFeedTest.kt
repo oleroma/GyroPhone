@@ -51,6 +51,50 @@ class OverlayFeedTest {
         assertEquals("0700000119$LAYOUT_BLOB" + "00".repeat(200 - 5 - 25), out.hex())
     }
 
+    @Test fun framesBlob() {
+        val f = OverlayFeed()
+        assertEquals(-1, f.framesVersion())
+        f.setLayout(layout)
+        val frames = OverlayFrames(
+            34.5f, 2.75f, 0xFF00BCD4.toInt(),
+            listOf(
+                OverlayMark("a", inside = true, row = false, set = true,
+                    lines = listOf(OverlayLine("W", OverlayLine.PLAIN), OverlayLine("Crouch on", OverlayLine.ON)),
+                    bars = listOf(OverlayBar(0, 0.5f, 10))),
+                // Not in the layout: left out.
+                OverlayMark("gone", false, false, false, listOf(OverlayLine("X", OverlayLine.PLAIN)), emptyList()),
+                OverlayMark("", false, false, false, listOf(OverlayLine("Hold", OverlayLine.PLAIN)), emptyList()),
+            ),
+        )
+        f.setFrames(frames)
+        val v = f.framesVersion()
+        val (version, blob) = f.framesSnapshot()!!
+        assertEquals(v, version)
+        assertEquals(FRAMES_BLOB, blob.hex())
+        // The same frames again: no new version. A new layout: a new one (the controls' places may move).
+        f.setFrames(frames.copy())
+        assertEquals(v, f.framesVersion())
+        f.setLayout(layout.copy(workspace = "Other"))
+        assertEquals(v + 1, f.framesVersion())
+        val out = ByteArray(Wire.OVERLAY_FRAMES_PLAIN)
+        assertEquals(Wire.OVERLAY_FRAMES_PLAIN, OverlayFeed.encodeFramesPiece(out, 0, 3, blob, 0))
+        assertEquals(3, out.getU16(0))
+        assertEquals(blob.size, out.getU8(4))
+        assertEquals(228, Wire.sizeOf(PacketType.OVERLAY_FRAMES))
+        assertEquals(true, PacketType.isPhoneToHost(PacketType.OVERLAY_FRAMES))
+    }
+
+    @Test fun litControlsReplaceTouchedOnes() {
+        val f = OverlayFeed()
+        f.setLayout(layout.copy(controls = layout.controls + layout.controls[0].copy(id = "b")))
+        val o = ByteArray(Wire.OVERLAY_PLAIN)
+        f.encodeFrame(o, 0, 0, setOf("a"), emptySet())
+        assertEquals(1, o.getU8(56))
+        f.uiLit = setOf("b")
+        f.encodeFrame(o, 0, 0, setOf("a"), emptySet())
+        assertEquals(2, o.getU8(56))
+    }
+
     @Test fun bigLayoutSplitsIntoPieces() {
         val many = layout.copy(controls = List(40) { layout.controls[0].copy(id = "c$it", label = "Label $it") })
         val blob = OverlayFeed.encodeLayout(many)
@@ -227,6 +271,7 @@ class OverlayFeedTest {
 
     companion object {
         const val LAYOUT_BLOB = "0160093804044d61696e000100010008001033036606800141"
+        const val FRAMES_BLOB = "01010059011301d4bc00ff02000502000157010943726f756368206f6e010000800a00ff00010004486f6c6400"
         const val FRAME = "040302010000803f000000bf0000803ee803000000200000000000000180030101003b010080004000000000000000000000000000000000" +
             "0100000000000000000000000000000000000000000000000000000000000000007fc1ff0000ff0000ff0000ff0000ff0000ff0000ff0000" +
             "0000803f00000000000000c0" + "000000400000000000000000" + "00000000000000000000000000000000"

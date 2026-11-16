@@ -15,6 +15,8 @@ internal sealed class OverlayScene
     /// <summary>How long ago <see cref="Frame"/> came (us), or -1 when none came.</summary>
     public long FrameAgeUs = -1;
     public OverlayLayout? Layout;
+    /// <summary>The pad's button frames and bars (phone only), or null.</summary>
+    public OverlayMarks? Marks;
     public bool Connected;
     /// <summary>Moving and resizing (Edit): a frame shows the window's edges.</summary>
     public bool Arranging;
@@ -522,6 +524,23 @@ internal static class OverlayRenderer
             float pxH = layout is { HeightPx: > 0 } ? layout.HeightPx : 1080;
             float fontPx = Math.Min(pxW, pxH) * LabelSize;
 
+            // The pad's button frames and bars, when they are for this layout: one per control at most.
+            var marks = live && layout != null && scene.Marks is { } ms && ms.LayoutVersion == layout.Version && ms.Marks.Count > 0 ? ms : null;
+            OverlayMark?[]? markOf = null;
+            OverlayMark? padMark = null;
+            if (marks != null)
+            {
+                markOf = new OverlayMark?[layout!.Controls.Count];
+                foreach (var mk in marks.Marks)
+                    if (mk.Control < 0) padMark = mk;
+                    else if (mk.Control < markOf.Length) markOf[mk.Control] = mk;
+                // The frames outside their buttons lie behind the buttons, as on the pad.
+                g.PushClip(screen);
+                for (int i = 0; i < markOf.Length; i++)
+                    if (markOf[i] is { Inside: false, Lines.Count: > 0 } mk) MarkDrawing.Frame(g, mk, marks, BoxOf(layout.Controls[i], pxW, pxH), true, pxW, pxH, project);
+                g.Pop();
+            }
+
             if (layout != null)
             {
                 // The control shapes cut to the screen: the same until the layout or the window's size changes.
@@ -531,7 +550,12 @@ internal static class OverlayRenderer
                     var c = layout.Controls[i];
                     bool pressed = live && f.IsPressed(i);
                     bool latched = live && !pressed && f.IsLatched(i);
-                    if (cuts[i] is not { } cut) continue;
+                    if (cuts[i] is not { } cut)
+                    {
+                        // Off the screen: no outline for its bars either.
+                        buf.Controls[i] = null;
+                        continue;
+                    }
                     var pts = ProjectInto(ref buf.Controls[i], cut);
                     float op = Math.Clamp(c.Opacity, 0f, 1f);
                     if (c.Kind == OverlayControlKind.Display)
@@ -565,11 +589,23 @@ internal static class OverlayRenderer
                 {
                     var c = layout.Controls[i];
                     if (c.Kind == OverlayControlKind.Display || c.Label.Length == 0) continue;
+                    // A frame in the button's middle takes its label's place.
+                    if (markOf?[i] is { Inside: true, Lines.Count: > 0 }) continue;
                     float op = Math.Clamp(c.Opacity, 0f, 1f);
                     DrawLabel(g, c.Label, c.X, c.Y, c.W * pxW, fontPx, pxW, pxH, project, Color.FromArgb((int)(255 * Math.Max(op, 0.5f)), 255, 255, 255));
                 }
                 if (layout.Layer.Length > 0)
                     DrawLabel(g, layout.Layer, 0.5f, 0.05f, pxW * 0.6f, fontPx, pxW, pxH, project, Color.FromArgb(230, 255, 255, 255), pill: true);
+            }
+
+            // Over the buttons, as the pad's sliders: the bars (cut by their button), sliders icons and the frames inside.
+            if (marks != null)
+            {
+                var whole = new RectangleF(0, 0, pxW, pxH);
+                if (padMark != null) MarkDrawing.Over(g, padMark, marks, whole, false, pxW, pxH, project, null);
+                for (int i = 0; i < markOf!.Length; i++)
+                    if (markOf[i] is { } mk && buf.Controls[i] is { } outline)
+                        MarkDrawing.Over(g, mk, marks, BoxOf(layout!.Controls[i], pxW, pxH), true, pxW, pxH, project, outline);
             }
 
             if (live && scene.Trails is { } trails)
@@ -627,6 +663,7 @@ internal static class OverlayRenderer
         h.Add(layout == null ? 0 : RuntimeHelpers.GetHashCode(layout));
         if (live)
         {
+            h.Add(scene.Marks == null ? 0 : RuntimeHelpers.GetHashCode(scene.Marks));
             h.Add(f.PadShown);
             if (layout != null)
                 for (int i = 0; i < layout.Controls.Count; i++) h.Add((f.IsPressed(i) ? 1 : 0) | (f.IsLatched(i) ? 2 : 0));
@@ -831,6 +868,28 @@ internal static class OverlayRenderer
         var pts = RoundedRect(w, h, r, 4);
         for (int i = 0; i < pts.Length; i++) pts[i] = (c.X + pts[i].X / pxW, c.Y + pts[i].Y / pxH);
         return pts;
+    }
+
+    /// <summary>Control <paramref name="c"/>'s box in pad pixels.</summary>
+    internal static RectangleF BoxOf(OverlayControl c, float pxW, float pxH)
+    {
+        float w = c.W * pxW, h = c.H * pxH;
+        return new RectangleF(c.X * pxW - w / 2, c.Y * pxH - h / 2, w, h);
+    }
+
+    /// <summary>
+    /// The affine transform the projection has around pad point (u, v), taking pad pixels (x right, y down, the
+    /// point at 0, 0) to the picture; null when the screen is seen edge on there.
+    /// </summary>
+    internal static Matrix3x2? PadAffine(float u, float v, float pxW, float pxH, Func<float, float, PointF> project)
+    {
+        var p0 = project(u, v);
+        var px = project(u + 1f / pxW * 100f, v);
+        var py = project(u, v + 1f / pxH * 100f);
+        float ax = (px.X - p0.X) / 100f, ay = (px.Y - p0.Y) / 100f;
+        float bx = (py.X - p0.X) / 100f, by = (py.Y - p0.Y) / 100f;
+        if (MathF.Abs(ax * by - ay * bx) < 1e-6f) return null;
+        return new Matrix3x2(ax, ay, bx, by, p0.X, p0.Y);
     }
 
     /// <summary>

@@ -41,6 +41,8 @@ public static class PacketType
     public const byte OverlaySamples = 0x2C;
     /// <summary>Phone to host once a second while TEST_MODE has <see cref="TestModeFlags.PhoneStats"/>: the phone's side of the link (<see cref="Protocol.PhoneStats"/>).</summary>
     public const byte PhoneStats = 0x2D;
+    /// <summary>Sent while HOST_STATUS has <see cref="HostStatusFlags.Overlay"/>, on change and every second: the pad's button frames and bars, in pieces.</summary>
+    public const byte OverlayFrames = 0x2E;
     public const byte Bye = 0x2F;
     public const byte Pong = 0x30;
     public const byte HostStatus = 0x31;
@@ -108,6 +110,7 @@ public static class PacketType
         Overlay => Wire.OverlayPlain,
         OverlayLayout => Wire.OverlayLayoutPlain,
         OverlaySamples => Wire.OverlaySamplesPlain,
+        OverlayFrames => Wire.OverlayFramesPlain,
         PressTime => Wire.PressTimePlain,
         PhoneStats => Wire.PhoneStatsPlain,
         TestMode => Wire.TestModePlain,

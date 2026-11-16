@@ -45,6 +45,10 @@ import com.oleroma.gyrophone.core.model.isTouchpad
 import com.oleroma.gyrophone.core.model.nothing
 import com.oleroma.gyrophone.core.model.slides
 import com.oleroma.gyrophone.core.model.valueTarget
+import com.oleroma.gyrophone.core.net.OverlayBar
+import com.oleroma.gyrophone.core.net.OverlayFrames
+import com.oleroma.gyrophone.core.net.OverlayLine
+import com.oleroma.gyrophone.core.net.OverlayMark
 import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
@@ -91,6 +95,9 @@ class ValueBars internal constructor(val marks: List<ValueMark>, val bars: Boole
     internal val values = FloatArray(2 * MAX_SHOWN)
     internal val labels = arrayOfNulls<AnnotatedString>(marks.size)
     internal val laid = arrayOfNulls<TextLayoutResult>(marks.size)
+
+    /** Each mark's lines as text and colour, for the PC's phone overlay ([toOverlay]). */
+    internal val plain = arrayOfNulls<List<OverlayLine>>(marks.size)
 
     /** Each mark's frame sits in its middle, else outside. */
     internal val inside = BooleanArray(marks.size)
@@ -200,12 +207,14 @@ fun rememberValueBars(engine: MappingEngine, marks: List<ValueMark>, active: () 
             val counts = engine.workspace.gyro.gameCountsPer360
             var centered: MutableSet<String>? = null
             for ((k, mk) in vb.marks.withIndex()) {
+                val plainLines = ArrayList<OverlayLine>()
                 val label = buildAnnotatedString {
                     var any = false
                     fun line(s: String, c: Color?) {
                         if (any) append(if (vb.row[k]) ROW else "\n")
                         any = true
                         if (c == null) append(s) else withStyle(SpanStyle(color = c)) { append(s) }
+                        plainLines.add(OverlayLine(s, if (c == TOGGLE_ON) OverlayLine.ON else if (c == TOGGLE_OFF) OverlayLine.OFF else OverlayLine.PLAIN))
                     }
                     if (vb.frames) {
                         live.clear()
@@ -238,6 +247,7 @@ fun rememberValueBars(engine: MappingEngine, marks: List<ValueMark>, active: () 
                 }.takeIf { it.isNotEmpty() }
                 if (label != vb.labels[k]) {
                     vb.labels[k] = label
+                    vb.plain[k] = plainLines.takeIf { it.isNotEmpty() }
                     vb.laid[k] = label?.let { text.measure(it, VALUE_STYLE) }
                     changed = true
                 }
@@ -250,6 +260,37 @@ fun rememberValueBars(engine: MappingEngine, marks: List<ValueMark>, active: () 
     }
     return vb
 }
+
+/**
+ * What the pad shows over its buttons now, for the PC's phone overlay to show the same ([OverlayFrames]):
+ * each mark's frame lines and where they sit, its sliders icon and its Position bars (one per axis: the
+ * first chip driven on it, as [ValueBarsOverlay] draws them, in [barColor]). [textPx] and [dp] in pad pixels.
+ */
+fun ValueBars.toOverlay(textPx: Float, dp: Float, barColor: Int): OverlayFrames {
+    val out = ArrayList<OverlayMark>(marks.size)
+    for ((k, mk) in marks.withIndex()) {
+        val bars = ArrayList<OverlayBar>()
+        if (this.bars) {
+            for (axis in FingerAxis.entries) {
+                for (j in chips.indices) {
+                    val src = chips[j].source as? InputSource.Finger ?: continue
+                    if (src.id != mk.id || src.axis != axis) continue
+                    val v = values[2 * j]
+                    if (v.isNaN()) continue
+                    bars.add(OverlayBar(axis.ordinal, v, mk.steps[axis] ?: 0))
+                    break
+                }
+            }
+        }
+        val lines = plain[k].orEmpty()
+        if (lines.isEmpty() && bars.isEmpty() && !mk.set) continue
+        out.add(OverlayMark(mk.id, inside[k] && mk.framed, row[k], mk.set, lines, bars))
+    }
+    return OverlayFrames(textPx, dp, barColor, out)
+}
+
+/** The frames' text size in px ([VALUE_STYLE]'s, as measured with [density]). */
+fun valueTextPx(density: androidx.compose.ui.unit.Density): Float = with(density) { VALUE_STYLE.fontSize.toPx() }
 
 /** The frames outside their buttons ([ValueBars]): drawn behind the buttons. */
 @Composable
