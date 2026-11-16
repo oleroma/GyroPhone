@@ -83,9 +83,11 @@ object WorkspaceDefaults {
         return MoveSlot.valueOf(m) to (MoveField.entries.firstOrNull { it.name == f } ?: return null)
     }
 
-    /** Each gyro axis's own sensitivity and factor keys. */
-    private val gyroAxisSens: Map<String, String> = MotionAxis.entries.mapNotNull { a ->
-        GyroSettings.sensitivityProp(a)?.let { s -> gyroKey(GyroSettings.scaleProp(a)!!) to gyroKey(s) }
+    /** Each gyro axis's old factor and link keys, to its own sensitivity's key. */
+    private val gyroAxisSens: Map<String, String> = MotionAxis.entries.flatMap { a ->
+        GyroSettings.sensitivityProp(a)?.let { s ->
+            listOf(gyroKey(GyroSettings.scaleProp(a)!!) to gyroKey(s), gyroKey(GyroSettings.linkProp(a)!!) to gyroKey(s))
+        } ?: emptyList()
     }.toMap()
 
     /**
@@ -98,7 +100,7 @@ object WorkspaceDefaults {
         dirOf(key)?.let { (d, f) -> return listOf(touchpadKey(f.sharedOf(d))) }
         moveOf(key)?.let { (m, f) ->
             val shared = touchpadKey(f.sharedOf(m))
-            return if (f == MoveField.SCALE) listOf(shared, moveKey(m, MoveField.SENSITIVITY)) else listOf(shared)
+            return if (f == MoveField.SCALE || f == MoveField.LINK) listOf(shared, moveKey(m, MoveField.SENSITIVITY)) else listOf(shared)
         }
         gyroAxisSens[key]?.let { exact -> return listOf(gyroKey("sensitivity"), exact) }
         if (key in gyroAxisSens.values) return listOf(gyroKey("sensitivity"))
@@ -164,6 +166,7 @@ object WorkspaceDefaults {
     }
 
     private fun gyroValue(prop: String, e: JsonElement?): Any? {
+        if (e is JsonObject && prop.endsWith("Link")) return runCatching { json.decodeFromJsonElement(SensLink.serializer(), e) }.getOrNull()
         val p = e as? JsonPrimitive ?: return null
         if (p is JsonNull) return null
         if (!p.isString) return p.booleanOrNull ?: p.doubleOrNull
@@ -180,6 +183,9 @@ object WorkspaceDefaults {
 
     /** [key] holds a factor of the value above (× parent), not a value of its own. */
     fun isFactor(key: String): Boolean = key.endsWith("Scale") || key.endsWith("." + MoveField.SCALE.name)
+
+    /** [key] holds a link to another sensitivity ([SensLink]), not a value of its own. */
+    fun isLink(key: String): Boolean = key.endsWith("Link") || key.endsWith("." + MoveField.LINK.name)
 
     /** [to] with [from]'s value of [key]. */
     fun take(key: String, to: Workspace, from: Workspace): Workspace = when {

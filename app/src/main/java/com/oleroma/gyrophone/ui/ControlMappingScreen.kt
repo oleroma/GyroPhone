@@ -240,7 +240,7 @@ private class MapPreset(
 
 private enum class LibraryTab(val label: String) {
     RECENT("Recent"), PRESETS("Presets"), KEYBOARD("Keyboard"), MOUSE("Mouse"), GAMEPAD("Gamepad"),
-    GYRO("Gyro"), TOUCH("Touch"), PHONE("Phone"), LAYERS("Layers"), OTHER("Other"),
+    GYRO("Gyro"), SENSITIVITY("Sensitivity"), TOUCH("Touch"), PHONE("Phone"), LAYERS("Layers"), OTHER("Other"),
 }
 
 private fun group(name: String): List<OutputTarget> =
@@ -253,6 +253,7 @@ private fun tabTargets(tab: LibraryTab, extras: List<OutputTarget>): List<Output
     LibraryTab.GYRO -> group("Gyro")
     LibraryTab.PHONE -> group("Phone")
     LibraryTab.TOUCH -> group("Touch")
+    LibraryTab.SENSITIVITY -> group("Sensitivity")
     LibraryTab.LAYERS -> Describe.layerTargets
     LibraryTab.OTHER -> Describe.otherTargets
     // Switching apps and zoom, where the input offers them, go with the presets.
@@ -880,7 +881,7 @@ internal fun ControlMappingScreen(
         if (t is OutputTarget.GyroSens) {
             // It needs a range to do anything: around the sensitivity it would change.
             val g = runtime.engine.workspace.gyro
-            val base = g.sensitivityOf(if (t.axis == MotionAxis.NONE) MotionAxis.ROLL else t.axis)
+            val base = if (t.named > 0) g.sensitivity else g.sensitivityOf(if (t.axis == MotionAxis.NONE) MotionAxis.ROLL else t.axis)
             next = next.map { if (Bindings.belongs(it, input) && it.target == t && it.range == null) it.copy(range = AxisRange(base * 0.8f, base * 1.2f)) else it }
         }
         change(
@@ -3311,7 +3312,7 @@ private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings
 
         is OutputTarget.GyroSens -> {
             val c = g.gameCountsPer360
-            val base = g.sensitivityOf(if (target.axis == MotionAxis.NONE) MotionAxis.ROLL else target.axis)
+            val base = if (target.named > 0) g.sensitivity else g.sensitivityOf(if (target.axis == MotionAxis.NONE) MotionAxis.ROLL else target.axis)
             val initial = AxisRange(base * 0.8f, base * 1.2f)
             val hint = "The gyro sensitivity at the input's 0 and at full; it changes evenly between them while the input " +
                     "is active (a finger on the button, a trigger off its rest) and goes back when it lets go. " +
