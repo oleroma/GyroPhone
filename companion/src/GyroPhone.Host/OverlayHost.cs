@@ -355,6 +355,9 @@ public sealed class OverlayHost
 
     public long OverlaySnapshot(OverlayFrame into, out OverlayLayout? layout) => OverlaySnapshot(into, null, out layout);
 
+    /// <summary>The newest button frames and bars from the pad (drawn on the phone overlay's screen), or null before they came.</summary>
+    public OverlayMarks? OverlayMarks => _view.Marks;
+
     /// <summary>
     /// A window whose handles show the PC controller: its buttons, triggers and sticks in place of the
     /// phone's controller, none while the phone's "Use PC controller for gyro ratchet" is off.

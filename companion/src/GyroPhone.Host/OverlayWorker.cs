@@ -38,6 +38,7 @@ internal sealed class OverlayWorker
     private readonly OverlayFrame _sub = new();
     private readonly OverlayTotals _totals = new();
     private readonly OverlayLayoutAssembler _layout = new();
+    private readonly OverlayMarksAssembler _marks = new();
     private readonly Dictionary<string, OverlayPose> _poses = [];
     private readonly OverlayRest _rest = new();
     // The phone's Level displays presses last seen (-1 = none yet: the first count levels nothing).
@@ -190,11 +191,14 @@ internal sealed class OverlayWorker
             case OverlayInbox.Kind.Layout:
                 _layout.Add(plain);
                 return true;
+            case OverlayInbox.Kind.Frames:
+                return _marks.Add(plain);
             case OverlayInbox.Kind.TotalsReset:
                 _totals.Reset();
                 return true;
             case OverlayInbox.Kind.Renew:
                 _layout.Renew();
+                _marks.Renew();
                 foreach (var pose in _poses.Values) pose.ForgetPresses();
                 _levelPresses = -1;
                 return true;
@@ -213,7 +217,11 @@ internal sealed class OverlayWorker
         _poseKinds.Clear();
         _levelPresses = -1;
         _totals.Reset();
-        if (layoutToo) _layout.Reset();
+        if (layoutToo)
+        {
+            _layout.Reset();
+            _marks.Reset();
+        }
     }
 
     private bool OnOverlay(ReadOnlySpan<byte> plain, in OverlayInbox.Slot s)
@@ -323,5 +331,5 @@ internal sealed class OverlayWorker
         _saveLevel(o.Id, up, true, null);
     }
 
-    private void Publish() => _view.PublishOverlay(_frame, _rxUs, _layout.Layout, _rest, _poses, _settings.Overlays);
+    private void Publish() => _view.PublishOverlay(_frame, _rxUs, _layout.Layout, _marks.Marks, _rest, _poses, _settings.Overlays);
 }

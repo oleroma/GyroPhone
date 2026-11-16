@@ -6,6 +6,7 @@ namespace GyroPhone.Tests;
 public class OverlayTests
 {
     internal const string LayoutBlob = "0160093804044d61696e000100010008001033036606800141";
+    internal const string FramesBlob = "01010059011301d4bc00ff02000502000157010943726f756368206f6e010000800a00ff00010004486f6c6400";
     internal const string Frame = "040302010000803f000000bf0000803ee803000000200000000000000180030101003b010080004000000000000000000000000000000000" +
         "0100000000000000000000000000000000000000000000000000000000000000007fc1ff0000ff0000ff0000ff0000ff0000ff0000ff0000" +
         "0000803f00000000000000c0" + "000000400000000000000000" + "00000000000000000000000000000000";
@@ -119,6 +120,40 @@ public class OverlayTests
         Assert.Equal("A", c.Label);
         // The same version again changes nothing.
         Assert.False(a.Add(Piece(7, 0, 1, Hex.B(LayoutBlob))));
+    }
+
+    [Fact]
+    public void DecodesTheFrames()
+    {
+        Assert.Equal(228, PacketType.Size(PacketType.OverlayFrames));
+        Assert.True(PacketType.IsPhoneToHostSealed(PacketType.OverlayFrames));
+        var a = new OverlayMarksAssembler();
+        Assert.True(a.Add(Piece(4, 0, 1, Hex.B(FramesBlob))));
+        var m = a.Marks!;
+        Assert.Equal(4, m.Version);
+        Assert.Equal(1, m.LayoutVersion);
+        Assert.Equal(34.5f, m.TextPx, 3);
+        Assert.Equal(2.75f, m.Dp, 3);
+        Assert.Equal(unchecked((int)0xFF00BCD4), m.BarColor);
+        Assert.Equal(2, m.Marks.Count);
+        var b = m.Marks[0];
+        Assert.Equal(0, b.Control);
+        Assert.True(b.Inside);
+        Assert.False(b.Row);
+        Assert.True(b.Set);
+        Assert.Equal(["W", "Crouch on"], b.Lines.Select(l => l.Text));
+        Assert.Equal(OverlayFrameLine.On, b.Lines[1].Color);
+        var bar = Assert.Single(b.Bars);
+        Assert.Equal(0, bar.Axis);
+        Assert.Equal(0.5f, bar.Value, 3);
+        Assert.Equal(10, bar.Steps);
+        var pad = m.Marks[1];
+        Assert.Equal(-1, pad.Control);
+        Assert.Equal("Hold", Assert.Single(pad.Lines).Text);
+        Assert.Empty(pad.Bars);
+        Assert.False(a.Add(Piece(4, 0, 1, Hex.B(FramesBlob))));
+        // Cut short: dropped.
+        Assert.Null(OverlayMarks.Decode(5, Hex.B(FramesBlob).AsSpan(0, 30)));
     }
 
     [Fact]

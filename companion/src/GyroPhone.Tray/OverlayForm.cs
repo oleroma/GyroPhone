@@ -581,6 +581,7 @@ internal sealed class OverlayForm : Form
     {
         // A new OVERLAY that shows something new, a new layout, or now and then for the status: draw again.
         long age = _engine.OverlaySnapshot(_scene.Frame, _id, out var layout);
+        var marks = Settings is { Kind: OverlayKind.Phone } ? _engine.OverlayMarks : null;
         bool fresh = age >= 0 && _scene.Frame.PhoneTimeUs != _lastTime;
         long now = Environment.TickCount64;
         if (now - _screenHzAt >= 2000)
@@ -719,7 +720,7 @@ internal sealed class OverlayForm : Form
         bool shows = fresh && ShowsNew(age);
         if (fresh && !shows) _lastTime = _scene.Frame.PhoneTimeUs;
         bool changed = _dirty || shows || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
-            !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now) || laserFading ||
+            !ReferenceEquals(layout, _scene.Layout) || !ReferenceEquals(marks, _scene.Marks) || _trails.Fading(now) || laserFading ||
             _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser || GraphMoved();
         // The FPS overlay shows nothing of the phone: it draws only on a change of its own settings, and 4 times a second.
         if (Settings is { Kind: OverlayKind.Fps }) changed = _dirty || now - _lastDrawTicks >= FpsDrawing.EveryMs;
@@ -732,6 +733,7 @@ internal sealed class OverlayForm : Form
         if (fps > 0 && !_dirty && _clock.Elapsed.TotalMilliseconds - _lastDrawAt < OverlayPacing.MinGapMs(_screenHz, fps)) return;
         _scene.FrameAgeUs = age;
         _scene.Layout = layout;
+        _scene.Marks = marks;
         Render();
     }
 

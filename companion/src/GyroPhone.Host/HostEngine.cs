@@ -701,6 +701,11 @@ public sealed class HostEngine
                 _overlayInbox.Put(OverlayInbox.Kind.Layout, plain, nowUs, Environment.TickCount64);
                 _overlayQueued = true;
                 break;
+            case PacketType.OverlayFrames:
+                if (!_overlayOn) break;
+                _overlayInbox.Put(OverlayInbox.Kind.Frames, plain, nowUs, Environment.TickCount64);
+                _overlayQueued = true;
+                break;
             case PacketType.Motion:
                 OnMotion(plain, nowUs);
                 break;

@@ -4,7 +4,7 @@ using GyroPhone.Protocol;
 namespace GyroPhone.Host;
 
 /// <summary>
-/// What the input side hands the overlay side: the phone's OVERLAY, OVERLAY_SAMPLES and OVERLAY_LAYOUT bytes as
+/// What the input side hands the overlay side: the phone's OVERLAY, OVERLAY_SAMPLES, OVERLAY_LAYOUT and OVERLAY_FRAMES bytes as
 /// they came (decrypted), and marks for when the overlay data starts again (a new session, the phone gone). A fixed
 /// ring of slots in memory both sides map (<see cref="SharedRegion"/>: the input process writes, the companion
 /// reads): putting one in is a byte copy and a few writes, nothing is made, nothing waits.
@@ -31,6 +31,8 @@ public sealed unsafe class OverlayInbox
         Renew,
         /// <summary>Overlay data starts again (phone gone, overlays off): poses, rest and totals go; <see cref="Slot.Flag"/> also drops the layout.</summary>
         Clear,
+        /// <summary>An OVERLAY_FRAMES piece: the pad's button frames and bars.</summary>
+        Frames,
     }
 
     /// <summary>A slot as the reader sees it: copied header fields, and the bytes in place (valid until <see cref="Release"/>).</summary>
@@ -96,7 +98,7 @@ public sealed unsafe class OverlayInbox
 
     private byte* SlotAt(int i) => _p + SlotsOff + (i & (Capacity - 1)) * SlotBytes;
 
-    /// <summary>A packet (<see cref="Kind.Overlay"/>, <see cref="Kind.Samples"/>, <see cref="Kind.Layout"/>); false when full.</summary>
+    /// <summary>A packet (<see cref="Kind.Overlay"/>, <see cref="Kind.Samples"/>, <see cref="Kind.Layout"/>, <see cref="Kind.Frames"/>); false when full.</summary>
     public bool Put(Kind kind, ReadOnlySpan<byte> plain, long rxUs, long rxMs) => Write(kind, plain, rxUs, rxMs, 0, 0, 0);
 
     /// <summary>An OVERLAY with the PC controller's gate: the axes left on, a ratchet held, its ratchet presses.</summary>
