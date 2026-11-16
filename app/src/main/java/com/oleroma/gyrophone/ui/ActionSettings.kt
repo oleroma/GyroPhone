@@ -201,7 +201,7 @@ private fun ButtonTouchpadSpeed(g: ButtonGyroLevel, key: String) {
     val touchReset = { g.edit { it.withTouch(null) } }
     val namedTouch: (Int) -> Float? = { n -> SliderOverrides.named(g.sliders, true, n) }
     LinkedSens(
-        key + "touchLink" + g.set, "Touchpad sensitivity", g.inUse.touchLinkOf, touchLinkChoices, touch = true,
+        key + "touchLink" + g.set, "Touchpad sensitivity", g.inUse.touchLinkOf, touchLinkChoices(), touch = true,
         valueOf = { l -> g.inUse.withTouchLink(l).touchSensOver(g.touchpad, namedTouch) ?: g.touchpad.sensitivity },
         show = { "%.1f".format(it) },
         overridden = touchOwn, onReset = touchReset, hint = touchHint,

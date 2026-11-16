@@ -20,6 +20,7 @@ import com.oleroma.gyrophone.core.model.MoveSettings
 import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.PhysicalDevice
+import com.oleroma.gyrophone.core.model.NamedSens
 import com.oleroma.gyrophone.core.model.SensLink
 import com.oleroma.gyrophone.core.model.SliderOverride
 import com.oleroma.gyrophone.core.model.TouchpadSettings
@@ -138,6 +139,43 @@ class SensLinkTest {
         assertEquals(1f, pad.with(own).feel(1).sensitivityX, 0f)
     }
 
+    @Test fun namedSensitivitiesAreAddedAsNeededAndRenamedWithoutBreakingLinks() {
+        var w = Workspace("w", "w")
+        val (w1, a) = NamedSens.add(w, touch = false)
+        val (w2, b) = NamedSens.add(w1, touch = true)
+        w = w2
+        assertEquals(listOf("Sens 1", "Sens 2"), w.namedSens.map { it.name })
+        assertTrue(a != b)
+        w = NamedSens.rename(w, a, "Aim")
+        assertEquals("Aim", w.namedSens.first { it.id == a }.name)
+        // A delete drops every use of its id, so a later one may take it again.
+        val (w3, c) = NamedSens.add(NamedSens.delete(w, b), touch = false)
+        assertTrue(c != a)
+        assertEquals(listOf("Aim", "Sens 1"), w3.namedSens.map { it.name })
+    }
+
+    @Test fun deletingANamedSensitivityKeepsWhatFollowedItAndDropsItsChips() {
+        val (w0, id) = NamedSens.add(Workspace("w", "w", gyro = GyroSettings(sensitivity = 16f)), touch = false)
+        val chip = Mapping(InputSource.Gyro(MotionAxis.ROLL), OutputTarget.GyroSens(named = id))
+        val w = w0.copy(
+            gyro = w0.gyro.copy(yawLink = SensLink(SensLink.named(id), 0.5f)),
+            heldButtons = listOf(HeldButton(lbId, emptyList(), gyro = listOf(ButtonGyro(pitchLink = SensLink(SensLink.named(id), 2f))))),
+            mappings = listOf(chip),
+            sliders = listOf(SliderOverride(OutputTarget.GyroSens(named = id), 6f)),
+        )
+        val d = NamedSens.delete(w, id)
+        assertTrue(d.namedSens.isEmpty())
+        assertTrue(d.mappings.isEmpty())
+        assertTrue(d.sliders.isEmpty())
+        assertEquals(3f, d.gyro.sensitivityOf(yaw), 0f)
+        assertNull(d.gyro.yawLink)
+        assertEquals(12f, d.heldButtons[0].gyro[0].pitch!!, 0f)
+        // Never set: it was the shared Sensitivity, so it keeps following that at the same scale.
+        val unset = NamedSens.delete(w.copy(sliders = emptyList()), id)
+        assertEquals(SensLink(SensLink.SHARED, 0.5f), unset.gyro.yawLink)
+        assertEquals(8f, unset.gyro.sensitivityOf(yaw), 0f)
+    }
+
     // The engine: a held button following a named Gyro sens a slider keeps; sliders under held buttons.
 
     private val pad = PadDevice(id = 1, vendorId = 0x045E, productId = 0x0B13, name = "Xbox Wireless Controller")
@@ -154,7 +192,10 @@ class SensLinkTest {
 
     @Test fun aHeldButtonFollowsANamedGyroSensASliderKeeps() {
         val e = MappingEngine(
-            single(aimWorkspace(ButtonGyro(yawLink = SensLink(SensLink.named(1)), pitchLink = SensLink("YAW", 0.5f)), listOf(SliderOverride(OutputTarget.GyroSens(named = 1), 6f)))),
+            single(
+                aimWorkspace(ButtonGyro(yawLink = SensLink(SensLink.named(1)), pitchLink = SensLink("YAW", 0.5f)), listOf(SliderOverride(OutputTarget.GyroSens(named = 1), 6f)))
+                    .copy(namedSens = listOf(NamedSens(1, "Aim"))),
+            ),
         )
         assertEquals(16f, e.gyroSettings.sensitivityOf(yaw), 0f)
         e.setKey(pad, AndroidKey.BUTTON_L1, true)

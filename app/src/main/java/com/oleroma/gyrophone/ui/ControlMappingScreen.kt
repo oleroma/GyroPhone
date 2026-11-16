@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.ui
 
+import com.oleroma.gyrophone.core.model.NamedSens
 import android.content.res.Configuration
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.ui.platform.LocalConfiguration
@@ -492,6 +493,10 @@ internal fun ControlMappingScreen(
      * id). Its Motion tab then maps gyro axes while it is held; null = no Motion tab.
      */
     physicalMotionId: String? = null,
+    /** The workspace's named sensitivities ([NamedSens]): their chips join the library's Sensitivity tab. */
+    namedSens: List<NamedSens> = emptyList(),
+    /** Changes the workspace (adding, renaming, deleting named sensitivities); null = they can't be managed here. */
+    onNamedSens: (((Workspace) -> Workspace) -> Unit)? = null,
     /** That physical key's or button's own gyro settings while held ([HeldButton.gyro]), for its gyro cards' space. */
     physicalGyro: List<ButtonGyro>? = null,
     /** A physical device's keys' own settings ([KeyTiming]): their How, which their chips follow; null = not a physical control. */
@@ -624,6 +629,14 @@ internal fun ControlMappingScreen(
     fun buttonChips(m: List<Mapping>) = MappingPresets.chipsOf(m, controlInputs, ::placeOf, keepFingers = true)
     val presetKind = remember(control) { ButtonLibrary.kindOf(control) }
     val userPresets by runtime.mappingPresets.collectAsStateWithLifecycle()
+    val namedTargets = namedSens.map { if (it.touch) OutputTarget.TouchSens(named = it.id) else OutputTarget.GyroSens(named = it.id) }
+    // Chips and links name them from here while the workspace is edited.
+    SideEffect { if (onNamedSens != null && NamedSens.active != namedSens) NamedSens.active = namedSens }
+
+    /** The workspace changed by [change] (its named sensitivities). */
+    fun editWorkspace(change: (Workspace) -> Workspace) {
+        onNamedSens?.invoke(change)
+    }
     val library by runtime.buttonLibrary.collectAsStateWithLifecycle()
     val builtins = remember(control, inputs) { presetsFor(control, inputs, physical, ::buttonChips) }
     // Button presets: library buttons of this kind (a touch one's Base mappings as chips).
@@ -1833,12 +1846,13 @@ internal fun ControlMappingScreen(
         }
         val presetsTab = q.isEmpty() && tab == LibraryTab.PRESETS
         val shownTargets = when {
-            q.isNotEmpty() -> (Describe.allTargets + extras).distinct().filter {
+            q.isNotEmpty() -> (Describe.allTargets + namedTargets + extras).distinct().filter {
                 Describe.shortTarget(it).contains(q, ignoreCase = true) || Describe.target(it)
                     .contains(q, ignoreCase = true)
             }
 
             tab == LibraryTab.RECENT -> recent
+            tab == LibraryTab.SENSITIVITY -> tabTargets(tab, extras) + namedTargets
             else -> tabTargets(tab, extras)
         }
         val current = selected?.let { Bindings.targets(view, it) }.orEmpty()
@@ -1932,6 +1946,23 @@ internal fun ControlMappingScreen(
                                 onDragStart = { at -> startDrag(Dragged.Target(t, null), at) },
                             )
                         }
+                    }
+                    if (q.isEmpty() && tab == LibraryTab.SENSITIVITY && onNamedSens != null) {
+                        NamedSensManager(
+                            namedSens,
+                            onAdd = { touch ->
+                                editWorkspace { w -> NamedSens.add(w, touch).first }
+                            },
+                            onRename = { ns -> askName("Rename sensitivity", ns.name) { n -> editWorkspace { w -> NamedSens.rename(w, ns.id, n) } } },
+                            onDelete = { ns ->
+                                val gone: (Mapping) -> Boolean = { m ->
+                                    val t = m.target
+                                    (t is OutputTarget.GyroSens && !ns.touch && t.named == ns.id) || (t is OutputTarget.TouchSens && ns.touch && t.named == ns.id)
+                                }
+                                if (currentMappings.any(gone)) change(currentMappings.filterNot(gone), "Removed " + ns.name)
+                                editWorkspace { w -> NamedSens.delete(w, ns.id) }
+                            },
+                        )
                     }
                 }
             }
@@ -3369,5 +3400,42 @@ private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings
         }
 
         else -> null
+    }
+}
+
+/**
+ * The workspace's named sensitivities ([NamedSens]) in the library's Sensitivity tab: add a gyro
+ * or touch one, rename (✎) or delete (✕) each. Their chips are in the list above, to map onto sliders.
+ */
+@Composable
+private fun NamedSensManager(
+    named: List<NamedSens>,
+    onAdd: (touch: Boolean) -> Unit,
+    onRename: (NamedSens) -> Unit,
+    onDelete: (NamedSens) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            "Your sensitivities: map one onto a slider to set it, and pick it in a sensitivity's ⚙ (\"follows\") to use it. " +
+                "Deleting one leaves what followed it at the value it gave.",
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(selected = false, onClick = { onAdd(false) }, label = { Text("+ Gyro sens") })
+            FilterChip(selected = false, onClick = { onAdd(true) }, label = { Text("+ Touch sens") })
+        }
+        for (ns in named) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    ns.name + if (ns.touch) "  (touch)" else "  (gyro)",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                TextButton(onClick = { onRename(ns) }) { Text("✎") }
+                TextButton(onClick = { onDelete(ns) }) { Text("✕") }
+            }
+        }
     }
 }

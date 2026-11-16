@@ -83,6 +83,12 @@ data class Workspace(
     val padFingers: List<FingerAxisSettings> = emptyList(),
     /** Sensitivities kept by sliders ([SliderOverride]), over its settings in effect; the newest of each sensitivity only. */
     val sliders: List<SliderOverride> = emptyList(),
+    /**
+     * Its named sensitivities ([NamedSens]): made in the mapping editor's library as needed, set by
+     * slider chips ([OutputTarget.GyroSens.named], [OutputTarget.TouchSens.named]) and followed by
+     * sensitivity rows ([SensLink]).
+     */
+    val namedSens: List<NamedSens> = emptyList(),
 ) {
     /**
      * Some gyro mapping may be measured against gravity (World or Player space): the workspace's,

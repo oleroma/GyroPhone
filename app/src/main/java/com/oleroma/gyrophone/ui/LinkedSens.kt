@@ -15,23 +15,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.model.MotionAxis
+import com.oleroma.gyrophone.core.model.NamedSens
 import com.oleroma.gyrophone.core.model.SensLink
 import kotlin.math.roundToInt
 
 /** The Scale slider's step. */
 private const val SCALE_STEP = 0.05f
 
-/** What a gyro axis's sensitivity can follow besides its own value: the shared one, the other axes, the named Gyro sens. */
+/** What a gyro axis's sensitivity can follow besides its own value: the shared one, the other axes, the workspace's named gyro ones. */
 internal fun gyroLinkChoices(axis: MotionAxis): List<String> =
     listOf(SensLink.SHARED) + MotionAxis.shown.filter { it != axis }.map { SensLink.axis(it) } +
-        (1..SensLink.NAMED).map { SensLink.named(it) }
+        NamedSens.of(false).map { SensLink.named(it.id) }
 
-/** What a Move's sensitivity can follow: the shared one, the finger count's other Move, the named Touch sens. */
+/** What a Move's sensitivity can follow: the shared one, the finger count's other Move, the workspace's named touch ones. */
 internal fun moveLinkChoices(x: Boolean): List<String> =
-    listOf(SensLink.SHARED, if (x) SensLink.Y else SensLink.X) + (1..SensLink.NAMED).map { SensLink.named(it) }
+    listOf(SensLink.SHARED, if (x) SensLink.Y else SensLink.X) + NamedSens.of(true).map { SensLink.named(it.id) }
 
-/** What a button's touchpad speed while held can follow: the named Touch sens. */
-internal val touchLinkChoices: List<String> = (1..SensLink.NAMED).map { SensLink.named(it) }
+/** What a button's touchpad speed while held can follow: the workspace's named touch ones. */
+internal fun touchLinkChoices(): List<String> = NamedSens.of(true).map { SensLink.named(it.id) }
 
 /**
  * A sensitivity row (a gyro axis, a button's axis while held, a Move X / Y, a button's touchpad
@@ -60,11 +61,11 @@ internal fun LinkedSens(
             "$label follows", overridden, onReset,
             "$hint Own value: set it here. Or follow another sensitivity at a Scale of it: " +
                 (if (touch) "the shared Sensitivity, the other Move, or a Touch sens a slider sets " else "the shared Sensitivity, another axis, or a Gyro sens a slider sets ") +
-                "(map it from the library's Sensitivity tab). It follows that value as it changes, worked out only when it changes.",
+                "(add one with + Gyro sens or + Touch sens in the mapping editor library's Sensitivity tab, then map it onto a slider). It follows that value as it changes, worked out only when it changes.",
         ) {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 SelectChip("Own value", link == null) { if (link != null) onLink(null) }
-                for (from in choices) {
+                for (from in if (link != null && link.from !in choices) choices + link.from else choices) {
                     val l = SensLink(from)
                     SelectChip(l.source(touch), link?.from == from) {
                         if (link?.from != from) onLink(SensLink(from, link?.scale ?: 1f))

@@ -13,6 +13,7 @@ import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.AxisRange
 import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.SetValue
+import com.oleroma.gyrophone.core.model.NamedSens
 import com.oleroma.gyrophone.core.model.SensLink
 import com.oleroma.gyrophone.core.model.SliderOverrides
 import com.oleroma.gyrophone.core.model.valueTarget
@@ -199,12 +200,26 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * Named Gyro sens and Touch sens chips ([OutputTarget.GyroSens.named], [OutputTarget.TouchSens.named])
      * in effect, by number (index 0 unused); NaN = none. Set by [refreshSens] like [sensNow].
      */
-    private val namedGyroNow = FloatArray(SensLink.NAMED + 1) { Float.NaN }
-    private val namedTouchNow = FloatArray(SensLink.NAMED + 1) { Float.NaN }
-    private val namedGyroSeq = LongArray(SensLink.NAMED + 1)
-    private val namedTouchSeq = LongArray(SensLink.NAMED + 1)
-    private val namedGyroVals = FloatArray(SensLink.NAMED + 1)
-    private val namedTouchVals = FloatArray(SensLink.NAMED + 1)
+    private var namedGyroNow = FloatArray(1) { Float.NaN }
+    private var namedTouchNow = FloatArray(1) { Float.NaN }
+    private var namedGyroSeq = LongArray(1)
+    private var namedTouchSeq = LongArray(1)
+    private var namedGyroVals = FloatArray(1)
+    private var namedTouchVals = FloatArray(1)
+
+    /**
+     * Sizes the named sensitivities' arrays for [w]'s ([Workspace.namedSens], by id) and names them
+     * for showing ([NamedSens.active]); allocates only when the workspace has more than before.
+     */
+    private fun fitNamed(w: Workspace) {
+        if (w.namedSens != NamedSens.active) NamedSens.active = w.namedSens
+        val size = (w.namedSens.maxOfOrNull { it.id } ?: 0) + 1
+        if (size <= namedGyroNow.size) return
+        namedGyroNow = namedGyroNow.copyOf(size).also { it.fill(Float.NaN, namedGyroNow.size, size) }
+        namedTouchNow = namedTouchNow.copyOf(size).also { it.fill(Float.NaN, namedTouchNow.size, size) }
+        namedGyroSeq = LongArray(size); namedTouchSeq = LongArray(size)
+        namedGyroVals = FloatArray(size); namedTouchVals = FloatArray(size)
+    }
 
     /** Named Gyro sens [n] now: its chip in effect, else its kept slider value, else none (the shared Sensitivity). */
     private val namedGyro: (Int) -> Float? = { n ->
@@ -318,13 +333,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 sensSeen.add(m)
                 val seq = sensOrder.getOrPut(m) { ++sensSeq }
                 if (t is OutputTarget.GyroSens && t.named > 0) {
-                    val n = t.named.coerceAtMost(SensLink.NAMED)
-                    if (seq > namedGyroSeq[n]) {
+                    val n = t.named
+                    if (n < namedGyroSeq.size && seq > namedGyroSeq[n]) {
                         namedGyroSeq[n] = seq; namedGyroVals[n] = v
                     }
                 } else if (t is OutputTarget.TouchSens && t.named > 0) {
-                    val n = t.named.coerceAtMost(SensLink.NAMED)
-                    if (seq > namedTouchSeq[n]) {
+                    val n = t.named
+                    if (n < namedTouchSeq.size && seq > namedTouchSeq[n]) {
                         namedTouchSeq[n] = seq; namedTouchVals[n] = v
                     }
                 } else if (t is OutputTarget.GyroSens) {
@@ -369,7 +384,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 gyroValNow[i] = v; changed = true
             }
         }
-        for (n in 1..SensLink.NAMED) {
+        for (n in 1 until namedGyroNow.size) {
             val v = if (namedGyroSeq[n] < 0L) Float.NaN else namedGyroVals[n].coerceIn(MIN_SENS_CHIP, MAX_SENS_CHIP)
             if (v.toBits() != namedGyroNow[n].toBits()) {
                 namedGyroNow[n] = v; changed = true
@@ -377,7 +392,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         }
         if (changed) gyroNow = gyroFrom(gyroBase)
         var namedTouchChanged = false
-        for (n in 1..SensLink.NAMED) {
+        for (n in 1 until namedTouchNow.size) {
             val v = if (namedTouchSeq[n] < 0L) Float.NaN else namedTouchVals[n].coerceIn(MIN_TOUCH_SENS_CHIP, MAX_TOUCH_SENS_CHIP)
             if (v.toBits() != namedTouchNow[n].toBits()) {
                 namedTouchNow[n] = v; namedTouchChanged = true
@@ -1529,6 +1544,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (id !in touches && id.removePrefix(PHYS) !in physDown) pressOrder.remove(id)
         }
         ws = w
+        fitNamed(w)
         heldPhys = heldOf(w)
         for (id in physDown) if (PHYS + id !in latched) pressOrder.remove(PHYS + id)
         physDown.clear()
@@ -2478,7 +2494,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 current = p; applyWorkspace(); return@synchronized
             }
             current = p
-            ws = ws.copy(sliders = loaded.sliders)
+            ws = ws.copy(sliders = loaded.sliders, namedSens = loaded.namedSens)
+            fitNamed(ws)
             kept.values.removeIf { it.committed }
             applyLayerSettings()
             refreshSens()

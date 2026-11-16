@@ -3126,6 +3126,8 @@ fun PadScreen(
                         onMappingsChange = { m ->
                             editWorkspace { it.copy(mappings = m) }
                         },
+                        namedSens = ws.namedSens,
+                        onNamedSens = { change -> editWorkspace(change) },
                         onSettings = null,
                         onClose = close,
                         sets = ws.sets,
@@ -3238,6 +3240,8 @@ fun PadScreen(
                             label = sel.label,
                             onLabel = { v -> updateControl(sel.id) { it.copy(label = v) } },
                             onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
+                            namedSens = ws.namedSens,
+                            onNamedSens = { change -> editWorkspace(change) },
                             // Over the settings when it was opened from there: back to them; else they open over it.
                             onSettings = { pages.over = menu == EditMenu.MAPPING },
                             // The control stays selected (ready to pinch); a tap on empty space clears it.

@@ -508,7 +508,7 @@ sealed interface OutputTarget {
      * activated wins.
      */
     /**
-     * With [named] 1..[SensLink.NAMED] it is the workspace's named Gyro sens N instead: a value
+     * With [named] (a [NamedSens.id]) it is one of the workspace's named sensitivities instead: a value
      * of its own (until set, the shared Sensitivity) that any gyro sensitivity can follow
      * ([SensLink]); [axis] is then [MotionAxis.NONE].
      */
@@ -521,7 +521,7 @@ sealed interface OutputTarget {
      * null = every Move, X / Y = the one-finger Move X / Y) from the source's value, through the
      * chip's range, like [GyroSens].
      */
-    /** With [named] 1..[SensLink.NAMED] the workspace's named Touch sens N instead, like [GyroSens.named]; [axis] is then null. */
+    /** With [named] (a [NamedSens.id]) one of the workspace's named touch sensitivities instead, like [GyroSens.named]; [axis] is then null. */
     @Serializable
     @SerialName("touch_sens")
     data class TouchSens(val axis: StickAxis? = null, val named: Int = 0) : OutputTarget

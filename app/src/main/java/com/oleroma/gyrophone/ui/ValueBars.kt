@@ -432,13 +432,13 @@ private fun linePart(m: Mapping, out: Float, counts: Float): LinePart {
     val p = "%.0f".format(pct.coerceIn(0f, 1f) * 100)
     return when (val t = m.target) {
         is OutputTarget.GyroSens -> {
-            val name = if (t.named > 0) "Gyro sens ${t.named}" else if (t.axis == com.oleroma.gyrophone.core.model.MotionAxis.NONE) "" else t.axis.label
+            val name = if (t.named > 0) com.oleroma.gyrophone.core.model.NamedSens.nameOf(t.named, false) else if (t.axis == com.oleroma.gyrophone.core.model.MotionAxis.NONE) "" else t.axis.label
             if (t.named > 0 && counts <= 0f) LinePart(p, KIND_PAD, name, "%.1f".format(out).removeSuffix(".0").removeSuffix(",0"))
             else if (counts > 0f) LinePart(p, KIND_RWS, name, "%.2f".format(GameSens.rws(out, counts)))
             else LinePart(p, KIND_SENS, name, "%.1f".format(out).removeSuffix(".0").removeSuffix(",0"))
         }
         is OutputTarget.TouchSens ->
-            if (t.named > 0) LinePart(p, KIND_PAD, "Touch sens ${t.named}", "%.2f".format(out))
+            if (t.named > 0) LinePart(p, KIND_PAD, com.oleroma.gyrophone.core.model.NamedSens.nameOf(t.named, true), "%.2f".format(out))
             else LinePart(p, KIND_TOUCH, t.axis?.name ?: "", "%.2f".format(out))
         OutputTarget.TapTime -> LinePart(p, KIND_PAD, "Tap", "%.0f ms".format(out))
         is OutputTarget.GyroGlide, is OutputTarget.TiltRange ->
