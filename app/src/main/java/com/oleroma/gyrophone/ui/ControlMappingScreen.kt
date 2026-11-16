@@ -284,6 +284,9 @@ private fun allows(allowed: Set<OutputTarget>, t: OutputTarget): Boolean {
         is OutputTarget.PadAxis -> allowed.any { it is OutputTarget.PadAxis && it.axis == t.axis }
         is OutputTarget.MouseAxis -> allowed.any { it is OutputTarget.MouseAxis && it.motion == t.motion }
         is OutputTarget.Key -> allowed.any { it is OutputTarget.Key }
+        // A named sensitivity goes where its plain one does.
+        is OutputTarget.GyroSens -> allowed.any { it is OutputTarget.GyroSens && it.axis == t.axis }
+        is OutputTarget.TouchSens -> allowed.any { it is OutputTarget.TouchSens && it.axis == t.axis }
         OutputTarget.GyroHold -> OutputTarget.GyroPause in allowed
         // Layer actions, (Let go), Black screen, Set orientation, Clear displays, workspace switches,
         // Fullscreen and Nothing go where button outputs do.
