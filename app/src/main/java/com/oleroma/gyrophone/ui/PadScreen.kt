@@ -3140,7 +3140,7 @@ fun PadScreen(
                         },
                         // ⚙ edits the settings of the layer picked in the set bar.
                         settings = touchpadSettings(runtime, setLevel(ws, d.defaults, mapSet) { change -> editWorkspace(change) })
-                            .let { t -> MappingSettings(t.action, shared = workspacePage, sharedTop = workspaceTop) },
+                            .let { t -> MappingSettings(t.action, shared = workspacePage, sharedTop = workspaceTop, sens = t.sens) },
                         // Base takes the Defaults' mappings of what it does not map; a layer shows Base's greyed.
                         inherited = if (mapSet == MappingSet.BASE || ws.sets.none { s -> s.id == mapSet }) {
                             Inheritance.defaults(d.defaults)

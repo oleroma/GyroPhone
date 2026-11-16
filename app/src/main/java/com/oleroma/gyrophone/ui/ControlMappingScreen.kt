@@ -72,6 +72,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import com.oleroma.gyrophone.core.model.AxisRange
 import com.oleroma.gyrophone.core.model.MotionAxis
+import com.oleroma.gyrophone.core.model.SensLink
 import com.oleroma.gyrophone.core.model.FingerAxis
 import com.oleroma.gyrophone.core.model.slides
 import com.oleroma.gyrophone.core.model.valueTarget
@@ -952,6 +953,25 @@ internal fun ControlMappingScreen(
 
     // The Swipe card's lines, by source: a drag lands on the line under the finger.
     val lineBounds = remember { mutableStateMapOf<InputSource, Rect>() }
+    // Each gyro axis card's Sensitivity line, by its source: a sensitivity chip dropped there makes the axis follow it.
+    val sensBounds = remember { mutableStateMapOf<InputSource, Rect>() }
+    // The gyro axis card whose Sensitivity line a dragged sensitivity chip is over.
+    var sensHover by remember { mutableStateOf<BindableInput?>(null) }
+    // The gyro axis card whose Sensitivity chip's Scale is being set.
+    var sensDialog by remember { mutableStateOf<BindableInput?>(null) }
+
+    /** [input]'s Sensitivity line (a gyro axis card's), or null. */
+    fun sensRow(input: BindableInput): SensRow? {
+        val g = input.sources.first() as? InputSource.Gyro ?: return null
+        if (g.axis !in MotionAxis.shown) return null
+        return settings?.sens?.invoke(input)
+    }
+
+    /** The gyro axis card whose Sensitivity line is under [p] and can follow [t], or null. */
+    fun sensCardAt(p: Offset, t: OutputTarget): BindableInput? = shownNow.firstOrNull { c ->
+        val g = c.sources.first() as? InputSource.Gyro
+        g != null && sensBounds[g]?.contains(p) == true && sensLinkOf(t, g.axis) != null && sensRow(c) != null
+    }
 
 
     /** The held swipe sources of [input]'s zoned Wheres (zone 0, Hold): their mappings make its zones. */
@@ -1226,6 +1246,16 @@ internal fun ControlMappingScreen(
      */
     fun place() {
         val d = dragged
+        // Over a gyro card's Sensitivity line, a sensitivity chip lands there, not among its chips.
+        val sh = (d as? Dragged.Target)?.let { sensCardAt(dragPos, it.target) }
+        if (sh != sensHover) {
+            if (sh != null) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            sensHover = sh
+        }
+        if (sh != null) {
+            landing = null
+            return
+        }
         val card = when (d) {
             is Dragged.Target -> cardAt(dragPos)?.takeIf { allows(allowedTargets(it), d.target) }
             is Dragged.Divider -> cardAt(dragPos)?.takeIf { it.sources.first() == d.card.sources.first() }
@@ -1403,12 +1433,28 @@ internal fun ControlMappingScreen(
     fun cancelDrag() {
         dragged = null
         landing = null
+        sensHover = null
         liveOrder = emptyList()
     }
 
     fun endDrag() {
         val d = dragged ?: return
         place()
+        // A sensitivity chip dropped on a gyro card's Sensitivity line: the axis follows it (Scale 1).
+        val sh = sensHover
+        if (d is Dragged.Target && sh != null) {
+            val g = sh.sources.first() as InputSource.Gyro
+            val link = sensLinkOf(d.target, g.axis)
+            val row = sensRow(sh)
+            if (link != null && row != null) {
+                row.set(link)
+                if (d.from == null) addRecent(d.target) else if (!d.inherited) remove(d.from, d.target, d.n)
+                selectedSrc = sh.sources.first()
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            }
+            cancelDrag()
+            return
+        }
         val l = landing
         var done = false
         when (d) {
@@ -1649,7 +1695,20 @@ internal fun ControlMappingScreen(
                     val dragTarget = (d as? Dragged.Target)?.target
                     // A card preset fits only cards of its kind: the others grey out.
                     val dragCard = (d as? Dragged.Preset)?.preset?.takeIf { it.level == PresetLevel.CARD }
-                    val fits = (dragTarget == null || allows(allowedTargets(input), dragTarget)) && (dragCard == null || presetFits(dragCard, input))
+                    // A gyro axis card's Sensitivity line: shown while it has a chip (own or faded), or a
+                    // sensitivity chip it can follow is dragged.
+                    val sr = sensRow(input)
+                    val gAxis = (src as? InputSource.Gyro)?.axis
+                    val sensDrag = sr != null && dragTarget != null && gAxis != null && sensLinkOf(dragTarget, gAxis) != null
+                    val sensLine = if (sr != null && (sr.link != null || sr.inherited != null || sensDrag)) SensLine(
+                        own = sr.link?.let { it.label(false) + " = " + sr.show(it) },
+                        faded = sr.inherited?.let { it.label(false) + " = " + sr.show(it) },
+                        landing = sensHover?.sources?.first() == src,
+                        onBounds = { b -> if (sensBounds[src] != b) sensBounds[src] = b },
+                        onClick = { selectedSrc = src; sensDialog = input },
+                    ) else null
+                    if (sensLine == null) SideEffect { sensBounds.remove(src) }
+                    val fits = (dragTarget == null || allows(allowedTargets(input), dragTarget) || sensDrag) && (dragCard == null || presetFits(dragCard, input))
                     val zoneCount = zonesOf(input)
                     val zoneInputs = List(zoneCount) { z -> if (z == 0) input else Bindings.zoneInput(input, z) }
                     val row = liveRow(input)
@@ -1660,6 +1719,7 @@ internal fun ControlMappingScreen(
                     DisposableEffect(src) {
                         onDispose {
                             cardBounds.remove(src)
+                            sensBounds.remove(src)
                             itemBounds.keys.removeAll { it.first == src }
                             rowScrolls.remove(src)
                             rowBounds.remove(src)
@@ -1809,6 +1869,7 @@ internal fun ControlMappingScreen(
                             fadedAsk = trig(wheresOf(input).getOrNull(f.where) ?: input, f.trigger) to f.target
                         },
                         onHandleDrag = { at -> startCardDrag(input, at) },
+                        sens = sensLine,
                         onSavePreset = if (own.any { it != OutputTarget.NoOutput }) ({
                             val title = actionTitle(control, input)
                             askName("Save card preset", title) { name ->
@@ -2515,6 +2576,45 @@ internal fun ControlMappingScreen(
             },
         )
     }
+    sensDialog?.let { input ->
+        val sr = sensRow(input)
+        val g = input.sources.first() as? InputSource.Gyro
+        val l = sr?.link ?: sr?.inherited
+        if (sr != null && g != null && l != null) {
+            var v by remember(input, l) { mutableFloatStateOf(l.scale) }
+            AlertDialog(
+                onDismissRequest = { sensDialog = null },
+                title = { Text(g.axis.label + " sensitivity") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(l.source(false) + " × " + SensLink.fmt(v) + " = " + sr.show(l.copy(scale = v)))
+                        Slider(
+                            value = v.coerceIn(SensLink.MIN_SCALE, SensLink.MAX_SCALE),
+                            onValueChange = { x -> v = ((x / 0.05f).roundToInt() * 0.05f).coerceIn(SensLink.MIN_SCALE, SensLink.MAX_SCALE) },
+                            valueRange = SensLink.MIN_SCALE..SensLink.MAX_SCALE,
+                            typedTitle = "Scale",
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            (if (sr.link == null) "From the level above; Done makes it this one's own. " else "") +
+                                "Scale: this times what it follows (1 = the same). Remove: it follows the level above again.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        sensDialog = null
+                        if (sr.link == null || v != l.scale) sr.set(l.copy(scale = v))
+                    }) { Text("Done") }
+                },
+                dismissButton = {
+                    if (sr.link != null) TextButton(onClick = { sensDialog = null; sr.set(null) }) { Text("Remove") }
+                },
+            )
+        }
+    }
     hapticDraft?.let { (input, t) ->
         HapticTargetDialog(
             start = t,
@@ -2627,6 +2727,8 @@ private fun ActionCard(
     onSavePreset: (() -> Unit)? = null,
     /** A card of several labelled lines (the Swipe card's directions), each its own row; null = the one [row]. */
     lines: List<CardLine>? = null,
+    /** A gyro axis card's Sensitivity line under its chips; null = none. */
+    sens: SensLine? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val handleCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
@@ -2778,8 +2880,75 @@ private fun ActionCard(
                     parentName, setOrder, setId, onOther, landingLabel,
                 )
             }
+            if (sens != null) SensLineRow(sens)
             if (timing != null) Text(timing, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             if (note != null) Text(note, style = MaterialTheme.typography.bodySmall, color = colors.error)
+        }
+    }
+}
+
+/** The sensitivity a Sensitivity chip [t] dropped on gyro [axis]'s card makes it follow; null = none it can follow. */
+private fun sensLinkOf(t: OutputTarget, axis: MotionAxis): SensLink? {
+    val g = t as? OutputTarget.GyroSens ?: return null
+    return when {
+        g.named > 0 -> SensLink(SensLink.named(g.named))
+        g.axis == MotionAxis.NONE -> SensLink(SensLink.SHARED)
+        g.axis == axis -> null
+        else -> SensLink(SensLink.axis(g.axis))
+    }
+}
+
+/**
+ * A gyro axis card's Sensitivity line: its own chip ([own], "Aim ×0.5 = 4.0"), else the level
+ * above's ([faded]); [landing] a sensitivity chip is over it.
+ */
+private class SensLine(
+    val own: String?,
+    val faded: String?,
+    val landing: Boolean,
+    val onBounds: (Rect) -> Unit,
+    val onClick: () -> Unit,
+)
+
+@Composable
+private fun SensLineRow(line: SensLine) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .onGloballyPositioned { line.onBounds(it.boundsInRoot()) }
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (line.landing) colors.tertiary.copy(alpha = 0.18f) else Color.Transparent)
+            .padding(horizontal = 2.dp, vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            if (line.landing) "Sensitivity  → follows" else "Sensitivity",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (line.landing) FontWeight.SemiBold else null,
+            color = if (line.landing) colors.tertiary else colors.onSurfaceVariant,
+        )
+        val text = line.own ?: line.faded
+        if (text == null) {
+            Text(
+                if (line.landing) "Release to follow it" else "Drop a sensitivity here",
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.onSurfaceVariant,
+            )
+        } else {
+            Surface(
+                onClick = line.onClick,
+                shape = RoundedCornerShape(8.dp),
+                color = if (line.own != null) colors.secondaryContainer else colors.surfaceContainerHighest,
+                modifier = Modifier.alpha(if (line.own != null) 1f else 0.55f),
+            ) {
+                Text(
+                    text,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (line.own != null) colors.onSecondaryContainer else colors.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
         }
     }
 }
