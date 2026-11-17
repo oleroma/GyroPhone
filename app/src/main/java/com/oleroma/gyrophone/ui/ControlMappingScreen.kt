@@ -191,6 +191,8 @@ private sealed interface Dragged {
         val n: Int = 0,
         /** A chip preset's How and options, which the new chip takes. */
         val options: MapOptions? = null,
+        /** A gyro card whose Sensitivity line's own chip this is: onto the library it unmaps, onto another card's line it moves. */
+        val sensFrom: BindableInput? = null,
     ) : Dragged
     data class Preset(val preset: MapPreset) : Dragged
 
@@ -1442,6 +1444,31 @@ internal fun ControlMappingScreen(
         place()
         // A sensitivity chip dropped on a gyro card's Sensitivity line: the axis follows it (Scale 1).
         val sh = sensHover
+        // A Sensitivity line's own chip: onto another card's line it moves there (its Scale kept),
+        // onto the library it is unmapped (the axis follows the level above again), elsewhere it stays.
+        val sf = (d as? Dragged.Target)?.sensFrom
+        if (sf != null) {
+            val from = sensRow(sf)
+            val own = from?.link
+            if (from != null && own != null) {
+                if (sh != null && sh.sources.first() != sf.sources.first()) {
+                    val g = sh.sources.first() as InputSource.Gyro
+                    val to = sensRow(sh)
+                    val link = sensLinkOf(d.target, g.axis)
+                    if (to != null && link != null) {
+                        from.set(null)
+                        to.set(link.copy(scale = own.scale))
+                        selectedSrc = sh.sources.first()
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    }
+                } else if (libraryBounds.contains(dragPos)) {
+                    from.set(null)
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                }
+            }
+            cancelDrag()
+            return
+        }
         if (d is Dragged.Target && sh != null) {
             val g = sh.sources.first() as InputSource.Gyro
             val link = sensLinkOf(d.target, g.axis)
@@ -1706,6 +1733,13 @@ internal fun ControlMappingScreen(
                         landing = sensHover?.sources?.first() == src,
                         onBounds = { b -> if (sensBounds[src] != b) sensBounds[src] = b },
                         onClick = { selectedSrc = src; sensDialog = input },
+                        onDrag = { at ->
+                            val l = sr.link
+                            if (l != null) {
+                                selectedSrc = src
+                                startDrag(Dragged.Target(sensTargetOf(l), null, sensFrom = input), at)
+                            }
+                        },
                     ) else null
                     if (sensLine == null) SideEffect { sensBounds.remove(src) }
                     val fits = (dragTarget == null || allows(allowedTargets(input), dragTarget) || sensDrag) && (dragCard == null || presetFits(dragCard, input))
@@ -1907,9 +1941,9 @@ internal fun ControlMappingScreen(
             },
         )
     }
-    val chipCarried = (dragged as? Dragged.Target)?.from != null
+    val chipCarried = (dragged as? Dragged.Target)?.let { it.from != null || it.sensFrom != null } == true
     // Read through derived state, so a moving finger doesn't recompose the panes every frame.
-    val overLibrary by remember { derivedStateOf { (dragged as? Dragged.Target)?.from != null && libraryBounds.contains(dragPos) } }
+    val overLibrary by remember { derivedStateOf { (dragged as? Dragged.Target)?.let { it.from != null || it.sensFrom != null } == true && libraryBounds.contains(dragPos) } }
     val libraryPane: @Composable () -> Unit = {
         val q = query.trim()
         val shownPresets = when {
@@ -2899,6 +2933,13 @@ private fun ActionCard(
     }
 }
 
+/** The library chip that stands for link [l]: the one that, dropped on a Sensitivity line, makes it. */
+private fun sensTargetOf(l: SensLink): OutputTarget.GyroSens = when {
+    l.named > 0 -> OutputTarget.GyroSens(named = l.named)
+    l.axis != null -> OutputTarget.GyroSens(l.axis!!)
+    else -> OutputTarget.GyroSens()
+}
+
 /** The sensitivity a Sensitivity chip [t] dropped on gyro [axis]'s card makes it follow; null = none it can follow. */
 private fun sensLinkOf(t: OutputTarget, axis: MotionAxis): SensLink? {
     val g = t as? OutputTarget.GyroSens ?: return null
@@ -2920,12 +2961,15 @@ private class SensLine(
     val landing: Boolean,
     val onBounds: (Rect) -> Unit,
     val onClick: () -> Unit,
+    /** A long press on its own chip starts dragging it (onto the library to unmap it). */
+    val onDrag: (Offset) -> Unit,
 )
 
 @Composable
 private fun SensLineRow(line: SensLine, parentName: String, setId: Int, landingLabel: String?) {
     val colors = MaterialTheme.colorScheme
     // Laid out like a Swipe card's line: its label, then a framed row with one chip (own or faded).
+    val ownCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
     Column(
         Modifier.fillMaxWidth().onGloballyPositioned { line.onBounds(it.boundsInRoot()) },
         verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -2971,6 +3015,7 @@ private fun SensLineRow(line: SensLine, parentName: String, setId: Int, landingL
 
                 line.own != null -> Row(
                     Modifier
+                        .dragSource("sens", ownCoords) { at -> line.onDrag(at) }
                         .clip(RoundedCornerShape(8.dp))
                         .clickable(onClick = line.onClick)
                         .background(if (setId == MappingSet.BASE) colors.secondaryContainer else setColor(setId).copy(alpha = 0.35f))
