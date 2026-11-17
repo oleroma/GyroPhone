@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Security.Principal;
 using GyroPhone.Host.Perf;
 
 namespace GyroPhone.Windows;
@@ -177,70 +176,4 @@ public sealed class Foreground : IForeground
 
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);
-}
-
-/// <summary>
-/// Watching frames (<see cref="FrameWatch"/>) needs admin rights or Windows' "Performance Log Users" group.
-/// Adding the user to the group takes one admin prompt, then works without admin from the next sign-in.
-/// </summary>
-public static class PerfPermission
-{
-    /// <summary>The group's well-known SID (its name depends on the Windows language).</summary>
-    public const string GroupSid = "S-1-5-32-559";
-
-    /// <summary>This process already has the right: run as admin, or the group was in place at sign-in.</summary>
-    public static bool Have
-    {
-        get
-        {
-            try
-            {
-                using var id = WindowsIdentity.GetCurrent();
-                return ElevationProbe.IsSelfElevated || id.Groups?.Any(g => g.Value == GroupSid) == true;
-            }
-            catch (Exception)
-            {
-                return false;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Adds this user to the group with one admin prompt. True when it was added (or already was);
-    /// false when the prompt was declined or it failed.
-    /// </summary>
-    public static bool Grant(Action<string> log)
-    {
-        try
-        {
-            using var id = WindowsIdentity.GetCurrent();
-            string user = id.User?.Value ?? throw new InvalidOperationException("no user SID");
-            // By SIDs, so neither the group's nor the user's name matters.
-            string script = "$g=[Security.Principal.SecurityIdentifier]'" + GroupSid + "';" +
-                "$u=[Security.Principal.SecurityIdentifier]'" + user + "';" +
-                "$gn=$g.Translate([Security.Principal.NTAccount]).Value.Split('\\')[-1];" +
-                "$un=$u.Translate([Security.Principal.NTAccount]).Value;" +
-                "net localgroup \"$gn\" \"$un\" /add; if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 2) { exit $LASTEXITCODE }; exit 0";
-            var psi = new ProcessStartInfo("powershell.exe", $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{script.Replace("\"", "\\\"")}\"")
-            {
-                UseShellExecute = true,
-                Verb = "runas",
-                WindowStyle = ProcessWindowStyle.Hidden,
-            };
-            using var p = Process.Start(psi);
-            if (p == null) return false;
-            p.WaitForExit(30_000);
-            log($"performance log users: added, exit {p.ExitCode}");
-            return p.ExitCode == 0;
-        }
-        catch (System.ComponentModel.Win32Exception)
-        {
-            return false; // prompt declined
-        }
-        catch (Exception e)
-        {
-            log($"performance log users: {e.GetType().Name}: {e.Message}");
-            return false;
-        }
-    }
 }

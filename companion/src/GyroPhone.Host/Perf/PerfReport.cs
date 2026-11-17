@@ -5,7 +5,7 @@ using System.Text;
 namespace GyroPhone.Host.Perf;
 
 /// <summary>
-/// The link tests as one plain web page, <c>results.html</c> in the records folder, like the latency test's:
+/// The link tests as one plain web page, <c>results.html</c> in the records folder:
 /// the table of every kept record, newest first, the best value of each column marked, then each record's
 /// summary, bursts of trouble and second-by-second table. Rewritten whenever a record is saved; it opens in
 /// any browser and can be shared as one file.

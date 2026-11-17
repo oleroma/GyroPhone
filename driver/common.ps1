@@ -2,6 +2,9 @@
 
 $GpSubject = 'CN=GyroPhone pad driver (this PC only)'
 $GpHardwareId = 'Root\GyroPhonePad'
+# The other GyroPhone driver (input-driver/, the virtual mouse and keyboard), which uses the same
+# certificate: it is removed only when the last of the two is uninstalled.
+$GpOtherHardwareId = 'Root\GyroPhoneInput'
 $GpStage = Join-Path $env:ProgramData 'GyroPhone\driver'
 
 function Write-Step([string]$text) { Write-Host $text }
@@ -32,6 +35,11 @@ function Get-GpCertificates([string]$Store) {
 # The "GyroPhone virtual pad" devices (present or not).
 function Get-GpDevices {
     @(Get-PnpDevice -ErrorAction SilentlyContinue | Where-Object { $_.HardwareID -contains $GpHardwareId })
+}
+
+# True while the other GyroPhone driver's device is on this PC: the certificate stays for it.
+function Test-OtherDriver {
+    @(Get-PnpDevice -ErrorAction SilentlyContinue | Where-Object { $_.HardwareID -contains $GpOtherHardwareId }).Count -gt 0
 }
 
 # signtool.exe from an installed Windows SDK, newest first; $null when there is none.

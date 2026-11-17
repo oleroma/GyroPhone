@@ -26,6 +26,7 @@ public sealed class Watchdog : IDisposable
     private readonly Func<bool>? _elevatedProbe;
     private readonly Func<bool>? _publicProbe;
     private readonly Func<KeyLabels?>? _keyLabelsProbe;
+    private readonly Func<System.Net.IPAddress?, byte>? _pcSetupProbe;
     private readonly Func<ITickSleep> _sleep;
     private readonly Action<string> _log;
     private readonly byte[] _held = new byte[StateFrame.KeyBitmapSize];
@@ -40,7 +41,8 @@ public sealed class Watchdog : IDisposable
 
     public Watchdog(HostEngine engine, IClock clock, HeldKeysMarker? marker = null, SettingsStore? store = null,
         Func<bool>? elevatedForegroundProbe = null, Func<bool>? networkPublicProbe = null, Action<string>? log = null,
-        Func<KeyLabels?>? keyLabelsProbe = null, Func<ITickSleep>? tickSleep = null)
+        Func<KeyLabels?>? keyLabelsProbe = null, Func<ITickSleep>? tickSleep = null,
+        Func<System.Net.IPAddress?, byte>? pcSetupProbe = null)
     {
         _engine = engine;
         _clock = clock;
@@ -49,6 +51,7 @@ public sealed class Watchdog : IDisposable
         _elevatedProbe = elevatedForegroundProbe;
         _publicProbe = networkPublicProbe;
         _keyLabelsProbe = keyLabelsProbe;
+        _pcSetupProbe = pcSetupProbe;
         _sleep = tickSleep ?? (() => new PlainTickSleep());
         _log = log ?? (_ => { });
     }
@@ -172,6 +175,12 @@ public sealed class Watchdog : IDisposable
                 KeyLabels? labels = null;
                 try { labels = _keyLabelsProbe(); } catch (Exception) { }
                 _engine.SetKeyLabels(labels);
+            }
+            if (_pcSetupProbe != null)
+            {
+                byte setup = 0;
+                try { setup = _pcSetupProbe(_engine.PhoneAddress()); } catch (Exception) { }
+                _engine.SetPcSetup(setup);
             }
         }
         finally

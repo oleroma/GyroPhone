@@ -104,7 +104,7 @@ class WireCodecTest {
             LinkInfo(-1, 100, 1000, -90, 6, 2402, 5955, 1), LinkInfo(5, 1, 500, -40, 5, 866, 5180, 0, LinkPath.HOTSPOT),
             HostStatus(7, 1000, 0, -1, -1, 0, 2, 31),
             KeyLabels(0x04100410, IntArray(KeyLabels.USAGES.size) { 0x20 + it * 3 }),
-            PressTime(0x01020304, 0xA0B0C0D0.toInt()), TestMode(TestModeFlags.PRESS_TIMES or TestModeFlags.LATENCY_SCREEN),
+            PressTime(0x01020304, 0xA0B0C0D0.toInt()), TestMode(TestModeFlags.PRESS_TIMES or TestModeFlags.LINK_TEST),
         )
         for (p in packets) {
             val n = WireCodec.encodeSealedPlain(p, buf, 3)
@@ -124,6 +124,19 @@ class WireCodecTest {
         assertEquals(Wire.sealedSize(4), Wire.sizeOf(PacketType.TEST_MODE))
         assertTrue(PacketType.isPhoneToHost(PacketType.PRESS_TIME))
         assertFalse(PacketType.isPhoneToHost(PacketType.TEST_MODE))
+    }
+
+    @Test fun phoneStatsBytesMatchThePcs() {
+        val buf = ByteArray(64)
+        val p = PhoneStats(0x01020304, 500, 620, 1, 2, 3000, 2500, 7000, 150_000, 640)
+        val n = WireCodec.encodeSealedPlain(p, buf, 0)
+        assertEquals(Wire.PHONE_STATS_PLAIN, n)
+        // Same bytes as the PC's PhoneStatsRoundTrip.
+        assertEquals("04030201f4016c02010002 00b80b0000c4090000581b0000f0490200 80020000".replace(" ", ""),
+            buf.copyOf(n).joinToString("") { "%02x".format(it) })
+        assertEquals(p, WireCodec.decodeSealedPlain(PacketType.PHONE_STATS, buf, 0, n))
+        assertTrue(PacketType.isPhoneToHost(PacketType.PHONE_STATS))
+        assertEquals(8, TestModeFlags.PHONE_STATS)
     }
 
     @Test fun keyLabelsNameKeysByWhatThePcTypes() {

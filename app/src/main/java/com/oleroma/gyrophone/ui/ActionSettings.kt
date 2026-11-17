@@ -3,16 +3,24 @@ package com.oleroma.gyrophone.ui
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
+import androidx.compose.ui.Alignment
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.engine.GyroMouse
+import com.oleroma.gyrophone.core.model.SliderOverrides
+import com.oleroma.gyrophone.core.model.SensLink
 import com.oleroma.gyrophone.core.model.AxisGlide
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.ButtonGyro
 import com.oleroma.gyrophone.core.model.GyroMode
+import com.oleroma.gyrophone.core.model.GyroSpace
+import com.oleroma.gyrophone.core.model.How
+import com.oleroma.gyrophone.core.model.MapOptions
+import com.oleroma.gyrophone.core.model.ButtonHow
 import com.oleroma.gyrophone.core.model.GyroCurve
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.TouchpadSettings
@@ -28,6 +36,8 @@ import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.StickAxis
+import com.oleroma.gyrophone.core.model.AxisHalf
+import com.oleroma.gyrophone.core.model.Direction
 import com.oleroma.gyrophone.core.model.SurfaceInput
 import com.oleroma.gyrophone.core.model.TouchAreaKind
 import com.oleroma.gyrophone.core.model.Trigger
@@ -63,7 +73,49 @@ internal class MappingSettings(
     /** A touch control's shared settings as categories, for its one settings page; [itemsHeader] goes above them (its Reset all). */
     val items: List<SectionItem> = emptyList(),
     val itemsHeader: (@Composable () -> Unit)? = null,
+    /** A gyro axis card's Sensitivity line; null = none (any other card). */
+    val sens: (BindableInput) -> SensRow? = { null },
 )
+
+/**
+ * A gyro axis card's Sensitivity line: the sensitivity the axis follows at this level ([link], its
+ * own chip), else the one it follows from the level above ([inherited], a faded chip).
+ */
+internal class SensRow(
+    val link: SensLink?,
+    val inherited: SensLink?,
+    /** What a link comes to now, for showing. */
+    val show: (SensLink) -> String,
+    /** Sets the link; null = follow the level above again. */
+    val set: (SensLink?) -> Unit,
+)
+
+/** Gyro [axis]'s Sensitivity line at [level] (the workspace, a layer or the Defaults). */
+private fun gyroSensRow(level: WorkspaceLevel, axis: MotionAxis): SensRow {
+    val g = level.ws.gyro
+    fun k(prop: String) = WorkspaceDefaults.gyroKey(axis.name.lowercase() + prop)
+    val l = g.ownLink(axis)
+    val own = level.isOwn(k("Link")) || level.isOwn(k("Scale"))
+    val named: (Int) -> Float? = { n -> SliderOverrides.named(level.ws.sliders, false, n) }
+    return SensRow(l.takeIf { own }, l.takeIf { !own }, { x -> gyroShow(g)(g.withLink(axis, x).sensitivityOf(axis, named)) }) { x ->
+        if (x == null) {
+            level.reset(k("Link"))
+            level.reset(k("Scale"))
+        } else level.edit { it.copy(gyro = it.gyro.withLink(axis, x)) }
+    }
+}
+
+/** A button's gyro [axis] Sensitivity line while held. */
+private fun buttonSensRow(g: ButtonGyroLevel, axis: MotionAxis): SensRow {
+    val own = g.own.ownLink(axis)
+    // Not its own: what it follows while held, from Base (in a layer), else the workspace's or
+    // layer's link (unless the button's own value or own Gyro sensitivity hides it).
+    val faded = if (own != null) null else g.inUse.ownLink(axis)
+        ?: g.parent.ownLink(axis).takeIf { g.inUse.own(axis) == null && g.inUse.sensitivity == null }
+    return SensRow(own, faded, { x -> gyroShow(g.parent)(g.inUse.withLink(axis, x).sensitivityOf(axis, g.parent, g.named)) }) { x ->
+        g.edit { if (x == null) it.with(axis, null) else it.withLink(axis, x) }
+    }
+}
 
 /** [content] as a composable value (a branch of a `when` gives it no expected type to infer that from). */
 private fun ui(content: @Composable () -> Unit): @Composable () -> Unit = content
@@ -148,6 +200,10 @@ private class ButtonGyroLevel(
     val inUse: ButtonGyro = sets.fold(ButtonGyro()) { r, s -> all.firstOrNull { it.set == s }?.let { r.under(it) } ?: r }
     val own: ButtonGyro = all.firstOrNull { it.set == set } ?: ButtonGyro(set)
     val where = if (set == MappingSet.BASE) "" else " in this layer"
+    val sliders = ws.sliders
+
+    /** The workspace's named Gyro sens as its sliders keep them (null: the shared Sensitivity). */
+    val named: (Int) -> Float? = { n -> SliderOverrides.named(sliders, false, n) }
 
     companion object {
         fun of(control: TouchControl, ws: Workspace, set: Int, update: ((TouchControl) -> TouchControl) -> Unit) =
@@ -184,18 +240,18 @@ private fun ButtonGyroSensitivity(g: ButtonGyroLevel, key: String) {
 private fun ButtonTouchpadSpeed(g: ButtonGyroLevel, key: String) {
     Hint("While this is held.")
     val touchHint = "While this is held${g.where}, the touchpad cursor moves at this speed, for every finger count. Unset, the workspace's."
-    val touchOwn = g.own.touchSensitivity != null || g.own.touchScale != null
+    val touchOwn = g.own.touchSensitivity != null || g.own.touchLinkOf != null
     val touchReset = { g.edit { it.withTouch(null) } }
-    val touchBase = g.inUse.touchSensitivity ?: g.touchpad.sensitivity
-    ScaledSens(
-        key + "touchScale" + g.set, "Touchpad sensitivity", g.inUse.touchScale, touchBase, { "%.1f".format(it) },
-        overridden = touchOwn, onReset = touchReset,
-        hint = "$touchHint With Scale parent each finger count's own speed is scaled.",
-        onMode = { scaled ->
-            val now = g.inUse.touchScale?.let { it * touchBase } ?: touchBase
-            g.edit { if (scaled) it.withTouchScale(1f) else it.withTouch(now) }
+    val namedTouch: (Int) -> Float? = { n -> SliderOverrides.named(g.sliders, true, n) }
+    LinkedSens(
+        key + "touchLink" + g.set, "Touchpad sensitivity", g.inUse.touchLinkOf, touchLinkChoices(), touch = true,
+        valueOf = { l -> g.inUse.withTouchLink(l).touchSensOver(g.touchpad, namedTouch) ?: g.touchpad.sensitivity },
+        show = { "%.1f".format(it) },
+        overridden = touchOwn, onReset = touchReset, hint = touchHint,
+        onLink = { l ->
+            val now = g.inUse.touchSensOver(g.touchpad, namedTouch) ?: g.touchpad.sensitivity
+            g.edit { if (l == null) it.withTouch(now) else it.withTouchLink(l) }
         },
-        onScale = { f -> g.edit { it.withTouchScale(f) } },
     ) {
         OverrideSlider(
             key + "touchSens" + g.set, "Touchpad sensitivity %.1f", g.inUse.touchSensitivity ?: g.touchpad.sensitivity,
@@ -220,22 +276,27 @@ private fun buttonGyroGear(g: ButtonGyroLevel, key: String, axis: MotionAxis): @
             onReset = { g.edit { it.withMode(axis, null) } },
             hint = "While this is held${g.where}. Unset, the workspace's.",
         ) { m -> g.edit { it.withMode(axis, m) } }
+        GyroSpaceRow(
+            axis, g.inUse.ownSpace(axis) ?: g.parent.spaceOf(axis), g.own.ownSpace(axis) != null,
+            onReset = { g.edit { it.withSpace(axis, null) } },
+            hint = "While this is held${g.where}. Unset, the workspace's.",
+        ) { sp -> g.edit { it.withSpace(axis, sp) } }
         val hint = "While this is held: how fast ${axis.label.lowercase()} turns${g.where}. Unset, it follows this button's " +
             "Gyro sensitivity (in Settings), else the workspace's."
-        val own = g.own.own(axis) != null || g.own.ownScale(axis) != null
-        val reset = { g.edit { it.with(axis, null).withScale(axis, null) } }
-        ScaledSens(
-            key + "gyroScale" + g.set + axis.name, "${axis.label} sensitivity", g.inUse.ownScale(axis),
-            g.inUse.own(axis) ?: g.inUse.sensitivity ?: g.parent.exactOf(axis), gyroShow(g.parent),
+        val own = g.own.own(axis) != null || g.own.ownLink(axis) != null
+        val reset = { g.edit { it.with(axis, null) } }
+        LinkedSens(
+            key + "gyroLink" + g.set + axis.name, "${axis.label} sensitivity", g.inUse.ownLink(axis), gyroLinkChoices(axis),
+            touch = false,
+            valueOf = { l -> g.inUse.withLink(axis, l).sensitivityOf(axis, g.parent, g.named) }, show = gyroShow(g.parent),
             overridden = own, onReset = reset, hint = hint,
-            onMode = { scaled ->
-                val now = g.inUse.sensitivityOf(axis, g.parent)
-                g.edit { if (scaled) it.withScale(axis, 1f) else it.with(axis, now) }
+            onLink = { l ->
+                val now = g.inUse.sensitivityOf(axis, g.parent, g.named)
+                g.edit { if (l == null) it.with(axis, now) else it.withLink(axis, l) }
             },
-            onScale = { f -> g.edit { it.withScale(axis, f) } },
         ) {
             GyroSensSlider(
-                key + "gyro" + g.set + axis.name, "${axis.label} sensitivity", g.inUse.sensitivityOf(axis, g.parent), g.parent,
+                key + "gyro" + g.set + axis.name, "${axis.label} sensitivity", g.inUse.sensitivityOf(axis, g.parent, g.named), g.parent,
                 overridden = own, onReset = reset, hint = hint,
             ) { v -> g.edit { it.with(axis, v) } }
         }
@@ -299,6 +360,10 @@ internal fun touchControlSettings(
     // The settings its actions share, as categories: its gyro, a touchpad button's surface, a stick's own.
     val heldCategories = gyro?.let { g ->
         listOf(
+            category(runtime, "buttonHow", "Press", "How its chips press: Held, Once, Toggle or Repeat", prefKey = "button.How") {
+                ButtonHowRow(control.how, control.repeat) { h, n -> update { it.copy(how = h, repeat = n) } }
+                if (control.how == How.TOGGLE) ButtonToggleRows(control, key, update)
+            },
             category(runtime, "buttonGyro", "Gyro", "Gyro sensitivity and acceleration while held", prefKey = "button.Gyro") {
                 ButtonGyroSensitivity(g, key)
             },
@@ -350,6 +415,7 @@ internal fun touchControlSettings(
         },
         items = items,
         itemsHeader = header,
+        sens = { input -> (input.sources.firstOrNull() as? InputSource.Gyro)?.let { s -> gyro?.let { buttonSensRow(it, s.axis) } } },
     )
 }
 
@@ -389,6 +455,7 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
             }
         },
         shared = { WorkspaceSettings(runtime, level, key) },
+        sens = { input -> (input.sources.firstOrNull() as? InputSource.Gyro)?.takeIf { it.id.isEmpty() }?.let { gyroSensRow(level, it.axis) } },
     )
 }
 
@@ -414,29 +481,30 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
             children = level.kids(k("Mode")),
             hint = "Unset, it follows the gyro mode in Settings." + if (g.mode == GyroMode.SENSOR_OFF) " Gyro is off there now." else "",
         ) { m -> level.edit { it.copy(gyro = it.gyro.withMode(axis, m)) } }
+        GyroSpaceRow(
+            axis, g.spaceOf(axis), level.isOwn(k("Space")),
+            onReset = { level.reset(k("Space")) },
+            children = level.kids(k("Space")),
+            hint = "Unset, it follows the Gyro space in Settings (${g.gyroSpace.label}).",
+        ) { sp -> level.edit { it.copy(gyro = it.gyro.withSpace(axis, sp)) } }
         val sensHint = "How fast ${axis.label.lowercase()} turns; scrolling and sticks go faster or slower with it too. " +
             "Unset, it follows the shared Sensitivity (${gyroShow(g)(g.sensitivity)}) in Settings."
-        val sensOwn = level.isOwn(k("Sensitivity")) || level.isOwn(k("Scale"))
-        val resetSens = { level.reset(k("Scale")); level.reset(k("Sensitivity")) }
-        ScaledSens(
-            key + "scale" + axis.name, "${axis.label} sensitivity", g.ownScale(axis), g.exactOf(axis), gyroShow(g),
+        val sensOwn = level.isOwn(k("Sensitivity")) || level.isOwn(k("Scale")) || level.isOwn(k("Link"))
+        val resetSens = { level.reset(k("Link")); level.reset(k("Scale")); level.reset(k("Sensitivity")) }
+        val named: (Int) -> Float? = { n -> SliderOverrides.named(level.ws.sliders, false, n) }
+        LinkedSens(
+            key + "link" + axis.name, "${axis.label} sensitivity", g.ownLink(axis), gyroLinkChoices(axis), touch = false,
+            valueOf = { l -> g.withLink(axis, l).sensitivityOf(axis, named) }, show = gyroShow(g),
             overridden = sensOwn, onReset = resetSens, hint = sensHint,
-            onMode = { scaled ->
-                if (scaled) {
-                    // The factor multiplies the parent's exact value: this level's own one goes.
-                    if (level.isOwn(k("Sensitivity"))) level.reset(k("Sensitivity"))
-                    level.edit { it.copy(gyro = it.gyro.withScale(axis, 1f)) }
-                } else {
-                    val now = g.sensitivityOf(axis)
-                    level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, now)) }
-                }
+            onLink = { l ->
+                val now = g.sensitivityOf(axis, named)
+                level.edit { it.copy(gyro = if (l == null) it.gyro.withSensitivity(axis, now) else it.gyro.withLink(axis, l)) }
             },
-            onScale = { f -> level.edit { it.copy(gyro = it.gyro.withScale(axis, f)) } },
         ) {
             GyroSensSlider(
-                key + "sens" + axis.name, "${axis.label} sensitivity", g.sensitivityOf(axis), g,
+                key + "sens" + axis.name, "${axis.label} sensitivity", g.sensitivityOf(axis, named), g,
                 overridden = sensOwn, onReset = resetSens, hint = sensHint,
-                children = level.kids(k("Sensitivity"), k("Scale")),
+                children = level.kids(k("Sensitivity"), k("Scale"), k("Link")),
             ) { v -> level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, v)) } }
         }
         AccelCurveSetting(
@@ -462,7 +530,7 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
     }
 }
 
-/** The ⚙ of sideways ([x]) or forward and back tilt at [level]: its range and deadzone, its own or the shared ones. */
+/** The ⚙ of sideways ([x]) or forward and back tilt at [level]: its range and deadzone (and sideways, the compass lying flat), its own or the shared ones. */
 private fun tiltGear(level: WorkspaceLevel, key: String, x: Boolean): @Composable () -> Unit = ui {
     val g = level.ws.gyro
     val what = if (x) "Sideways tilt" else "Forward and back tilt"
@@ -486,6 +554,13 @@ private fun tiltGear(level: WorkspaceLevel, key: String, x: Boolean): @Composabl
             children = level.kids(dzKey),
             hint = "Leaning less than this counts as level. Unset, the shared Tilt deadzone in Settings.",
         ) { v -> level.edit { it.copy(gyro = if (x) it.gyro.copy(tiltXDeadzoneDeg = v) else it.gyro.copy(tiltYDeadzoneDeg = v)) } }
+        if (x) {
+            val ck = WorkspaceDefaults.gyroKey("tiltCompass")
+            OverrideSwitch(
+                "Use compass when flat", "Lying flat, sideways tilt (a steering wheel) has no gravity to say where straight is. On, the compass holds straight where the phone went flat; off, the gyro alone carries it, drifting very slowly (Set orientation makes the way it points straight). Laptops, speakers, metal and magnetic cases can bend the compass, so straight may wander.",
+                g.tiltCompass, overridden = level.isOwn(ck), onReset = { level.reset(ck) }, children = level.kids(ck),
+            ) { v -> level.edit { it.copy(gyro = it.gyro.copy(tiltCompass = v)) } }
+        }
     }
 }
 
@@ -521,6 +596,34 @@ private fun RatchetModeRow(
 }
 
 /**
+ * Gyro [axis]'s space for its mappings ([GyroSpace]): Local, World, and for yaw Player. [space]: the
+ * one in effect (Player off yaw shows as Local: it changes nothing there).
+ */
+@Composable
+private fun GyroSpaceRow(
+    axis: MotionAxis,
+    space: GyroSpace,
+    overridden: Boolean,
+    onReset: () -> Unit,
+    hint: String,
+    children: ChildInfo? = null,
+    onSet: (GyroSpace) -> Unit,
+) {
+    val choices = GyroSpace.choicesFor(axis)
+    val shown = if (space in choices) space else GyroSpace.LOCAL
+    val what = when (shown) {
+        GyroSpace.LOCAL -> "Local: ${axis.label.lowercase()} about the phone's own axis."
+        GyroSpace.WORLD -> "World: ${axis.label.lowercase()} measured against gravity, however the phone is held."
+        GyroSpace.PLAYER -> "Player: yaw blends the phone's yaw and roll by how it leans, so turning stays level when you tilt or lie down."
+    }
+    OverrideRow("${axis.label}: space", overridden, onReset, "$what $hint", children = children) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (sp in choices) FilterChip(selected = shown == sp, onClick = { onSet(sp) }, label = { Text(sp.label) })
+        }
+    }
+}
+
+/**
  * The ⚙ of a physical control's actions in [preset]: a key's long press and double tap timings,
  * its own over the workspace [ws]'s. [update] changes the preset.
  */
@@ -536,7 +639,14 @@ internal fun physicalSettings(
         ButtonGyroLevel(ws, set, preset.held(h.id)?.gyro.orEmpty()) { change -> update { p -> p.withHeld(h.id, h.sources, set, change) } }
     }
     val key = preset.id + ":" + held?.id
-    val items = if (level == null) emptyList() else listOf(
+    val keyCode = held?.sources?.firstNotNullOfOrNull { ButtonHow.keyOf(it) }
+    val howItem = keyCode?.let { k ->
+        category(runtime, "heldHow", "Press", "How its chips press: Held, Once, Toggle or Repeat", prefKey = "physical.How") {
+            val t = preset.timing(k)
+            ButtonHowRow(t?.how, t?.repeat ?: 2) { h, n -> update { p -> p.withTiming(k) { it.copy(how = h, repeat = n) } } }
+        }
+    }
+    val items = listOfNotNull(howItem) + if (level == null) emptyList() else listOf(
         category(runtime, "heldGyro", "Gyro", "Gyro sensitivity and acceleration while held", prefKey = "physical.Held", defaultOpen = true) {
             ButtonGyroSensitivity(level, key)
         },
@@ -544,7 +654,7 @@ internal fun physicalSettings(
             ButtonTouchpadSpeed(level, key)
         },
     )
-    return physicalActionSettings(preset, ws, update).let { a ->
+    return physicalActionSettings(runtime, preset, ws, update).let { a ->
         MappingSettings(
             // A gyro axis of its Motion tab: its ratchet, sensitivity (or factor), acceleration and glide while held.
             action = { input ->
@@ -553,6 +663,76 @@ internal fun physicalSettings(
             },
             shared = if (items.isEmpty()) null else ui { ReorderableSections(runtime, "physical", items) },
             items = items,
+            sens = { input -> (input.sources.firstOrNull() as? InputSource.Gyro)?.let { s -> level?.let { buttonSensRow(it, s.axis) } } },
+        )
+    }
+}
+
+/**
+ * A button's How ([TouchControl.how], [KeyTiming.how]): what its chips do when they don't set their
+ * own. [onSet] gets the new How (null = Held) and Repeat count.
+ */
+@Composable
+private fun ButtonHowRow(how: How?, repeat: Int, onSet: (How?, Int) -> Unit) {
+    val shown = how ?: How.HELD
+    OverrideRow(
+        "How", how != null && how != How.HELD, { onSet(null, 2) },
+        "Every chip of this button that doesn't set its own How follows this one (a chip's own How shows ↺ to follow again). " +
+            "Toggle also keeps this button's own gyro cards and gyro settings on from one touch to the next. " +
+            "Chips that move something (a stick, the mouse, a sensitivity) stay Held, except Toggle on Position and Move.",
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (h in How.entries) FilterChip(
+                selected = shown == h, onClick = { onSet(h.takeUnless { it == How.HELD }, repeat) }, label = { Text(h.label) },
+            )
+        }
+        if (shown == How.REPEAT) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (n in MapOptions.MIN_REPEAT..MapOptions.MAX_REPEAT) FilterChip(
+                selected = repeat == n, onClick = { onSet(How.REPEAT, n) }, label = { Text("×$n") },
+            )
+        }
+    }
+}
+
+/**
+ * A Toggle button's Initial state (On / Off, what it is when the workspace opens and goes back
+ * to) and "Also ends on" (what turns it back besides a touch).
+ */
+@Composable
+private fun ButtonToggleRows(control: TouchControl, key: String, update: ((TouchControl) -> TouchControl) -> Unit) {
+    OverrideRow(
+        "Initial state", control.initialOn, { update { it.copy(initialOn = false) } },
+        "On or Off when the workspace opens. Each touch turns it to the other state; an ending below turns it back to this one. " +
+            "While it is On, its chips on its press press and its gyro cards and gyro settings are on.",
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(selected = !control.initialOn, onClick = { update { it.copy(initialOn = false) } }, label = { Text("Off") })
+            FilterChip(selected = control.initialOn, onClick = { update { it.copy(initialOn = true) } }, label = { Text("On") })
+        }
+    }
+    val any = control.endsOnLetGo || control.endsOnNextInput || control.endsOnSame || control.endsAfterMs > 0
+    OverrideRow(
+        "Also ends on", any,
+        { update { it.copy(endsOnLetGo = false, endsOnNextInput = false, endsOnSame = false, endsAfterMs = 0) } },
+        "Besides a touch, what turns the button back to its Initial state. Chips that follow its Toggle go back with it.",
+    ) {
+        @Composable
+        fun check(label: String, on: Boolean, set: (TouchControl, Boolean) -> TouchControl) =
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = on, onCheckedChange = { v -> update { set(it, v) } })
+                Text(label, style = MaterialTheme.typography.bodyMedium)
+            }
+        check("\"Let go\" mapping (any button mapped to (Let go))", control.endsOnLetGo) { c, v -> c.copy(endsOnLetGo = v) }
+        check("Next input (another key or button pressed and let go)", control.endsOnNextInput) { c, v -> c.copy(endsOnNextInput = v) }
+        check("Same keystroke (one of its keys pressed by another mapping)", control.endsOnSame) { c, v -> c.copy(endsOnSame = v) }
+        var timer by remember(key, control.endsAfterMs) { mutableStateOf(control.endsAfterMs / 1000f) }
+        Text("Timer: " + if (timer <= 0f) "off" else "%.1f s".format(timer), style = MaterialTheme.typography.labelLarge)
+        Slider(
+            value = timer,
+            onValueChange = { timer = (it * 10f).roundToInt() / 10f },
+            valueRange = 0f..MapOptions.MAX_TOGGLE_MS / 1000f,
+            onValueChangeFinished = { update { it.copy(endsAfterMs = (timer * 1000f).roundToInt()) } },
+            typedTitle = "Timer (s)",
         )
     }
 }
@@ -561,6 +741,7 @@ internal fun physicalSettings(
 internal class PhysicalHeld(val id: String, val sources: List<InputSource>)
 
 private fun physicalActionSettings(
+    runtime: GamepadRuntime,
     preset: DevicePreset,
     ws: Workspace,
     update: ((DevicePreset) -> DevicePreset) -> Unit,
@@ -573,7 +754,17 @@ private fun physicalActionSettings(
         val own = src?.let { preset.timing(it.keyCode) }
         val key = preset.id + ":" + src?.keyCode
         when {
-            stickId != null -> ui { StickTuningSettings(preset, stickId, update) }
+            stickId != null -> {
+                // The card's own direction, bright in the picture (a whole axis: none).
+                val x = axis?.axis == PhysicalSticks.sticks.getValue(stickId).first
+                val only = when (axis?.half) {
+                    null -> null
+                    AxisHalf.FULL -> null
+                    AxisHalf.POSITIVE -> if (x) Direction.RIGHT else Direction.DOWN
+                    AxisHalf.NEGATIVE -> if (x) Direction.LEFT else Direction.UP
+                }
+                ui { StickTuningSettings(runtime, preset, stickId, only, update) }
+            }
             triggerId != null -> ui { TriggerTuningSettings(preset, triggerId, update) }
             else -> when (src?.gesture) {
                 ButtonGesture.TAP, ButtonGesture.LONG_PRESS, ButtonGesture.DOUBLE_TAP -> ui {
@@ -593,28 +784,43 @@ private fun physicalActionSettings(
     shared = null,
 )
 
-/** A physical stick's tuning in [preset] (stick [id]): deadzones, curve, sensitivity, Outer ring and direction pies. */
+/**
+ * A physical stick's tuning in [preset] (stick [id]): its picture ([StickPiePicture], [only]: the
+ * direction whose card opened it), deadzones, curve, sensitivity, Outer ring and direction pies.
+ */
 @Composable
-private fun StickTuningSettings(preset: DevicePreset, id: String, update: ((DevicePreset) -> DevicePreset) -> Unit) {
+private fun StickTuningSettings(
+    runtime: GamepadRuntime,
+    preset: DevicePreset,
+    id: String,
+    only: Direction?,
+    update: ((DevicePreset) -> DevicePreset) -> Unit,
+) {
     val t = preset.stick(id)
     val d = StickTuning()
     fun set(f: (StickTuning) -> StickTuning) = update { p -> p.withStick(id, f(p.stick(id))) }
     val key = preset.id + ":" + id + ":"
+    // What a slider being dragged would set, shown in the picture before it is let go.
+    var live by remember(key) { mutableStateOf<StickTuning?>(null) }
+    fun liveOf(f: (StickTuning, Float) -> StickTuning): (Float?) -> Unit = { v -> live = v?.let { f(t, it) } }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             "The whole stick's feel, kept in the preset. Every mapping of this stick follows it.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        NotSearching { StickPiePicture(live ?: t, runtime.stickWatch, right = id == "rs", only) }
         OverrideSlider(
             key + "inner", "Inner deadzone %.0f%%", t.inner * 100, 0f..40f, 1f, t.inner != d.inner,
             { set { it.copy(inner = d.inner) } },
             "Nothing happens until the stick is pushed this far, the same in every direction.",
+            onLive = liveOf { s, v -> s.copy(inner = v / 100) },
         ) { v -> set { it.copy(inner = v / 100) } }
         OverrideSlider(
             key + "outer", "Outer deadzone %.0f%%", t.outer * 100, 60f..100f, 1f, t.outer != d.outer,
             { set { it.copy(outer = d.outer) } },
             "From this far on the stick counts as pushed all the way.",
+            onLive = liveOf { s, v -> s.copy(outer = (v / 100).coerceAtLeast(s.inner + 0.05f)) },
         ) { v -> set { it.copy(outer = (v / 100).coerceAtLeast(t.inner + 0.05f)) } }
         OverrideRow(
             "Curve", t.curve != d.curve, { set { it.copy(curve = d.curve) } },
@@ -635,16 +841,19 @@ private fun StickTuningSettings(preset: DevicePreset, id: String, update: ((Devi
             key + "ring", "Outer ring %.0f%%", t.outerRing * 100, 30f..100f, 1f, t.outerRing != d.outerRing,
             { set { it.copy(outerRing = d.outerRing) } },
             "The Outer cards fire while the stick is pushed past this, for example Shift to sprint.",
+            onLive = liveOf { s, v -> s.copy(outerRing = v / 100) },
         ) { v -> set { it.copy(outerRing = v / 100) } }
         OverrideSlider(
             key + "pieX", "Left and right pies %.0f°", t.pieX, StickTuning.MIN_PIE..StickTuning.MAX_PIE, 5f, t.pieX != d.pieX,
             { set { it.copy(pieX = d.pieX) } },
             "How wide Left and Right are. Wider than 90° overlaps Up and Down, so a diagonal presses both.",
+            onLive = liveOf { s, v -> s.copy(pieX = v) },
         ) { v -> set { it.copy(pieX = v) } }
         OverrideSlider(
             key + "pieY", "Up and down pies %.0f°", t.pieY, StickTuning.MIN_PIE..StickTuning.MAX_PIE, 5f, t.pieY != d.pieY,
             { set { it.copy(pieY = d.pieY) } },
             "How wide Up and Down are.",
+            onLive = liveOf { s, v -> s.copy(pieY = v) },
         ) { v -> set { it.copy(pieY = v) } }
     }
 }

@@ -32,6 +32,9 @@ internal static class LaserDrawing
         return scale;
     }
 
+    // The gun's flat items, made again each time it moves (one per drawing thread).
+    [ThreadStatic] private static Gpu3D.FlatList? GunList;
+
     // A Draw each shot hit's corners.
     private const int HitSides = 12;
 
@@ -77,8 +80,23 @@ internal static class LaserDrawing
         // The grid's lines (picture x, y on the sphere), on the near half (front) or the far one: with perspective
         // each point by its depth, ±√(1 − x² − y²). Kept (with their built shapes, by the canvas) until the
         // lines, the window's size or Perspective change: a still sphere's grid is never built again.
-        void Grid(List<(float X, float Y)[]> lines, Color col, bool front)
+        // The view's turn (shown frame to picture) for the card: the axonometric view after the sphere's turn.
+        float[] viewTurn = ViewTurn(s.LaserAxonometric, turned);
+        float persp = s.Perspective ? LaserTrace.CameraDistance : 0f;
+        void Grid(bool front, Color col)
         {
+            // On the graphics card: the grid's circles go up once, then only the view's turn.
+            int gridLook = HashCode.Combine(col.ToArgb(), px, persp, c, r, front);
+            if (Gpu3D.Draw(g, area, front ? "grid-front" : "grid-back", new Gpu3D.Key(gridLook, Gpu3D.TurnOf(viewTurn), area, 0),
+                (viewTurn, c, r, col, px, persp, front), static (f, st) =>
+                {
+                    f.Perspective = st.persp;
+                    f.Lines(f.Geometry("laser:grid", GridGeo), st.viewTurn, st.c, st.r, st.col, st.px, st.front ? Gpu3D.Side.Front : Gpu3D.Side.Back);
+                }))
+                return;
+            // On the CPU: the grid's lines in the picture (made again for a turning sphere).
+            var gl = buf != null ? buf.GridFor(s.LaserAxonometric, turned) : LaserTrace.GridFor(s.LaserAxonometric, turned);
+            var lines = front ? gl.Front : gl.Back;
             var memo = buf == null ? new DrawBuffers.GridPoints() : front ? buf.GridFront : buf.GridBack;
             if (!ReferenceEquals(memo.Lines, lines) || memo.Cx != c.X || memo.Cy != c.Y || memo.R != r || memo.Perspective != s.Perspective)
             {
@@ -188,9 +206,32 @@ internal static class LaserDrawing
         {
             if (gimbal == null) return;
             int[] colorOf = [1, 0, 2];
+            // On the graphics card: the rings not held (dashed ones stay on the CPU), turned there with the laser's pose.
+            bool onCard = false;
+            {
+                var ringTurn = Mul(viewTurn, m);
+                int ringLook = HashCode.Combine(HashCode.Combine(axisColors[0].ToArgb(), axisColors[1].ToArgb(), axisColors[2].ToArgb()), px, persp, c, r, front, locks, active);
+                onCard = Gpu3D.Draw(g, area, front ? "rings-front" : "rings-back", new Gpu3D.Key(ringLook, Gpu3D.TurnOf(ringTurn), area, 0),
+                    (ringTurn, c, r, px, persp, front, locks, active, axisColors), static (f, st) =>
+                    {
+                        f.Perspective = st.persp;
+                        int[] colorOf = [1, 0, 2];
+                        for (int i = 0; i < 3; i++)
+                        {
+                            bool locked = (st.locks & (1 << i)) != 0, lit = (st.active & (1 << i)) != 0;
+                            if (locked) continue;
+                            var a = st.axisColors[colorOf[i]];
+                            var col = Color.FromArgb(Math.Clamp((int)(a.A * (lit ? 1f : 0.75f) * (st.front ? 1f : 0.45f)), 0, 255), a);
+                            float w = st.px * (lit ? 3.5f : st.front ? 2.5f : 1.5f);
+                            int ring = i;
+                            f.Lines(f.Geometry($"laser:ring{i}", b => RingGeo(b, ring)), st.ringTurn, st.c, st.r, col, w, st.front ? Gpu3D.Side.Front : Gpu3D.Side.Back);
+                        }
+                    });
+            }
             for (int i = 0; i < 3; i++)
             {
                 bool locked = (locks & (1 << i)) != 0, lit = (active & (1 << i)) != 0;
+                if (onCard && !locked) continue;
                 var col = Fade(axisColors[colorOf[i]], (locked ? 0.25f : lit ? 1f : 0.75f) * (front ? 1f : 0.45f));
                 float w = px * (lit ? 3.5f : front ? 2.5f : 1.5f);
                 var run = new List<PointF>(66);
@@ -374,29 +415,48 @@ internal static class LaserDrawing
             Paint(false);
             var body = Color.FromArgb(s.Color("rifle"));
             float edge = Math.Max(1f, px * 0.75f);
-            foreach (var f in LaserTrace.RifleFaces(m, s.LaserAxonometric, turned, s.Perspective, aim, kick * kickK, gun, lower, s.GunScope, hip))
-            {
-                var pts = new PointF[f.Corners.Length];
-                for (int i = 0; i < pts.Length; i++) pts[i] = new PointF(c.X + f.Corners[i].X * r, c.Y - f.Corners[i].Y * r);
-                g.FillPolygon(Color.FromArgb(body.A, (int)(body.R * f.Light), (int)(body.G * f.Light), (int)(body.B * f.Light)), pts);
-                g.DrawPolygon(Color.FromArgb(body.A, body.R / 2, body.G / 2, body.B / 2), edge, pts);
-            }
+            float k = kick * kickK;
+            // On the graphics card: the faces worked out here (cheap), filled and outlined there, far to near.
+            int look = HashCode.Combine(HashCode.Combine(body.ToArgb(), gun.Key, s.GunScope, s.LaserAxonometric, s.Perspective, c, r),
+                HashCode.Combine(aim, k, lower, hip), turned == null ? 0 : HashCode.Combine(turned[0], turned[1], turned[2], turned[3], turned[4], turned[5], turned[6], turned[7]));
+            var gunState = (m, s, turned, aim, k, gun, lower, hip, c, r, body, edge);
+            if (!Gpu3D.Draw(g, area, "gun", new Gpu3D.Key(look, Gpu3D.TurnOf(m), area, turned == null ? 0 : turned[8].GetHashCode()), gunState, static (f, st) =>
+                {
+                    var list = GunList ??= new Gpu3D.FlatList();
+                    list.Clear();
+                    var outline = Color.FromArgb(st.body.A, st.body.R / 2, st.body.G / 2, st.body.B / 2);
+                    Span<PointF> pts = stackalloc PointF[64];
+                    foreach (var face in LaserTrace.RifleFaces(st.m, st.s.LaserAxonometric, st.turned, st.s.Perspective, st.aim, st.k, st.gun, st.lower, st.s.GunScope, st.hip))
+                    {
+                        int n = Math.Min(face.Corners.Length, pts.Length);
+                        for (int i = 0; i < n; i++) pts[i] = new PointF(st.c.X + face.Corners[i].X * st.r, st.c.Y - face.Corners[i].Y * st.r);
+                        list.Fill(pts[..n], Color.FromArgb(st.body.A, (int)(st.body.R * face.Light), (int)(st.body.G * face.Light), (int)(st.body.B * face.Light)));
+                        list.Outline(pts[..n], outline, st.edge);
+                    }
+                    f.Flat(list);
+                }))
+                foreach (var f in LaserTrace.RifleFaces(m, s.LaserAxonometric, turned, s.Perspective, aim, k, gun, lower, s.GunScope, hip))
+                {
+                    var pts = new PointF[f.Corners.Length];
+                    for (int i = 0; i < pts.Length; i++) pts[i] = new PointF(c.X + f.Corners[i].X * r, c.Y - f.Corners[i].Y * r);
+                    g.FillPolygon(Color.FromArgb(body.A, (int)(body.R * f.Light), (int)(body.G * f.Light), (int)(body.B * f.Light)), pts);
+                    g.DrawPolygon(Color.FromArgb(body.A, body.R / 2, body.G / 2, body.B / 2), edge, pts);
+                }
             if (aim > 0f) LaserSight();
             MuzzleFlash();
             Paint(true);
             Axes(true);
             return;
         }
-        var gridLines = buf != null ? buf.GridFor(s.LaserAxonometric, turned) : LaserTrace.GridFor(s.LaserAxonometric, turned);
         if (crosshair)
         {
             // The crosshair look: no sphere or beam; a crosshair lying on the sphere where it aims.
-            if (s.LaserGrid) Grid(gridLines.Back, grid, false);
+            if (s.LaserGrid) Grid(false, grid);
             Axes(false);
             Paint(false);
             Crosshair();
             Paint(true);
-            if (s.LaserGrid) Grid(gridLines.Front, Fade(grid, 0.6f), true);
+            if (s.LaserGrid) Grid(true, Fade(grid, 0.6f));
             Axes(true);
             return;
         }
@@ -447,7 +507,7 @@ internal static class LaserDrawing
             if (dot != null) g.FillPolygon(color, dot);
         }
 
-        if (s.LaserGrid) Grid(gridLines.Back, grid, false);
+        if (s.LaserGrid) Grid(false, grid);
         Rings(false);
         Axes(false);
         Paint(false);
@@ -455,10 +515,60 @@ internal static class LaserDrawing
         g.DrawLine(beamCol, px * 2.5f, c, hit, round: true);
         g.FillEllipse(beamCol, new RectangleF(c.X - px * 3, c.Y - px * 3, px * 6, px * 6));
         Paint(true);
-        if (s.LaserGrid) Grid(gridLines.Front, Fade(grid, 0.6f), true);
+        if (s.LaserGrid) Grid(true, Fade(grid, 0.6f));
         Rings(true);
         Axes(true);
         if (hitFront) Spot();
         g.DrawEllipse(grid, px * 1.5f, new RectangleF(c.X - r, c.Y - r, 2 * r, 2 * r));
+    }
+
+    /// <summary>The picture's turn of the shown frame: the axonometric view (or none) after the sphere's turn (applied transposed, as <see cref="LaserTrace.ToView"/>).</summary>
+    private static float[] ViewTurn(bool axon, float[]? turned)
+    {
+        float[] t = turned is { } tt ? [tt[0], tt[3], tt[6], tt[1], tt[4], tt[7], tt[2], tt[5], tt[8]] : [1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f];
+        return axon ? Mul(LaserTrace.View, t) : t;
+    }
+
+    /// <summary>Row-major 3×3 a · b.</summary>
+    private static float[] Mul(float[] a, float[] b)
+    {
+        var o = new float[9];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                o[i * 3 + j] = a[i * 3] * b[j] + a[i * 3 + 1] * b[3 + j] + a[i * 3 + 2] * b[6 + j];
+        return o;
+    }
+
+    /// <summary>The <see cref="LaserTrace.GridDeg"/>° grid's circles on the unit sphere (as <see cref="LaserTrace.GridFor"/> makes them).</summary>
+    private static void GridGeo(Gpu3D.GeoBuilder b)
+    {
+        int steps = LaserTrace.GridSteps;
+        void Circle(Func<double, (float X, float Y, float Z)> point)
+        {
+            var q = point(0);
+            for (int i = 1; i <= steps; i++)
+            {
+                var p = point(i * 2 * Math.PI / steps);
+                b.Line(q.X, q.Y, q.Z, p.X, p.Y, p.Z);
+                q = p;
+            }
+        }
+        for (int lat = -90 + LaserTrace.GridDeg; lat < 90; lat += LaserTrace.GridDeg)
+        {
+            float a = lat * MathF.PI / 180f;
+            Circle(t => LaserTrace.Dir(a, (float)t));
+        }
+        for (int lon = 0; lon < 180; lon += LaserTrace.GridDeg)
+        {
+            float sb = MathF.Sin(lon * MathF.PI / 180f), cb = MathF.Cos(lon * MathF.PI / 180f);
+            Circle(t => ((float)Math.Cos(t) * sb, (float)Math.Sin(t), -(float)Math.Cos(t) * cb));
+        }
+    }
+
+    /// <summary>Gimbal ring <paramref name="i"/> in the laser's own frame (<see cref="LaserTrace.GimbalRing"/> unturned).</summary>
+    private static void RingGeo(Gpu3D.GeoBuilder b, int i)
+    {
+        var pts = LaserTrace.GimbalRing(i, [1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f]);
+        for (int j = 1; j < pts.Length; j++) b.Line(pts[j - 1].X, pts[j - 1].Y, pts[j - 1].Z, pts[j].X, pts[j].Y, pts[j].Z);
     }
 }

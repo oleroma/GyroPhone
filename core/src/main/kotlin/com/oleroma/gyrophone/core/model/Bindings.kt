@@ -255,6 +255,14 @@ object Bindings {
     )
 
     /**
+     * The "Steering wheel" preset of touch control [id] ("" = the workspace's): turning the phone
+     * like a wheel (sideways tilt, [com.oleroma.gyrophone.core.engine.TiltShake]) steers the left stick.
+     */
+    fun steeringWheelMappings(id: String = ""): List<Mapping> = listOf(
+        Mapping(InputSource.Tilt(StickAxis.X, AxisHalf.FULL, id), OutputTarget.PadAxis(GamepadAxis.LX)),
+    )
+
+    /**
      * The phone's tilt and shake for touch control [id] ("" = the workspace's): a full tilt axis
      * drives a game pad axis, each direction and a shake press anything.
      */

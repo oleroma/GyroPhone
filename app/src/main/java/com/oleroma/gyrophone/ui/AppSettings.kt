@@ -34,6 +34,7 @@ import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.ProfileExport
 import com.oleroma.gyrophone.core.model.isWorkspaceInput
 import com.oleroma.gyrophone.runtime.GamepadRuntime
+import com.oleroma.gyrophone.runtime.PhoneDebug
 import com.oleroma.gyrophone.runtime.ScreenOrientation
 import kotlin.math.roundToInt
 
@@ -145,7 +146,9 @@ private fun AppTab(runtime: GamepadRuntime) {
             dismissButton = { TextButton(onClick = { importing = null }) { Text("Cancel") } },
         )
     }
-    val debugOn by runtime.debug.enabled.collectAsStateWithLifecycle()
+    val diagOn by runtime.debug.enabled.collectAsStateWithLifecycle()
+    val diagKeep by runtime.debug.keepMinutes.collectAsStateWithLifecycle()
+    val usbDirect by runtime.usbDirectOn.collectAsStateWithLifecycle()
     val tight by runtime.gyroTightening.collectAsStateWithLifecycle()
     val smooth by runtime.gyroSmoothing.collectAsStateWithLifecycle()
     val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
@@ -213,7 +216,8 @@ private fun AppTab(runtime: GamepadRuntime) {
                     "Hardware devices too", padOnlyHardware,
                     hint = if (padOnlyHardware) "Controllers, keyboards and the volume buttons also reach the PC only on the pad."
                     else "Controllers, keyboards and the volume buttons reach the PC with the pad closed too, while GP is on screen " +
-                        "(Android gives an app in the background no buttons). A keyboard still types into GP's boxes.",
+                        "(Android gives an app in the background no buttons; a USB controller read directly works in the background too). " +
+                        "A keyboard still types into GP's boxes.",
                 ) { runtime.setPadOnlyHardware(it) }
             }
         },
@@ -224,7 +228,7 @@ private fun AppTab(runtime: GamepadRuntime) {
             }
             Hint("The ← / → buttons are ordinary buttons of every workspace (Make global): move, resize, map or delete them in Edit layout. Add them back from Add preset ★ → Workspace arrows.")
         },
-        category(runtime, "touchDisplay", "Touch display", "Touches, trails, live mappings, swipe lines, Move rulers") {
+        category(runtime, "touchDisplay", "Touch display", "Touches, trails, mappings on buttons, swipe lines, Move rulers") {
             SwitchRow("Show touches", visuals.showTouches) { runtime.setTouchVisuals(visuals.copy(showTouches = it)) }
             SwitchRow("Trail behind fingers", visuals.trail) { runtime.setTouchVisuals(visuals.copy(trail = it)) }
             if (visuals.trail) {
@@ -254,8 +258,11 @@ private fun AppTab(runtime: GamepadRuntime) {
                 ) { runtime.setTouchVisuals(visuals.copy(fadeMs = it)) }
             }
             SwitchRow(
-                "Show live mappings on buttons", visuals.liveMappings,
-                hint = "A button's label briefly shows what it is sending, such as a tap, double tap or long press action.",
+                "Show mappings on buttons", visuals.liveMappings,
+                hint = "A frame on each button lists what it is sending now, one line each (a tap, double tap or long press action " +
+                        "stays a moment), and each Toggle it has with its state: \"Crouch on\" in green, \"Crouch off\" in grey. " +
+                        "Slider values join the same frame. It sits in the middle of the button, in place of its label, when everything " +
+                        "the button could show fits there; otherwise outside by its top-right corner.",
             ) { runtime.setTouchVisuals(visuals.copy(liveMappings = it)) }
             SwitchRow(
                 "Show the swipe line on touchpad buttons", visuals.swipeLine,
@@ -344,14 +351,49 @@ private fun AppTab(runtime: GamepadRuntime) {
                         "ends on the PC plays either way.",
             ) { runtime.setGameRumble(it) }
         },
-        category(runtime, "debugging", "Debugging", "The debug panel and recordings") {
+        category(runtime, "debugging", "Performance", "Reading USB controllers directly; Diagnostics: every log in one switch") {
             SwitchRow(
-                "Debug tools", debugOn,
-                hint = "Shows a debug panel on the pad: the link's speed and latency, the gyro, the active workspace and " +
-                        "layer, what the PC is sent now, and a list of what you press and what it turns into. " +
-                        "Record saves the last 30 seconds (the PC saves its side too over Wi-Fi or USB). " +
-                        "Off: nothing is logged.",
+                "Read USB controllers directly", usbDirect,
+                hint = if (usbDirect) "A gamepad plugged into the phone's USB port is read by GP itself on its own thread, the fastest " +
+                    "way: the screen and Android's input queue never hold a press. Android asks once per plug-in. While GP holds it " +
+                    "(when input is sent, see Screen), other apps get nothing from it, and its buttons reach the PC from the background too."
+                else "USB gamepads go through Android like any other: only while GP is on screen.",
+            ) { runtime.setUsbDirect(it) }
+            Text("Debug", style = MaterialTheme.typography.titleSmall)
+            SwitchRow(
+                "Diagnostics", diagOn,
+                hint = "Every log at once, here and on the PC (switching it on either side switches both): what you press and " +
+                        "what it turns into, what the PC is sent, ratchet timings, the gyro displays' draw times and the link " +
+                        "each second. Only the last minutes set below are kept, in memory; Save writes them to a file and the " +
+                        "PC saves its side into its Performance results. A red dot shows at the pad's top left while it's on. " +
+                        "It barely touches input: a press only drops a few numbers into a slot, and the text is made later on " +
+                        "a side thread. Off: nothing is measured or logged.",
             ) { runtime.debug.setEnabled(it) }
+            var keep by remember(diagKeep) { mutableStateOf(diagKeep.toFloat()) }
+            Searchable("Keep", "How many minutes Diagnostics keeps and Save writes, 1 to 30.") {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Keep %.0f min".format(keep), Modifier.padding(end = 8.dp))
+                        Slider(
+                            value = keep,
+                            onValueChange = { keep = it.roundToInt().toFloat() },
+                            valueRange = PhoneDebug.MIN_KEEP.toFloat()..PhoneDebug.MAX_KEEP.toFloat(),
+                            steps = PhoneDebug.MAX_KEEP - PhoneDebug.MIN_KEEP - 1,
+                            onValueChangeFinished = { runtime.debug.setKeepMinutes(keep.roundToInt()) },
+                        )
+                    }
+                    Hint("How many minutes Diagnostics keeps and Save writes. More only takes memory (a few MB at 30).")
+                }
+            }
+            if (diagOn) {
+                OutlinedButton(onClick = {
+                    runtime.debug.saveInBackground { f ->
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            note(context, if (f != null) "Saved the last ${diagKeep} min (the PC saves its side too)" else "Not saved")
+                        }
+                    }
+                }) { Text("Save") }
+            }
         },
         category(runtime, "backup", "Backup", "Export or import everything as a file") {
             Searchable(

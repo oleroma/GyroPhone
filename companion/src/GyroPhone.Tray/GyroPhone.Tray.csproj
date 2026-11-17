@@ -11,6 +11,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>GyroPhone.ico</ApplicationIcon>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- update.cmd reads this (file properties, Comments) to know the exe takes the flag before it runs it. -->
     <Description>GyroPhone Companion; supports --init-keys</Description>
   </PropertyGroup>
@@ -27,26 +28,34 @@
     <!-- Overlay windows drawn by the graphics card: Direct2D into a GDI-compatible texture. -->
     <PackageReference Include="Vortice.Direct2D1" Version="3.6.2" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
-    <!-- OpenCV's native library for the latency test's video analyser (GyroPhone.Latency). -->
-    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20260627" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.6.2" />
   </ItemGroup>
-  <!-- OpenCV's native DLLs (about 95 MB, used only by the latency test) stay out of the single-file exe and
-       ship beside it. Bundled, every new build would first write them out to %TEMP%\.net on its first start
-       (and the antivirus scan them), for the companion and again for the update finisher. The install hook
-       copies them next to the exe, and the update finisher puts in any that wait as "<dll>.new". -->
-  <Target Name="KeepOpenCvOutOfTheBundle" AfterTargets="ComputeResolvedFilesToPublishList">
-    <ItemGroup>
-      <ResolvedFileToPublish Condition="'%(Filename)%(Extension)' == 'OpenCvSharpExtern.dll' Or $([System.String]::Copy('%(Filename)').StartsWith('opencv_videoio_ffmpeg'))">
-        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
-      </ResolvedFileToPublish>
-    </ItemGroup>
-  </Target>
-  <!-- Names them in side-files.txt in the publish folder, so the build hook ships exactly these (a DLL an
-       older publish left there isn't one). -->
+  <!-- Names any DLLs that stay out of the single-file exe (ExcludeFromSingleFile; none since the video
+       latency test moved to tools/latency-test) in side-files.txt in the publish folder, so the build hook
+       ships exactly these (a DLL an older publish left there isn't one). -->
   <Target Name="ListSideFiles" AfterTargets="Publish" Condition="'$(PublishSingleFile)' == 'true'">
     <ItemGroup>
       <_GpSideFile Include="@(ResolvedFileToPublish->'%(RelativePath)')" Condition="'%(ResolvedFileToPublish.ExcludeFromSingleFile)' == 'true' And '%(Extension)' == '.dll'" />
     </ItemGroup>
     <WriteLinesToFile File="$(PublishDir)side-files.txt" Lines="@(_GpSideFile)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+  <!-- The FPS helper (GyroPhone.FrameHelper) rides inside the published exe; "Set up FPS helper" copies it to
+       Program Files. Published on its own first (native AOT, a few MB) by a separate dotnet, so none of the
+       companion's publish settings (self-extract, ReadyToRun, output folder) reach it. Native AOT finds the C++
+       linker with vswhere.exe, which Visual Studio keeps in its Installer folder, not on the PATH: that folder
+       is put first on the PATH for this step. Plain builds (tests) skip it. -->
+  <Target Name="EmbedFpsHelper" BeforeTargets="PrepareForBuild" Condition="'$(PublishSingleFile)' == 'true'">
+    <PropertyGroup>
+      <_GpHelperProject>$(MSBuildProjectDirectory)/../GyroPhone.FrameHelper/GyroPhone.FrameHelper.csproj</_GpHelperProject>
+      <_GpHelperDir>$(MSBuildProjectDirectory)/$(BaseIntermediateOutputPath)fps-helper/</_GpHelperDir>
+      <_GpDotnet>$(DOTNET_HOST_PATH)</_GpDotnet>
+      <_GpDotnet Condition="'$(_GpDotnet)' == ''">dotnet</_GpDotnet>
+      <_GpVsInstaller>$([System.Environment]::GetFolderPath(SpecialFolder.ProgramFilesX86))\Microsoft Visual Studio\Installer</_GpVsInstaller>
+    </PropertyGroup>
+    <Exec Command="&quot;$(_GpDotnet)&quot; publish &quot;$(_GpHelperProject)&quot; -c Release -r win-x64 --self-contained true -p:PublishAot=true -p:DebugType=none -o &quot;$(_GpHelperDir)&quot;"
+          EnvironmentVariables="PATH=$([MSBuild]::Escape('$(_GpVsInstaller);$(PATH)'))" />
+    <ItemGroup>
+      <EmbeddedResource Include="$(_GpHelperDir)GyroPhoneFpsHelper.exe" LogicalName="GyroPhoneFpsHelper.exe" />
+    </ItemGroup>
   </Target>
 </Project>

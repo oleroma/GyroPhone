@@ -14,7 +14,6 @@ public enum MainPage
     Gamepad,
     Overlays,
     Connection,
-    Latency,
     Performance,
     App,
 }
@@ -145,8 +144,6 @@ public sealed class MainWindow : Window
     /// <summary>Shows page <paramref name="id"/>.</summary>
     public void Go(MainPage id)
     {
-        // The Latency test is a part of Performance.
-        if (id == MainPage.Latency) id = MainPage.Performance;
         _lastPage = id;
         Build(id);
         foreach (var (key, slot) in _pages)

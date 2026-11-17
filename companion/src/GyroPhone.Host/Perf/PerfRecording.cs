@@ -75,7 +75,11 @@ public sealed record PerfRun(
     bool Frames = true,
     int BusySeconds = 0,
     string BusyTop = "",
-    string? Text = null)
+    string? Text = null,
+    double PhoneSendMaxMs = -1,
+    double PhoneWakeLateMs = -1,
+    double PhoneGapMaxMs = -1,
+    int PhoneFailed = 0)
 {
     /// <summary>Jumps per minute of the game in front.</summary>
     public double JumpsPerMin => GameSeconds > 0 ? Jumps * 60 / GameSeconds : 0;
@@ -85,7 +89,8 @@ public sealed record PerfRun(
 /// A stretch of link trouble in a record: seconds in a row (a quiet second between two still joins them)
 /// with lost or late packets, phone pauses or let-go keys.
 /// </summary>
-public sealed record LinkBurst(long FromS, long ToS, DateTime At, int Lost, int Late, double MaxLateMs, int Gaps, int Releases, int Jumps, string Busy = "")
+public sealed record LinkBurst(long FromS, long ToS, DateTime At, int Lost, int Late, double MaxLateMs, int Gaps, int Releases, int Jumps, string Busy = "",
+    float PhoneGapMs = -1, float PhoneWakeMs = -1, float PhoneSendMs = -1)
 {
     public long Seconds => ToS - FromS + 1;
 }
@@ -231,6 +236,9 @@ public sealed class PerfRecording
         return list;
     }
 
+    /// <summary>A phone number for the burst table, "-" when the phone sent none.</summary>
+    private static string Ms(float v, string format) => v < 0 ? "-" : v.ToString(format, CultureInfo.InvariantCulture);
+
     private static double Median(List<double> v)
     {
         if (v.Count == 0) return -1;
@@ -239,10 +247,14 @@ public sealed class PerfRecording
     }
 
     /// <summary>The record's row and its per-second text (the file the Results table links to).</summary>
-    public (PerfRun Run, string Text) Finish(long endUs, IReadOnlyList<LinkSecond> link)
+    public (PerfRun Run, string Text) Finish(long endUs, IReadOnlyList<LinkSecond> link, IReadOnlyList<PhoneSecond>? phone = null)
     {
+        phone ??= [];
         lock (_lock)
         {
+            var phoneBySecond = new SortedDictionary<long, PhoneSecond>();
+            foreach (var p in phone) phoneBySecond[Math.Max(0, (long)Math.Round((p.AtUs - StartUs) / 1e6) - 1)] = p;
+            bool hasPhone = phoneBySecond.Count > 0;
             double fps = _sumMs > 0 ? _ms.Count * 1000 / _sumMs : 0;
             bool frames = _ms.Count > 0;
             var loads = _seconds.Values.Where(s => s.Load != null).Select(s => s.Load!.Value).ToList();
@@ -251,6 +263,15 @@ public sealed class PerfRecording
             // A link second ends about a second after its start: keyed by the nearest whole second, minus that one.
             foreach (var l in link) linkBySecond[Math.Max(0, (long)Math.Round((l.AtUs - StartUs) / 1e6) - 1)] = l;
             var bursts = Bursts(linkBySecond);
+            // What the phone saw in each burst (and the second before it, when its trouble began).
+            if (hasPhone)
+                for (int i = 0; i < bursts.Count; i++)
+                {
+                    var b = bursts[i];
+                    var ps = phoneBySecond.Where(x => x.Key >= b.FromS - 1 && x.Key <= b.ToS).Select(x => x.Value).ToList();
+                    if (ps.Count > 0)
+                        bursts[i] = b with { PhoneGapMs = ps.Max(p => p.GapMaxMs), PhoneWakeMs = ps.Max(p => p.WakeLateMs), PhoneSendMs = ps.Max(p => p.SendMaxMs) };
+                }
             var p50 = link.Where(l => l.LatP50Ms >= 0).Select(l => (double)l.LatP50Ms).ToList();
             var p99 = link.Where(l => l.LatP99Ms >= 0).Select(l => (double)l.LatP99Ms).ToList();
             double jitter = link.Count > 0 ? link.Average(l => l.JitterMs) : 0;
@@ -261,7 +282,9 @@ public sealed class PerfRecording
             var run = new PerfRun(Name, Link, Start, (endUs - StartUs) / 1e6, Game, _sumMs / 1000, fps, FrameStats.Low1Fps([.. _ms]),
                 _jumps, _worst, link.Sum(l => l.Lost), link.Sum(l => l.Late), link.Count > 0 ? link.Max(l => l.MaxLateMs) : 0,
                 link.Sum(l => l.Gaps), link.Sum(l => l.Releases), Avg(l => l.CpuPct), Avg(l => l.DriverPct), Avg(l => l.BusiestCoreDriverPct),
-                null, path, Median(p50), Median(p99), jitter, bursts.Count, frames, busySeconds.Count, busyTop);
+                null, path, Median(p50), Median(p99), jitter, bursts.Count, frames, busySeconds.Count, busyTop, null,
+                hasPhone ? phone.Max(p => p.SendMaxMs) : -1, hasPhone ? phone.Max(p => p.WakeLateMs) : -1,
+                hasPhone ? phone.Max(p => p.GapMaxMs) : -1, phone.Sum(p => p.Failed));
 
             var sb = new StringBuilder();
             var c = CultureInfo.InvariantCulture;
@@ -274,6 +297,10 @@ public sealed class PerfRecording
                 sb.AppendLine(c, $"game {Game}, in front {run.GameSeconds:0} s: avg {run.AvgFps:0.0} fps, 1% low {run.Low1Fps:0.0} fps, " +
                     $"jumps {run.Jumps} ({run.JumpsPerMin:0.0}/min), worst frame {run.WorstMs:0.0} ms");
             else sb.AppendLine("game frames: not watched (the FPS overlay was off)");
+            if (hasPhone)
+                sb.AppendLine(c, $"phone: longest send {run.PhoneSendMaxMs:0.0} ms ({phone.Sum(p => p.SlowSends)} took 2 ms or more), failed sends {run.PhoneFailed}, " +
+                    $"send thread woke up to {run.PhoneWakeLateMs:0.0} ms late, longest gap between its STATEs {run.PhoneGapMaxMs:0} ms");
+            else sb.AppendLine("phone: no numbers (a phone app without PHONE_STATS, or no session)");
             sb.AppendLine(c, $"PC: CPU {run.CpuPct:0}%, driver time {run.DriverPct:0.0}%, busiest core driver time {run.BusiestCoreDriverPct:0.0}%");
             if (busySeconds.Count > 0)
                 sb.AppendLine(c, $"WARNING: the PC was busy with other programs (together {PcBusy.Pct:0}% of the PC or more) for {busySeconds.Count} s, mostly {busyTop}. A build, scan or update can cause hitches: see the busy column.");
@@ -281,14 +308,18 @@ public sealed class PerfRecording
             if (bursts.Count > 0)
             {
                 sb.AppendLine("Link trouble (at = clock time, :ss = second of the minute, to spot a repeating pattern):");
-                sb.AppendLine("  at        :ss  from_s  secs  lost  late maxlate_ms pauses let_go game_jumps  pc_busy");
+                sb.AppendLine("  at        :ss  from_s  secs  lost  late maxlate_ms pauses let_go game_jumps ph_gap_ms ph_wake_ms ph_send_ms  pc_busy");
                 foreach (var b in bursts)
-                    sb.AppendLine(c, $"  {b.At:HH:mm:ss}  :{b.At:ss} {b.FromS,7} {b.Seconds,5} {b.Lost,5} {b.Late,5} {b.MaxLateMs,10:0} {b.Gaps,6} {b.Releases,6} {(frames ? b.Jumps.ToString(c) : "-"),10}  {(b.Busy.Length > 0 ? b.Busy : "-")}");
+                    sb.AppendLine(c, $"  {b.At:HH:mm:ss}  :{b.At:ss} {b.FromS,7} {b.Seconds,5} {b.Lost,5} {b.Late,5} {b.MaxLateMs,10:0} {b.Gaps,6} {b.Releases,6} {(frames ? b.Jumps.ToString(c) : "-"),10} " +
+                        $"{Ms(b.PhoneGapMs, "0"),9} {Ms(b.PhoneWakeMs, "0.0"),10} {Ms(b.PhoneSendMs, "0.0"),10}  {(b.Busy.Length > 0 ? b.Busy : "-")}");
                 sb.AppendLine();
             }
             else sb.AppendLine("Link trouble: none.").AppendLine();
             sb.AppendLine("Per second. fps: while the game was in front, with the FPS overlay on (a second it was in front only partly has few frames).");
-            sb.AppendLine("  s  :ss |   rx lost late maxlate_ms gaps rel  lat_ms p99_ms jitter |  frames   fps  worst_ms jumps |  cpu  dpc  int core_drv | busy");
+            if (hasPhone)
+                sb.AppendLine("phone: STATEs and packets it sent, failed and slow (2 ms+) sends, longest send, how late its send thread woke, longest gap between STATEs, packets the whole phone sent.");
+            sb.AppendLine("  s  :ss |   rx lost late maxlate_ms gaps rel  lat_ms p99_ms jitter |" +
+                (hasPhone ? " states  pkts fail slow send_ms wake_ms gap_ms  ph_tx |" : "") + "  frames   fps  worst_ms jumps |  cpu  dpc  int core_drv | busy");
             long last = Math.Max(_seconds.Count > 0 ? _seconds.Keys.Max() : 0, linkBySecond.Count > 0 ? linkBySecond.Keys.Max() : 0);
             for (long k = 0; k <= last; k++)
             {
@@ -305,6 +336,13 @@ public sealed class PerfRecording
                 }
                 else sb.Append("   -    -    -          -    -   -       -      -      -");
                 sb.Append(" | ");
+                if (hasPhone)
+                {
+                    if (phoneBySecond.TryGetValue(k, out var ph))
+                        sb.Append(c, $"{ph.States,6} {ph.Packets,5} {ph.Failed,4} {ph.SlowSends,4} {ph.SendMaxMs,7:0.0} {ph.WakeLateMs,7:0.0} {ph.GapMaxMs,6:0} {ph.PhoneTx,6}");
+                    else sb.Append("     -     -    -    -       -       -      -      -");
+                    sb.Append(" | ");
+                }
                 if (s != null && s.Frames > 0)
                     sb.Append(c, $"{s.Frames,7} {s.Frames * 1000 / s.SumMs,5:0} {s.WorstMs,9:0.0} {s.Jumps,5}");
                 else sb.Append("      -     -         -     -");

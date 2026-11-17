@@ -137,6 +137,7 @@ internal fun CapsuleRow(
     var adding by remember { mutableStateOf(false) }
     val gap = 8.dp
     val current by rememberUpdatedState(wsIndex)
+    val tips = rememberSetupTips(runtime)
 
     fun drop() {
         val moved = row.filterIsInstance<Capsule.Ws>().map { it.index }
@@ -163,7 +164,8 @@ internal fun CapsuleRow(
                 Capsule.Devices -> "Controller, keyboard and mouse"
                 Capsule.App -> "App"
                 Capsule.Defaults -> "Defaults"
-                Capsule.Connection -> "Connection"
+                // A dot while the Connection page has Setup tips.
+                Capsule.Connection -> if (tips.isEmpty()) "Connection" else "Connection •"
             }
             val isDragged = dragged == c
             CapsuleChip(

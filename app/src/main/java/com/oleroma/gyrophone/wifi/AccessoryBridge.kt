@@ -26,7 +26,8 @@ import java.net.SocketAddress
  * a loopback UDP socket, so [WifiLink] uses the cable exactly like USB tethering: it sends to
  * [UsbTetherInfo.target] (this bridge) and whatever comes down the cable arrives from there.
  * Thread gp-acc-rx reads the cable, gp-acc-tx the loopback socket; writes to the cable block while
- * the PC does not read, which only holds up gp-acc-tx.
+ * the PC does not read. The game input itself ([WifiPump]) skips the loopback: [sendDirect] writes
+ * it to the cable on the sender's own thread, with no hand-off to another thread on the way.
  */
 class AccessoryBridge(context: Context) {
     private val appContext = context.applicationContext
@@ -39,6 +40,12 @@ class AccessoryBridge(context: Context) {
     /** The WifiLink socket that last sent here: datagrams from the PC go to it. */
     @Volatile private var peer: SocketAddress? = null
     private var asked: UsbAccessory? = null
+    /** The cable's write end while open, shared by gp-acc-tx and [sendDirect] (one frame at a time, [writeLock]). */
+    @Volatile private var cableOut: FileOutputStream? = null
+    /** The loopback address [WifiLink] sends the cable's datagrams to. */
+    @Volatile private var loopAddr: InetSocketAddress? = null
+    private val writeLock = Any()
+    private val directFrame = ByteArray(UsbFrames.maxSize(Wire.MAX_DATAGRAM))
 
     /**
      * Called about once a second (rx thread): the cable as a [UsbTetherInfo] while GyroPhone's
@@ -82,10 +89,35 @@ class AccessoryBridge(context: Context) {
         socket = s
         dead = false
         peer = null
+        val out = FileOutputStream(fd.fileDescriptor)
+        cableOut = out
+        val addr = InetSocketAddress(LOOPBACK, s.localPort)
+        loopAddr = addr
         Thread({ cableToLoop(fd, s) }, "gp-acc-rx").apply { isDaemon = true }.start()
-        Thread({ loopToCable(fd, s) }, "gp-acc-tx").apply { isDaemon = true }.start()
+        Thread({ loopToCable(out, s) }, "gp-acc-tx").apply { isDaemon = true }.start()
         Log.i(TAG, "accessory open: ${acc.manufacturer} ${acc.model} ${acc.serial}")
-        return UsbTetherInfo("accessory", LOOPBACK, InetSocketAddress(LOOPBACK, s.localPort), direct = true).also { info = it }
+        return UsbTetherInfo("accessory", LOOPBACK, addr, direct = true).also { info = it }
+    }
+
+    /**
+     * Writes datagram [b] ([off], [len]) straight to the cable when [to] is this bridge's loopback
+     * address and the cable is open (the caller's thread; it waits while the PC doesn't read);
+     * false when it isn't for the cable or the cable is gone (the caller sends it as usual then).
+     */
+    fun sendDirect(to: java.net.SocketAddress?, b: ByteArray, off: Int, len: Int): Boolean {
+        if (dead || to == null || to != loopAddr) return false
+        val out = cableOut ?: return false
+        return try {
+            synchronized(writeLock) {
+                val n = UsbFrames.encode(b, off, len, directFrame)
+                out.write(directFrame, 0, n)
+            }
+            true
+        } catch (e: IOException) {
+            if (!dead) Log.i(TAG, "cable closed: ${e.message}")
+            dead = true
+            false
+        }
     }
 
     private fun cableToLoop(fd: ParcelFileDescriptor, s: DatagramSocket) {
@@ -113,22 +145,20 @@ class AccessoryBridge(context: Context) {
         dead = true
     }
 
-    private fun loopToCable(fd: ParcelFileDescriptor, s: DatagramSocket) {
+    private fun loopToCable(out: FileOutputStream, s: DatagramSocket) {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY)
         val buf = ByteArray(Wire.MAX_DATAGRAM)
         val frame = ByteArray(UsbFrames.maxSize(Wire.MAX_DATAGRAM))
         val packet = DatagramPacket(buf, buf.size)
         try {
-            FileOutputStream(fd.fileDescriptor).use { out ->
-                while (!dead) {
-                    packet.setLength(buf.size)
-                    s.receive(packet)
-                    val from = packet.address
-                    if (from == null || !from.isLoopbackAddress || packet.length < 1) continue
-                    peer = packet.socketAddress
-                    val n = UsbFrames.encode(buf, 0, packet.length, frame)
-                    out.write(frame, 0, n)
-                }
+            while (!dead) {
+                packet.setLength(buf.size)
+                s.receive(packet)
+                val from = packet.address
+                if (from == null || !from.isLoopbackAddress || packet.length < 1) continue
+                peer = packet.socketAddress
+                val n = UsbFrames.encode(buf, 0, packet.length, frame)
+                synchronized(writeLock) { out.write(frame, 0, n) }
             }
         } catch (e: IOException) {
             if (!dead) Log.i(TAG, "loopback or cable closed: ${e.message}")
@@ -147,6 +177,8 @@ class AccessoryBridge(context: Context) {
             // already gone
         }
         pfd = null
+        cableOut = null
+        loopAddr = null
         info = null
         peer = null
     }

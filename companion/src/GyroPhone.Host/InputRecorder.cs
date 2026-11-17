@@ -19,8 +19,10 @@ public struct HandOffCauses
     /// <summary>Who had the lock at the longest wait ("ui", "watchdog", ...); null without a wait.</summary>
     public string? LockHolder;
     private long _longestWaitTicks;
-    /// <summary>Stopwatch ticks inside the pad driver (ViGEm or the DualSense driver) and inside SendInput.</summary>
+    /// <summary>Stopwatch ticks inside the pad driver (ViGEm or the DualSense driver) and inside SendInput (or the input driver).</summary>
     public long PadTicks, SendInputTicks;
+    /// <summary>Where keys and mouse went: "SendInput" or "input driver" (<see cref="Abstractions.IKeyMouseSink.Route"/>).</summary>
+    public string? Route;
     /// <summary>How long the garbage collector paused every thread (us).</summary>
     public long GcPauseUs;
 
@@ -111,6 +113,9 @@ public sealed class InputRecorder
 
     /// <summary>More for each second's line (the FPS overlay's frames), or null; called under the engine lock.</summary>
     public Func<string?>? SecondNote { get; set; }
+
+    /// <summary>Lines go to input.log ("Record input log"); off, the seconds are still counted for the Performance page and records, but nothing is written.</summary>
+    public bool WriteLines { get; set; } = true;
 
     /// <summary>Lines wait in a queue for <see cref="WritePending"/> instead of going to <c>write</c> at once.</summary>
     public bool Deferred { get; set; }
@@ -292,13 +297,15 @@ public sealed class InputRecorder
 
     /// <summary>
     /// "3.1 ms from receive to SendInput: engine lock 2.6 ms (ui had it), pad driver 0.2 ms, SendInput 0.1 ms,
+    /// ("input driver" in place of SendInput when keys and mouse go through it)
     /// garbage collection 0.0 ms, the rest 0.2 ms": each cause over 0.05 ms; the rest is gp-rx itself (waiting
     /// for a CPU, the burst's other packets).
     /// </summary>
     private string SlowText(long took, in HandOffCauses c)
     {
         _sb.Clear();
-        _sb.Append(CultureInfo.InvariantCulture, $"{took / 1000.0:0.0} ms from receive to SendInput:");
+        string route = c.Route ?? "SendInput";
+        _sb.Append(CultureInfo.InvariantCulture, $"{took / 1000.0:0.0} ms from receive to {route}:");
         long wait = Us(c.LockWaitTicks), pad = Us(c.PadTicks), send = Us(c.SendInputTicks), gc = Math.Max(0, c.GcPauseUs);
         int parts = 0;
         void Part(string what, long us, string? extra = null)
@@ -310,7 +317,7 @@ public sealed class InputRecorder
         }
         Part("engine lock", wait, c.LockHolder);
         Part("pad driver", pad);
-        Part("SendInput", send);
+        Part(route, send);
         Part("garbage collection", gc);
         Part("the rest", took - wait - pad - send - gc);
         if (parts == 0) _sb.Append(" no cause measured");
@@ -401,6 +408,7 @@ public sealed class InputRecorder
 
     private void Line(long atUs, string what, string detail)
     {
+        if (!WriteLines) return;
         var line = string.Create(CultureInfo.InvariantCulture, $"{(atUs - _sessionStartUs) / 1e6,10:0.000} {what,-13} {detail}");
         if (Deferred) _pending.Enqueue(line);
         else _write(line);

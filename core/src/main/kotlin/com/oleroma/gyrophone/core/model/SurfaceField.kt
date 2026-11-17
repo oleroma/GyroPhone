@@ -329,12 +329,15 @@ enum class MoveField(val whole: Boolean = false) {
     CURSOR_DEADZONE(true), CATCH_UP(true), REARM(true), STILL(true), SAMPLE(true),
     LOCK(true), TURN(true), PIE_MARGIN(true), HOLD_STOPS(true),
 
-    /** Its factor (× parent) of the sensitivity, instead of an exact [SENSITIVITY]. */
-    SCALE;
+    /** The old Scale parent factor (only read; see [MoveSettings.scale]). */
+    SCALE,
+
+    /** Its sensitivity following another one ([MoveSettings.link]), instead of an exact [SENSITIVITY]. */
+    LINK;
 
     /** The shared setting of [m] this sets over. */
     fun sharedOf(m: MoveSlot): SurfaceField = when (this) {
-        SENSITIVITY, SCALE -> SurfaceField.SENSITIVITY
+        SENSITIVITY, SCALE, LINK -> SurfaceField.SENSITIVITY
         ACCELERATION -> SurfaceField.ACCELERATION
         SCROLL_SPEED -> SurfaceField.SCROLL_SPEED
         NATURAL_SCROLL -> SurfaceField.NATURAL_SCROLL
@@ -374,6 +377,7 @@ enum class MoveField(val whole: Boolean = false) {
         PIE_MARGIN -> s.margin
         HOLD_STOPS -> s.holdStops
         SCALE -> s.scale
+        LINK -> s.link
     }
 
     fun same(a: MoveSettings, b: MoveSettings): Boolean = get(a) == get(b)
@@ -399,6 +403,7 @@ enum class MoveField(val whole: Boolean = false) {
         PIE_MARGIN -> to.copy(margin = from.margin)
         HOLD_STOPS -> to.copy(holdStops = from.holdStops)
         SCALE -> to.copy(scale = from.scale)
+        LINK -> to.copy(link = from.link)
     }
 
     /** A level's own [s] sets this for [m]. */

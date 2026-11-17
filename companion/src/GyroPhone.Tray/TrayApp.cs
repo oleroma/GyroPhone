@@ -1,10 +1,13 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Net;
 using System.Text;
+using System.Text.Json;
 using GyroPhone.Host;
 using GyroPhone.Host.Abstractions;
 using GyroPhone.Host.Perf;
 using GyroPhone.Host.Settings;
+using GyroPhone.Host.Split;
 using GyroPhone.Protocol;
 using GyroPhone.Protocol.Mapping;
 using GyroPhone.Ui;
@@ -14,34 +17,35 @@ using Microsoft.Win32;
 namespace GyroPhone.Tray;
 
 /// <summary>
-/// The tray application: owns the engine, UDP server and watchdog, the notification-area icon and
-/// its short menu, and the pair and main windows (WPF, from GyroPhone.Ui, which reach the app through
-/// <see cref="ICompanion"/>). Engine callbacks (IHostEvents, IPairPrompt) arrive on the
-/// rx or watchdog thread under the engine lock, so they only post to the UI thread.
+/// The tray application, the control panel: the notification-area icon and its short menu, the pair and main windows
+/// (WPF, from GyroPhone.Ui, which reach the app through <see cref="ICompanion"/>), the overlays, the Performance page
+/// and Diagnostics' log. The input itself (the phone link, mappings, injection, pairing keys) runs in the input process
+/// (<see cref="InputHost"/>), which this starts and talks to through <see cref="InputClient"/>; its overlay data and held
+/// outputs come through <see cref="SharedRegion"/>. Events from the input process arrive on the pipe thread and are
+/// posted to the UI thread.
 /// </summary>
-internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, ICompanion
+internal sealed class TrayApp : ApplicationContext, ICompanion
 {
     private const long FirewallHintAfterUs = 30_000_000;
 
     private readonly FileLog _log;
-    /// <summary>The always-on input log (input.log next to companion.log), written by the engine's InputRecorder.</summary>
-    private readonly FileLog _inputLog;
     private readonly string _exePath;
     private readonly IClock _clock = StopwatchClock.Instance;
     private readonly long _startUs;
     private readonly Control _ui;
-    private readonly SendInputSink _keyMouse;
-    private readonly HeldKeysMarker _marker;
-    private readonly HostEngine _engine;
-    private readonly UdpHostServer _server;
-    private readonly Watchdog _watchdog;
-    private readonly KeyFiles _keyFiles;
-    private AuthorizedPhonesWatcher? _authorized;
-    private readonly AoaUsbLink _usb;
+    /// <summary>The input process: its commands (<see cref="In"/>) and its newest status (<see cref="St"/>).</summary>
+    private readonly InputClient _input;
+    /// <summary>The memory shared with the input process (overlay data, held outputs, Diagnostics' raw events).</summary>
+    private readonly SharedRegion _region;
+    private readonly EventWaitHandle _overlayWake;
+    /// <summary>The overlays' side: their settings (companion.json) and what the overlay windows read.</summary>
+    private readonly OverlayHost _overlays;
+    private readonly SettingsStore _uiStore;
+    /// <summary>Diagnostics' log, kept here: the input process's lines and raw events, the overlays' draw times.</summary>
+    private readonly DebugTrace _debug;
+    private readonly Pairing _pairing;
     /// <summary>The Performance page's frame watcher and test records (logs\perf).</summary>
     private readonly PerfMonitor _perf;
-    private IPadSink _pad;
-    private string? _padError;
 
     private readonly TrayIcons _icons = new();
     private readonly NotifyIcon _tray;
@@ -60,7 +64,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     private string _statusLine = "";
     // While Refresh updates the main window: its snapshot and problems, so View doesn't take them again.
     private (HostSnapshot Snapshot, List<Problem> Problems)? _refreshing;
-    private DebugForm? _debugForm;
     // The open overlay windows, by settings id.
     private readonly Dictionary<string, OverlayForm> _overlayForms = [];
     // The open windows, for the pacer thread (the dictionary is the UI thread's).
@@ -74,92 +77,69 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     private int _refreshQueued;
     private bool? _firewallOk;
     private bool? _usbRuleOk;
-    /// <summary>Why key file pairing is off (the host key could not be loaded), or null.</summary>
-    private volatile string? _keyError;
-    /// <summary>host.key was held by another program at start-up: it is tried again in the background.</summary>
-    private volatile bool _keyRetrying;
-    /// <summary>The port was taken at start-up: gp-bind keeps trying; true once the first 5 s have passed.</summary>
-    private volatile bool _bindRetrying, _bindWaitLong;
+    // Diagnostics as last seen in the input process's status (the log here follows it).
+    private bool _diagnosticsOn;
+    private bool _padErrorShown;
+    private bool _pairShownOnce;
     private bool _firewallHintShown;
     // The phone's "Press a key" was open at the last refresh (its notification shows once per opening).
     private bool _captureShown;
     private bool _sessionLocked, _suspended;
     private int _exited;
 
-    public TrayApp()
+    public TrayApp(string inputArgs)
     {
         _log = new FileLog();
-        _inputLog = new FileLog(fileName: "input.log", maxBytes: 5_000_000);
         _exePath = Environment.ProcessPath ?? Application.ExecutablePath;
         _startUs = _clock.NowUs;
         _ui = new Control();
         _ = _ui.Handle; // create the window handle so BeginInvoke works from other threads
         _log.Write($"starting {Application.ProductVersion}, elevated {ElevationProbe.IsSelfElevated}");
 
-        _keyMouse = new SendInputSink(_log.Write);
-        _marker = new HeldKeysMarker(HeldKeysMarker.DefaultPath());
+        // The companion's own settings (overlays, presets, shortcuts, tray click): companion.json, first made from
+        // settings.json, which the input process keeps for its own.
+        var inputSettingsPath = SettingsStore.DefaultPath();
+        _uiStore = new SettingsStore(Path.Combine(Path.GetDirectoryName(inputSettingsPath) ?? "", "companion.json"), Program.LockedFileWaitMs);
+        bool fresh = !File.Exists(_uiStore.Path);
+        var uiSettings = (fresh ? new SettingsStore(inputSettingsPath, Program.LockedFileWaitMs) : _uiStore).Load(Environment.MachineName, _log.Write);
 
-        var store = new SettingsStore(SettingsStore.DefaultPath(), Program.LockedFileWaitMs);
-        var settings = store.Load(Environment.MachineName, _log.Write);
-        _pad = PadSinks.Create(_log.Write, out _padError);
-        var protector = new DpapiKeyProtector();
-        _keyFiles = new KeyFiles(KeyFiles.DefaultDirectory(), Program.LockedFileWaitMs);
-        GyroPhone.Protocol.Crypto.P256? hostKey = null;
+        _region = SharedRegion.CreateOrOpen(SplitNames.Region);
+        _overlayWake = new EventWaitHandle(false, EventResetMode.AutoReset, SplitNames.OverlayWake);
+        _input = new InputClient(_exePath, _log.Write, inputArgs);
+        _overlays = new OverlayHost(uiSettings, _region, _overlayWake, (on, compass, samples) => In.SetOverlay(on, compass, samples), _clock);
+        if (fresh) _overlays.MarkDirty();
+        _debug = new DebugTrace(() => _clock.NowUs, queue: _region.Debug);
+        _pairing = new Pairing(this);
         try
         {
-            hostKey = _keyFiles.LoadOrCreateHostKey(protector, settings.HostName, _log.Write);
+            DebugTrace.SetLayout(KeyboardLayoutProbe.Read());
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
-            _keyError = $"{e.GetType().Name}: {e.Message}";
-            // Only held by another program for longer than the wait: keep trying instead of leaving pairing off.
-            _keyRetrying = e is IOException;
-            _log.Write($"key file pairing off: {_keyError}{(_keyRetrying ? "; retrying in the background" : "")}");
+            _log.Write($"key names: {e.GetType().Name}");
         }
-        _engine = new HostEngine(settings, _pad, _keyMouse, this, protector, _clock, this, hostKey: hostKey)
-        {
-            Recorder = new InputRecorder(_inputLog.Write),
-        };
-        _engine.SetPcPad(new XInputPcPad(_log.Write, _clock));
-        _engine.SetKeyMouseListener(new RawInputListener(_log.Write));
-        _perf = new PerfMonitor(new FrameWatch(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
+        _perf = new PerfMonitor(new FpsHelperSource(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
             Path.Combine(_log.Directory, "perf"), _log.Write);
-        _engine.Recorder!.Timeline = _perf.Link;
-        _perf.Started += () => _engine.Buzz();
-        _perf.Ended += _ => _engine.Buzz();
+        _perf.ShowsLinkChanged += () => In.SetLinkWatch(_perf.ShowsLink);
         _perf.PathNow = () => LinkPath()?.Text;
-        _engine.Recorder!.SecondNote = _perf.SecondNote;
         OverlayForm.FpsSource = () => (_perf.View(), _perf.GameName, _perf.State, _perf.Recording);
         OverlayForm.FpsLinkSource = () =>
         {
             long now = _clock.NowUs;
             return _perf.Link.Between(now - 61_000_000, now + 1_000_000);
         };
-        if (hostKey != null) _authorized = new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);
-        PowerQos.TryDisableForProcess(_log.Write);
-        _server = new UdpHostServer(_engine, _clock,
-            onRxThreadStart: () =>
-            {
-                Mmcss.TryEnter("Games", Mmcss.AvrtPriorityHigh, _log.Write);
-                PowerQos.TryDisableForThread(_log.Write);
-            },
-            log: _log.Write,
-            catchUpWait: new ExactCatchUpWait(_log.Write));
-        _usb = new AoaUsbLink(Wire.Port, settings.UsbDirect, _log.Write);
-        _watchdog = new Watchdog(_engine, _clock, _marker, store,
-            networkPublicProbe: NetworkCategory.IsAnyConnectedPublic, log: _log.Write,
-            keyLabelsProbe: KeyboardLayoutProbe.Read, tickSleep: () => new HighResolutionSleep());
+        _input.Event += OnInputEvent;
+        _input.Connected += OnInputConnected;
+        _input.Lost += () => Post(Refresh);
 
-        // Keep the Run entry pointing at this exe (it may have moved since it was enabled).
-        if (settings.StartWithWindows) TrySetAutoStart(true);
 
         _menu = new ContextMenuStrip();
         _statusItem = new ToolStripMenuItem("Starting…") { Enabled = false };
         _problemsItem = new ToolStripMenuItem("", null, (_, _) => ShowMainWindow(MainPage.Home)) { Available = false };
-        _outX360 = new ToolStripMenuItem("Xbox 360", null, (_, _) => _engine.SetOutputMode(OutputMode.Xbox360));
-        _outDs4 = new ToolStripMenuItem("DualShock 4", null, (_, _) => _engine.SetOutputMode(OutputMode.DualShock4));
-        _outDualSense = new ToolStripMenuItem("DualSense", null, (_, _) => _engine.SetOutputMode(OutputMode.DualSense)) { Available = false };
-        _outOff = new ToolStripMenuItem("Off (keyboard and mouse only)", null, (_, _) => _engine.SetOutputMode(OutputMode.None));
+        _outX360 = new ToolStripMenuItem("Xbox 360", null, (_, _) => In.SetOutputMode(OutputMode.Xbox360));
+        _outDs4 = new ToolStripMenuItem("DualShock 4", null, (_, _) => In.SetOutputMode(OutputMode.DualShock4));
+        _outDualSense = new ToolStripMenuItem("DualSense", null, (_, _) => In.SetOutputMode(OutputMode.DualSense)) { Available = false };
+        _outOff = new ToolStripMenuItem("Off (keyboard and mouse only)", null, (_, _) => In.SetOutputMode(OutputMode.None));
         var outputItem = new ToolStripMenuItem("Gamepad output");
         outputItem.DropDownItems.AddRange(new ToolStripItem[] { _outX360, _outDs4, _outDualSense, _outOff });
         var pairItem = new ToolStripMenuItem("Pair new phone…", null, (_, _) => PairNewPhone());
@@ -170,12 +150,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         var overlayItem = new ToolStripMenuItem("Overlays");
         overlayItem.DropDownItems.Add(new ToolStripMenuItem("…"));
         overlayItem.DropDownOpening += (_, _) => BuildOverlayMenu(overlayItem);
-        // The phone's Record button: save this PC's side at once (the ring keeps moving).
-        _engine.DebugSaveRequested = () => Post(() =>
-        {
-            var path = SaveDebug();
-            if (_debugForm is { IsDisposed: false } f) f.ShowSaved(path);
-        });
         var exitItem = new ToolStripMenuItem("Exit", null, (_, _) => ExitApp());
         _versionItem = new ToolStripMenuItem($"{Program.AppName} {Application.ProductVersion}") { Enabled = false };
         // Short: the everyday switches. Everything else is in the main window.
@@ -219,37 +193,37 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         _uiTimer = new System.Windows.Forms.Timer { Interval = 1000 };
         _uiTimer.Tick += (_, _) => Refresh();
 
-        StartServer();
+        _overlays.Start();
+        StartOverlays();
+        _input.Start();
         _uiTimer.Start();
         _updater.Start();
         CheckFirewallAsync();
-        if (_keyRetrying) RetryHostKey(protector, settings.HostName);
         Refresh();
 
-        if (_padError != null)
-            Balloon("Gamepad output is off", $"{_padError}. Keyboard and mouse still work. Open GyroPhone and see the Gamepad page.", ToolTipIcon.Warning);
         if (Program.JustUpdated)
             Balloon("GyroPhone Companion updated", $"Now running {Application.ProductVersion}. Pairing and settings are kept.", ToolTipIcon.Info);
     }
 
-    /// <summary>
-    /// The port is ours (UI thread): the rest of the start-up. Owning the port is the single-instance guard,
-    /// so only now are the held-keys marker, the engine's timers, the cable and the overlays started.
-    /// </summary>
-    private void ServerStarted()
+    /// <summary>The input process's commands; they never throw (nothing happens while it restarts).</summary>
+    private IInputControl In => _input.Input;
+
+    private static readonly InputSettingsView NoSettings = InputSettingsView.Of(new HostSettings());
+
+    private static readonly HostSnapshot NoSnapshot = new(null, false, false, OutputMode.None, true, false, false, false, false, 0,
+        null, 0, 0, HostStatus.Unknown, HostStatus.Unknown, 0, null, false, [], new HostCounters(0, 0, 0, 0, 0, 0, 0, 0));
+
+    /// <summary>The input process's newest status (null until it first attached).</summary>
+    private InputStatus? St => _input.Status;
+
+    private HostSnapshot Snap => St?.Snapshot ?? NoSnapshot;
+
+    private InputSettingsView Set => St?.Settings ?? NoSettings;
+
+    /// <summary>The overlays shown last time, their pacer and their shortcuts (UI thread, at start).</summary>
+    private void StartOverlays()
     {
-        _bindRetrying = false;
-        if (Volatile.Read(ref _exited) != 0)
-        {
-            _server.Stop(); // bound just as the app exited
-            return;
-        }
-        int recovered = HeldKeysMarker.Recover(_marker.Path, _keyMouse);
-        if (recovered > 0) _log.Write($"released {recovered} inputs left held by a previous run");
-        _engine.Start(_clock.NowUs);
-        _watchdog.Start();
-        _usb.Start();
-        _log.Write($"listening on UDP {Wire.Port} as '{_engine.Settings.HostName}'");
+        GcWatch.NameCurrentThread("window thread");
         _pacer = new OverlayPacer(TickOverlays, OverlayWantHz, OverlayScreenHz, _log.Write);
         ApplyOverlays(); // shown last time: shown again
         try
@@ -261,72 +235,75 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         {
             _log.Write($"overlay shortcuts off: {e.GetType().Name}: {e.Message}");
         }
-        Refresh();
-        // First run: the engine opened the pairing window because nothing is paired yet.
-        if (_engine.Snapshot().PairingWindowS > 0) OpenPairForm();
     }
 
-    /// <summary>
-    /// host.key stayed locked through the start-up wait (gp-key thread): read it again every few seconds,
-    /// and once it reads, turn key file and QR code pairing on. Until then Home shows it as a problem.
-    /// </summary>
-    private void RetryHostKey(DpapiKeyProtector protector, string hostName)
+    // =====================================================================================
+    // the input process's events (pipe thread): post only
+    // =====================================================================================
+
+    /// <summary>Attached to an input process (the first, or a new one after a crash): it learns what the overlays want.</summary>
+    private void OnInputConnected()
     {
-        var t = new Thread(() =>
+        _overlays.StartAgain();
+        _overlays.TellAgain();
+        In.SetLinkWatch(_perf.ShowsLink);
+        Post(() =>
         {
-            while (Volatile.Read(ref _exited) == 0)
+            ApplyDiagnostics();
+            Refresh();
+            // First run: the input process opened the pairing window because nothing is paired yet.
+            if (!_pairShownOnce)
             {
-                Thread.Sleep(5000);
-                try
-                {
-                    var key = _keyFiles.LoadOrCreateHostKey(protector, hostName, _log.Write);
-                    Post(() =>
-                    {
-                        if (Volatile.Read(ref _exited) != 0 || !_engine.SetHostKey(key)) return;
-                        _authorized ??= new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);
-                        _keyError = null;
-                        _keyRetrying = false;
-                        _log.Write("host key read: key file pairing on");
-                        Refresh();
-                    });
-                    return;
-                }
-                catch (IOException e)
-                {
-                    _keyError = $"{e.GetType().Name}: {e.Message}";
-                }
-                catch (Exception e) when (e is UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
-                {
-                    _keyError = $"{e.GetType().Name}: {e.Message}";
-                    _keyRetrying = false;
-                    _log.Write($"key file pairing off: {_keyError}");
-                    Post(Refresh);
-                    return;
-                }
+                if (Snap.PairingWindowS > 0 && Snap.PairedPhones.Count == 0) OpenPairForm();
+                // Keep the Run entry pointing at this exe (it may have moved since it was enabled).
+                if (Set.StartWithWindows) TrySetAutoStart(true);
             }
-        }) { Name = "gp-key", IsBackground = true, Priority = ThreadPriority.BelowNormal };
-        t.Start();
+            _pairShownOnce = true;
+        });
     }
 
-    // =====================================================================================
-    // engine callbacks (rx / watchdog thread, under the engine lock): post only
-    // =====================================================================================
-
-    public void StateChanged()
+    private void OnInputEvent(string name, JsonElement payload)
     {
-        if (Interlocked.Exchange(ref _refreshQueued, 1) == 0) Post(Refresh);
+        switch (name)
+        {
+            case "status":
+                if (Interlocked.Exchange(ref _refreshQueued, 1) == 0) Post(Refresh);
+                break;
+            case "debug":
+                if (payload.Deserialize<DebugLine>(PipeChannel.Json) is not { } line) break;
+                // A line means Diagnostics is on there (its status may come a moment later).
+                if (!_debug.Enabled) _debug.SetOn(true, "on in the input process");
+                // The input recorder's second line gets this side's part (the game's frames, the PC's load).
+                string text = line.Kind == DebugTrace.Kind.Link && line.Text.Contains(" sec ", StringComparison.Ordinal)
+                    && _perf.SecondNote() is { } note ? line.Text + note : line.Text;
+                _debug.Add(line.Kind, text, line.Us);
+                break;
+            case "debug-save":
+                // Diagnostics' Save, here or on the phone: this PC's side, written off the UI thread (the ring keeps moving).
+                ThreadPool.QueueUserWorkItem(_ => SaveDiagnosticsNow());
+                break;
+            case "link-second":
+                _perf.Link.Add(payload.Deserialize<LinkSecond>(PipeChannel.Json));
+                break;
+            case "phone-second":
+                _perf.Phone.Add(payload.Deserialize<PhoneSecond>(PipeChannel.Json));
+                break;
+            case "pair-show":
+                if (payload.Deserialize<InputHost.PairShow>(PipeChannel.Json) is not { } ask) break;
+                Post(() =>
+                {
+                    OpenPairForm();
+                    _pairWindow?.RefreshNow();
+                    Balloon("Pair a phone?", $"{ask.PhoneName} wants to pair. Code {ask.Sas}", ToolTipIcon.Info);
+                });
+                break;
+            case "pair-close":
+                Post(() => _pairWindow?.RefreshNow());
+                break;
+        }
     }
 
     public void Log(string message) => _log.Write(message);
-
-    public void Show(uint attemptId, string phoneName, string sasDisplay) => Post(() =>
-    {
-        OpenPairForm();
-        _pairWindow?.RefreshNow();
-        Balloon("Pair a phone?", $"{phoneName} wants to pair. Code {sasDisplay}", ToolTipIcon.Info);
-    });
-
-    public void Close(uint attemptId) => Post(() => _pairWindow?.RefreshNow());
 
     private void Post(Action action)
     {
@@ -349,13 +326,21 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     {
         Volatile.Write(ref _refreshQueued, 0);
         if (Volatile.Read(ref _exited) != 0) return;
-        var s = _engine.Snapshot();
-        bool serverOk = _server.State == ServerState.Running;
+        SaveUiSettings();
+        ApplyDiagnostics();
+        var st = St;
+        var s = Snap;
+        bool serverOk = st?.Server == nameof(ServerState.Running);
         bool padWanted = s.OutputMode != OutputMode.None;
 
         TrayState state;
         string status;
-        if (!serverOk && _bindRetrying && !_bindWaitLong)
+        if (st == null || !_input.Attached)
+        {
+            state = TrayState.Waiting;
+            status = st == null ? "Starting…" : "Input restarting…";
+        }
+        else if (!serverOk && st.BindRetrying && !st.BindWaitLong)
         {
             state = TrayState.Waiting;
             status = "Starting…";
@@ -363,7 +348,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         else if (!serverOk)
         {
             state = TrayState.Error;
-            status = _server.State == ServerState.PortInUse ? $"Port {Wire.Port} in use" : "Network error: restart the app";
+            status = st.Server == nameof(ServerState.PortInUse) ? $"Port {Wire.Port} in use" : "Network error: restart the app";
         }
         else if (s.Connected)
         {
@@ -405,13 +390,17 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         }
 
         // The phone's "Press a key" opened: say once per opening that this PC's keys and buttons count too.
-        if (s.Capturing && !_captureShown && _engine.Settings.PressKeyNotice)
+        if (s.Capturing && !_captureShown && Set.PressKeyNotice)
         {
             Balloon("Press a key or button",
                 "Your phone is listening. Press a key, mouse button or controller button on this PC to map it.",
                 ToolTipIcon.Info);
         }
         _captureShown = s.Capturing;
+
+        if (st?.PadError is { } padError && !_padErrorShown)
+            Balloon("Gamepad output is off", $"{padError}. Keyboard and mouse still work. Open GyroPhone and see the Gamepad page.", ToolTipIcon.Warning);
+        if (st != null) _padErrorShown = true;
 
         // A Public network is only a likely cause: the phone often gets through anyway (Windows' own
         // first-run rule, the USB rule on wired adapters), so it is named only once no phone has been seen.
@@ -425,18 +414,51 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         }
     }
 
+    /// <summary>Diagnostics as the input process has it: this side's log, the load each second, the overlay draw times (UI thread).</summary>
+    private void ApplyDiagnostics()
+    {
+        if (St == null) return;
+        bool on = Set.Diagnostics;
+        if (on == _diagnosticsOn && on == _debug.Enabled) return;
+        _diagnosticsOn = on;
+        if (on != _debug.Enabled)
+        {
+            if (on) DebugTrace.SetLayout(KeyboardLayoutProbe.Read());
+            _debug.SetOn(on, "switched");
+        }
+        _perf.SetDiagnostics(on, Set.DiagnosticsMinutes);
+        OverlayTiming.On = on;
+    }
+
+    /// <summary>companion.json, when the overlays or the tray click changed (UI thread, each refresh).</summary>
+    private void SaveUiSettings()
+    {
+        if (_overlays.TakeDirty() is not { } json) return;
+        try
+        {
+            _uiStore.WriteAtomic(json);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _overlays.MarkDirty();
+            _log.Write($"companion.json not saved: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
     /// <summary>What stops the phone or the gamepad from working, each with its fix, for Home's warning bars.</summary>
     private List<Problem> Problems(HostSnapshot s)
     {
         var list = new List<Problem>();
-        if (_server.State != ServerState.Running && !(_bindRetrying && !_bindWaitLong))
-            list.Add(new Problem(_server.State == ServerState.PortInUse
+        var st = St;
+        if (st == null) return list;
+        if (st.Server != nameof(ServerState.Running) && !(st.BindRetrying && !st.BindWaitLong))
+            list.Add(new Problem(st.Server == nameof(ServerState.PortInUse)
                 ? $"Port {Wire.Port} is in use by another program, so the phone can't connect. Close it: GyroPhone keeps trying and starts listening once it is free."
                 : "The network server failed to start. Restart GyroPhone; the log has the details.", "Open log folder", OpenLogFolder));
-        if (_keyError != null)
-            list.Add(new Problem(_keyRetrying
-                ? $"Pairing by QR code and key files is off for now: host.key is held by another program ({_keyError}). GyroPhone keeps trying."
-                : $"Pairing by QR code and key files is off: host.key could not be read ({_keyError}).", "Open log folder", OpenLogFolder));
+        if (st.KeyError != null)
+            list.Add(new Problem(st.KeyRetrying
+                ? $"Pairing by QR code and key files is off for now: host.key is held by another program ({st.KeyError}). GyroPhone keeps trying."
+                : $"Pairing by QR code and key files is off: host.key could not be read ({st.KeyError}).", "Open log folder", OpenLogFolder));
         if (s.NetworkPublic && _firewallHintShown && !s.AnyDatagramSeen)
             list.Add(new Problem("No phone seen yet, and this network is Public, so Windows may block it.", "Make it Private…", OpenNetworkSettings));
         if (_firewallOk == false)
@@ -446,12 +468,12 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         if (s.OutputMode == OutputMode.DualSense && !s.DualSenseOk)
             list.Add(new Problem("No gamepad: the DualSense needs the GyroPhone pad driver (driver\\install.cmd next to the companion), then restart GyroPhone. Keyboard and mouse still work."));
         else if (s.OutputMode != OutputMode.None && s.OutputMode != OutputMode.DualSense && !s.DriverOk)
-            list.Add(new Problem($"No gamepad: {_padError ?? "the ViGEmBus driver is missing"}. Keyboard and mouse still work.", "Install driver…", OpenDriverDownload));
-        if (s.ElevatedForeground && !ElevationProbe.IsSelfElevated)
+            list.Add(new Problem($"No gamepad: {st.PadError ?? "the ViGEmBus driver is missing"}. Keyboard and mouse still work.", "Install driver…", OpenDriverDownload));
+        if (s.ElevatedForeground && !st.Elevated)
             list.Add(new Problem("The app in front runs as administrator, so input can't reach it.", "Restart as administrator", RestartAsAdmin));
-        if (_usb.Enabled && _usb.State == UsbDirectState.AdbBusy)
-            list.Add(new Problem("adb is holding the phone, so the USB cable can't be used.", "Stop adb and use the cable", _usb.TakeFromAdb));
-        if (_usb.Enabled && _usb.State == UsbDirectState.NeedsDriver)
+        if (st.UsbEnabled && UsbState == UsbDirectState.AdbBusy)
+            list.Add(new Problem("adb is holding the phone, so the USB cable can't be used.", "Stop adb and use the cable", TakeUsbFromAdb));
+        if (st.UsbEnabled && UsbState == UsbDirectState.NeedsDriver)
             list.Add(new Problem("The phone is on the USB cable but Windows needs the WinUSB driver for it.", "How to install…", ShowUsbDriverHelp));
         return list;
     }
@@ -462,17 +484,21 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
     public CompanionView View()
     {
-        var s = _refreshing?.Snapshot ?? _engine.Snapshot();
-        var help = !_usb.Enabled ? UsbHelp.None : _usb.State switch
+        var st = St;
+        var s = _refreshing?.Snapshot ?? Snap;
+        var set = Set;
+        bool usbOn = st?.UsbEnabled ?? false;
+        var help = !usbOn ? UsbHelp.None : UsbState switch
         {
             UsbDirectState.AdbBusy => UsbHelp.AdbBusy,
             UsbDirectState.NeedsDriver => UsbHelp.NeedsDriver,
             _ => UsbHelp.None,
         };
-        string server = _server.State == ServerState.Running ? $"Listening on UDP port {Wire.Port}."
-            : _server.State == ServerState.PortInUse ? $"Port {Wire.Port} is in use{(_bindWaitLong ? " by another program" : "")}; retrying." : $"Not running ({_server.State}).";
+        string server = st == null ? "Starting the input process." : !_input.Attached ? "The input process is starting again."
+            : st.Server == nameof(ServerState.Running) ? $"Listening on UDP port {Wire.Port}."
+            : st.Server == nameof(ServerState.PortInUse) ? $"Port {Wire.Port} is in use{(st.BindWaitLong ? " by another program" : "")}; retrying." : $"Not running ({st.Server}).";
         string hostKey = s.HostKeyFingerprint is { } fp ? $"This PC's key: {fp}"
-            : $"This PC has no key{(_keyError != null ? $" ({_keyError})" : "")}: pairing by QR code and key files is off.";
+            : $"This PC has no key{(st?.KeyError != null ? $" ({st.KeyError})" : "")}: pairing by QR code and key files is off.";
         return new CompanionView(s,
             $"{Program.AppName} {Application.ProductVersion}",
             _statusLine,
@@ -480,63 +506,145 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             IsAutoStartOn(),
             IsWatcherOn(),
             TrayClick,
-            _usb.Enabled,
+            usbOn,
             UsbDirectText(),
             help,
             _firewallOk,
             _usbRuleOk,
-            ElevationProbe.IsSelfElevated,
+            st?.Elevated ?? ElevationProbe.IsSelfElevated,
             server,
-            s.DriverOk ? null : _padError,
+            s.DriverOk ? null : st?.PadError,
             hostKey,
-            _keyFiles.Directory,
+            st?.KeysFolder ?? "",
             _log.Path,
             _refreshing?.Problems ?? Problems(s),
-            _engine.Settings.MeasureButtons,
-            _engine.PressLatencyNow(),
-            _engine.Settings.InputLog,
-            _engine.Settings.CatchUpMs,
-            _engine.Settings.PressKeyNotice,
-            _engine.Settings.PressKeyListen);
+            set.MeasureButtons,
+            st?.Buttons,
+            set.Diagnostics,
+            set.CatchUpMs,
+            set.PressKeyNotice,
+            set.PressKeyListen,
+            set.DiagnosticsMinutes,
+            Volatile.Read(ref _diagSaved),
+            set.UseInputDriver,
+            st?.InputDriverReady == true ? InputDriverState.Ready : st?.InputDriverInstalled == true ? InputDriverState.NotPlugged : InputDriverState.NotInstalled);
     }
 
-    public void SetLatencyScreen(bool on) => _engine.SetLatencyScreen(on);
 
     public void SetCatchUpMs(int ms)
     {
-        _engine.SetCatchUpMs(ms);
+        In.SetCatchUpMs(ms);
         Refresh();
     }
 
-    public void ToggleInputLog()
+    public void ToggleUseInputDriver()
     {
-        _engine.SetInputLog(!_engine.Settings.InputLog);
+        In.SetUseInputDriver(!Set.UseInputDriver);
         Refresh();
     }
+
+    // Performance › Delivery test: a window in front reading raw mouse input like a game, next to the delivery probe.
+    private readonly object _deliveryGate = new();
+    private DeliveryTestWindow? _deliveryTest;
+    private System.Threading.Timer? _deliveryTimer;
+    private volatile DeliveryNumbers? _deliveryProbe;
+    private volatile bool _deliveryFront;
+    private bool _deliveryFrontSent;
+
+    public void OpenDeliveryTest()
+    {
+        lock (_deliveryGate)
+        {
+            if (_deliveryTest is { } open)
+            {
+                open.Show();
+                return;
+            }
+            _deliveryProbe = null;
+            _deliveryFront = _deliveryFrontSent = false;
+            In.SetDeliveryTest(true, false);
+            var w = new DeliveryTestWindow(_region.Moves, () => _deliveryProbe,
+                front =>
+                {
+                    _deliveryFront = front;
+                    ThreadPool.QueueUserWorkItem(_ => DeliveryTick());
+                },
+                DeliveryTestClosed);
+            _deliveryTest = w;
+            _deliveryTimer = new System.Threading.Timer(_ => DeliveryTick(), null, 500, 500);
+            w.Show();
+        }
+    }
+
+    /// <summary>Off the window's thread: tells the input process whether the window is in front, and fetches the probe's numbers.</summary>
+    private void DeliveryTick()
+    {
+        lock (_deliveryGate)
+        {
+            if (_deliveryTest == null) return;
+            bool front = _deliveryFront;
+            if (front != _deliveryFrontSent)
+            {
+                In.SetDeliveryTest(true, front);
+                _deliveryFrontSent = front;
+            }
+            _deliveryProbe = In.DeliveryTestNumbers();
+        }
+    }
+
+    /// <summary>The test window closed (its thread): the summary goes to the log (and Diagnostics), and the test stops.</summary>
+    private void DeliveryTestClosed(string summary)
+    {
+        _log.Write(summary);
+        if (_debug.Enabled) _debug.Add(DebugTrace.Kind.Note, summary);
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            lock (_deliveryGate)
+            {
+                _deliveryTimer?.Dispose();
+                _deliveryTimer = null;
+                _deliveryTest = null;
+                In.SetDeliveryTest(false, false);
+            }
+        });
+    }
+
+    public void ToggleDiagnostics()
+    {
+        In.SetDiagnostics(!Set.Diagnostics);
+        Refresh();
+    }
+
+    public void SetDiagnosticsMinutes(int minutes)
+    {
+        In.SetDiagnosticsMinutes(minutes);
+        _perf.SetDiagnostics(Set.Diagnostics, minutes);
+        Refresh();
+    }
+
+    public void SaveDiagnostics() => In.SaveDiagnostics();
 
     public void TogglePressKeyListen()
     {
-        _engine.SetPressKeyListen(!_engine.Settings.PressKeyListen);
+        In.SetPressKeyListen(!Set.PressKeyListen);
         Refresh();
     }
 
     public void TogglePressKeyNotice()
     {
-        _engine.SetPressKeyNotice(!_engine.Settings.PressKeyNotice);
+        In.SetPressKeyNotice(!Set.PressKeyNotice);
         Refresh();
     }
 
     public void ToggleMeasureButtons()
     {
-        _engine.SetMeasureButtons(!_engine.Settings.MeasureButtons);
+        In.SetMeasureButtons(!Set.MeasureButtons);
         Refresh();
     }
 
     public string DetailsText() => StatusText();
 
-    public void TakeUsbFromAdb() => _usb.TakeFromAdb();
-
-    public void ShowDebugWindow() => ShowDebugForm();
+    public void TakeUsbFromAdb() => In.TakeUsbFromAdb();
 
     public string? FormatShortcut(int virtualKey, bool ctrl, bool alt, bool shift)
     {
@@ -569,33 +677,33 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         else ShowMainWindow();
     }
 
-    public TrayClickAction TrayClick => _engine.Settings.TrayClick;
-    public IReadOnlyList<OverlaySettings> Overlays => _engine.Settings.Overlays;
+    public TrayClickAction TrayClick => _overlays.Ui.TrayClick;
+    public IReadOnlyList<OverlaySettings> Overlays => _overlays.Ui.Overlays;
 
-    public OverlaySettings? OverlayOf(string id) => _engine.Settings.Overlays.Find(o => o.Id == id);
+    public OverlaySettings? OverlayOf(string id) => _overlays.Ui.Overlays.Find(o => o.Id == id);
 
     /// <summary>Its label, else its kind's name, numbered when there are several of that kind.</summary>
     public string OverlayName(OverlaySettings o)
     {
         if (!string.IsNullOrWhiteSpace(o.Label)) return o.Label.Trim();
-        var same = _engine.Settings.Overlays.Where(x => x.Kind == o.Kind).ToList();
+        var same = _overlays.Ui.Overlays.Where(x => x.Kind == o.Kind).ToList();
         var name = OverlaySettings.KindName(o.Kind);
         return same.Count > 1 ? $"{name} {same.IndexOf(o) + 1}" : name;
     }
 
     public void SetTrayClick(TrayClickAction action)
     {
-        _engine.SetTrayClick(action);
+        _overlays.Change(s => s.TrayClick = action);
         Refresh();
     }
 
-    public void SetOutputMode(OutputMode mode) => _engine.SetOutputMode(mode);
+    public void SetOutputMode(OutputMode mode) => In.SetOutputMode(mode);
 
-    public void TogglePaused() => _engine.SetPaused(!_engine.Snapshot().Paused);
+    public void TogglePaused() => In.SetPaused(!Snap.Paused);
 
     public void PairNewPhone()
     {
-        _engine.OpenPairingWindow();
+        In.OpenPairingWindow();
         OpenPairForm();
         _pairWindow?.PairAgain();
     }
@@ -617,8 +725,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         if (_pairWindow == null)
         {
             if (!StartWpf()) return;
-            var w = new PairWindow(_engine, _engine.Settings.HostName, _engine.HostPublicKey != null ? _keyFiles : null,
-                "Pair new phone - " + Program.AppName, WindowIcon());
+            var w = new PairWindow(_pairing, Set.HostName, "Pair new phone - " + Program.AppName, WindowIcon());
             System.Windows.Forms.Integration.ElementHost.EnableModelessKeyboardInterop(w);
             w.Closed += (_, _) =>
             {
@@ -684,12 +791,6 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
     private void OpenMainWindow(MainPage? page)
     {
-        // A test record runs only with the window closed: opening it ends the record (saved as far as it got).
-        if (_perf.Recording != null)
-        {
-            _perf.StopRecording();
-            page ??= MainPage.Performance;
-        }
         if (_mainWindow == null)
         {
             if (!StartWpf()) return;
@@ -758,7 +859,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     private void BuildOverlayMenu(ToolStripMenuItem menu)
     {
         menu.DropDownItems.Clear();
-        foreach (var o in _engine.Settings.Overlays.ToList())
+        foreach (var o in _overlays.Ui.Overlays.ToList())
         {
             var id = o.Id;
             menu.DropDownItems.Add(new ToolStripMenuItem($"Show {OverlayName(o)}", null, (_, _) => SetOverlayShown(id, !(OverlayOf(id)?.Shown ?? false)))
@@ -776,7 +877,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             Checked = OverlayEdit,
         });
         menu.DropDownItems.Add(new ToolStripMenuItem("Level all: as held now shows face-on" + KeysSuffix(OverlayAction.LevelAll), null, (_, _) => LevelAll()));
-        if (_engine.Settings.Overlays.Any(o => o.Kind == OverlayKind.Laser))
+        if (_overlays.Ui.Overlays.Any(o => o.Kind == OverlayKind.Laser))
             menu.DropDownItems.Add(new ToolStripMenuItem("Clear pointers", null, (_, _) => ClearAllLasers()));
         menu.DropDownItems.Add(new ToolStripMenuItem("Overlay settings…", null, (_, _) => ShowMainWindow(MainPage.Overlays)));
     }
@@ -784,24 +885,24 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     /// <summary>Shows or closes overlay window <paramref name="id"/>, and remembers it for the next start.</summary>
     public void SetOverlayShown(string id, bool shown)
     {
-        _engine.UpdateOverlaySettings(id, o => o.Shown = shown);
+        _overlays.UpdateOverlaySettings(id, o => o.Shown = shown);
         // Showing one while all are hidden: it should appear, so Hide all ends.
-        if (shown) _engine.SetOverlaysHidden(false);
+        if (shown) _overlays.SetOverlaysHidden(false);
         ApplyOverlays();
         Refresh();
     }
 
-    public bool OverlaysHidden => _engine.Settings.OverlaysHidden;
+    public bool OverlaysHidden => _overlays.Ui.OverlaysHidden;
 
     /// <summary>Hide all: every overlay window closes, each keeping its own Show for when this is off.</summary>
     public void SetOverlaysHidden(bool hidden)
     {
-        _engine.SetOverlaysHidden(hidden);
+        _overlays.SetOverlaysHidden(hidden);
         ApplyOverlays();
         Refresh();
     }
 
-    public OverlayShortcuts Shortcuts => _engine.Settings.OverlayShortcuts;
+    public OverlayShortcuts Shortcuts => _overlays.Ui.OverlayShortcuts;
 
     /// <summary>" (Ctrl+Alt+R)" for a menu item or button, or "" when the action has no keys.</summary>
     public string KeysSuffix(OverlayAction a) => Shortcuts.Get(a) is { Length: > 0 } k ? $" ({k})" : "";
@@ -812,7 +913,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     /// <summary>Sets <paramref name="a"/>'s keys ("" = none) and holds them at once.</summary>
     public void SetShortcut(OverlayAction a, string keys)
     {
-        _engine.SetOverlayShortcut(a, keys);
+        _overlays.SetOverlayShortcut(a, keys);
         ApplyShortcuts();
         Refresh();
     }
@@ -869,7 +970,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             ShowMainWindow(MainPage.Overlays);
             return;
         }
-        var under = _engine.Settings.Overlays
+        var under = _overlays.Ui.Overlays
             .Where(o => _overlayForms.TryGetValue(o.Id, out var f) && f.Visible && f.Bounds.Contains(at))
             .Select(o => o.Id).ToList();
         string pick = id;
@@ -894,12 +995,12 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         Refresh();
     }
 
-    public bool OverlayEdit => _engine.Settings.OverlayEdit;
+    public bool OverlayEdit => _overlays.Ui.OverlayEdit;
 
     /// <summary>Edit: every overlay window can be dragged; off, the mouse goes through them all.</summary>
     public void SetOverlayEdit(bool on)
     {
-        _engine.SetOverlayEdit(on);
+        _overlays.SetOverlayEdit(on);
         foreach (var f in _overlayForms.Values.ToList()) f.SettingsChanged();
         UpdateOverlayWheel();
         Refresh();
@@ -911,7 +1012,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     /// </summary>
     public void ChangeOverlay(string id, Action<OverlaySettings> change)
     {
-        _engine.UpdateOverlaySettings(id, change);
+        _overlays.UpdateOverlaySettings(id, change);
         if (_overlayForms.TryGetValue(id, out var f)) f.SettingsChanged();
         RefreshPageNow();
     }
@@ -948,23 +1049,23 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     /// <summary>A new overlay window of <paramref name="kind"/>, shown; returns its id.</summary>
     public string AddOverlay(OverlayKind kind)
     {
-        var id = _engine.AddOverlay(kind);
+        var id = _overlays.AddOverlay(kind);
         ApplyOverlays();
         Refresh();
         return id;
     }
 
-    public IReadOnlyList<OverlaySettings> OverlayPresets => _engine.Settings.OverlayPresets;
+    public IReadOnlyList<OverlaySettings> OverlayPresets => _overlays.Ui.OverlayPresets;
 
     public void SaveOverlayPreset(string id, string name)
     {
-        _engine.SaveOverlayPreset(id, name);
+        _overlays.SaveOverlayPreset(id, name);
         Refresh();
     }
 
     public string? AddOverlayFromPreset(string presetId)
     {
-        var id = _engine.AddOverlayFromPreset(presetId);
+        var id = _overlays.AddOverlayFromPreset(presetId);
         ApplyOverlays();
         Refresh();
         return id;
@@ -972,20 +1073,20 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
     public void RenameOverlayPreset(string presetId, string name)
     {
-        _engine.RenameOverlayPreset(presetId, name);
+        _overlays.RenameOverlayPreset(presetId, name);
         Refresh();
     }
 
     public void RemoveOverlayPreset(string presetId)
     {
-        _engine.RemoveOverlayPreset(presetId);
+        _overlays.RemoveOverlayPreset(presetId);
         Refresh();
     }
 
     public void RemoveOverlay(string id)
     {
         if (_overlayForms.Remove(id, out var f)) f.Close();
-        _engine.RemoveOverlay(id);
+        _overlays.RemoveOverlay(id);
         ApplyOverlays();
         Refresh();
     }
@@ -1009,15 +1110,15 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         foreach (var f in _overlayForms.Values.ToList()) f.ClearPaint();
     }
 
-    public OverlayRestFade RestFade => _engine.Settings.OverlayRestFade;
+    public OverlayRestFade RestFade => _overlays.Ui.OverlayRestFade;
 
     public void ChangeRestFade(Action<OverlayRestFade> change)
     {
-        _engine.UpdateOverlayRestFade(change);
+        _overlays.UpdateOverlayRestFade(change);
         RefreshPageNow();
     }
 
-    public float? StillnessDps => _engine.OverlayStillnessDps();
+    public float? StillnessDps => _overlays.OverlayStillnessDps();
 
     public void LevelAll()
     {
@@ -1030,17 +1131,24 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     {
         if (Volatile.Read(ref _exited) != 0) return;
         foreach (var f in _overlayList)
-            if (!f.IsDisposed) f.Tick();
-        // The draw times in the log now and then, so they can be read without the Debug window.
+            if (!f.IsDisposed) f.Signal();
+        // The draw times, into Diagnostics: every second while an overlay draws (so a short burst of fast moves
+        // can be read back), else now and then.
         long now = Environment.TickCount64;
-        if (now - _overlayStatsLoggedAt >= 30_000)
+        if (now - _overlayStatsLoggedAt >= 1_000 && _debug.Enabled)
         {
-            if (_overlayStatsLoggedAt != 0) _log.Write(OverlayStats());
+            bool drawing = _overlayList.Any(f => f.Stats.Length > 0 && !f.Stats.EndsWith(": idle", StringComparison.Ordinal));
+            if (_overlayStatsLoggedAt != 0 && (drawing || now - _overlayStatsQuietAt >= 30_000))
+            {
+                _debug.Add(DebugTrace.Kind.Note, OverlayStats());
+                if (!drawing) _overlayStatsQuietAt = now;
+            }
             _overlayStatsLoggedAt = now;
         }
     }
 
     private long _overlayStatsLoggedAt;
+    private long _overlayStatsQuietAt;
 
     /// <summary>The fastest frame rate an open overlay window wants (pacer thread); 0 = every screen refresh.</summary>
     private int OverlayWantHz()
@@ -1098,7 +1206,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     public string OverlayStats()
     {
         var open = _overlayList;
-        return open.Length == 0 ? "overlays: none open" : "overlays: " + string.Join(" · ", open.Select(f => f.Stats).Where(t => t.Length > 0));
+        if (open.Length == 0) return "overlays: none open";
+        string paint = GpuPaint.Status, shapes = Gpu3D.Status;
+        return "overlays: " + string.Join(" · ", open.Select(f => f.Stats).Where(t => t.Length > 0)) + (paint.Length > 0 ? " · " + paint : "")
+            + (shapes.Length > 0 ? " · " + shapes : "");
     }
 
     /// <summary>An overlay window that shows the phone's pose is open (the FPS overlay needs nothing from the phone).</summary>
@@ -1106,7 +1217,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
     private void ApplyOverlays()
     {
-        foreach (var o in _engine.Settings.Overlays.ToList())
+        foreach (var o in _overlays.Ui.Overlays.ToList())
         {
             try
             {
@@ -1116,7 +1227,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             {
                 // An overlay must never take the companion down (it reopens at every start while Shown).
                 _log.Write($"overlay failed and was turned off: {e}");
-                _engine.UpdateOverlaySettings(o.Id, x => x.Shown = false);
+                _overlays.UpdateOverlaySettings(o.Id, x => x.Shown = false);
                 if (_overlayForms.Remove(o.Id, out var f))
                     try { f.Dispose(); } catch (Exception) { }
                 Balloon("Overlay failed", "It was turned off. The log has the details.", ToolTipIcon.Warning);
@@ -1125,9 +1236,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         // Windows whose settings are gone.
         foreach (var id in _overlayForms.Keys.Where(id => OverlayOf(id) == null).ToList())
             if (_overlayForms.Remove(id, out var f)) f.Close();
-        _engine.SetOverlay(PoseOverlaysOpen());
+        _overlays.SetOverlay(PoseOverlaysOpen());
         // The game's frames are watched only while an FPS overlay is on.
-        _perf.Watch(_engine.Settings.Overlays.Any(o => o.Kind == OverlayKind.Fps && o.Shown));
+        _perf.Watch(_overlays.Ui.Overlays.Any(o => o.Kind == OverlayKind.Fps && o.Shown));
         OverlaysChanged();
         foreach (var f in _overlayForms.Values)
         {
@@ -1148,13 +1259,13 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         if (shown && open == null)
         {
             var id = o.Id;
-            var form = new OverlayForm(_engine, id, _log.Write, OverlayClicked, OverlayPicked);
+            var form = new OverlayForm(_overlays, id, _log.Write, OverlayClicked, OverlayPicked);
             form.FormClosed += (_, _) =>
             {
                 if (_overlayForms.TryGetValue(id, out var cur) && ReferenceEquals(cur, form))
                 {
                     _overlayForms.Remove(id);
-                    _engine.SetOverlay(PoseOverlaysOpen());
+                    _overlays.SetOverlay(PoseOverlaysOpen());
                     OverlaysChanged();
                 }
             };
@@ -1169,36 +1280,37 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         }
     }
 
-    public void ShowDebugForm()
-    {
-        if (_debugForm == null || _debugForm.IsDisposed)
-        {
-            var form = new DebugForm(_engine, SaveDebug, OpenDebugFolder, OverlayStats);
-            form.FormClosed += (_, _) =>
-            {
-                if (ReferenceEquals(_debugForm, form)) _debugForm = null;
-            };
-            _debugForm = form;
-        }
-        _debugForm.Show();
-        if (_debugForm.WindowState == FormWindowState.Minimized) _debugForm.WindowState = FormWindowState.Normal;
-        _debugForm.Activate();
-    }
-
     /// <summary>Debug recordings: Documents\GyroPhone\Debug, where they are easy to find and send.</summary>
     public static string DebugDirectory =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "GyroPhone", "Debug");
 
-    /// <summary>Writes the last 30 s of the debug log to the debug folder; returns the path, or null.</summary>
-    public string? SaveDebug()
+    private int _diagSaved;
+
+    /// <summary>Diagnostics' Save (any thread): the PC's event log into the debug folder, and a record into Performance results.</summary>
+    private void SaveDiagnosticsNow()
+    {
+        int minutes = Set.DiagnosticsMinutes;
+        string? path = SaveDebug(minutes);
+        try { _perf.Save(minutes, $"Diagnostics {DateTime.Now:HH:mm}"); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            _log.Write($"diagnostics record not saved: {e.GetType().Name}: {e.Message}");
+        }
+        if (path != null) Interlocked.Increment(ref _diagSaved);
+        Post(Refresh);
+    }
+
+    /// <summary>Writes the last <paramref name="minutes"/> of the event log to the debug folder; returns the path, or null.</summary>
+    public string? SaveDebug(int minutes)
     {
         try
         {
             Directory.CreateDirectory(DebugDirectory);
             var path = Path.Combine(DebugDirectory, $"pc-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
             var header = new List<string> { $"{Program.AppName} {Application.ProductVersion}" };
-            header.AddRange(DebugForm.StatusText(_engine).Split("\r\n"));
-            File.WriteAllText(path, _engine.Debug.Save(header));
+            _debug.Drain();
+            header.AddRange(DiagStatus().Split("\r\n"));
+            File.WriteAllText(path, _debug.Save(header, minutes));
             // Keep the newest 20 recordings.
             foreach (var old in Directory.GetFiles(DebugDirectory, "pc-*.txt").OrderByDescending(f => f).Skip(20)) File.Delete(old);
             _log.Write($"debug recording saved: {Path.GetFileName(path)}");
@@ -1210,6 +1322,37 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             return null;
         }
     }
+
+    /// <summary>The link, the pad and what is held now; the header of a PC Diagnostics save.</summary>
+    private string DiagStatus()
+    {
+        var s = In.Snapshot() ?? Snap;
+        var sb = new System.Text.StringBuilder();
+        sb.Append(s.Connected ? $"phone: {s.PhoneName}{(s.Silent ? " (not answering)" : "")}" : "phone: not connected");
+        sb.Append($" · output {s.OutputMode}{(s.PadPlugged ? "" : " (not plugged)")}{(s.DriverOk ? "" : " · no ViGEm driver")}");
+        if (s.Paused) sb.Append(" · input paused");
+        sb.Append("\r\nlink: ");
+        sb.Append($"got {s.RxPerSec}/s · loss {s.LossPermille / 10.0:0.0}%");
+        sb.Append(s.LatP50Us == GyroPhone.Protocol.HostStatus.Unknown ? " · latency unknown" :
+            $" · latency {s.LatP50Us / 1000.0:0.0} / {s.LatP99Us / 1000.0:0.0} ms (p50/p99) · jitter {s.JitterUs / 1000.0:0.0} ms");
+        if (s.PhoneLink is { } l)
+            sb.Append($" · phone sends {l.SendRateHz}/s · round trip {l.RttMinUs / 1000.0:0.0} ms")
+              .Append(l.RssiDbm != 0 ? $" · {l.RssiDbm} dBm {l.LinkMbps} Mbps" : ""); // 0 on a cable: no radio
+        if (s.Connected)
+            sb.Append("\r\nconnection: ").Append(LinkPaths.Connection(s.PhoneLink,
+                IPAddress.TryParse(In.PhoneAddress(), out var phoneAt) ? phoneAt : null, PcSetupProbe.Ssid));
+        sb.Append($"\r\npad: {_debug.CurrentPad}");
+        var held = new List<string>();
+        var scratch = new StateFrame();
+        for (int u = 0; u < 256; u++)
+            if (_region.Held.Held(LaserFire.Key + u, scratch)) held.Add(DebugTrace.UsageName((byte)u));
+        sb.Append($"\r\nkeys (the phone's newest state): {(held.Count == 0 ? "none" : string.Join("+", held))}");
+        sb.Append($"\r\nlogging: {(_debug.Enabled ? "on" : "off")} · raw events dropped {_debug.Dropped} · counters: {s.Counters}");
+        if (Hello() is { } h) sb.Append($"\r\ninput process: pid {h.Pid}, {h.Version}");
+        return sb.ToString();
+    }
+
+    private InputHello? Hello() => _input.Hello;
 
     public void OpenDebugFolder()
     {
@@ -1226,7 +1369,8 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
     private string StatusText()
     {
-        var s = _engine.Snapshot();
+        var st = St;
+        var s = In.Snapshot() ?? Snap;
         var b = new StringBuilder();
         b.AppendLine(s.Connected ? $"Phone:        {s.PhoneName}{(s.Silent ? " (no signal)" : "")}" : "Phone:        not connected");
         b.AppendLine($"Received:     {s.RxPerSec}/s, loss {s.LossPermille / 10.0:0.0}%");
@@ -1242,23 +1386,23 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         }
         b.AppendLine($"USB direct:   {UsbDirectText()}");
         b.AppendLine($"Output:       {OutputName(s.OutputMode)}, pad {(s.PadPlugged ? "plugged" : "not plugged")}");
-        b.AppendLine($"Gamepad driver: {(s.DriverOk ? "ViGEmBus ok" : _padError ?? "missing")}");
+        b.AppendLine($"Gamepad driver: {(s.DriverOk ? "ViGEmBus ok" : st?.PadError ?? "missing")}");
         b.AppendLine($"Input:        {(s.Paused ? "paused" : "active")}");
         b.AppendLine($"Network:      {(!s.NetworkPublic ? "Private or Domain" : s.AnyDatagramSeen ? "Public (the phone gets through)" : "Public (set it to Private if the phone can't connect)")}, firewall rule "
             + (_firewallOk switch { true => "present", false => "missing", null => "checking" })
             + ", USB rule " + (_usbRuleOk switch { true => "present", false => "missing", null => "checking" }));
-        b.AppendLine($"Server:       {(_server.State == ServerState.Running ? $"UDP {Wire.Port}" : _server.State.ToString())}, "
-            + $"this app {(ElevationProbe.IsSelfElevated ? "elevated" : "not elevated")}");
+        b.AppendLine($"Server:       {(st?.Server == nameof(ServerState.Running) ? $"UDP {Wire.Port}" : st?.Server ?? "starting")}, "
+            + $"input process {(st?.Elevated == true ? "elevated" : "not elevated")}{(_input.Hello is { } h ? $" (pid {h.Pid})" : "")}");
         b.AppendLine($"Pairing:      {(s.PairingWindowS > 0 ? $"open, {s.PairingWindowS} s left" : "closed")}, {s.PairedPhones.Count} paired phone(s)"
             + $" ({s.PairedPhones.Count(p => p.ByKey)} by key)");
-        b.AppendLine($"PC key:       {s.HostKeyFingerprint ?? "unavailable" + (_keyError != null ? $" ({_keyError})" : "")}, {_keyFiles.Directory}");
-        b.AppendLine($"Phone keys:   {(_authorized == null ? "not read (no PC key)" : _authorized.LastScan)}");
-        b.AppendLine($"Log:          {_log.Path}{(_log.LastError is { } le ? $" (cannot write: {le})" : "")}");
+        b.AppendLine($"PC key:       {s.HostKeyFingerprint ?? "unavailable" + (st?.KeyError != null ? $" ({st.KeyError})" : "")}, {st?.KeysFolder}");
+        b.AppendLine($"Phone keys:   {st?.AuthorizedScan ?? "not read (no PC key)"}");
+        b.AppendLine($"Log:          {_log.Path}{(_log.LastError is { } le ? $" (cannot write: {le})" : "")}{(st?.LogError is { } ie ? $" (input process cannot write: {ie})" : "")}");
         b.AppendLine($"Running as:   {Environment.UserDomainName}\\{Environment.UserName}, {_exePath}");
         var c = s.Counters;
         b.AppendLine();
-        b.AppendLine($"datagrams {c.Datagrams}  states {c.States}  injections {c.Injections}  SendInput short {_keyMouse.ShortWrites}");
-        b.AppendLine($"dropped {c.Dropped}  bad auth {c.BadAuth}  errors sent {c.Errors}  unknown keys {c.UnknownUsages}  exceptions {c.Exceptions + _server.RxExceptions}");
+        b.AppendLine($"datagrams {c.Datagrams}  states {c.States}  injections {c.Injections}  SendInput short {st?.SendInputShortWrites ?? 0}  keys and mouse via {(st?.InputDriverReady == true ? "input driver" : "SendInput")}");
+        b.AppendLine($"dropped {c.Dropped}  bad auth {c.BadAuth}  errors sent {c.Errors}  unknown keys {c.UnknownUsages}  exceptions {c.Exceptions + (st?.RxExceptions ?? 0)}");
         return b.ToString();
     }
 
@@ -1269,33 +1413,20 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             : $"Forget {phone.Name}? The phone will need to pair again.";
         var r = MessageBox.Show(text, Program.AppName, MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
         if (r != DialogResult.OK) return;
-        if (!phone.ByKey)
-        {
-            _engine.Forget(phone.PhoneId);
-            return;
-        }
-        try
-        {
-            File.Delete(phone.KeyFile!);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            _log.Write($"could not delete key file: {e.GetType().Name}");
-        }
-        _authorized?.Reload();
+        In.Forget(phone);
     }
 
     public PerfMonitor Perf => _perf;
 
     public (string Text, string? Setup)? LinkPath()
     {
-        var s = _engine.Snapshot();
+        var s = Snap;
         if (!s.Connected || s.PhoneLink is not { } l) return null;
-        var pc = LinkPaths.AdapterFor(_engine.PhoneAddress());
+        var pc = LinkPaths.AdapterFor(IPAddress.TryParse(In.PhoneAddress(), out var a) ? a : null);
         return (LinkPaths.Describe(l, pc), LinkPaths.Setup(l, pc));
     }
 
-    public bool AllowFrameWatch() => PerfPermission.Grant(_log.Write);
+    public bool SetUpFpsHelper() => FpsHelperSetup.Install(_log.Write);
 
     public void OpenPerfFolder()
     {
@@ -1331,8 +1462,9 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     {
         try
         {
-            Directory.CreateDirectory(_keyFiles.AuthorizedDirectory);
-            using var p = Process.Start(new ProcessStartInfo("explorer.exe", $"\"{_keyFiles.Directory}\"") { UseShellExecute = true });
+            if (St?.KeysFolder is not { Length: > 0 } folder) return;
+            Directory.CreateDirectory(Path.Combine(folder, "authorized_phones"));
+            using var p = Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
         }
         catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException)
         {
@@ -1340,78 +1472,18 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         }
     }
 
-    /// <summary>How long gp-bind retries quickly (the watcher letting go) before it shows the port as taken.</summary>
-    private const int FastBindMs = 5000;
-
-    /// <summary>
-    /// Binds UDP 47800. The watcher holds the port whenever no companion runs, so it is asked to let go
-    /// before the first try; it answers within milliseconds. If the port is still taken, gp-bind keeps
-    /// trying off the UI thread: every 25 ms for 5 s, then every second for as long as the app runs, asking
-    /// the watcher each time. The rest of the start-up (<see cref="ServerStarted"/>) runs once it binds.
-    /// </summary>
-    private void StartServer()
-    {
-        if (Watcher.IsRunning() && Watcher.AskToYieldPort()) _log.Write($"watcher running: asked it to let go of port {Wire.Port}");
-        if (_server.Start())
-        {
-            ServerStarted();
-            return;
-        }
-        if (_server.State != ServerState.PortInUse)
-        {
-            _log.Write("UDP server failed to start");
-            return;
-        }
-        _log.Write($"port {Wire.Port} in use: retrying");
-        _bindRetrying = true;
-        var t = new Thread(BindLoop) { Name = "gp-bind", IsBackground = true };
-        t.Start();
-    }
-
-    private void BindLoop()
-    {
-        var clock = Stopwatch.StartNew();
-        while (Volatile.Read(ref _exited) == 0)
-        {
-            bool fast = clock.ElapsedMilliseconds < FastBindMs;
-            Thread.Sleep(fast ? 25 : 1000);
-            if (Volatile.Read(ref _exited) != 0) return;
-            Watcher.AskToYieldPort();
-            if (_server.Start(logFailure: false))
-            {
-                _log.Write($"port {Wire.Port} free after {clock.ElapsedMilliseconds} ms");
-                Post(ServerStarted);
-                return;
-            }
-            if (_server.State != ServerState.PortInUse)
-            {
-                _log.Write("UDP server failed to start");
-                _bindRetrying = false;
-                Post(Refresh);
-                return;
-            }
-            if (!fast && !_bindWaitLong)
-            {
-                _bindWaitLong = true;
-                _log.Write($"port {Wire.Port} still in use by another program: retrying every second");
-                Post(Refresh);
-            }
-        }
-    }
-
     public void ToggleUsbDirect()
     {
-        bool on = !_usb.Enabled;
-        _usb.Enabled = on;
-        _engine.SetUsbDirect(on);
-        _log.Write($"usb direct {(on ? "on" : "off")}");
+        In.SetUsbDirect(!(St?.UsbEnabled ?? false));
         Refresh();
     }
 
+    private UsbDirectState UsbState => Enum.TryParse<UsbDirectState>(St?.UsbState, out var u) ? u : UsbDirectState.Off;
+
     private string UsbDirectText()
     {
-        string detail = _usb.Detail.Length > 0 ? $" ({_usb.Detail})" : "";
-        return _usb.State switch
+        string detail = St?.UsbDetail is { Length: > 0 } d ? $" ({d})" : "";
+        return UsbState switch
         {
             UsbDirectState.Off => "off",
             UsbDirectState.NoPhone => "on, no phone with USB debugging on the cable",
@@ -1441,7 +1513,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     public void ToggleAutoStart()
     {
         bool enable = !IsAutoStartOn();
-        if (TrySetAutoStart(enable)) _engine.SetStartWithWindows(enable);
+        if (TrySetAutoStart(enable)) In.SetStartWithWindows(enable);
         Refresh();
     }
 
@@ -1562,19 +1634,12 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
 
     public void RetryDriver()
     {
-        var pad = PadSinks.Create(_log.Write, out var error);
-        if (error != null && !pad.DualSenseOk)
+        if (In.RetryDriver() is { } error)
         {
-            _padError = error;
             MessageBox.Show($"{error}.\n\nInstall ViGEmBus from {ViGEmPadSink.DriverDownloadUrl}, then choose Retry driver again.",
                 Program.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        // The engine unplugs and disposes the old sink on its pad thread.
-        _engine.SetPadSink(pad);
-        _pad = pad;
-        _padError = error;
-        _log.Write("gamepad driver found");
         Balloon("Gamepad driver found", "Game pad output is on.", ToolTipIcon.Info);
         Refresh();
     }
@@ -1671,7 +1736,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             default:
                 return;
         }
-        _engine.SetLocked(_sessionLocked || _suspended);
+        In.SetLocked(_sessionLocked || _suspended);
     }
 
     private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
@@ -1679,7 +1744,7 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
         if (e.Mode == PowerModes.Suspend) _suspended = true;
         else if (e.Mode == PowerModes.Resume) _suspended = false;
         else return;
-        _engine.SetLocked(_sessionLocked || _suspended);
+        In.SetLocked(_sessionLocked || _suspended);
     }
 
     private void OnApplicationExit(object? sender, EventArgs e) => Shutdown();
@@ -1690,18 +1755,20 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
     {
         _pairWindow?.Close();
         _mainWindow?.Close();
-        _debugForm?.Close();
+        _deliveryTest?.Close();
         foreach (var f in _overlayForms.Values.ToList()) f.Close();
         _overlayWheel?.Dispose();
         _overlayWheel = null;
         _hotkeys?.Dispose();
         _hotkeys = null;
         _pacer?.Dispose();
+        // The input process stops first (release-all, the goodbye to the phone), and is waited for: an update replaces the exe.
+        _input.ExitInput();
         Shutdown();
         ExitThread();
     }
 
-    /// <summary>Release-all, HOST_BYE(EXIT), unplug, save, clear the held-keys marker. Runs once.</summary>
+    /// <summary>Saves and stops this side. Runs once. The input process stops only on <see cref="ExitApp"/>.</summary>
     private void Shutdown()
     {
         if (Interlocked.Exchange(ref _exited, 1) != 0) return;
@@ -1713,17 +1780,10 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _uiTimer.Stop();
             _refreshSoon?.Stop();
             _updater.Dispose();
-            _authorized?.Dispose();
-            _watchdog.Dispose();
-            _engine.Shutdown();
-            _server.Stop();
-            _usb.Dispose();
             _perf.Dispose();
-            _watchdog.SaveSettings();
-            var held = new byte[StateFrame.KeyBitmapSize];
-            int version = _engine.HeldSnapshot(held, out byte mb);
-            _marker.Update(version, held, mb);
-            (_pad as IDisposable)?.Dispose();
+            if (_overlays.TakeDirty() is { } json) _uiStore.WriteAtomic(json);
+            _debug.SetOn(false, "exit");
+            _input.Dispose();
             _log.Write("stopped");
         }
         catch (Exception e)
@@ -1746,9 +1806,20 @@ internal sealed class TrayApp : ApplicationContext, IHostEvents, IPairPrompt, IC
             _menu.Dispose();
             _icons.Dispose();
             _ui.Dispose();
-            _inputLog.Dispose();
+            _overlayWake.Dispose();
             _log.Dispose();
         }
         base.Dispose(disposing);
+    }
+
+    /// <summary>Pairing for the pair window: the input process does it, through this companion.</summary>
+    private sealed class Pairing(TrayApp app) : IPairing
+    {
+        public HostSnapshot Snapshot() => app.In.Snapshot() ?? app.Snap;
+        public byte[]? HostPublicKey => app.In.HostPublicKey();
+        public void OpenPairingWindow() => app.In.OpenPairingWindow();
+        public void AnswerPair(uint attemptId, bool allow) => app.In.AnswerPair(attemptId, allow);
+        public byte[]? OpenQrPairing() => app.In.OpenQrPairing();
+        public void CloseQrPairing() => app.In.CloseQrPairing();
     }
 }

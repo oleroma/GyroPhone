@@ -67,6 +67,7 @@ public sealed class UsbBridge : IDisposable
 
     private void RxLoop()
     {
+        GcWatch.NameCurrentThread("gp-usb-rx");
         ThreadStarted();
         var buf = new byte[16384];
         var deframer = new UsbDeframer();

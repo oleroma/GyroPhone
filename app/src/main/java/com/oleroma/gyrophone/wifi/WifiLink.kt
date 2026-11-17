@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.ConnectivityManager
 import android.os.Build
 import android.os.Process
 import android.os.SystemClock
@@ -149,10 +150,6 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** What is held on the PC while [pressCapture] (CAPTURED); empty when the session ends. Called on the link's thread. */
     @Volatile var onPcPresses: ((List<PcPress>) -> Unit)? = null
 
-    private val _latencyScreen = MutableStateFlow(false)
-    /** The PC's latency test window is open (TEST_MODE): the pad shows the tracking markers. */
-    val latencyScreen: StateFlow<Boolean> = _latencyScreen
-
     private val _linkTest = MutableStateFlow(false)
     /** The PC runs a Link test (TEST_MODE): the pump sends fake input, the pad shows a note. */
     val linkTest: StateFlow<Boolean> = _linkTest
@@ -162,11 +159,24 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         set(v) {
             field = v
             pump.pressTimes = v and TestModeFlags.PRESS_TIMES != 0
-            _latencyScreen.value = v and TestModeFlags.LATENCY_SCREEN != 0
             pump.linkTest = v and TestModeFlags.LINK_TEST != 0
+            pump.phoneStats = v and TestModeFlags.PHONE_STATS != 0
             _linkTest.value = v and TestModeFlags.LINK_TEST != 0
+            // A Save on the PC: its counter changed since the last TEST_MODE that had one.
+            val save = if (v and TestModeFlags.PHONE_STATS != 0) (v and TestModeFlags.DIAG_SAVE_MASK) shr TestModeFlags.DIAG_SAVE_SHIFT else -1
+            if (save >= 0 && pcSaves >= 0 && save != pcSaves) onPcSave?.invoke()
+            pcSaves = save
         }
-    private val accessory = AccessoryBridge(appContext)
+
+    /** The PC's Diagnostics save counter last seen (-1: none yet, or the PC's Diagnostics off). */
+    @Volatile private var pcSaves = -1
+
+    /** Diagnostics: the PC switched its Diagnostics (true on or false off); on the receive thread. */
+    @Volatile var onPcDiagnostics: ((Boolean) -> Unit)? = null
+
+    /** Diagnostics: Save was pressed on the PC; on the receive thread. */
+    @Volatile var onPcSave: (() -> Unit)? = null
+    private val accessory = AccessoryBridge(appContext).also { pump.direct = it }
 
     private val _state = MutableStateFlow<LinkState>(LinkState.Off)
     override val state: StateFlow<LinkState> = _state
@@ -338,12 +348,31 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     // Read by the pump (LINK_INFO) and the UI (stats).
     @Volatile private var clockOffsetUs = 0L
     @Volatile private var rttMinUs = -1L
+    private val _pcLogging = MutableStateFlow(false)
+
+    /** Diagnostics is on in the connected companion (the pad's red dot); false with no PC. */
+    val pcLogging: StateFlow<Boolean> = _pcLogging
+
+    /** The PC's Diagnostics bit last seen this session, or null before the first HOST_STATUS. */
+    private var pcDiagSeen: Boolean? = null
+
     @Volatile private var hostStatus: HostStatus? = null
         set(v) {
             field = v
             overlay.wanted = v != null && v.flags and HostStatusFlags.OVERLAY != 0
             overlay.compassWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_COMPASS != 0
             overlay.totalsWanted = overlay.wanted && v!!.flags and HostStatusFlags.OVERLAY_TOTALS != 0
+            overlay.samplesWanted = overlay.wanted && v!!.flags2 and HostStatusFlags2.OVERLAY_SAMPLES != 0
+            val pcDiag = v != null && v.flags2 and HostStatusFlags2.PC_LOGGING != 0
+            _pcLogging.value = pcDiag
+            // The phone's switch follows the PC's when it changes; at a session's start, on wins on either side
+            // (the PC follows the phone's LINK_INFO the same way), so a misfire right at the start is logged.
+            if (v == null) pcDiagSeen = null
+            else {
+                val seen = pcDiagSeen
+                if ((seen == null && pcDiag && !debugTrace) || (seen != null && seen != pcDiag)) onPcDiagnostics?.invoke(pcDiag)
+                pcDiagSeen = pcDiag
+            }
             if (v != null) motion.padTakesMotion = OutputMode.takesMotion(v.outputMode) && v.flags and HostStatusFlags.PAD_PLUGGED != 0
             else motion.padTakesMotion = false
         }
@@ -504,6 +533,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             ethernet = usbActive && usbEthernet,
             vigemOk = hs?.let { it.flags and HostStatusFlags.VIGEM_OK != 0 }
                 ?: welcomeHostFlags?.let { it and HostFlags.VIGEM_OK != 0 },
+            pcSetup = hs?.flags2,
         )
     }
 
@@ -1352,7 +1382,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** Bumped by [requestDebugSave]; LINK_INFO carries its low bits so the PC saves when they change. */
     @Volatile private var debugSaves = 0
 
-    /** Asks the PC to save its last 30 s of debug log now, next to the phone's recording. */
+    /** Asks the PC to save its last 3 minutes of debug log now, next to the phone's recording. */
     fun requestDebugSave() {
         debugSaves++
         pump.requestLinkInfo()
@@ -1421,6 +1451,67 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 
+    /**
+     * For a Diagnostics save (any thread, only at Save, never on the input path): how the phone reaches the PC now,
+     * in words. Router or PC hotspot is told by the network's gateway: on the PC's own hotspot (or a cable to the PC)
+     * the PC is the gateway. "router Wi-Fi · network Home · 5 GHz ch 36 · Wi-Fi 6 · -41 dBm · 1201 Mbps · PC 192.168.1.20 · phone wlan0 192.168.1.31"
+     */
+    fun connectionLine(): String {
+        val f = live
+        val pc = (f?.hostAddr ?: session?.hostAddr)?.address
+        val u = if (usbActive) usb else null
+        val cm = appContext.getSystemService(ConnectivityManager::class.java)
+        val parts = ArrayList<String>(8)
+        if (u != null) {
+            val pcGateway = gatewayIs(cm, u.name, pc)
+            parts += when {
+                u.hotspot -> "phone hotspot (the PC joined the phone's Wi-Fi hotspot)"
+                u.ethernet -> when (pcGateway) {
+                    true -> "cable to PC (Ethernet adapter on the phone)"
+                    false -> "cable to router (Ethernet adapter on the phone)"
+                    null -> "Ethernet cable (adapter on the phone; router or PC unknown)"
+                }
+                u.direct -> "cable to PC (USB direct)"
+                else -> "cable to PC (USB tethering)"
+            }
+        } else {
+            val net = binder.network
+            val info = binder.info
+            if (net == null) parts += "no Wi-Fi network"
+            else {
+                val iface = binder.interfaceName
+                parts += when (gatewayIs(cm, iface, pc)) {
+                    true -> "PC hotspot"
+                    false -> "router Wi-Fi"
+                    null -> "Wi-Fi (router or PC hotspot unknown)"
+                }
+                parts += "network " + (info.ssid ?: "name hidden by Android (GP has no location access)")
+                if (info.band != 0) parts += "${info.band} GHz" + (wifiChannel(info.freqMhz)?.let { " ch $it" } ?: "")
+                info.wifiGeneration?.let { parts += "Wi-Fi $it" }
+                info.rssiDbm?.let { parts += "$it dBm" }
+                info.linkMbps?.let { parts += "$it Mbps" }
+            }
+        }
+        parts += "PC " + (pc?.hostAddress ?: "not connected")
+        val ifName = u?.name ?: binder.interfaceName
+        val own = u?.address ?: ifName?.let { name ->
+            runCatching { java.net.NetworkInterface.getByName(name)?.inetAddresses?.toList()?.firstOrNull { it is java.net.Inet4Address } }.getOrNull()
+        }
+        if (ifName != null) parts += "phone ${if (u?.direct == true) "cable" else ifName} ${own?.hostAddress ?: ""}".trimEnd()
+        return parts.joinToString(" · ")
+    }
+
+    /** The default gateway of the network on [iface] is [pc] (true), is another address (false), or unknown (null). */
+    private fun gatewayIs(cm: ConnectivityManager?, iface: String?, pc: InetAddress?): Boolean? {
+        if (cm == null || iface == null || pc == null || pc.isLoopbackAddress) return null
+        @Suppress("DEPRECATION")
+        val lp = runCatching { cm.allNetworks.mapNotNull { cm.getLinkProperties(it) }.firstOrNull { it.interfaceName == iface } }.getOrNull()
+            ?: return null
+        val gw = lp.routes.firstOrNull { it.isDefaultRoute && it.gateway is java.net.Inet4Address && !it.gateway!!.isAnyLocalAddress }?.gateway
+            ?: return null
+        return gw == pc
+    }
+
     /** "5 GHz · 1201 Mbps · −51 dBm", leaving out what is unknown. */
     private fun radioDetail(): String {
         if (usbActive) return if (usbHotspot) "phone hotspot" else if (usbEthernet) "Ethernet" else if (usbDirect) "USB cable" else "USB tethering"
@@ -1473,6 +1564,16 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             is PairState.GotHost -> PairingMath.formatSas(s.sas)
             is PairState.AwaitUser -> PairingMath.formatSas(s.sas)
             is PairState.Confirming -> PairingMath.formatSas(s.sas)
+            else -> null
+        }
+
+        /** The Wi-Fi channel of a centre frequency, or null. */
+        fun wifiChannel(mhz: Int?): Int? = when (mhz) {
+            null -> null
+            in 2412..2472 -> (mhz - 2407) / 5
+            2484 -> 14
+            in 5160..5885 -> (mhz - 5000) / 5
+            in 5955..7115 -> (mhz - 5950) / 5
             else -> null
         }
 

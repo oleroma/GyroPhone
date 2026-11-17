@@ -28,7 +28,7 @@ public static partial class UpdateInfo
     public const string NewSuffix = ".new";
 
     /// <summary>
-    /// The DLLs that wait next to the exe in <paramref name="dir"/> as "&lt;dll&gt;.new" (OpenCV's, which ship
+    /// The DLLs that wait next to the exe in <paramref name="dir"/> as "&lt;dll&gt;.new" (any that ship
     /// beside the single-file exe), each with the file it replaces, by name. The install hook puts them there
     /// instead of over a DLL a running companion may hold; the update finisher moves them in once it exited.
     /// </summary>

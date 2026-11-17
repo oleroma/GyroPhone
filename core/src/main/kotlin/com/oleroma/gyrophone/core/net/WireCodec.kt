@@ -261,6 +261,7 @@ object WireCodec {
         is Rumble -> PacketType.RUMBLE
         is KeyLabels -> PacketType.KEY_LABELS
         is PressTime -> PacketType.PRESS_TIME
+        is PhoneStats -> PacketType.PHONE_STATS
         is TestMode -> PacketType.TEST_MODE
         is CaptureListen -> PacketType.CAPTURE
         is PcPresses -> PacketType.CAPTURED
@@ -304,6 +305,14 @@ object WireCodec {
             }
             is Rumble -> { out.putU8(off, p.large); out.putU8(off + 1, p.small); out.putU8(off + 2, p.pattern) }
             is PressTime -> { out.putU32(off, p.stateTimeUs); out.putU32(off + 4, p.eventTimeUs) }
+            is PhoneStats -> {
+                out.putU32(off, p.timeUs)
+                out.putU16(off + 4, p.states); out.putU16(off + 6, p.packets)
+                out.putU16(off + 8, p.failed); out.putU16(off + 10, p.slowSends)
+                out.putU32(off + 12, p.sendTotalUs); out.putU32(off + 16, p.sendMaxUs)
+                out.putU32(off + 20, p.wakeLateMaxUs); out.putU32(off + 24, p.stateGapMaxUs)
+                out.putU32(off + 28, p.phoneTxPackets)
+            }
             is TestMode -> out.putU8(off, p.flags)
             is CaptureListen -> out.putU8(off, p.flags)
             is PcPresses -> {
@@ -355,6 +364,10 @@ object WireCodec {
             )
             PacketType.RUMBLE -> Rumble(buf.getU8(off), buf.getU8(off + 1), buf.getU8(off + 2))
             PacketType.PRESS_TIME -> PressTime(buf.getI32(off), buf.getI32(off + 4))
+            PacketType.PHONE_STATS -> PhoneStats(
+                buf.getI32(off), buf.getU16(off + 4), buf.getU16(off + 6), buf.getU16(off + 8), buf.getU16(off + 10),
+                buf.getI32(off + 12), buf.getI32(off + 16), buf.getI32(off + 20), buf.getI32(off + 24), buf.getI32(off + 28),
+            )
             PacketType.TEST_MODE -> TestMode(buf.getU8(off))
             PacketType.CAPTURE -> CaptureListen(buf.getU8(off))
             PacketType.CAPTURED -> {

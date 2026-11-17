@@ -147,50 +147,46 @@ public class PerfTests
     }
 
     [Fact]
-    public void MonitorRecordsATimedTestAndKeepsIt()
+    public void DiagnosticsSaveKeepsARecord()
     {
         var dir = Path.Combine(Path.GetTempPath(), "gp-perf-" + Guid.NewGuid().ToString("N"));
         var clock = new FakeClock();
-        var src = new FakeSource();
-        var m = new PerfMonitor(src, null, new FakeForeground(), clock, dir, _ => { });
-        PerfRun? ended = null;
-        m.Ended += r => ended = r;
-        int started = 0;
-        m.Started += () => started++;
+        var m = new PerfMonitor(new FakeSource(), null, new FakeForeground(), clock, dir, _ => { });
         m.PathNow = () => "Router Wi-Fi 5 GHz";
-        m.Watch(true); // the FPS overlay is on
-        m.StartRecording("Router", "Wi-Fi 5 GHz", 6);
-        m.StartRecording("Router", "Wi-Fi 5 GHz", 6); // already recording: no second start
-        Assert.Equal(1, started);
-        Assert.Equal(FrameWatchState.On, m.State);
-        src.Present!(Game, 0);
-        m.Tick();
-        long t = 0;
-        for (int i = 0; i < 450; i++) src.Present!(Game, t += 10_000);
-        clock.NowUs = t;
-        m.Tick();
-        Assert.NotNull(m.Recording);
-        clock.NowUs = 6_100_000;
-        m.Tick();
+        Assert.Null(m.Save(3, "off")); // nothing kept while Diagnostics is off
         Assert.Null(m.Recording);
-        Assert.Equal(FrameWatchState.On, m.State); // the overlay still is
-        m.Watch(false);
-        Assert.Equal(FrameWatchState.Off, m.State);
-        var run = Assert.Single(m.Runs);
-        Assert.Equal(run, ended);
-        Assert.Equal("Router Wi-Fi 5 GHz", run.Path);
-        Assert.True(run.Frames);
-        Assert.Equal("Discovery", run.Game);
-        Assert.Equal(100, run.AvgFps, 1);
+        m.SetDiagnostics(true, 3);
+        Assert.NotNull(m.Recording);
+        clock.NowUs = 6_000_000;
+        m.Tick();
+        var run = m.Save(3, "Router");
+        Assert.NotNull(run);
+        Assert.NotNull(m.Recording); // Save doesn't switch it off
+        Assert.Equal(run, Assert.Single(m.Runs));
+        Assert.Equal("Router Wi-Fi 5 GHz", run!.Path);
+        Assert.Equal(6, run.Seconds, 1); // since it came on: less than Keep
         // One results page for every record, with this record's second-by-second text.
         Assert.Equal(Path.Combine(dir, PerfReport.FileName), run.File);
-        Assert.True(File.Exists(run.File));
         Assert.Contains("Router", File.ReadAllText(run.File!));
         Assert.Contains("Per second", run.Text);
-        Assert.Contains("Per second", File.ReadAllText(run.File!));
         // Kept for next time.
         var again = new PerfMonitor(new FakeSource(), null, new FakeForeground(), clock, dir, _ => { });
         Assert.Equal("Router", Assert.Single(again.Runs).Name);
+        m.SetDiagnostics(false, 3);
+        Assert.Null(m.Recording);
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public void ASaveCoversOnlyTheKeptMinutes()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "gp-perf-" + Guid.NewGuid().ToString("N"));
+        var clock = new FakeClock();
+        var m = new PerfMonitor(new FakeSource(), null, new FakeForeground(), clock, dir, _ => { });
+        m.SetDiagnostics(true, 1);
+        clock.NowUs = 300_000_000;
+        var run = m.Save(1, "x");
+        Assert.Equal(60, run!.Seconds, 1);
         Directory.Delete(dir, true);
     }
 
@@ -200,11 +196,11 @@ public class PerfTests
         var dir = Path.Combine(Path.GetTempPath(), "gp-perf-" + Guid.NewGuid().ToString("N"));
         var clock = new FakeClock();
         var m = new PerfMonitor(new FakeSource(), null, new FakeForeground(), clock, dir, _ => { });
+        m.SetDiagnostics(true, 3);
         for (int i = 0; i < PerfMonitor.MaxRuns + 3; i++)
         {
-            m.StartRecording($"Run {i}", "Router", 0);
             clock.NowUs += 2_000_000;
-            m.StopRecording();
+            m.Save(3, $"Run {i}");
         }
         Assert.Equal(PerfMonitor.MaxRuns, m.Runs.Count);
         Assert.Equal($"Run {PerfMonitor.MaxRuns + 2}", m.Runs[0].Name);
@@ -219,7 +215,7 @@ public class PerfTests
     }
 
     [Fact]
-    public void ALinkTestNeedsNoFrameWatch()
+    public void DiagnosticsNeedNoFrameWatchAndKeepThePath()
     {
         var dir = Path.Combine(Path.GetTempPath(), "gp-perf-" + Guid.NewGuid().ToString("N"));
         var clock = new FakeClock();
@@ -227,17 +223,16 @@ public class PerfTests
         var m = new PerfMonitor(src, null, new FakeForeground(), clock, dir, _ => { });
         string path = "Router Wi-Fi 5 GHz";
         m.PathNow = () => path;
-        m.StartRecording("x", "y", 0);
-        Assert.NotNull(m.Recording);
+        m.SetDiagnostics(true, 3);
         Assert.Equal(FrameWatchState.Off, m.State); // no FPS overlay: nothing watches the game
         Assert.Null(src.Present);
-        Assert.Null(m.SecondNote());
-        path = "Phone hotspot";
         clock.NowUs = 1_000_000;
         m.Tick();
-        m.StopRecording();
-        var run = Assert.Single(m.Runs);
-        Assert.False(run.Frames);
+        path = "Phone hotspot";
+        clock.NowUs = 2_000_000;
+        m.Tick();
+        var run = m.Save(3, "x");
+        Assert.False(run!.Frames);
         Assert.Equal("Router Wi-Fi 5 GHz → Phone hotspot", run.Path);
         Directory.Delete(dir, true);
     }
