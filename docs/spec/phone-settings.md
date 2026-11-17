@@ -17,6 +17,7 @@ Every settings page (`ui/SettingsLayout.kt`) has a low **search** field on top (
 | Category | Setting | Default |
 |---|---|---|
 | Screen | Start in fullscreen | off |
+| | Double Back to leave fullscreen (mistouch guard: in fullscreen one Back does nothing, two within the time bring the top row back); Double Back time 250 / 300 / 400 / 500 / 700 ms / 1 s | off; 400 ms |
 | | Keep the screen on while the pad is open | on |
 | | Black screen when idle; Black screen after 30 s / 1 / 2 / 5 min | off; 1 min |
 | | Screen rotation: Auto, Landscape, Portrait, Forced portrait, Forced landscape (top left / top right) | Auto |
