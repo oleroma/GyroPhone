@@ -289,6 +289,10 @@ internal fun GyroDisplaySettingsScreen(
                                 if (look == 2) Chips(listOf("Lines only" to 1, "Evenly, thickness too" to 0), if (d.crosshairKickLinesOnly) 1 else 0) { set(d.copy(crosshairKickLinesOnly = it == 1)) }
                             }
                             SwitchRow("Muzzle flash", d.muzzleFlash, if (look == 2) "Each shot the crosshair flashes in time with its kick: a burst of white light cooling to the Flash colour (yellow), then Flash end (orange), and back to its own colour." else "Each shot a blast of flame from the muzzle in time with the kick, as wide as the gun's muzzle and as long as its calibre (pistol shortest, shotgun and sniper longest): white, cooling to the Flash colour (yellow), then Flash end (orange).") { set(d.copy(muzzleFlash = it)) }
+                            if (look == 1 && d.muzzleFlash) Indented {
+                                val gun = d.gun()
+                                PercentSlider("Flash size (${gun.name})", d.flashOf(gun), GyroDisplay.FLASH_SIZE_MIN..GyroDisplay.FLASH_SIZE_MAX) { set(d.copy(gunFlash = d.gunFlash + (gun.key to it))) }
+                            }
                         }
                         if (look == 0 && d.laserDraw) {
                             Text("Shoots like", style = MaterialTheme.typography.bodySmall)

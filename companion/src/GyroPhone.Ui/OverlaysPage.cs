@@ -120,7 +120,7 @@ internal sealed class OverlaysPage : Page
     private readonly CheckBox _gunLowered, _gunScope;
     private readonly SliderRow _gunHipPull, _gunHipRecover;
     private readonly CheckBox _muzzleFlash, _laserSpread, _laserBloom, _laserShotDraw;
-    private readonly SliderRow _gunSpread;
+    private readonly SliderRow _gunSpread, _flashSize;
     private readonly Seg<int> _hitLook;
     private readonly CheckBox _laserFireOnly;
     private readonly CheckBox[] _tbEase = new CheckBox[3];
@@ -456,6 +456,9 @@ internal sealed class OverlaysPage : Page
         _fireOptions.Children.Add(_kickOptions);
         _muzzleFlash = Parts.Toggle("Muzzle flash", () => Change(o => o.MuzzleFlash = !o.MuzzleFlash), "Each shot a flash in time with the kick: white, cooling to the Flash colour (yellow), then Flash end (orange). The crosshair glows and takes those colours, then its own again; the gun's muzzle blasts flame as wide as its muzzle and as long as its calibre (pistol shortest, shotgun and sniper longest).");
         _fireOptions.Children.Add(_muzzleFlash);
+        _flashSize = new SliderRow("Flash size (this gun)", GyroPhone.Host.Settings.OverlaySettings.FlashSizeMin, GyroPhone.Host.Settings.OverlaySettings.FlashSizeMax, 0.05, v => $"{v * 100:0}%", v => Change(o => (o.GunFlash ??= [])[o.Gun().Key] = (float)v));
+        _flashSize.View.Margin = new Thickness(20, 0, 0, 0);
+        _fireOptions.Children.Add(_flashSize.View);
         _shootsLikeTitle = Parts.Text("Shoots like", "Sub");
         _fireOptions.Children.Add(_shootsLikeTitle);
         _shootsLike = new Seg<int>(k => Change(o => o.LaserGun = k), true, [.. GyroPhone.Host.Guns.All.Select((g, i) => (g.Name, i))]);
@@ -1065,6 +1068,8 @@ internal sealed class OverlaysPage : Page
         _kickLines.Set(o.CrosshairKickLinesOnly);
         Parts.Show(_muzzleFlash, kicks);
         Parts.SetChecked(_muzzleFlash, o.MuzzleFlash);
+        Parts.Show(_flashSize.View, o.LaserRifle && o.MuzzleFlash);
+        _flashSize.Set(o.FlashOf(o.Gun()));
         Parts.Show(_shootsLikeTitle, !kicks && o.LaserDraw);
         Parts.Show(_shootsLike.View, !kicks && o.LaserDraw);
         Parts.SetChecked(_laserSpread, o.LaserSpread);

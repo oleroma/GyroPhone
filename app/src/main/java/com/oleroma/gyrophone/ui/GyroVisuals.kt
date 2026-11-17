@@ -794,7 +794,7 @@ private class VisState {
      * ([Guns.Gun.flash]), white, then [hot], then [end] as they shrink and fade, with a white-hot core; each shot
      * its own lengths and turn.
      */
-    private fun DrawScope.muzzleFlash(c: Offset, r: Float, ms: Float, hot: Color, end: Color, gun: Guns.Gun, kickK: Float) {
+    private fun DrawScope.muzzleFlash(c: Offset, r: Float, ms: Float, hot: Color, end: Color, gun: Guns.Gun, kickK: Float, size: Float) {
         val g = MuzzleFlash.glow(ms)
         if (g <= 0f) return
         val fire = Color(MuzzleFlash.color(ms, hot.toArgb(), end.toArgb(), end.copy(alpha = 0f).toArgb()))
@@ -805,8 +805,8 @@ private class VisState {
         val tip = at(mz[0], mz[1], mz[2])
         val step = shotAt
         fun rnd(i: Int): Float = (((step * 7919L + i * 104729L) xor (step shr 3)) % 1000L).let { kotlin.math.abs(it) / 1000f }
-        // Bursts out at once, then shrinks back as it cools.
-        val grow = 0.55f + 0.45f * kotlin.math.sqrt(g)
+        // Bursts out at once, then shrinks back as it cools; [size]: the gun's Flash size.
+        val grow = (0.55f + 0.45f * kotlin.math.sqrt(g)) * size
         val width = gun.bore * gun.fit * 2.4f * r * grow
         // One flame from the muzzle along gun direction (dx, dy, dz), [len] long, [w] wide at its widest.
         fun flame(dx: Float, dy: Float, dz: Float, len: Float, w: Float, color: Color) {
@@ -1386,7 +1386,7 @@ private class VisState {
             }
             if (aim > 0f) laserSight(c, r, col(GyroDisplayColor.LASER_AIM), gun, kickK)
             val fm = flashMs(d)
-            if (fm >= 0f) muzzleFlash(c, r, fm, col(GyroDisplayColor.LASER_FLASH), col(GyroDisplayColor.LASER_FLASH_END), gun, kickK)
+            if (fm >= 0f) muzzleFlash(c, r, fm, col(GyroDisplayColor.LASER_FLASH), col(GyroDisplayColor.LASER_FLASH_END), gun, kickK, d.flashOf(gun))
             paint(true)
             axes(true)
             return

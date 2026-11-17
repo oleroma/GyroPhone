@@ -737,12 +737,17 @@ public sealed class LaserTrace
         return e <= GunFrame ? 1f : GunFrame / e;
     }
 
-    /// <summary>One face of the gun in the picture: its corners (x, y, unit radius, any number), how lit it is (0..1) and its depth.</summary>
-    public readonly record struct Face((float X, float Y)[] Corners, float Light, float Depth);
+    /// <summary>
+    /// One face of the gun in the picture: its corners (x, y, unit radius, any number), how lit it is (0..1) and its
+    /// middle's depth. Plane: its plane as seen (normal x, y, z and normal · point); Solid: which box or tube it belongs
+    /// to, both for <see cref="DrawOrder"/>.
+    /// </summary>
+    public readonly record struct Face((float X, float Y)[] Corners, float Light, float Depth, System.Numerics.Vector4 Plane = default, int Solid = 0);
 
     /// <summary>
     /// <paramref name="gun"/> turned by pose <paramref name="m"/>, seen as <see cref="ToView"/> sees it: the faces toward the
-    /// viewer, farthest first, lit from above left. Aiming (<paramref name="aim"/> 0 .. 1, eased) it is shouldered
+    /// viewer (as the camera sees them with <paramref name="persp"/>), in drawing order (<see cref="DrawOrder"/>), lit from
+    /// above left. Aiming (<paramref name="aim"/> 0 .. 1, eased) it is shouldered
     /// (<see cref="AimPull"/>) and, with <paramref name="scope"/>, its round scope grows onto it; firing it kicks
     /// (<paramref name="kick"/>, <see cref="RifleAt"/>); <paramref name="lower"/> pitches it down. As the phone's.
     /// </summary>
@@ -753,24 +758,30 @@ public sealed class LaserTrace
         List<Face> shown = new(64);
         const float lx = -0.35f, ly = 0.6f, lz = 0.72f;
         float ak = Math.Clamp(aim, 0f, 1f);
+        // Each box and tube is one solid: its own faces never cover each other.
+        int solid = 0;
         (float X, float Y, float Z) Turn((float X, float Y, float Z) q) =>
             ToView(m[0] * q.X + m[1] * q.Y + m[2] * q.Z, m[3] * q.X + m[4] * q.Y + m[5] * q.Z, m[6] * q.X + m[7] * q.Y + m[8] * q.Z, axon, turned);
         // One face: its corners in the gun's own frame, and its normal.
         void AddFace((float X, float Y, float Z)[] c, float nx, float ny, float nz)
         {
             var n = Turn(RifleAt(nx, ny, nz, ak, kick, true, g, lower, hip));
-            if (n.Z <= 1e-4f) return;
+            var v0 = Turn(RifleAt(c[0].X, c[0].Y, c[0].Z, ak, kick, false, g, lower, hip));
+            float k = n.X * v0.X + n.Y * v0.Y + n.Z * v0.Z;
+            // Toward the viewer: flat, its normal toward the screen; in perspective, toward the camera.
+            float toward = persp ? n.Z * CameraDistance - k : n.Z;
+            if (toward <= 1e-4f) return;
             float light = Math.Clamp(0.45f + 0.55f * Math.Max(0f, n.X * lx + n.Y * ly + n.Z * lz), 0f, 1f);
             var corners = new (float X, float Y)[c.Length];
             float depth = 0f;
             for (int i = 0; i < c.Length; i++)
             {
-                var v = Turn(RifleAt(c[i].X, c[i].Y, c[i].Z, ak, kick, false, g, lower, hip));
+                var v = i == 0 ? v0 : Turn(RifleAt(c[i].X, c[i].Y, c[i].Z, ak, kick, false, g, lower, hip));
                 float f = persp ? Perspective(v.Z) : 1f;
                 corners[i] = (v.X * f, v.Y * f);
                 depth += v.Z;
             }
-            shown.Add(new Face(corners, light, depth / c.Length));
+            shown.Add(new Face(corners, light, depth / c.Length, new System.Numerics.Vector4(n.X, n.Y, n.Z, k), solid));
         }
         void Box(float cx, float cy, float cz, float hx, float hy, float hz)
         {
@@ -790,6 +801,7 @@ public sealed class LaserTrace
                 }
                 AddFace(c, axis == 0 ? sign : 0f, axis == 1 ? sign : 0f, axis == 2 ? sign : 0f);
             }
+            solid++;
         }
         // A round tube along z at height y, from z0 (front) to z1, radius r: its sides and both ends.
         void Tube(float y, float z0, float z1, float r)
@@ -812,6 +824,7 @@ public sealed class LaserTrace
                 }
                 AddFace(c, 0f, 0f, nz);
             }
+            solid++;
         }
         var b = g.Boxes;
         for (int o = 0; o < b.Length; o += 6) Box(b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5]);
@@ -833,8 +846,139 @@ public sealed class LaserTrace
             Tube(sy, Zz(sc.Front - 0.03f), Zz(sc.Front + 0.04f), sc.Bell * ak);
             Tube(sy, Zz(sc.Back - 0.03f), Zz(sc.Back), sc.Radius * 1.25f * ak);
         }
-        shown.Sort((x, y) => x.Depth.CompareTo(y.Depth));
-        return shown;
+        return DrawOrder(shown, persp);
+    }
+
+    /// <summary>
+    /// <paramref name="faces"/> (each toward the viewer, convex) in drawing order: each after every face it hides part of,
+    /// so nearer faces cover farther ones. Sorting by each face's middle alone isn't enough: a long face's middle can be
+    /// nearer than a small face it is behind (the small one then covers it, and it looks missing). So each two faces of
+    /// different solids that overlap in the picture are compared where they overlap, and the faces drawn in that order
+    /// (the farther middle first where nothing decides it, or where faces cut through each other). As the phone's.
+    /// </summary>
+    public static List<Face> DrawOrder(List<Face> faces, bool persp)
+    {
+        int n = faces.Count;
+        if (n < 2) return faces;
+        var box = new float[n * 4];
+        int most = 3;
+        for (int i = 0; i < n; i++)
+        {
+            var c = faces[i].Corners;
+            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = -float.MaxValue, y1 = -float.MaxValue;
+            foreach (var p in c)
+            {
+                x0 = Math.Min(x0, p.X); x1 = Math.Max(x1, p.X);
+                y0 = Math.Min(y0, p.Y); y1 = Math.Max(y1, p.Y);
+            }
+            box[i * 4] = x0; box[i * 4 + 1] = y0; box[i * 4 + 2] = x1; box[i * 4 + 3] = y1;
+            most = Math.Max(most, c.Length);
+        }
+        var bufA = new (float X, float Y)[most * 2 + 4];
+        var bufB = new (float X, float Y)[most * 2 + 4];
+        // after[i]: the faces to draw after face i (the ones in front of it where they overlap).
+        var after = new List<int>?[n];
+        var before = new int[n];
+        for (int i = 0; i < n; i++)
+            for (int j = i + 1; j < n; j++)
+            {
+                var fi = faces[i];
+                var fj = faces[j];
+                if (fi.Solid == fj.Solid) continue;
+                if (box[i * 4] >= box[j * 4 + 2] || box[j * 4] >= box[i * 4 + 2] || box[i * 4 + 1] >= box[j * 4 + 3] || box[j * 4 + 1] >= box[i * 4 + 3]) continue;
+                if (OverlapMiddle(fi.Corners, fj.Corners, bufA, bufB) is not { } cut) continue;
+                float zi = DepthAt(fi.Plane, cut.X, cut.Y, persp), zj = DepthAt(fj.Plane, cut.X, cut.Y, persp);
+                if (float.IsNaN(zi) || float.IsNaN(zj) || MathF.Abs(zi - zj) < 1e-5f) continue;
+                int far = zi < zj ? i : j, near = far == i ? j : i;
+                (after[far] ??= new List<int>(4)).Add(near);
+                before[near]++;
+            }
+        // Ready faces (nothing left to draw before them) farthest middle first; a loop (faces cutting through each other)
+        // is broken at its farthest face.
+        var output = new List<Face>(n);
+        var done = new bool[n];
+        for (int step = 0; step < n; step++)
+        {
+            int pick = -1;
+            bool pickReady = false;
+            for (int i = 0; i < n; i++)
+            {
+                if (done[i]) continue;
+                bool ready = before[i] == 0;
+                if (pick < 0 || (ready && !pickReady) || (ready == pickReady && faces[i].Depth < faces[pick].Depth))
+                {
+                    pick = i;
+                    pickReady = ready;
+                }
+            }
+            done[pick] = true;
+            output.Add(faces[pick]);
+            if (after[pick] is { } list)
+                foreach (int k in list) before[k]--;
+        }
+        return output;
+    }
+
+    /// <summary>The depth (view z) of plane <paramref name="p"/> (normal, normal · point) under picture point (x, y); NaN when seen edge on.</summary>
+    private static float DepthAt(System.Numerics.Vector4 p, float x, float y, bool persp)
+    {
+        if (!persp) return MathF.Abs(p.Z) < 1e-6f ? float.NaN : (p.W - p.X * x - p.Y * y) / p.Z;
+        // Seen in perspective a picture point is the ray x' = x (D - z) / D, y' = y (D - z) / D.
+        float a = (p.X * x + p.Y * y) / CameraDistance, den = p.Z - a;
+        return MathF.Abs(den) < 1e-6f ? float.NaN : (p.W - a * CameraDistance) / den;
+    }
+
+    /// <summary>
+    /// The middle of where convex polygons <paramref name="a"/> and <paramref name="b"/> overlap in the picture, or null when
+    /// they only touch. <paramref name="bufA"/>, <paramref name="bufB"/>: scratch, room for both polygons' corners.
+    /// </summary>
+    private static (float X, float Y)? OverlapMiddle((float X, float Y)[] a, (float X, float Y)[] b, (float X, float Y)[] bufA, (float X, float Y)[] bufB)
+    {
+        var cur = bufA;
+        var next = bufB;
+        int count = a.Length;
+        a.CopyTo(cur, 0);
+        int nb = b.Length;
+        // b's corners round counterclockwise, so its inside is on each edge's left.
+        float area = 0f;
+        for (int i = 0; i < nb; i++)
+        {
+            var p = b[i]; var q = b[(i + 1) % nb];
+            area += p.X * q.Y - q.X * p.Y;
+        }
+        float turn = area >= 0f ? 1f : -1f;
+        for (int e = 0; e < nb; e++)
+        {
+            if (count == 0) return null;
+            var (ax, ay) = b[e];
+            var (bx, by) = b[(e + 1) % nb];
+            int outCount = 0;
+            for (int i = 0; i < count; i++)
+            {
+                var p = cur[i]; var q = cur[(i + 1) % count];
+                float sp = ((bx - ax) * (p.Y - ay) - (by - ay) * (p.X - ax)) * turn;
+                float sq = ((bx - ax) * (q.Y - ay) - (by - ay) * (q.X - ax)) * turn;
+                if (sp >= 0f) next[outCount++] = p;
+                if (sp >= 0f != sq >= 0f)
+                {
+                    float t = sp / (sp - sq);
+                    next[outCount++] = (p.X + (q.X - p.X) * t, p.Y + (q.Y - p.Y) * t);
+                }
+            }
+            (cur, next) = (next, cur);
+            count = outCount;
+        }
+        if (count < 3) return null;
+        float ar = 0f, sx = 0f, sy = 0f;
+        for (int i = 0; i < count; i++)
+        {
+            var p = cur[i]; var q = cur[(i + 1) % count];
+            ar += p.X * q.Y - q.X * p.Y;
+            sx += p.X; sy += p.Y;
+        }
+        // Only touching along an edge (or a sliver too thin to see): no order needed.
+        if (MathF.Abs(ar) / 2f < 1e-6f) return null;
+        return (sx / count, sy / count);
     }
 
     /// <summary>

@@ -198,6 +198,8 @@ data class GyroDisplay(
      * glows as it flashes; the gun's muzzle blasts a forward plume and side jets, as wide as its muzzle and as long as its calibre.
      */
     val muzzleFlash: Boolean = true,
+    /** Each gun's own muzzle flash size (the Gun look's blast, 1 = as wide as its muzzle and as long as its calibre), by its key, where changed. */
+    val gunFlash: Map<String, Float> = emptyMap(),
     /**
      * LASER crosshair and gun, Simulate spread: each Fire display shot lands off the aim point, a random way, by
      * up to the gun's spread ([spreadOf]); the crosshair and gun kick toward it. With [laserBloom], shots fired in
@@ -400,6 +402,9 @@ data class GyroDisplay(
     /** [gun]'s kick size (0.05 .. 2): its own setting or 50%. */
     fun kickOf(gun: com.oleroma.gyrophone.core.engine.Guns.Gun = gun()): Float = gunKick[gun.key] ?: 0.5f
 
+    /** [gun]'s muzzle flash size ([FLASH_SIZE_MIN] .. [FLASH_SIZE_MAX]): its own setting or 100%. */
+    fun flashOf(gun: com.oleroma.gyrophone.core.engine.Guns.Gun = gun()): Float = (gunFlash[gun.key] ?: 1f).coerceIn(FLASH_SIZE_MIN, FLASH_SIZE_MAX)
+
     /** [gun]'s spread (degrees): its own setting or its default. */
     fun spreadOf(gun: com.oleroma.gyrophone.core.engine.Guns.Gun = gun()): Float = gunSpread[gun.key] ?: gun.spreadDeg
 
@@ -412,6 +417,10 @@ data class GyroDisplay(
     companion object {
         /** The current settings layout ([v]). */
         const val VERSION = 3
+
+        /** The muzzle flash size slider's range ([flashOf]). */
+        const val FLASH_SIZE_MIN = 0.25f
+        const val FLASH_SIZE_MAX = 3f
 
         /** A new display of [kind], with the PC overlays' defaults: gravity, easing back on ratchet over 2 s. */
         fun create(kind: GyroDisplayKind) = GyroDisplay(kind, v = VERSION, gravity = true, ease = true, easeSeconds = 2f)
