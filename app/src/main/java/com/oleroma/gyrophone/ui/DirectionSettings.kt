@@ -98,7 +98,7 @@ private fun SurfaceMovement(level: SurfaceLevel, key: String, touchpad: Boolean)
     OverrideSwitch(
         "Inertia",
         (if (s.inertia) "A Move keeps going after a flick, cursor and scrolling alike." else "Moves stop when the fingers lift.") +
-            " Each Move X / Y ⚙ can set its own; built in, the one-finger cursor's is off.",
+            inertiaExceptions(s),
         s.inertia, own(SurfaceField.INERTIA), reset(SurfaceField.INERTIA), children = level.kids(SurfaceField.INERTIA),
     ) { v -> edit { it.copy(inertia = v) } }
     InertiaCurveRow(s.inertiaCurve, own(SurfaceField.INERTIA_CURVE), reset(SurfaceField.INERTIA_CURVE), children = level.kids(SurfaceField.INERTIA_CURVE)) { c -> edit { it.copy(inertiaCurve = c) } }
@@ -334,145 +334,183 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
 }
 
 /**
- * The ⚙ of Move X or Y [m]: the cursor and scrolling settings it uses, each its own over [level]'s
- * shared one (the Settings), highlighted with a ↺ where it sets its own. The cursor deadzone
- * goes for the whole motion of its finger count: Move X and Y show the same one.
+ * The ⚙ of the Move card of [m]'s finger count: Move X's and Move Y's cursor and scrolling
+ * settings, each axis's own row (X, then Y) over [level]'s shared one (the Settings), highlighted
+ * with a ↺ where it sets its own. The settings of the whole motion (sample, lock, deadzone...)
+ * show once: they are kept on Move X.
  */
 @Composable
-internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, touchpad: Boolean) {
+internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, @Suppress("UNUSED_PARAMETER") touchpad: Boolean) {
     val current by rememberUpdatedState(level)
     val s = level.eff
     val f = s.feel(m.fingers)
-    val k = key + m.name
     val whole = MoveSlot.of(m.fingers, true)
-    /** The slot that keeps [field]: the Move X of the finger count for the whole motion's. */
-    fun slot(field: MoveField) = if (field.whole) whole else m
-    fun edit(field: MoveField, change: (com.oleroma.gyrophone.core.model.MoveSettings) -> com.oleroma.gyrophone.core.model.MoveSettings) =
-        current.edit { it.withMove(slot(field), change) }
-    fun own(field: MoveField) = level.isMoveOwn(slot(field), field)
-    fun reset(field: MoveField): () -> Unit = { current.resetMove(slot(field), field) }
+    val axes = listOf(whole, MoveSlot.of(m.fingers, false))
+    /** The slot that keeps [field] of axis [a]: the Move X of the finger count for the whole motion's. */
+    fun slot(a: MoveSlot, field: MoveField) = if (field.whole) whole else a
+    fun edit(a: MoveSlot, field: MoveField, change: (com.oleroma.gyrophone.core.model.MoveSettings) -> com.oleroma.gyrophone.core.model.MoveSettings) =
+        current.edit { it.withMove(slot(a, field), change) }
+    fun own(a: MoveSlot, field: MoveField) = level.isMoveOwn(slot(a, field), field)
+    fun reset(a: MoveSlot, field: MoveField): () -> Unit = { current.resetMove(slot(a, field), field) }
+    fun kids(a: MoveSlot, field: MoveField) = level.kids(slot(a, field), field)
+    fun axisName(a: MoveSlot) = if (a.x) "X" else "Y"
+    fun axisWay(a: MoveSlot) = if (a.x) "sideways" else "up and down"
     val fields = MoveField.entries
-    val x = m.x
-    val axis = if (x) "sideways" else "up and down"
 
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        ResetAllButton("Settings", fields.any(::own)) { fields.forEach { reset(it)() } }
+        ResetAllButton("Settings", axes.any { a -> fields.any { own(a, it) } }) { axes.forEach { a -> fields.forEach { reset(a, it)() } } }
         SectionTitle("Cursor and sticks")
-        val mv = s.move(m)
-        val sensNow = if (x) f.sensitivityX else f.sensitivityY
-        val sensOwn = own(MoveField.SENSITIVITY) || own(MoveField.SCALE) || own(MoveField.LINK)
-        val resetSens = { reset(MoveField.LINK)(); reset(MoveField.SCALE)(); reset(MoveField.SENSITIVITY)() }
-        val sensHint = "Counts per dp of travel $axis. 0 turns it off."
-        LinkedSens(
-            k + "link", "Sensitivity", mv.linkOf, moveLinkChoices(x), touch = true,
-            valueOf = { l -> s.withMove(m) { it.copy(link = l, scale = null) }.sensOf(m) }, show = { "%.1f".format(it) },
-            overridden = sensOwn, onReset = resetSens, hint = sensHint,
-            onLink = { l ->
-                if (l == null) edit(MoveField.SENSITIVITY) { it.copy(sensitivity = sensNow, scale = null, link = null) }
-                else edit(MoveField.LINK) { it.copy(link = l, scale = null) }
-            },
-        ) {
-            OverrideSlider(
-                k + "sens", "Sensitivity %.1f", sensNow, 0f..MAX_SURFACE_SENS, 0.1f,
-                sensOwn, resetSens, hint = sensHint,
-                children = level.kids(m, MoveField.SENSITIVITY, MoveField.SCALE, MoveField.LINK),
-            ) { v -> edit(MoveField.SENSITIVITY) { it.copy(sensitivity = v, scale = null, link = null) } }
+        for (a in axes) {
+            val x = a.x
+            val k = key + a.name
+            val mv = s.move(a)
+            val sensNow = if (x) f.sensitivityX else f.sensitivityY
+            val sensOwn = own(a, MoveField.SENSITIVITY) || own(a, MoveField.SCALE) || own(a, MoveField.LINK)
+            val resetSens = { reset(a, MoveField.LINK)(); reset(a, MoveField.SCALE)(); reset(a, MoveField.SENSITIVITY)() }
+            val sensHint = "Counts per dp of travel ${axisWay(a)}. 0 turns it off."
+            LinkedSens(
+                k + "link", "Sensitivity ${axisName(a)}", mv.linkOf, moveLinkChoices(x), touch = true,
+                valueOf = { l -> s.withMove(a) { it.copy(link = l, scale = null) }.sensOf(a) }, show = { "%.1f".format(it) },
+                overridden = sensOwn, onReset = resetSens, hint = sensHint,
+                onLink = { l ->
+                    if (l == null) edit(a, MoveField.SENSITIVITY) { it.copy(sensitivity = sensNow, scale = null, link = null) }
+                    else edit(a, MoveField.LINK) { it.copy(link = l, scale = null) }
+                },
+            ) {
+                OverrideSlider(
+                    k + "sens", "Sensitivity ${axisName(a)} %.1f", sensNow, 0f..MAX_SURFACE_SENS, 0.1f,
+                    sensOwn, resetSens, hint = sensHint,
+                    children = level.kids(a, MoveField.SENSITIVITY, MoveField.SCALE, MoveField.LINK),
+                ) { v -> edit(a, MoveField.SENSITIVITY) { it.copy(sensitivity = v, scale = null, link = null) } }
+            }
         }
-        OverrideSlider(
-            k + "acc", "Acceleration %.1f", if (x) f.accelerationX else f.accelerationY, 0f..2f, 0.1f,
-            own(MoveField.ACCELERATION), reset(MoveField.ACCELERATION), children = level.kids(slot(MoveField.ACCELERATION), MoveField.ACCELERATION),
-        ) { v -> edit(MoveField.ACCELERATION) { it.copy(acceleration = v) } }
-        val mode = if (x) f.modeX else f.modeY
-        OverrideRow("Direction", own(MoveField.MODE), reset(MoveField.MODE), children = level.kids(slot(MoveField.MODE), MoveField.MODE), hint = moveModeHint(mode)) {
-            MoveModeChips(mode) { md -> edit(MoveField.MODE) { it.copy(mode = md) } }
-        }
-        if (mode != MoveMode.FREE) {
-            var live by remember { mutableStateOf<Float?>(null) }
-            val pie = if (x) f.pieX else f.pieY
-            PiePicture(PieKind.MOVE, shown = PieKind.axisMask(x)) { live ?: pie }
+        for (a in axes) {
             OverrideSlider(
-                k + "pie", "Pie %.0f°", pie, TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
-                own(MoveField.PIE), reset(MoveField.PIE), children = level.kids(slot(MoveField.PIE), MoveField.PIE),
-                hint = "It moves while the finger heads within this pie, " + if (x) "left and right alike." else "up and down alike.",
-                onLive = { live = it },
-            ) { v -> edit(MoveField.PIE) { it.copy(pie = v) } }
+                key + a.name + "acc", "Acceleration ${axisName(a)} %.1f", if (a.x) f.accelerationX else f.accelerationY, 0f..2f, 0.1f,
+                own(a, MoveField.ACCELERATION), reset(a, MoveField.ACCELERATION), children = kids(a, MoveField.ACCELERATION),
+            ) { v -> edit(a, MoveField.ACCELERATION) { it.copy(acceleration = v) } }
+        }
+        for (a in axes) {
+            val x = a.x
+            val mode = if (x) f.modeX else f.modeY
+            OverrideRow("Direction ${axisName(a)}", own(a, MoveField.MODE), reset(a, MoveField.MODE), children = kids(a, MoveField.MODE), hint = moveModeHint(mode)) {
+                MoveModeChips(mode) { md -> edit(a, MoveField.MODE) { it.copy(mode = md) } }
+            }
+            if (mode != MoveMode.FREE) {
+                var live by remember { mutableStateOf<Float?>(null) }
+                val pie = if (x) f.pieX else f.pieY
+                PiePicture(PieKind.MOVE, shown = PieKind.axisMask(x)) { live ?: pie }
+                OverrideSlider(
+                    key + a.name + "pie", "Pie ${axisName(a)} %.0f°", pie, TouchpadSettings.MIN_PIE_DEG..TouchpadSettings.MAX_PIE_DEG, 5f,
+                    own(a, MoveField.PIE), reset(a, MoveField.PIE), children = kids(a, MoveField.PIE),
+                    hint = "It moves while the finger heads within this pie, " + if (x) "left and right alike." else "up and down alike.",
+                    onLive = { live = it },
+                ) { v -> edit(a, MoveField.PIE) { it.copy(pie = v) } }
+            }
+        }
+        val k = key + whole.name
+        if (!f.free) {
             OverrideSlider(
                 k + "sample", "Sample %.1f dp", f.moveSampleDp, TouchpadSettings.MIN_SAMPLE_DP..TouchpadSettings.MAX_SAMPLE_DP, 0.5f,
-                own(MoveField.SAMPLE), reset(MoveField.SAMPLE), children = level.kids(slot(MoveField.SAMPLE), MoveField.SAMPLE),
+                own(whole, MoveField.SAMPLE), reset(whole, MoveField.SAMPLE), children = kids(whole, MoveField.SAMPLE),
                 hint = "$SAMPLE_HINT A stroke's first this much waits for it. For Move X and Y alike.",
-            ) { v -> edit(MoveField.SAMPLE) { it.copy(sample = v) } }
+            ) { v -> edit(whole, MoveField.SAMPLE) { it.copy(sample = v) } }
             OverrideSwitch(
-                "Lock heading", "$LOCK_HINT For Move X and Y alike.", f.moveLock, own(MoveField.LOCK), reset(MoveField.LOCK), children = level.kids(slot(MoveField.LOCK), MoveField.LOCK),
-            ) { v -> edit(MoveField.LOCK) { it.copy(lock = v) } }
+                "Lock heading", "$LOCK_HINT For Move X and Y alike.", f.moveLock, own(whole, MoveField.LOCK), reset(whole, MoveField.LOCK), children = kids(whole, MoveField.LOCK),
+            ) { v -> edit(whole, MoveField.LOCK) { it.copy(lock = v) } }
             if (f.moveLock) {
                 OverrideSlider(
                     k + "turn", "Turn after %.1f dp", f.moveTurnDp, 0f..TouchpadSettings.MAX_MOVE_TURN_DP, 0.5f,
-                    own(MoveField.TURN), reset(MoveField.TURN), children = level.kids(slot(MoveField.TURN), MoveField.TURN), hint = "$TURN_HINT For Move X and Y alike.",
-                ) { v -> edit(MoveField.TURN) { it.copy(turnDp = v) } }
+                    own(whole, MoveField.TURN), reset(whole, MoveField.TURN), children = kids(whole, MoveField.TURN), hint = "$TURN_HINT For Move X and Y alike.",
+                ) { v -> edit(whole, MoveField.TURN) { it.copy(turnDp = v) } }
             }
             OverrideSlider(
                 k + "margin", if (f.movePieMargin < 1f) "Pie margin: off" else "Pie margin %.0f°",
                 f.movePieMargin, 0f..TouchpadSettings.MAX_MOVE_PIE_MARGIN, 1f,
-                own(MoveField.PIE_MARGIN), reset(MoveField.PIE_MARGIN), children = level.kids(slot(MoveField.PIE_MARGIN), MoveField.PIE_MARGIN), hint = "$MARGIN_HINT For Move X and Y alike.",
-            ) { v -> edit(MoveField.PIE_MARGIN) { it.copy(margin = v) } }
+                own(whole, MoveField.PIE_MARGIN), reset(whole, MoveField.PIE_MARGIN), children = kids(whole, MoveField.PIE_MARGIN), hint = "$MARGIN_HINT For Move X and Y alike.",
+            ) { v -> edit(whole, MoveField.PIE_MARGIN) { it.copy(margin = v) } }
         }
         OverrideSwitch(
             "Swipe stops Move", "$HOLD_STOPS_HINT For Move X and Y alike.", f.holdStopsMove,
-            own(MoveField.HOLD_STOPS), reset(MoveField.HOLD_STOPS), children = level.kids(slot(MoveField.HOLD_STOPS), MoveField.HOLD_STOPS),
-        ) { v -> edit(MoveField.HOLD_STOPS) { it.copy(holdStops = v) } }
+            own(whole, MoveField.HOLD_STOPS), reset(whole, MoveField.HOLD_STOPS), children = kids(whole, MoveField.HOLD_STOPS),
+        ) { v -> edit(whole, MoveField.HOLD_STOPS) { it.copy(holdStops = v) } }
         if (m.fingers == 1) {
             OverrideSlider(
                 k + "dz", if (f.cursorDeadzoneDp < 1f) "Cursor deadzone: off" else "Cursor deadzone %.0f dp",
-                f.cursorDeadzoneDp, 0f..TouchpadSettings.MAX_CURSOR_DEADZONE_DP, 1f, own(MoveField.CURSOR_DEADZONE), reset(MoveField.CURSOR_DEADZONE), children = level.kids(slot(MoveField.CURSOR_DEADZONE), MoveField.CURSOR_DEADZONE),
+                f.cursorDeadzoneDp, 0f..TouchpadSettings.MAX_CURSOR_DEADZONE_DP, 1f, own(whole, MoveField.CURSOR_DEADZONE), reset(whole, MoveField.CURSOR_DEADZONE), children = kids(whole, MoveField.CURSOR_DEADZONE),
                 hint = "The cursor stays still until the finger has moved this far, then catches up with it. For Move X and Y alike.",
-            ) { v -> edit(MoveField.CURSOR_DEADZONE) { it.copy(cursorDeadzoneDp = v) } }
+            ) { v -> edit(whole, MoveField.CURSOR_DEADZONE) { it.copy(cursorDeadzoneDp = v) } }
             if (f.cursorDeadzoneDp > 0f) {
                 OverrideSlider(
                     k + "catch", if (f.catchUpMs < 1) "Catch-up: instant" else "Catch-up %.0f ms",
-                    f.catchUpMs.toFloat(), 0f..TouchpadSettings.MAX_CATCH_UP_MS.toFloat(), 10f, own(MoveField.CATCH_UP), reset(MoveField.CATCH_UP), children = level.kids(slot(MoveField.CATCH_UP), MoveField.CATCH_UP),
-                ) { v -> edit(MoveField.CATCH_UP) { it.copy(catchUpMs = v.roundToInt()) } }
+                    f.catchUpMs.toFloat(), 0f..TouchpadSettings.MAX_CATCH_UP_MS.toFloat(), 10f, own(whole, MoveField.CATCH_UP), reset(whole, MoveField.CATCH_UP), children = kids(whole, MoveField.CATCH_UP),
+                ) { v -> edit(whole, MoveField.CATCH_UP) { it.copy(catchUpMs = v.roundToInt()) } }
                 OverrideSlider(
                     k + "rearm", if (f.deadzoneRearmMs < 1) "Re-arm: off" else "Re-arm after %.0f ms still",
-                    f.deadzoneRearmMs.toFloat(), 0f..TouchpadSettings.MAX_REARM_MS.toFloat(), 10f, own(MoveField.REARM), reset(MoveField.REARM), children = level.kids(slot(MoveField.REARM), MoveField.REARM),
+                    f.deadzoneRearmMs.toFloat(), 0f..TouchpadSettings.MAX_REARM_MS.toFloat(), 10f, own(whole, MoveField.REARM), reset(whole, MoveField.REARM), children = kids(whole, MoveField.REARM),
                     hint = "The deadzone arms again once the finger stands still this long. Off: once per touch.",
-                ) { v -> edit(MoveField.REARM) { it.copy(deadzoneRearmMs = v.roundToInt()) } }
+                ) { v -> edit(whole, MoveField.REARM) { it.copy(deadzoneRearmMs = v.roundToInt()) } }
                 if (f.deadzoneRearmMs > 0) {
                     OverrideSlider(
                         k + "still", "Still within %.1f dp", f.deadzoneStillDp, 0f..TouchpadSettings.MAX_STILL_DP, 0.5f,
-                        own(MoveField.STILL), reset(MoveField.STILL), children = level.kids(slot(MoveField.STILL), MoveField.STILL),
-                    ) { v -> edit(MoveField.STILL) { it.copy(deadzoneStillDp = v) } }
+                        own(whole, MoveField.STILL), reset(whole, MoveField.STILL), children = kids(whole, MoveField.STILL),
+                    ) { v -> edit(whole, MoveField.STILL) { it.copy(deadzoneStillDp = v) } }
                 }
             }
         }
         SectionTitle("Scrolling")
-        OverrideSlider(
-            k + "scroll", "Scroll speed %.2f", if (x) f.scrollSpeedX else f.scrollSpeedY, 0.25f..3f, 0.05f,
-            own(MoveField.SCROLL_SPEED), reset(MoveField.SCROLL_SPEED), children = level.kids(slot(MoveField.SCROLL_SPEED), MoveField.SCROLL_SPEED),
-        ) { v -> edit(MoveField.SCROLL_SPEED) { it.copy(scrollSpeed = v) } }
-        val natural = if (x) f.naturalScrollX else f.naturalScrollY
-        OverrideSwitch(
-            "Natural scrolling",
-            if (natural) "Content follows the fingers." else "Content moves against the fingers.",
-            natural, own(MoveField.NATURAL_SCROLL), reset(MoveField.NATURAL_SCROLL), children = level.kids(slot(MoveField.NATURAL_SCROLL), MoveField.NATURAL_SCROLL),
-        ) { v -> edit(MoveField.NATURAL_SCROLL) { it.copy(naturalScroll = v) } }
-        SectionTitle("Inertia")
-        val inertia = if (x) f.inertiaX else f.inertiaY
-        OverrideSwitch(
-            "Inertia",
-            if (inertia) "Keeps going $axis after a flick, cursor or scrolling, and slows down." else "Stops when the fingers lift.",
-            inertia, own(MoveField.INERTIA), reset(MoveField.INERTIA), children = level.kids(slot(MoveField.INERTIA), MoveField.INERTIA),
-        ) { v -> edit(MoveField.INERTIA) { it.copy(inertia = v) } }
-        if (inertia) {
-            InertiaCurveRow(if (x) f.curveX else f.curveY, own(MoveField.CURVE), reset(MoveField.CURVE), children = level.kids(slot(MoveField.CURVE), MoveField.CURVE)) { c ->
-                edit(MoveField.CURVE) { it.copy(curve = c) }
-            }
+        for (a in axes) {
             OverrideSlider(
-                k + "glide", "Glide %.0f ms", if (x) f.glideMsX else f.glideMsY, TouchpadSettings.MIN_GLIDE_MS..TouchpadSettings.MAX_GLIDE_MS, 5f,
-                own(MoveField.GLIDE), reset(MoveField.GLIDE), children = level.kids(slot(MoveField.GLIDE), MoveField.GLIDE), hint = GLIDE_HINT,
-            ) { v -> edit(MoveField.GLIDE) { it.copy(glideMs = v) } }
+                key + a.name + "scroll", "Scroll speed ${axisName(a)} %.2f", if (a.x) f.scrollSpeedX else f.scrollSpeedY, 0.25f..3f, 0.05f,
+                own(a, MoveField.SCROLL_SPEED), reset(a, MoveField.SCROLL_SPEED), children = kids(a, MoveField.SCROLL_SPEED),
+            ) { v -> edit(a, MoveField.SCROLL_SPEED) { it.copy(scrollSpeed = v) } }
         }
-        DirNote("Highlighted: set for ${m.label} only. The rest is the Settings' value, shared by every Move X and Y.")
+        for (a in axes) {
+            val natural = if (a.x) f.naturalScrollX else f.naturalScrollY
+            OverrideSwitch(
+                "Natural scrolling ${axisName(a)}",
+                if (natural) "Content follows the fingers." else "Content moves against the fingers.",
+                natural, own(a, MoveField.NATURAL_SCROLL), reset(a, MoveField.NATURAL_SCROLL), children = kids(a, MoveField.NATURAL_SCROLL),
+            ) { v -> edit(a, MoveField.NATURAL_SCROLL) { it.copy(naturalScroll = v) } }
+        }
+        SectionTitle("Inertia")
+        for (a in axes) {
+            val x = a.x
+            val inertia = if (x) f.inertiaX else f.inertiaY
+            // Built in, the one-finger Moves don't glide (the plain cursor): said here, so it isn't hidden.
+            val builtInOff = !inertia && !own(a, MoveField.INERTIA) && s.inertia
+            OverrideSwitch(
+                "Inertia ${axisName(a)}",
+                (if (inertia) "Keeps going ${axisWay(a)} after a flick, cursor or scrolling, and slows down." else "Stops when the fingers lift.") +
+                    if (builtInOff) " Built in, one-finger Moves don't glide; switch it on here." else "",
+                inertia, own(a, MoveField.INERTIA), reset(a, MoveField.INERTIA), children = kids(a, MoveField.INERTIA),
+            ) { v -> edit(a, MoveField.INERTIA) { it.copy(inertia = v) } }
+            if (inertia) {
+                InertiaCurveRow(if (x) f.curveX else f.curveY, own(a, MoveField.CURVE), reset(a, MoveField.CURVE), children = kids(a, MoveField.CURVE), title = "Glide curve ${axisName(a)}") { c ->
+                    edit(a, MoveField.CURVE) { it.copy(curve = c) }
+                }
+                OverrideSlider(
+                    key + a.name + "glide", "Glide ${axisName(a)} %.0f ms", if (x) f.glideMsX else f.glideMsY, TouchpadSettings.MIN_GLIDE_MS..TouchpadSettings.MAX_GLIDE_MS, 5f,
+                    own(a, MoveField.GLIDE), reset(a, MoveField.GLIDE), children = kids(a, MoveField.GLIDE), hint = GLIDE_HINT,
+                ) { v -> edit(a, MoveField.GLIDE) { it.copy(glideMs = v) } }
+            }
+        }
+        DirNote("Highlighted: set for ${if (m.fingers == 1) "" else "${m.fingers}-finger "}Move X or Y only. The rest is the Settings' value, shared by every Move X and Y.")
     }
+}
+
+/**
+ * What the shared Inertia doesn't reach: the Moves of each finger count whose own value differs
+ * (built in, one-finger Move X and Y are off), named so the switch never looks on for a Move that doesn't glide.
+ */
+private fun inertiaExceptions(s: TouchpadSettings): String {
+    val off = (1..4).flatMap { n ->
+        val f = s.feel(n)
+        listOfNotNull(MoveSlot.of(n, true).takeIf { f.inertiaX != s.inertia }, MoveSlot.of(n, false).takeIf { f.inertiaY != s.inertia })
+    }
+    if (off.isEmpty()) return " The Move ⚙ can set X and Y their own."
+    val names = off.joinToString { if (it.fingers == 1) "one-finger ${it.label}" else it.label }
+    return " " + (if (s.inertia) "Off" else "On") + " for $names (set in the Move ⚙)."
 }
 
 internal const val GLIDE_HINT =
@@ -485,9 +523,10 @@ internal fun InertiaCurveRow(
     overridden: Boolean,
     onReset: (() -> Unit)?,
     children: ChildInfo? = null,
+    title: String = "Glide curve",
     onPick: (InertiaCurve) -> Unit,
 ) {
-    OverrideRow("Glide curve", overridden, onReset, children = children) {
+    OverrideRow(title, overridden, onReset, children = children) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (c in InertiaCurve.entries) SelectChip(c.label, curve == c) { onPick(c) }
         }
