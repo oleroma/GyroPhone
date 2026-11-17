@@ -99,7 +99,7 @@ internal sealed class KeysBoard
 /// <summary>
 /// Draws the Keys overlay: a row for each stick that sends something ("LS" with a plus whose arms light as it pushes its
 /// keys, then the keys; or a dot where it points when it moves the mouse or a gamepad stick), then the key rows of
-/// <see cref="KeysBoard"/> ("A → Space"; a trigger's row with a bar for how far it is pulled; a Toggle that is on in its
+/// <see cref="KeysBoard"/> ("A = Space"; a trigger's row with a bar for how far it is pulled; a Toggle that is on in its
 /// colour). The rows are as tall as the window's width allows; rows that don't fit aren't drawn.
 /// </summary>
 internal static class KeysDrawing
@@ -158,9 +158,9 @@ internal static class KeysDrawing
         float nw = g.MeasureText(name, px, true).Width;
         g.DrawText(name, px, true, Faded(nameColor, a), new RectangleF(x, r.Y, r.Right - x, r.Height), TextAlign.Near, TextAlign.Center);
         x += nw + px * 0.3f;
-        const string Arrow = "→";
-        g.DrawText(Arrow, px, false, Faded(nameColor, a * 0.6f), new RectangleF(x, r.Y, Math.Max(0f, r.Right - x), r.Height), TextAlign.Near, TextAlign.Center);
-        x += g.MeasureText(Arrow, px, false).Width + px * 0.3f;
+        const string Is = "=";
+        g.DrawText(Is, px, false, Faded(nameColor, a * 0.6f), new RectangleF(x, r.Y, Math.Max(0f, r.Right - x), r.Height), TextAlign.Near, TextAlign.Center);
+        x += g.MeasureText(Is, px, false).Width + px * 0.3f;
         bool toggle = (row.Flags & OverlayKeyRow.Toggle) != 0;
         g.DrawText(row.Target, px, false, Faded(toggle ? on : target, a), new RectangleF(x, r.Y, Math.Max(0f, r.Right - x), r.Height), TextAlign.Near, TextAlign.Center);
         // A trigger's pull, as a thin bar along the row's foot.
@@ -204,9 +204,9 @@ internal static class KeysDrawing
         if (hasKeys) x += px * 0.2f;
         else
         {
-            const string Arrow = "→";
-            g.DrawText(Arrow, px, false, Color.FromArgb(nameColor.A * 3 / 5, nameColor), new RectangleF(x, r.Y, r.Right - x, r.Height), TextAlign.Near, TextAlign.Center);
-            x += g.MeasureText(Arrow, px, false).Width + px * 0.3f;
+            const string Is = "=";
+            g.DrawText(Is, px, false, Color.FromArgb(nameColor.A * 3 / 5, nameColor), new RectangleF(x, r.Y, r.Right - x, r.Height), TextAlign.Near, TextAlign.Center);
+            x += g.MeasureText(Is, px, false).Width + px * 0.3f;
         }
         // Where the stick points now, as a dot in a ring, then what it moves.
         var ring = new RectangleF(x, r.Y + (r.Height - icon) / 2, icon, icon);

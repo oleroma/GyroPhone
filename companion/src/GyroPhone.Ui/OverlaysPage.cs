@@ -372,7 +372,7 @@ internal sealed class OverlaysPage : Page
         _lookTab.Children.Add(graph);
 
         var (keysCard, kyb) = Parts.Card("Keys");
-        kyb.Children.Add(Parts.Text("The keys of the controller attached to the phone that are pressed now and what they send, as \"A → Space\". A new press takes the top free row and stays there while held; let go, its row fades out and leaves a gap the next press fills, so nothing moves. Each stick that sends something has its own row on top: a plus with its keys lit as you push it, or a dot where it points when it moves the mouse or a gamepad stick. Rows that don't fit the window aren't shown: make it taller in Edit.", "Hint"));
+        kyb.Children.Add(Parts.Text("The keys of the controller attached to the phone that are pressed now and what they send, as \"A = Space\". A new press takes the top free row and stays there while held; let go, its row fades out and leaves a gap the next press fills, so nothing moves. Each stick that sends something has its own row on top: a plus with its keys lit as you push it, or a dot where it points when it moves the mouse or a gamepad stick. Rows that don't fit the window aren't shown: make it taller in Edit.", "Hint"));
         _keysFade = new SliderRow("Fade out", 0, 2000, 50, v => v <= 0 ? "At once" : $"{v / 1000:0.##} s", v => Change(o => o.KeysFadeMs = (int)v));
         kyb.Children.Add(_keysFade.View);
         _keysLook = keysCard;
