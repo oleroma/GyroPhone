@@ -72,6 +72,11 @@ public enum OverlayKind
     Ring,
     /// <summary>Scrolling yaw, pitch and roll speed, shaded while a ratchet is held.</summary>
     Graph,
+    /// <summary>
+    /// The attached controller's keys pressed now and what they send ("A → Space"), each in a row that stays put while
+    /// held and fades out when let go, with a row for each stick that sends something.
+    /// </summary>
+    Keys,
 }
 
 public enum OverlayShape
@@ -364,9 +369,18 @@ public sealed class OverlaySettings
     [JsonIgnore]
     public bool WantsSamples => FollowsSamples || Kind == OverlayKind.Graph;
 
-    /// <summary>It turns with the phone (the FPS overlay, Ratchet ring and Speed graph don't).</summary>
+    /// <summary>It turns with the phone (the FPS overlay, Ratchet ring, Speed graph and Keys overlay don't).</summary>
     [JsonIgnore]
-    public bool Turns => Kind is not (OverlayKind.Fps or OverlayKind.Ring or OverlayKind.Graph);
+    public bool Turns => Kind is not (OverlayKind.Fps or OverlayKind.Ring or OverlayKind.Graph or OverlayKind.Keys);
+
+    /// <summary>Keys overlay: how long a let-go key's row takes to fade out, ms (0 = gone at once; up to 2000).</summary>
+    public int KeysFadeMs { get; set; } = 400;
+
+    /// <summary>Keys: the controls always shown on top (GyroPhone.Protocol.OverlayControls.Ids), lit while they fire; others show only while they fire.</summary>
+    public List<string> KeysShown { get; set; } = ["ls", "rs"];
+
+    /// <summary>Keys: no panel behind the rows, only the text over the game.</summary>
+    public bool KeysTransparent { get; set; }
 
     /// <summary>The Snake's zip back as LaserTrace.Add takes it, or null when off.</summary>
     [JsonIgnore]
@@ -589,6 +603,7 @@ public sealed class OverlaySettings
         OverlayKind.Fps => FpsColors,
         OverlayKind.Ring => RingColors,
         OverlayKind.Graph => GraphColors,
+        OverlayKind.Keys => KeysColors,
         _ => shape switch
         {
             null => ShapeColors,
@@ -607,6 +622,7 @@ public sealed class OverlaySettings
         OverlayKind.Fps => "FPS",
         OverlayKind.Ring => "Ratchet ring",
         OverlayKind.Graph => "Speed graph",
+        OverlayKind.Keys => "Keys",
         _ => "Bubble disk",
     };
 
@@ -705,6 +721,15 @@ public sealed class OverlaySettings
         new("text", "Numbers", 0xFFFFFFFF),
         new("line", "Frame times", 0xFF7CC4FF),
         new("jump", "Jumps", 0xFFFF5A5A),
+        new("panel", "Panel", 0x99000000),
+    ];
+
+    private static readonly OverlayColor[] KeysColors =
+    [
+        new("name", "Controller keys", 0xFFFFFFFF),
+        new("target", "What they send", 0xFF7CC4FF),
+        new("on", "Toggles on", 0xFF8FE39A),
+        new("dim", "Sticks at rest", 0x66FFFFFF),
         new("panel", "Panel", 0x99000000),
     ];
 

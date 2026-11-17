@@ -154,6 +154,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** The PC runs a Link test (TEST_MODE): the pump sends fake input, the pad shows a note. */
     val linkTest: StateFlow<Boolean> = _linkTest
 
+    private val _keysOverlay = MutableStateFlow(false)
+    /** The PC has a Keys overlay open (TEST_MODE OVERLAY_KEYS): the attached pad's keys are read for it ([com.oleroma.gyrophone.runtime.PadKeysWatch]). */
+    val keysOverlay: StateFlow<Boolean> = _keysOverlay
+
     /** The PC's TEST_MODE flags; 0 without a session. */
     @Volatile private var testMode = 0
         set(v) {
@@ -162,6 +166,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             pump.linkTest = v and TestModeFlags.LINK_TEST != 0
             pump.phoneStats = v and TestModeFlags.PHONE_STATS != 0
             _linkTest.value = v and TestModeFlags.LINK_TEST != 0
+            overlay.keysWanted = v and TestModeFlags.OVERLAY_KEYS != 0
+            _keysOverlay.value = v and TestModeFlags.OVERLAY_KEYS != 0
             // A Save on the PC: its counter changed since the last TEST_MODE that had one.
             val save = if (v and TestModeFlags.PHONE_STATS != 0) (v and TestModeFlags.DIAG_SAVE_MASK) shr TestModeFlags.DIAG_SAVE_SHIFT else -1
             if (save >= 0 && pcSaves >= 0 && save != pcSaves) onPcSave?.invoke()

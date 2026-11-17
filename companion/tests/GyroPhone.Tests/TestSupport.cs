@@ -385,7 +385,7 @@ internal sealed class Harness : IDisposable
         {
             PadWorker = padWorker ?? (job => job()),
         };
-        Overlays = new OverlayHost(Settings, Engine.Shared, new AutoResetEvent(false), (on, c, s) => Engine.SetOverlay(on, c, s), Clock);
+        Overlays = new OverlayHost(Settings, Engine.Shared, new AutoResetEvent(false), (on, c, s, k) => Engine.SetOverlay(on, c, s, k), Clock);
         Engine.OverlayWake = Overlays.Signal;
         Engine.AttachSender(Sender);
     }

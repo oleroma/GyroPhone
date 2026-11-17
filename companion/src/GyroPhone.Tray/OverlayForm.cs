@@ -29,6 +29,14 @@ internal sealed class OverlayForm : Form
     private readonly Action<string, Point> _clicked;
     private readonly Action<string> _picked;
     private readonly FingerTrails _trails = new();
+    /// <summary>The Keys overlay's rows (Keys only), and whether they changed since the last picture.</summary>
+    private readonly KeysBoard _keys = new();
+    /// <summary>The Keys overlay: what the phone's controller fires, worked out from each OVERLAY and the phone's table.</summary>
+    private readonly OverlayKeysReader _keysReader = new();
+    /// <summary>The Keys overlay's Always shown (<see cref="OverlayControls.Mask"/>) and the list it was made from.</summary>
+    private int _keysShown;
+    private List<string>? _keysShownOf;
+    private bool _keysUndrawn;
     // The laser pointer's trail and paint; the phone's Clear displays presses last seen (-1 = none yet).
     private readonly LaserTrace _laser = new();
     private int _clearPresses = -1;
@@ -581,7 +589,16 @@ internal sealed class OverlayForm : Form
     {
         // A new OVERLAY that shows something new, a new layout, or now and then for the status: draw again.
         long age = _engine.OverlaySnapshot(_scene.Frame, _id, out var layout);
-        var marks = Settings is { Kind: OverlayKind.Phone } ? _engine.OverlayMarks : null;
+        var marks = Settings is { Kind: OverlayKind.Phone or OverlayKind.Keys } ? _engine.OverlayMarks : null;
+        // The Keys overlay's rows: new keys, or rows fading out, draw again.
+        // Kept until drawn: a frame-capped tick leaves it for the next one.
+        if (Settings is { Kind: OverlayKind.Keys } ks)
+        {
+            long t = Environment.TickCount64;
+            if (!ReferenceEquals(ks.KeysShown, _keysShownOf)) { _keysShownOf = ks.KeysShown; _keysShown = OverlayControls.Mask(ks.KeysShown); }
+            var view = _keysReader.Read(marks?.Keys, _scene.Frame, t, _keysShown);
+            if (_keys.Update(view, t, Math.Clamp(ks.KeysFadeMs, 0, 2000))) _keysUndrawn = true;
+        }
         bool fresh = age >= 0 && _scene.Frame.PhoneTimeUs != _lastTime;
         long now = Environment.TickCount64;
         if (now - _screenHzAt >= 2000)
@@ -721,7 +738,7 @@ internal sealed class OverlayForm : Form
         if (fresh && !shows) _lastTime = _scene.Frame.PhoneTimeUs;
         bool changed = _dirty || shows || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
             !ReferenceEquals(layout, _scene.Layout) || !ReferenceEquals(marks, _scene.Marks) || _trails.Fading(now) || laserFading ||
-            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser || GraphMoved();
+            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser || GraphMoved() || _keysUndrawn;
         // The FPS overlay shows nothing of the phone: it draws only on a change of its own settings, and 4 times a second.
         if (Settings is { Kind: OverlayKind.Fps }) changed = _dirty || now - _lastDrawTicks >= FpsDrawing.EveryMs;
         if (!changed && now - _lastDrawTicks < 500) return;
@@ -745,11 +762,16 @@ internal sealed class OverlayForm : Form
     private bool ShowsNew(long age)
     {
         bool live = _engine.Connected && age is >= 0 and < 1_500_000;
+        // The Keys overlay shows only the controller's trigger pulls and sticks of the frame, not the phone.
+        if (Settings is { Kind: OverlayKind.Keys }) return live != _drawnLive || !SamePad(_scene.Frame, _drawnFrame);
         if (!live || !_drawnLive || !_scene.Frame.SameShown(_drawnFrame)) return true;
         var s = Settings;
         float scale = s == null || s.FollowsCamera ? 1f : Math.Clamp(s.MotionScale, 0.25f, 4f);
         return OverlayPacing.TurnShows(OverlayFrame.TurnBetween(_drawnFrame, _scene.Frame), _drawnSize, scale);
     }
+
+    private static bool SamePad(OverlayFrame a, OverlayFrame b) =>
+        a.PadFlags == b.PadFlags && a.PadL2Pull == b.PadL2Pull && a.PadR2Pull == b.PadR2Pull && a.PadSticks.AsSpan().SequenceEqual(b.PadSticks);
 
     /// <summary>The Speed graph got new speeds since it was drawn (it scrolls with them).</summary>
     private bool GraphMoved() => Settings is { Kind: OverlayKind.Graph } && _engine.OverlaySpeeds.Version != _drawnSpeeds;
@@ -770,8 +792,8 @@ internal sealed class OverlayForm : Form
     private bool StepRestFade(long now)
     {
         var rf = _engine.Ui.OverlayRestFade;
-        // The FPS overlay doesn't show the phone: it never fades with it.
-        bool resting = ClickThrough && Settings is not { Kind: OverlayKind.Fps } && _engine.OverlayResting(_id);
+        // The FPS and Keys overlays don't show the phone: they never fade with it.
+        bool resting = ClickThrough && Settings is not { Kind: OverlayKind.Fps or OverlayKind.Keys } && _engine.OverlayResting(_id);
         float target = resting ? Math.Clamp(rf.FadeTo, 0.05f, 1f) : 1f;
         float was = _restFade;
         long dtMs = _restFadeAt == 0 ? 0 : Math.Clamp(now - _restFadeAt, 0, 100);
@@ -849,6 +871,8 @@ internal sealed class OverlayForm : Form
         _drawnFiring = _scene.Firing;
         _drawnLaser = LaserStamp();
         _scene.Speeds = Settings is { Kind: OverlayKind.Graph } ? _engine.OverlaySpeeds : null;
+        _scene.Keys = Settings is { Kind: OverlayKind.Keys } ? _keys : null;
+        _keysUndrawn = false;
         _drawnSpeeds = _scene.Speeds?.Version ?? 0;
         _scene.Arranging = !ClickThrough;
         _scene.Selected = _selected;

@@ -287,6 +287,11 @@ public static class TestModeFlags
     /// <summary>With <see cref="PhoneStats"/>: a 3-bit counter of the PC's Saves; the phone saves its side when it changes.</summary>
     public const byte DiagSaveMask = 0x70;
     public const int DiagSaveShift = 4;
+    /// <summary>
+    /// Not a test: a Keys overlay is open, so the phone reads its attached pad's keys and sends them with the frames
+    /// (OVERLAY_FRAMES, <see cref="OverlayKeys"/>) while HOST_STATUS has <see cref="HostStatusFlags.Overlay"/>. Older phones ignore it.
+    /// </summary>
+    public const byte OverlayKeys = 0x80;
 }
 
 /// <summary>HOST_STATUS's second flags byte (byte 22).</summary>

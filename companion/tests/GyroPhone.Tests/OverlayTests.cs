@@ -154,6 +154,101 @@ public class OverlayTests
         Assert.False(a.Add(Piece(4, 0, 1, Hex.B(FramesBlob))));
         // Cut short: dropped.
         Assert.Null(OverlayMarks.Decode(5, Hex.B(FramesBlob).AsSpan(0, 30)));
+        // Frames without keys (no Keys overlay open, or an older phone).
+        Assert.Null(OverlayMarks.Decode(5, Hex.B(FramesBlob))!.Keys);
+    }
+
+    /// <summary>The phone's OverlayKeysTest.KEYS_BLOB: layout 7, no marks, then the Keys overlay's table.</summary>
+    private const string KeysBlob = "0107000000640000000000004bfa001af2d987871af2d9878780f24de60b000001410553706163654300074c53206c65667401414100084c5320726967687401444000054c5320757001574200074c5320646f776e0153610009525320782061786973054d6f757365610009525320792061786973054d6f7573650700025254074d6f757365204c01030c42206c6f6e67207072657373014502800158014300000141074d6f757365205200";
+
+    [Fact]
+    public void KeysFollowTheMarks()
+    {
+        var m = OverlayMarks.Decode(9, Hex.B(KeysBlob))!;
+        Assert.Empty(m.Marks);
+        var t = m.Keys!;
+        Assert.Equal(250, t.TapMs);
+        Assert.Equal(11, t.Keys.Count);
+        Assert.Equal(new OverlayKey(0, OverlayKey.Held, "A", "Space"), t.Keys[0]);
+        Assert.Equal(new OverlayKey(OverlayKey.Way | 3, OverlayKey.Held, "LS left", "A"), t.Keys[1]);
+        Assert.Equal(new OverlayKey(2, OverlayKey.Toggle, "X", "C"), t.Keys[9]);
+        Assert.Equal(0.3f, t.Triggers[1].Press, 2);
+        Assert.Equal(0.1f, t.Sticks[0].Inner, 2);
+        Assert.Equal(135f, t.Sticks[1].PieY);
+        // Cut short in the keys: the whole blob is dropped.
+        Assert.Null(OverlayMarks.Decode(9, Hex.B(KeysBlob).AsSpan(0, 40)));
+    }
+
+    [Fact]
+    public void KeysReaderWorksOutWhatFires()
+    {
+        var t = OverlayMarks.Decode(9, Hex.B(KeysBlob))!.Keys!;
+        var r = new OverlayKeysReader();
+        var f = new OverlayFrame();
+        // Nothing pressed: only the always-shown sticks (LS and RS by default), not lit.
+        var idle = r.Read(t, f, 1000)!;
+        Assert.Equal(
+            [
+                new OverlayKeyStick(0, "", ["W", "D", "S", "A"], 0, ["", "", "", "", ""], 0),
+                new OverlayKeyStick(1, "Mouse", ["", "", "", ""], 0, ["", "", "", "", ""], 0),
+            ],
+            idle.Shown.Select(x => x.Stick));
+        Assert.All(idle.Shown, x => Assert.False(x.Lit));
+        Assert.Empty(idle.Rows);
+        Assert.Same(idle, r.Read(t, f, 1010));
+        // A held (both its mappings), the left stick up and right (a diagonal), RT pulled, X pressed (Toggle on), B held.
+        f.PadButtons = OverlayFrame.PadSouth | OverlayFrame.PadR2 | OverlayFrame.PadWest | OverlayFrame.PadEast;
+        f.PadR2Pull = 0.6f;
+        f.PadSticks[0] = 0.7f; f.PadSticks[1] = -0.7f;
+        var k = r.Read(t, f, 1100)!;
+        Assert.Equal(OverlayKeyStick.Up | OverlayKeyStick.Right, k.Shown[0].Stick!.Lit);
+        Assert.Equal(
+            [
+                new OverlayKeyRow("A", "Space + Mouse R", 0),
+                new OverlayKeyRow("RT", "Mouse L", OverlayKeyRow.RightTrigger),
+                new OverlayKeyRow("X", "C on", OverlayKeyRow.Toggle),
+            ],
+            k.Rows);
+        // B held past the tap time: its long press fires.
+        Assert.Contains(new OverlayKeyRow("B long press", "E", 0), r.Read(t, f, 1400)!.Rows);
+        // All let go: X's Toggle stays on until it is pressed again.
+        f.PadButtons = 0; f.PadR2Pull = 0; f.PadSticks[0] = 0; f.PadSticks[1] = 0;
+        Assert.Equal([new OverlayKeyRow("X", "C on", OverlayKeyRow.Toggle)], r.Read(t, f, 1500)!.Rows);
+        f.PadButtons = OverlayFrame.PadWest;
+        Assert.Empty(r.Read(t, f, 1600)!.Rows);
+        // A button mapped twice to the same key (by its key and its axis, as the D-pad): shown once.
+        var twice = t with { Keys = [new OverlayKey(14, 0, "↑", "Space"), new OverlayKey(14, 0, "↑", "Space")] };
+        var r2 = new OverlayKeysReader();
+        f.PadButtons = OverlayFrame.PadUp;
+        Assert.Equal([new OverlayKeyRow("↑", "Space", 0)], r2.Read(twice, f, 1650)!.Rows);
+        // Touch buttons: by the OVERLAY's pressed and latched bits, without a name.
+        var touched = t with { Keys = [], Touch = [new OverlayTouchKey(2, 0, "Mouse L"), new OverlayTouchKey(5, OverlayKey.Toggle, "Space")] };
+        var r3 = new OverlayKeysReader();
+        var tf = new OverlayFrame();
+        tf.Pressed[0] = 1 << 2;
+        tf.Latched[0] = 1 << 5;
+        var rows = r3.Read(touched, tf, 1000)!.Rows;
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(("Mouse L", OverlayKeyRow.Touch), (rows[0].Target, rows[0].Flags));
+        Assert.Equal(("Space on", OverlayKeyRow.Touch | OverlayKeyRow.Toggle), (rows[1].Target, rows[1].Flags));
+        // A stick pushed only a little: under half its travel, no key.
+        f.PadButtons = 0; f.PadSticks[0] = 0.3f;
+        Assert.Equal(0, r.Read(t, f, 1700)!.Shown[0].Stick!.Lit);
+        // Pushed to the edge, up: its Outer up and its key both fire; an always-shown A sits on top, dim until pressed.
+        var outer = t with { Keys = [.. t.Keys, new OverlayKey(OverlayKey.Way | 0, OverlayKey.Outer, "LS up outer", "Shift"), new OverlayKey(OverlayKey.AnyWay | 0, 0, "LS outer", "Ctrl")] };
+        var r4 = new OverlayKeysReader();
+        f.PadSticks[0] = 0; f.PadSticks[1] = -1f;
+        int shown = OverlayControls.Mask(["ls", "a"]);
+        var v = r4.Read(outer, f, 2000, shown)!;
+        var ls = v.Shown[0].Stick!;
+        Assert.Equal(OverlayKeyStick.Up, ls.Lit);
+        Assert.Equal(OverlayKeyStick.Up | OverlayKeyStick.Any, ls.OuterLit);
+        Assert.Equal(["Shift", "", "", "", "Ctrl"], ls.Outer);
+        Assert.Equal(new OverlayKeyRow("A", "Space + Mouse R", 0) { Lit = false }, v.Shown[1]);
+        // RS isn't always shown here: its row comes only while it moves (it sends the mouse).
+        Assert.DoesNotContain(v.Rows, x => x.Name == "RS");
+        f.PadSticks[2] = 0.5f;
+        Assert.Contains(r4.Read(outer, f, 2010, shown)!.Rows, x => x.Name == "RS" && x.Stick != null);
     }
 
     [Fact]
@@ -199,7 +294,7 @@ public class OverlayTests
         var secondKey = Hex.Range(0xA0, 32);
         h.AddPaired(secondId, "Pixel", secondKey);
         var engine = new GyroPhone.Host.HostEngine(h.Settings, h.Pad, h.KeyMouse, h.Prompt, new PlainProtector(), h.Clock, h.Events);
-        var overlays = new GyroPhone.Host.OverlayHost(h.Settings, engine.Shared, new AutoResetEvent(false), (on, c, s) => engine.SetOverlay(on, c, s), h.Clock);
+        var overlays = new GyroPhone.Host.OverlayHost(h.Settings, engine.Shared, new AutoResetEvent(false), (on, c, s, k) => engine.SetOverlay(on, c, s, k), h.Clock);
         engine.OverlayWake = overlays.Signal;
         engine.AttachSender(h.Sender);
         void Send(FakePhone p, byte[] d)

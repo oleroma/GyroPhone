@@ -341,6 +341,9 @@ public sealed record OverlayMark(int Control, bool Inside, bool Row, bool Set, I
 /// </summary>
 public sealed record OverlayMarks(ushort Version, ushort LayoutVersion, float TextPx, float Dp, int BarColor, IReadOnlyList<OverlayMark> Marks)
 {
+    /// <summary>The Keys overlay's table of the phone's controller, after the marks; null when the phone sent none (no Keys overlay asked, or an older phone).</summary>
+    public OverlayKeys? Keys { get; init; }
+
     /// <summary>Decodes a frames blob (the phone's OverlayFeed.encodeFrames), or null when it is malformed.</summary>
     public static OverlayMarks? Decode(ushort version, ReadOnlySpan<byte> b)
     {
@@ -384,9 +387,17 @@ public sealed record OverlayMarks(ushort Version, ushort LayoutVersion, float Te
             }
             marks.Add(new OverlayMark(control, (flags & 1) != 0, (flags & 2) != 0, (flags & 4) != 0, lines, bars));
         }
-        return new OverlayMarks(version, layout, textPx, dp, color, marks);
+        OverlayKeys? keys = null;
+        if (Has(1) && b[p] == OverlayKeys.Section)
+        {
+            p++;
+            keys = OverlayKeys.Decode(b, ref p);
+            if (keys == null) return null;
+        }
+        return new OverlayMarks(version, layout, textPx, dp, color, marks) { Keys = keys };
     }
 }
+
 
 /// <summary>
 /// Puts versioned pieces (OVERLAY_LAYOUT, OVERLAY_FRAMES: u16 version, u8 index, u8 count, u8 length, then the

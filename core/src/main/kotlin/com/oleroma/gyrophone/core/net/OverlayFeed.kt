@@ -1,6 +1,8 @@
 package com.oleroma.gyrophone.core.net
 
 import com.oleroma.gyrophone.core.model.AndroidKey
+import com.oleroma.gyrophone.core.model.StickTuning
+import com.oleroma.gyrophone.core.model.TriggerTuning
 import kotlin.math.roundToInt
 
 /** One control as the PC's phone overlay draws it. Centre and size are fractions of the pad area. */
@@ -116,7 +118,14 @@ data class OverlayBar(val axis: Int, val value: Float, val steps: Int)
  * u16 text size (pad px × 10); u16 one dp (pad px × 100); u32 the bars' colour (ARGB); u8 mark count; per mark u8 control index (0xFF
  * the touchpad), u8 flags (1 inside, 2 on one row, 4 sliders icon), u8 line count, per line u8 colour
  * ([OverlayLine.PLAIN], [OverlayLine.ON], [OverlayLine.OFF]) and str8 text, u8 bar count, per bar u8 axis
- * (X, Y, distance, angle), u16 value (0..65535 = 0..1), u16 Snap steps (0 none).
+ * (X, Y, distance, angle), u16 value (0..65535 = 0..1), u16 Snap steps (0 none). Then, only while the PC has a Keys
+ * overlay open ([keysWanted]; older PCs stop at the marks), the attached pad's table ([OverlayKeys]), which changes
+ * only with the workspace, the set in use or the controller: u8 [KEYS_SECTION]; u16 tap time (ms); per stick (left,
+ * right) u8 inner, u8 outer, u8 Outer ring (0..255 = 0..1), u8 Left/Right pie, u8 Up/Down pie (degrees); per trigger
+ * (left, right) u8 Press, u8 Full pull (0..255 = 0..1); u8 key count, per key u8 [OverlayKey.input], u8
+ * [OverlayKey.flags], str8 name, str8 what it sends; u8 touch key count, per touch key u8 control index, u8 flags (as a
+ * key's), str8 what it sends ([OverlayTouchKey]). The PC works out what is pressed from the OVERLAY's pad fields and
+ * its pressed and latched bitmaps.
  *
  * Totals ([FLAG_TOTALS], only while HOST_STATUS has [HostStatusFlags.OVERLAY_TOTALS]; older PCs get
  * the per-frame form above): the yaw, pitch, roll and the camera degrees are running totals since
@@ -185,6 +194,7 @@ class OverlayFeed {
     private var fingerCount = 0
     private val sticks = LinkedHashMap<String, FloatArray>()
     private var frames: OverlayFrames? = null
+    private var keys: OverlayKeys? = null
     private var framesVersion = 0
     /** [frames] encoded for the layout now; null: encoded again at the next [framesSnapshot]. */
     private var framesBlob: ByteArray? = null
@@ -359,13 +369,33 @@ class OverlayFeed {
         }
     }
 
-    /** The frames version now, or -1 with none set; read without allocating before a [framesSnapshot]. */
-    fun framesVersion(): Int = synchronized(lock) { if (frames == null) -1 else framesVersion }
+    /**
+     * The PC has a Keys overlay open (TEST_MODE [TestModeFlags.OVERLAY_KEYS]): the attached pad's table ([setKeys])
+     * goes with the frames. Off: it leaves the frames.
+     */
+    @Volatile var keysWanted = false
+        set(v) {
+            field = v
+            if (!v) setKeys(null)
+        }
+
+    /** Sets the Keys overlay's table (null: none, the frames go without it); a change gets a new frames version. */
+    fun setKeys(k: OverlayKeys?) {
+        synchronized(lock) {
+            if (k == keys) return
+            keys = k
+            framesBlob = null
+            framesVersion = (framesVersion + 1) and 0xFFFF
+        }
+    }
+
+    /** The frames version now, or -1 with neither frames nor keys set; read without allocating before a [framesSnapshot]. */
+    fun framesVersion(): Int = synchronized(lock) { if (frames == null && keys == null) -1 else framesVersion }
 
     /** The frames version and blob now (for the layout now), for one round of OVERLAY_FRAMES pieces. */
     fun framesSnapshot(): Pair<Int, ByteArray>? = synchronized(lock) {
-        val f = frames ?: return null
-        val b = framesBlob ?: encodeFrames(f, version, index).also { framesBlob = it }
+        if (frames == null && keys == null) return null
+        val b = framesBlob ?: encodeFrames(frames ?: OverlayFrames.NONE, version, index, keys).also { framesBlob = it }
         framesVersion to b
     }
 
@@ -614,6 +644,10 @@ class OverlayFeed {
         /** A frame line's most UTF-8 bytes, and a frame's most lines. */
         private const val LINE_MAX = 64
         private const val MAX_LINES = 12
+        /** Marks the Keys overlay's part of a frames blob, after the marks. */
+        const val KEYS_SECTION = 0x4B
+        /** The most mappings the Keys overlay's table is sent. */
+        const val MAX_KEYS = 96
         /** A frames blob is cut to this many OVERLAY_FRAMES pieces. */
         const val MAX_FRAME_PIECES = 16
 
@@ -654,8 +688,8 @@ class OverlayFeed {
             return if (b.size <= PIECE_DATA * MAX_PIECES) b else b.copyOf(PIECE_DATA * MAX_PIECES)
         }
 
-        /** The frames blob (see the class comment) for layout [layoutVersion], whose controls are at [index]. */
-        fun encodeFrames(f: OverlayFrames, layoutVersion: Int, index: Map<String, Int>): ByteArray {
+        /** The frames blob (see the class comment) for layout [layoutVersion], whose controls are at [index], with [keys] after them. */
+        fun encodeFrames(f: OverlayFrames, layoutVersion: Int, index: Map<String, Int>, keys: OverlayKeys? = null): ByteArray {
             val out = java.io.ByteArrayOutputStream()
             fun u8(v: Int) = out.write(v and 0xFF)
             fun u16(v: Int) { u8(v); u8(v shr 8) }
@@ -682,6 +716,36 @@ class OverlayFeed {
                     u8(b.axis)
                     u16(unit16(b.value))
                     u16(b.steps.coerceIn(0, 0xFFFF))
+                }
+            }
+            if (keys != null) {
+                fun str(t: String) {
+                    val b = WireCodec.utf8Truncated(t, LINE_MAX)
+                    u8(b.size); out.write(b)
+                }
+                fun unit(v: Float) = u8((v.coerceIn(0f, 1f) * 255f).roundToInt())
+                u8(KEYS_SECTION)
+                u16(keys.tapMs.coerceIn(0, 0xFFFF))
+                for (i in 0 until 2) {
+                    val t = keys.sticks.getOrElse(i) { StickTuning() }
+                    unit(t.inner); unit(t.outer); unit(t.outerRing)
+                    u8(t.pieX.roundToInt().coerceIn(0, 255)); u8(t.pieY.roundToInt().coerceIn(0, 255))
+                }
+                for (i in 0 until 2) {
+                    val t = keys.triggers.getOrElse(i) { TriggerTuning() }
+                    unit(t.press); unit(t.full)
+                }
+                val ks = keys.keys.take(MAX_KEYS)
+                u8(ks.size)
+                for (k in ks) {
+                    u8(k.input); u8(k.flags)
+                    str(k.name); str(k.target)
+                }
+                val ts = keys.touch.filter { it.id in index }.take(MAX_KEYS)
+                u8(ts.size)
+                for (t in ts) {
+                    u8(index.getValue(t.id)); u8(t.flags)
+                    str(t.target)
                 }
             }
             val b = out.toByteArray()

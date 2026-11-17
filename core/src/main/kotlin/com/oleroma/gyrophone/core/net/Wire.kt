@@ -414,6 +414,12 @@ object TestModeFlags {
     /** With [PHONE_STATS]: a 3-bit counter; the phone saves its Diagnostics when it changes (a Save on the PC). */
     const val DIAG_SAVE_MASK = 0x70
     const val DIAG_SAVE_SHIFT = 4
+
+    /**
+     * Not a test: a Keys overlay is open on the PC, so the phone reads its attached pad's keys and sends them with the
+     * frames (OVERLAY_FRAMES, [OverlayFeed.keysWanted]) while HOST_STATUS has [HostStatusFlags.OVERLAY]. Older phones ignore it.
+     */
+    const val OVERLAY_KEYS = 0x80
 }
 
 /** BYE reason (phone). */

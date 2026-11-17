@@ -652,7 +652,7 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
 
     public void SetLinkWatch(bool on) => _engine.SetLinkWatch(on);
 
-    public void SetOverlay(bool on, bool compass, bool samples) => _engine.SetOverlay(on, compass, samples);
+    public void SetOverlay(bool on, bool compass, bool samples, bool keys = false) => _engine.SetOverlay(on, compass, samples, keys);
 
     // =====================================================================================
     // exit
