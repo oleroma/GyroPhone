@@ -214,6 +214,13 @@ class SensLinkTest {
         assertEquals(30f, e.gyroSettings.sensitivityOf(pitch), 0f)
     }
 
+    @Test fun aKeptYawSliderCarriesTheWorkspacesPitchLink() {
+        val w = aimWorkspace(ButtonGyro(), listOf(SliderOverride(OutputTarget.GyroSens(MotionAxis.YAW), 10f)))
+        val e = MappingEngine(single(w.copy(gyro = w.gyro.withLink(pitch, SensLink("YAW", 0.5f)))))
+        assertEquals(10f, e.gyroSettings.sensitivityOf(yaw), 0f)
+        assertEquals(5f, e.gyroSettings.sensitivityOf(pitch), 0f)
+    }
+
     // A physical button's Motion tab: gyro mapped while it is held.
 
     @Test fun aHeldPhysicalButtonTakesTheGyroAxesItMaps() {
