@@ -25,7 +25,8 @@ case "$side" in
       status) arg="" ;;
       workspace|everything)
         # Printed whole (not cut at the saves list).
-        adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService "$@" | sed '1{/^SERVICE /d}'
+        # dumpsys wraps it in its own header and indents it: keep the JSON from its first brace, dedented.
+        adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService "$@" | tr -d '\r' | sed -n '/^ *[{n]/,$p' | sed 's/^    //'
         exit 0 ;;
       *) usage ;;
     esac
