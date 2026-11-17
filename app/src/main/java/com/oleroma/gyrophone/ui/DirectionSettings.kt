@@ -98,7 +98,7 @@ private fun SurfaceMovement(level: SurfaceLevel, key: String, touchpad: Boolean)
     OverrideSwitch(
         "Inertia",
         (if (s.inertia) "A Move keeps going after a flick, cursor and scrolling alike." else "Moves stop when the fingers lift.") +
-            " Each Move X / Y ⚙ can set its own; built in, the one-finger cursor's is off.",
+            inertiaExceptions(s),
         s.inertia, own(SurfaceField.INERTIA), reset(SurfaceField.INERTIA), children = level.kids(SurfaceField.INERTIA),
     ) { v -> edit { it.copy(inertia = v) } }
     InertiaCurveRow(s.inertiaCurve, own(SurfaceField.INERTIA_CURVE), reset(SurfaceField.INERTIA_CURVE), children = level.kids(SurfaceField.INERTIA_CURVE)) { c -> edit { it.copy(inertiaCurve = c) } }
@@ -196,7 +196,7 @@ private fun SurfaceQuickSwipe(level: SurfaceLevel, key: String) {
 }
 
 @Composable
-private fun SurfaceSwipe(level: SurfaceLevel, key: String, zones: IntArray) {
+internal fun SurfaceSwipe(level: SurfaceLevel, key: String, zones: IntArray) {
     val current by rememberUpdatedState(level)
     val s = level.eff
     fun edit(change: (TouchpadSettings) -> TouchpadSettings) = current.edit(change)
@@ -334,7 +334,7 @@ internal fun DirectionSettings(level: SurfaceLevel, key: String, d: Direction, h
 }
 
 /**
- * The ⚙ of Move X or Y [m]: the cursor and scrolling settings it uses, each its own over [level]'s
+ * The ⚙ of Move X or Y [m] (each line of the Move card has its own): the cursor and scrolling settings it uses, each its own over [level]'s
  * shared one (the Settings), highlighted with a ↺ where it sets its own. The cursor deadzone
  * goes for the whole motion of its finger count: Move X and Y show the same one.
  */
@@ -459,7 +459,9 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
         val inertia = if (x) f.inertiaX else f.inertiaY
         OverrideSwitch(
             "Inertia",
-            if (inertia) "Keeps going $axis after a flick, cursor or scrolling, and slows down." else "Stops when the fingers lift.",
+            (if (inertia) "Keeps going $axis after a flick, cursor or scrolling, and slows down." else "Stops when the fingers lift.") +
+                // Built in, the one-finger Moves don't glide (the plain cursor): said here, so it isn't hidden.
+                if (!inertia && !own(MoveField.INERTIA) && s.inertia) " Built in, one-finger Moves don't glide; switch it on here." else "",
             inertia, own(MoveField.INERTIA), reset(MoveField.INERTIA), children = level.kids(slot(MoveField.INERTIA), MoveField.INERTIA),
         ) { v -> edit(MoveField.INERTIA) { it.copy(inertia = v) } }
         if (inertia) {
@@ -473,6 +475,20 @@ internal fun MoveGearSettings(level: SurfaceLevel, key: String, m: MoveSlot, tou
         }
         DirNote("Highlighted: set for ${m.label} only. The rest is the Settings' value, shared by every Move X and Y.")
     }
+}
+
+/**
+ * What the shared Inertia doesn't reach: the Moves of each finger count whose own value differs
+ * (built in, one-finger Move X and Y are off), named so the switch never looks on for a Move that doesn't glide.
+ */
+private fun inertiaExceptions(s: TouchpadSettings): String {
+    val off = (1..4).flatMap { n ->
+        val f = s.feel(n)
+        listOfNotNull(MoveSlot.of(n, true).takeIf { f.inertiaX != s.inertia }, MoveSlot.of(n, false).takeIf { f.inertiaY != s.inertia })
+    }
+    if (off.isEmpty()) return " The Move ⚙ can set X and Y their own."
+    val names = off.joinToString { if (it.fingers == 1) "one-finger ${it.label}" else it.label }
+    return " " + (if (s.inertia) "Off" else "On") + " for $names (set in the Move ⚙)."
 }
 
 internal const val GLIDE_HINT =
@@ -636,27 +652,25 @@ private fun SectionTitle(text: String) = NotSearching {
 }
 
 /**
- * The Swipe row's ⚙: pick an arrow (↑ → ↓ ←) to see what it sets for itself over the Settings'
- * shared values, its held swipe's ([DirectionSettings] with hold) and its quick swipe's. Swipe
- * any way has no settings of its own: it uses the shared hold distance and zones.
+ * The ⚙ of a Swipe card's arrow line [d] (each line has its own): that arrow's held swipe and
+ * quick swipe settings, each its own over [level]'s shared ones.
  */
 @Composable
-internal fun SwipeArrowSettings(level: SurfaceLevel, key: String, zones: IntArray) {
-    var d by remember { mutableStateOf(Direction.UP) }
+internal fun ArrowSettings(level: SurfaceLevel, key: String, d: Direction, zones: IntArray) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        NotSearching {
-            DirNote("Swipe any way uses the Settings' hold distance and zones. Each arrow can set its own here.")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (x in Direction.entries) {
-                    val own = DirField.entries.any { level.isDirOwn(x, it) }
-                    SelectChip(Bindings.slotLabel(x.ordinal) + if (own) " •" else "", d == x) { d = x }
-                }
-            }
-        }
         SectionTitle("Swipe " + Bindings.slotLabel(d.ordinal))
         DirectionSettings(level, key, d, hold = true, zones)
         SectionTitle("Quick swipe " + Bindings.slotLabel(d.ordinal))
         DirectionSettings(level, key, d, hold = false, zones)
+    }
+}
+
+/** The ⚙ of a Swipe card's Any line: it has nothing of its own, so the shared held swipe settings every arrow follows. */
+@Composable
+internal fun AnySwipeSettings(level: SurfaceLevel, key: String, zones: IntArray) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        DirNote("Swipe any way has no settings of its own: these are the shared ones every arrow follows unless its own ⚙ sets its own.")
+        SurfaceSwipe(level, key, zones)
     }
 }
 

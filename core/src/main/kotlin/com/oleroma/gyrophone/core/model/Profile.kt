@@ -1821,7 +1821,7 @@ data class TouchpadSettings(
         const val DEFAULT_SWIPE_DP = 40f
         const val DEFAULT_HOLD_DP = 20f
         const val MIN_ACTIVATE_DP = 2f
-        const val MAX_ACTIVATE_DP = 120f
+        const val MAX_ACTIVATE_DP = 600f
         const val DEFAULT_RELEASE_DP = 10f
         const val MAX_RELEASE_DP = 60f
         /** Two 90° pies per axis: the way of the larger axis. */

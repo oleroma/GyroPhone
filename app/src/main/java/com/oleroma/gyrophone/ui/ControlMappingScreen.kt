@@ -1729,6 +1729,9 @@ internal fun ControlMappingScreen(
                     val own = all.flatMap { ti -> Bindings.targets(view, ti) }
                     val cardLines = linesOf(input)
                     val swipe = cardLines.size > 1
+                    // A card of several lines (Swipe, Move, Position): each line has its own ⚙, the card's title none,
+                    // so no line's settings hide behind another's.
+                    val lineGears = swipe
                     // A layer shows only its own mappings: nothing faded from the level above there.
                     val parent = if (editSet == MappingSet.BASE) cardLines.flatMap(::parentOf) else emptyList()
                     // The level above passes down the whole card (Inheritance.cardOf) while it maps nothing
@@ -1796,6 +1799,7 @@ internal fun ControlMappingScreen(
                             },
                             onInheritedClick = { f -> selectedSrc = ls; fadedAsk = trig(line, f.trigger) to f.target },
                             onClick = { selectedSrc = ls },
+                            onGear = if (lineGears && !isNew) gearOf(line) else null,
                         )
                     }
                     // The new line goes last, under the mapped ones.
@@ -1850,7 +1854,7 @@ internal fun ControlMappingScreen(
                         onRowBounds = { b -> rowBounds[src] = b },
                         onItemBounds = { item, b -> itemBounds[src to item] = b },
                         onDivider = { k -> if (onZoneSettings != null) zoneDialog = input to k - 1 },
-                        onGear = gearOf(input),
+                        onGear = if (lineGears) null else gearOf(input),
                         onDividerDrag = { k, at -> selectedSrc = src; startDrag(Dragged.Divider(input, k), at) },
                         // The Swipe card: a tap picks its ↑ line, where library taps then add.
                         onClick = { selectedSrc = cardLines.getOrNull(1)?.sources?.first() ?: src },
@@ -2837,6 +2841,14 @@ private fun ActionCard(
                             Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = ln.onClick).padding(horizontal = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            ln.onGear?.let { g ->
+                                Box(
+                                    Modifier.padding(end = 4.dp).size(28.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = g),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text("⚙", style = MaterialTheme.typography.titleSmall, color = colors.primary)
+                                }
+                            }
                             if (ln.label.isEmpty()) Text(
                                 "New",
                                 style = MaterialTheme.typography.labelLarge,
@@ -3023,6 +3035,8 @@ private class CardLine(
     val onInheritedDrag: (Faded, Offset) -> Unit,
     val onInheritedClick: (Faded) -> Unit,
     val onClick: () -> Unit,
+    /** The line's own settings (a Move card's X and Y), opened by a ⚙ before its label; null = none. */
+    val onGear: (() -> Unit)? = null,
 )
 
 /** [line]'s framed, sideways scrolling row of chips and zone dividers (see [ActionCard]). */
