@@ -17,6 +17,8 @@ internal sealed class OverlayScene
     public OverlayLayout? Layout;
     /// <summary>The pad's button frames and bars (phone only), or null.</summary>
     public OverlayMarks? Marks;
+    /// <summary>The Keys overlay's rows (Keys only), or null.</summary>
+    public KeysBoard? Keys;
     public bool Connected;
     /// <summary>Moving and resizing (Edit): a frame shows the window's edges.</summary>
     public bool Arranging;
@@ -219,6 +221,11 @@ internal static class OverlayRenderer
         if (settings.Kind == OverlayKind.Fps)
         {
             FpsDrawing.Draw(g, new RectangleF(0, 0, size.Width, size.Height), scene, settings);
+            return;
+        }
+        if (settings.Kind == OverlayKind.Keys)
+        {
+            KeysDrawing.Draw(g, new RectangleF(0, 0, size.Width, size.Height), scene, settings);
             return;
         }
         bool live = scene.Connected && scene.FrameAgeUs is >= 0 and < 1_500_000;

@@ -106,7 +106,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         _region = SharedRegion.CreateOrOpen(SplitNames.Region);
         _overlayWake = new EventWaitHandle(false, EventResetMode.AutoReset, SplitNames.OverlayWake);
         _input = new InputClient(_exePath, _log.Write, inputArgs);
-        _overlays = new OverlayHost(uiSettings, _region, _overlayWake, (on, compass, samples) => In.SetOverlay(on, compass, samples), _clock);
+        _overlays = new OverlayHost(uiSettings, _region, _overlayWake, (on, compass, samples, keys) => In.SetOverlay(on, compass, samples, keys), _clock);
         if (fresh) _overlays.MarkDirty();
         _debug = new DebugTrace(() => _clock.NowUs, queue: _region.Debug);
         _pairing = new Pairing(this);
@@ -1212,7 +1212,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             + (shapes.Length > 0 ? " · " + shapes : "");
     }
 
-    /// <summary>An overlay window that shows the phone's pose is open (the FPS overlay needs nothing from the phone).</summary>
+    /// <summary>An overlay window that needs the phone's data is open (its pose, or the Keys overlay's keys; the FPS overlay needs nothing from the phone).</summary>
     private bool PoseOverlaysOpen() => _overlayForms.Keys.Any(id => OverlayOf(id) is not { Kind: OverlayKind.Fps });
 
     private void ApplyOverlays()

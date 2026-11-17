@@ -1912,6 +1912,40 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     /**
+     * For the PC's Keys overlay, under one lock: the game pad attached to the phone (the first attached device that
+     * acts as one of the workspace's pads, not a keyboard, mouse or the phone's keys), its mappings in use, or null
+     * without one. That list is the engine's own and a new one when the set in use changes: when [ms] is it, each
+     * of [ms]'s input is on now ([on]: pressed at least half way, a whole axis moved at all) and its How Toggle on
+     * ([toggled]); both at least [ms]'s size. Nothing is made: it only reads.
+     */
+    fun padKeys(ms: List<Mapping>?, on: BooleanArray, toggled: BooleanArray): List<Mapping>? = synchronized(lock) {
+        val d = keysPad() ?: return null
+        val now = padMappings[d.pad]
+        if (now !== ms) return now
+        val t = clock()
+        for (i in now.indices) {
+            val m = now[i]
+            val src = m.source
+            val v = abs(value(src, d))
+            val whole = src is InputSource.Axis && src.half == AxisHalf.FULL && src.stage == AxisStage.NONE
+            on[i] = if (whole) v >= KEYS_MOVED else v >= PRESS_THRESHOLD
+            toggled[i] = m.options?.mode == How.TOGGLE && d.shapers[m]?.toggledOn(t) == true
+        }
+        now
+    }
+
+    /** Whether the Keys overlay's pad ([padKeys]) has its right stick on RX / RY. */
+    fun padKeysRightStickRx(): Boolean = synchronized(lock) { keysPad()?.device?.rightStickRx == true }
+
+    private fun keysPad(): Dev? {
+        for (i in deviceList.indices) {
+            val d = deviceList[i]
+            if (d.pad in 0 until ws.pads.size && d.pad < padMappings.size) return d
+        }
+        return null
+    }
+
+    /**
      * Every input held now, for the debug panel: touch controls pressed (by label), then each
      * device's held keys ("Gamepad: A"), then touchpad fingers.
      */
@@ -3943,6 +3977,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     companion object {
         const val PRESS_THRESHOLD = 0.5f
+
+        /** A whole axis moved this far shows as on in the Keys overlay ([padKeys]). */
+        const val KEYS_MOVED = 0.05f
 
         /** The most mappings pressing at once that Diagnostics follows (more are left out of its on/off lines). */
         private const val MAX_FIRED = 128

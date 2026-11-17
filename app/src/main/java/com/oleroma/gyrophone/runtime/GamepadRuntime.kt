@@ -645,6 +645,11 @@ class GamepadRuntime(context: Context) {
     /** Diagnostics: the Performance switch, the event ring, saves ([PhoneDebug]). */
     val debug = PhoneDebug(appContext, this, scope)
 
+    init {
+        // The PC's Keys overlay: the attached pad's keys are read only while one is open.
+        scope.launch { wifi.keysOverlay.collectLatest { on -> if (on) PadKeysWatch.run(engine, wifi.overlay) } }
+    }
+
     /** Plays the engine's haptic mappings while a PC is connected. */
     private val haptics = PhoneHaptics(appContext) { _linkState.value is LinkState.Connected }.also { h ->
         h.log = { line -> debug.trace?.queue(com.oleroma.gyrophone.core.debug.DebugTrace.Kind.OUT) { line } }

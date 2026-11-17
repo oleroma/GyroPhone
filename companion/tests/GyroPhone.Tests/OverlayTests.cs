@@ -154,6 +154,32 @@ public class OverlayTests
         Assert.False(a.Add(Piece(4, 0, 1, Hex.B(FramesBlob))));
         // Cut short: dropped.
         Assert.Null(OverlayMarks.Decode(5, Hex.B(FramesBlob).AsSpan(0, 30)));
+        // Frames without keys (no Keys overlay open, or an older phone).
+        Assert.Null(OverlayMarks.Decode(5, Hex.B(FramesBlob))!.Keys);
+    }
+
+    /// <summary>The phone's OverlayKeysTest.KEYS_BLOB: layout 7, no marks, then the Keys overlay's part.</summary>
+    private const string KeysBlob = "0107000000640000000000004b0200030001570144015301410100054d6f75736500000000040001410f5370616365202b204d6f757365205204025254074d6f757365204c000c42206c6f6e6720707265737301450101580443206f6e";
+
+    [Fact]
+    public void KeysFollowTheMarks()
+    {
+        var m = OverlayMarks.Decode(9, Hex.B(KeysBlob))!;
+        Assert.Empty(m.Marks);
+        var k = m.Keys!;
+        Assert.Equal(2, k.Sticks.Count);
+        Assert.Equal(new OverlayKeyStick(0, "", ["W", "D", "S", "A"], OverlayKeyStick.Up | OverlayKeyStick.Right), k.Sticks[0]);
+        Assert.Equal("Mouse", k.Sticks[1].Analog);
+        Assert.Equal(
+            [
+                new OverlayKeyRow("A", "Space + Mouse R", 0),
+                new OverlayKeyRow("RT", "Mouse L", OverlayKeyRow.RightTrigger),
+                new OverlayKeyRow("B long press", "E", 0),
+                new OverlayKeyRow("X", "C on", OverlayKeyRow.Toggle),
+            ],
+            k.Rows);
+        // Cut short in the keys: the whole blob is dropped.
+        Assert.Null(OverlayMarks.Decode(9, Hex.B(KeysBlob).AsSpan(0, 40)));
     }
 
     [Fact]
@@ -199,7 +225,7 @@ public class OverlayTests
         var secondKey = Hex.Range(0xA0, 32);
         h.AddPaired(secondId, "Pixel", secondKey);
         var engine = new GyroPhone.Host.HostEngine(h.Settings, h.Pad, h.KeyMouse, h.Prompt, new PlainProtector(), h.Clock, h.Events);
-        var overlays = new GyroPhone.Host.OverlayHost(h.Settings, engine.Shared, new AutoResetEvent(false), (on, c, s) => engine.SetOverlay(on, c, s), h.Clock);
+        var overlays = new GyroPhone.Host.OverlayHost(h.Settings, engine.Shared, new AutoResetEvent(false), (on, c, s, k) => engine.SetOverlay(on, c, s, k), h.Clock);
         engine.OverlayWake = overlays.Signal;
         engine.AttachSender(h.Sender);
         void Send(FakePhone p, byte[] d)

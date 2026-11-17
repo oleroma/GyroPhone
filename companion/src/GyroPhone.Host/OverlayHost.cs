@@ -17,8 +17,8 @@ namespace GyroPhone.Host;
 /// </summary>
 public sealed class OverlayHost
 {
-    /// <summary>What the overlays ask of the phone: on (the phone sends OVERLAY), compass readings, each gyro sample.</summary>
-    public delegate void TellInput(bool on, bool compass, bool samples);
+    /// <summary>What the overlays ask of the phone: on (the phone sends OVERLAY), compass readings, each gyro sample, its pad's keys (a Keys overlay).</summary>
+    public delegate void TellInput(bool on, bool compass, bool samples, bool keys);
 
     private readonly object _gate = new();
     private readonly HostSettings _ui;
@@ -131,6 +131,7 @@ public sealed class OverlayHost
             // As the phone's new displays: the ring small, the graph wide and low.
             if (kind == OverlayKind.Ring) o.Width = o.Height = 120;
             else if (kind == OverlayKind.Graph) (o.Width, o.Height) = (420, 115);
+            else if (kind == OverlayKind.Keys) (o.Width, o.Height) = (240, 220);
             else if (kind != OverlayKind.Phone) o.Width = o.Height = 260;
             _ui.Overlays.Add(o);
             Changed();
@@ -306,17 +307,18 @@ public sealed class OverlayHost
     // Under _gate: tells the input process what the overlays ask of the phone, when that changed.
     private void Ask()
     {
-        bool compass = false, samples = false;
+        bool compass = false, samples = false, keys = false;
         foreach (var o in _ui.Overlays)
         {
             if (!o.Shown) continue;
             compass |= o.NeedsCompass;
             samples |= o.WantsSamples;
+            keys |= o.Kind == OverlayKind.Keys;
         }
-        int asks = (_on ? 1 : 0) | (_on && compass ? 2 : 0) | (_on && samples ? 4 : 0);
+        int asks = (_on ? 1 : 0) | (_on && compass ? 2 : 0) | (_on && samples ? 4 : 0) | (_on && keys ? 8 : 0);
         if (asks == _askedAsks) return;
         _askedAsks = asks;
-        _tellInput(_on, _on && compass, _on && samples);
+        _tellInput(_on, _on && compass, _on && samples, _on && keys);
     }
 
     /// <summary>What Level or Set orientation changed in overlay <paramref name="id"/> (gp-overlay): saved.</summary>

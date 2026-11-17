@@ -208,7 +208,7 @@ public sealed class HostEngine
     private bool _injectFailed;
 
     // Phone overlay: asked for in HOST_STATUS while on (the companion's overlays say what they want, SetOverlay).
-    private bool _overlayOn, _overlayCompass, _overlaySamples;
+    private bool _overlayOn, _overlayCompass, _overlaySamples, _overlayKeys;
     // "Measure buttons" (PRESS_TIME).
     private readonly PressLatency _press = new();
     private bool MeasuringButtons => _settings.MeasureButtons;
@@ -1717,12 +1717,20 @@ public sealed class HostEngine
     /// at once), with its compass readings and each gyro sample when they want those, and they go into the overlay ring
     /// (<see cref="OverlayHost"/>). Off: the phone stops sending them.
     /// </summary>
-    public void SetOverlay(bool on, bool compass = false, bool samples = false)
+    public void SetOverlay(bool on, bool compass = false, bool samples = false, bool keys = false)
     {
         using (Lock(ByUi))
         {
             compass &= on;
             samples &= on;
+            keys &= on;
+            if (keys != _overlayKeys)
+            {
+                // TEST_MODE carries it (HOST_STATUS has no room): told at once, an "off" a few times.
+                _overlayKeys = keys;
+                _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
+                if (_sessions.Active is { } k) SendTestMode(k);
+            }
             if (on == _overlayOn && compass == _overlayCompass && samples == _overlaySamples) return;
             if (on != _overlayOn)
             {
@@ -2411,6 +2419,7 @@ public sealed class HostEngine
         if (MeasuringButtons) flags |= TestModeFlags.PressTimes;
         if (_linkTestUntilUs != long.MinValue) flags |= TestModeFlags.LinkTest;
         if (_settings.Diagnostics) flags |= (byte)(TestModeFlags.PhoneStats | (_diagSaves << TestModeFlags.DiagSaveShift));
+        if (_overlayKeys) flags |= TestModeFlags.OverlayKeys;
         return flags;
     }
 

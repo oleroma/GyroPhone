@@ -70,7 +70,7 @@ public interface IInputControl
 
     // Overlays
     /// <summary>What the companion's overlays ask of the phone (<see cref="HostEngine.SetOverlay"/>).</summary>
-    void SetOverlay(bool on, bool compass, bool samples);
+    void SetOverlay(bool on, bool compass, bool samples, bool keys = false);
 }
 
 /// <summary>The names both processes use in the user's Windows session.</summary>
