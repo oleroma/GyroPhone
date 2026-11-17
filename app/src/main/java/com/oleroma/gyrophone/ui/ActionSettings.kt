@@ -11,6 +11,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.engine.GyroMouse
+import com.oleroma.gyrophone.core.model.SliderOverrides
+import com.oleroma.gyrophone.core.model.SensLink
 import com.oleroma.gyrophone.core.model.AxisGlide
 import com.oleroma.gyrophone.core.model.BindableInput
 import com.oleroma.gyrophone.core.model.ButtonGyro
@@ -71,7 +73,49 @@ internal class MappingSettings(
     /** A touch control's shared settings as categories, for its one settings page; [itemsHeader] goes above them (its Reset all). */
     val items: List<SectionItem> = emptyList(),
     val itemsHeader: (@Composable () -> Unit)? = null,
+    /** A gyro axis card's Sensitivity line; null = none (any other card). */
+    val sens: (BindableInput) -> SensRow? = { null },
 )
+
+/**
+ * A gyro axis card's Sensitivity line: the sensitivity the axis follows at this level ([link], its
+ * own chip), else the one it follows from the level above ([inherited], a faded chip).
+ */
+internal class SensRow(
+    val link: SensLink?,
+    val inherited: SensLink?,
+    /** What a link comes to now, for showing. */
+    val show: (SensLink) -> String,
+    /** Sets the link; null = follow the level above again. */
+    val set: (SensLink?) -> Unit,
+)
+
+/** Gyro [axis]'s Sensitivity line at [level] (the workspace, a layer or the Defaults). */
+private fun gyroSensRow(level: WorkspaceLevel, axis: MotionAxis): SensRow {
+    val g = level.ws.gyro
+    fun k(prop: String) = WorkspaceDefaults.gyroKey(axis.name.lowercase() + prop)
+    val l = g.ownLink(axis)
+    val own = level.isOwn(k("Link")) || level.isOwn(k("Scale"))
+    val named: (Int) -> Float? = { n -> SliderOverrides.named(level.ws.sliders, false, n) }
+    return SensRow(l.takeIf { own }, l.takeIf { !own }, { x -> gyroShow(g)(g.withLink(axis, x).sensitivityOf(axis, named)) }) { x ->
+        if (x == null) {
+            level.reset(k("Link"))
+            level.reset(k("Scale"))
+        } else level.edit { it.copy(gyro = it.gyro.withLink(axis, x)) }
+    }
+}
+
+/** A button's gyro [axis] Sensitivity line while held. */
+private fun buttonSensRow(g: ButtonGyroLevel, axis: MotionAxis): SensRow {
+    val own = g.own.ownLink(axis)
+    // Not its own: what it follows while held, from Base (in a layer), else the workspace's or
+    // layer's link (unless the button's own value or own Gyro sensitivity hides it).
+    val faded = if (own != null) null else g.inUse.ownLink(axis)
+        ?: g.parent.ownLink(axis).takeIf { g.inUse.own(axis) == null && g.inUse.sensitivity == null }
+    return SensRow(own, faded, { x -> gyroShow(g.parent)(g.inUse.withLink(axis, x).sensitivityOf(axis, g.parent, g.named)) }) { x ->
+        g.edit { if (x == null) it.with(axis, null) else it.withLink(axis, x) }
+    }
+}
 
 /** [content] as a composable value (a branch of a `when` gives it no expected type to infer that from). */
 private fun ui(content: @Composable () -> Unit): @Composable () -> Unit = content
@@ -156,6 +200,10 @@ private class ButtonGyroLevel(
     val inUse: ButtonGyro = sets.fold(ButtonGyro()) { r, s -> all.firstOrNull { it.set == s }?.let { r.under(it) } ?: r }
     val own: ButtonGyro = all.firstOrNull { it.set == set } ?: ButtonGyro(set)
     val where = if (set == MappingSet.BASE) "" else " in this layer"
+    val sliders = ws.sliders
+
+    /** The workspace's named Gyro sens as its sliders keep them (null: the shared Sensitivity). */
+    val named: (Int) -> Float? = { n -> SliderOverrides.named(sliders, false, n) }
 
     companion object {
         fun of(control: TouchControl, ws: Workspace, set: Int, update: ((TouchControl) -> TouchControl) -> Unit) =
@@ -192,18 +240,18 @@ private fun ButtonGyroSensitivity(g: ButtonGyroLevel, key: String) {
 private fun ButtonTouchpadSpeed(g: ButtonGyroLevel, key: String) {
     Hint("While this is held.")
     val touchHint = "While this is held${g.where}, the touchpad cursor moves at this speed, for every finger count. Unset, the workspace's."
-    val touchOwn = g.own.touchSensitivity != null || g.own.touchScale != null
+    val touchOwn = g.own.touchSensitivity != null || g.own.touchLinkOf != null
     val touchReset = { g.edit { it.withTouch(null) } }
-    val touchBase = g.inUse.touchSensitivity ?: g.touchpad.sensitivity
-    ScaledSens(
-        key + "touchScale" + g.set, "Touchpad sensitivity", g.inUse.touchScale, touchBase, { "%.1f".format(it) },
-        overridden = touchOwn, onReset = touchReset,
-        hint = "$touchHint With Scale parent each finger count's own speed is scaled.",
-        onMode = { scaled ->
-            val now = g.inUse.touchScale?.let { it * touchBase } ?: touchBase
-            g.edit { if (scaled) it.withTouchScale(1f) else it.withTouch(now) }
+    val namedTouch: (Int) -> Float? = { n -> SliderOverrides.named(g.sliders, true, n) }
+    LinkedSens(
+        key + "touchLink" + g.set, "Touchpad sensitivity", g.inUse.touchLinkOf, touchLinkChoices(), touch = true,
+        valueOf = { l -> g.inUse.withTouchLink(l).touchSensOver(g.touchpad, namedTouch) ?: g.touchpad.sensitivity },
+        show = { "%.1f".format(it) },
+        overridden = touchOwn, onReset = touchReset, hint = touchHint,
+        onLink = { l ->
+            val now = g.inUse.touchSensOver(g.touchpad, namedTouch) ?: g.touchpad.sensitivity
+            g.edit { if (l == null) it.withTouch(now) else it.withTouchLink(l) }
         },
-        onScale = { f -> g.edit { it.withTouchScale(f) } },
     ) {
         OverrideSlider(
             key + "touchSens" + g.set, "Touchpad sensitivity %.1f", g.inUse.touchSensitivity ?: g.touchpad.sensitivity,
@@ -235,20 +283,20 @@ private fun buttonGyroGear(g: ButtonGyroLevel, key: String, axis: MotionAxis): @
         ) { sp -> g.edit { it.withSpace(axis, sp) } }
         val hint = "While this is held: how fast ${axis.label.lowercase()} turns${g.where}. Unset, it follows this button's " +
             "Gyro sensitivity (in Settings), else the workspace's."
-        val own = g.own.own(axis) != null || g.own.ownScale(axis) != null
-        val reset = { g.edit { it.with(axis, null).withScale(axis, null) } }
-        ScaledSens(
-            key + "gyroScale" + g.set + axis.name, "${axis.label} sensitivity", g.inUse.ownScale(axis),
-            g.inUse.own(axis) ?: g.inUse.sensitivity ?: g.parent.exactOf(axis), gyroShow(g.parent),
+        val own = g.own.own(axis) != null || g.own.ownLink(axis) != null
+        val reset = { g.edit { it.with(axis, null) } }
+        LinkedSens(
+            key + "gyroLink" + g.set + axis.name, "${axis.label} sensitivity", g.inUse.ownLink(axis), gyroLinkChoices(axis),
+            touch = false,
+            valueOf = { l -> g.inUse.withLink(axis, l).sensitivityOf(axis, g.parent, g.named) }, show = gyroShow(g.parent),
             overridden = own, onReset = reset, hint = hint,
-            onMode = { scaled ->
-                val now = g.inUse.sensitivityOf(axis, g.parent)
-                g.edit { if (scaled) it.withScale(axis, 1f) else it.with(axis, now) }
+            onLink = { l ->
+                val now = g.inUse.sensitivityOf(axis, g.parent, g.named)
+                g.edit { if (l == null) it.with(axis, now) else it.withLink(axis, l) }
             },
-            onScale = { f -> g.edit { it.withScale(axis, f) } },
         ) {
             GyroSensSlider(
-                key + "gyro" + g.set + axis.name, "${axis.label} sensitivity", g.inUse.sensitivityOf(axis, g.parent), g.parent,
+                key + "gyro" + g.set + axis.name, "${axis.label} sensitivity", g.inUse.sensitivityOf(axis, g.parent, g.named), g.parent,
                 overridden = own, onReset = reset, hint = hint,
             ) { v -> g.edit { it.with(axis, v) } }
         }
@@ -367,6 +415,7 @@ internal fun touchControlSettings(
         },
         items = items,
         itemsHeader = header,
+        sens = { input -> (input.sources.firstOrNull() as? InputSource.Gyro)?.let { s -> gyro?.let { buttonSensRow(it, s.axis) } } },
     )
 }
 
@@ -406,6 +455,7 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
             }
         },
         shared = { WorkspaceSettings(runtime, level, key) },
+        sens = { input -> (input.sources.firstOrNull() as? InputSource.Gyro)?.takeIf { it.id.isEmpty() }?.let { gyroSensRow(level, it.axis) } },
     )
 }
 
@@ -439,27 +489,22 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
         ) { sp -> level.edit { it.copy(gyro = it.gyro.withSpace(axis, sp)) } }
         val sensHint = "How fast ${axis.label.lowercase()} turns; scrolling and sticks go faster or slower with it too. " +
             "Unset, it follows the shared Sensitivity (${gyroShow(g)(g.sensitivity)}) in Settings."
-        val sensOwn = level.isOwn(k("Sensitivity")) || level.isOwn(k("Scale"))
-        val resetSens = { level.reset(k("Scale")); level.reset(k("Sensitivity")) }
-        ScaledSens(
-            key + "scale" + axis.name, "${axis.label} sensitivity", g.ownScale(axis), g.exactOf(axis), gyroShow(g),
+        val sensOwn = level.isOwn(k("Sensitivity")) || level.isOwn(k("Scale")) || level.isOwn(k("Link"))
+        val resetSens = { level.reset(k("Link")); level.reset(k("Scale")); level.reset(k("Sensitivity")) }
+        val named: (Int) -> Float? = { n -> SliderOverrides.named(level.ws.sliders, false, n) }
+        LinkedSens(
+            key + "link" + axis.name, "${axis.label} sensitivity", g.ownLink(axis), gyroLinkChoices(axis), touch = false,
+            valueOf = { l -> g.withLink(axis, l).sensitivityOf(axis, named) }, show = gyroShow(g),
             overridden = sensOwn, onReset = resetSens, hint = sensHint,
-            onMode = { scaled ->
-                if (scaled) {
-                    // The factor multiplies the parent's exact value: this level's own one goes.
-                    if (level.isOwn(k("Sensitivity"))) level.reset(k("Sensitivity"))
-                    level.edit { it.copy(gyro = it.gyro.withScale(axis, 1f)) }
-                } else {
-                    val now = g.sensitivityOf(axis)
-                    level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, now)) }
-                }
+            onLink = { l ->
+                val now = g.sensitivityOf(axis, named)
+                level.edit { it.copy(gyro = if (l == null) it.gyro.withSensitivity(axis, now) else it.gyro.withLink(axis, l)) }
             },
-            onScale = { f -> level.edit { it.copy(gyro = it.gyro.withScale(axis, f)) } },
         ) {
             GyroSensSlider(
-                key + "sens" + axis.name, "${axis.label} sensitivity", g.sensitivityOf(axis), g,
+                key + "sens" + axis.name, "${axis.label} sensitivity", g.sensitivityOf(axis, named), g,
                 overridden = sensOwn, onReset = resetSens, hint = sensHint,
-                children = level.kids(k("Sensitivity"), k("Scale")),
+                children = level.kids(k("Sensitivity"), k("Scale"), k("Link")),
             ) { v -> level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, v)) } }
         }
         AccelCurveSetting(
@@ -618,6 +663,7 @@ internal fun physicalSettings(
             },
             shared = if (items.isEmpty()) null else ui { ReorderableSections(runtime, "physical", items) },
             items = items,
+            sens = { input -> (input.sources.firstOrNull() as? InputSource.Gyro)?.let { s -> level?.let { buttonSensRow(it, s.axis) } } },
         )
     }
 }

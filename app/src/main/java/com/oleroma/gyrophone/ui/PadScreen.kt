@@ -126,6 +126,7 @@ import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.engine.MappingEngine
+import com.oleroma.gyrophone.core.model.SliderOverrides
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.ButtonHow
 import com.oleroma.gyrophone.core.model.ButtonLibrary
@@ -3124,8 +3125,10 @@ fun PadScreen(
                         labelShown = ws.touchpadLabelShown,
                         onLabelShown = { v -> editWorkspace { it.copy(touchpadLabelShown = v) } },
                         onMappingsChange = { m ->
-                            editWorkspace { it.copy(mappings = m) }
+                            editWorkspace { SliderOverrides.pruned(it.copy(mappings = m)) }
                         },
+                        namedSens = ws.namedSens,
+                        onNamedSens = { change -> editWorkspace(change) },
                         onSettings = null,
                         onClose = close,
                         sets = ws.sets,
@@ -3138,7 +3141,7 @@ fun PadScreen(
                         },
                         // ⚙ edits the settings of the layer picked in the set bar.
                         settings = touchpadSettings(runtime, setLevel(ws, d.defaults, mapSet) { change -> editWorkspace(change) })
-                            .let { t -> MappingSettings(t.action, shared = workspacePage, sharedTop = workspaceTop) },
+                            .let { t -> MappingSettings(t.action, shared = workspacePage, sharedTop = workspaceTop, sens = t.sens) },
                         // Base takes the Defaults' mappings of what it does not map; a layer shows Base's greyed.
                         inherited = if (mapSet == MappingSet.BASE || ws.sets.none { s -> s.id == mapSet }) {
                             Inheritance.defaults(d.defaults)
@@ -3237,7 +3240,9 @@ fun PadScreen(
                             runtime = runtime,
                             label = sel.label,
                             onLabel = { v -> updateControl(sel.id) { it.copy(label = v) } },
-                            onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
+                            onMappingsChange = { m -> editWorkspace { SliderOverrides.pruned(it.copy(mappings = m)) } },
+                            namedSens = ws.namedSens,
+                            onNamedSens = { change -> editWorkspace(change) },
                             // Over the settings when it was opened from there: back to them; else they open over it.
                             onSettings = { pages.over = menu == EditMenu.MAPPING },
                             // The control stays selected (ready to pinch); a tap on empty space clears it.
@@ -3280,7 +3285,7 @@ fun PadScreen(
                                 }
                             },
                             onSize = { resize(sel.id, it) },
-                            onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
+                            onMappingsChange = { m -> editWorkspace { SliderOverrides.pruned(it.copy(mappings = m)) } },
                             // Opened from the mapping editor: back to it; else it opens over these.
                             onEditMappings = { pages.over = menu == EditMenu.CONTEXT },
                             onDuplicate = duplicateSel,

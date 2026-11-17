@@ -507,18 +507,24 @@ sealed interface OutputTarget {
      * every other sensitivity (the button's held, the workspace's); of several active, the last
      * activated wins.
      */
+    /**
+     * With [named] (a [NamedSens.id]) it is one of the workspace's named sensitivities instead: a value
+     * of its own (until set, the shared Sensitivity) that any gyro sensitivity can follow
+     * ([SensLink]); [axis] is then [MotionAxis.NONE].
+     */
     @Serializable
     @SerialName("gyro_sens")
-    data class GyroSens(val axis: MotionAxis = MotionAxis.NONE) : OutputTarget
+    data class GyroSens(val axis: MotionAxis = MotionAxis.NONE, val named: Int = 0) : OutputTarget
 
     /**
      * Touch sensitivity: the touchpad's Move sensitivity ([TouchpadSettings.sensitivity]; [axis]
      * null = every Move, X / Y = the one-finger Move X / Y) from the source's value, through the
      * chip's range, like [GyroSens].
      */
+    /** With [named] (a [NamedSens.id]) one of the workspace's named touch sensitivities instead, like [GyroSens.named]; [axis] is then null. */
     @Serializable
     @SerialName("touch_sens")
-    data class TouchSens(val axis: StickAxis? = null) : OutputTarget
+    data class TouchSens(val axis: StickAxis? = null, val named: Int = 0) : OutputTarget
 
     /**
      * Tap time ([Workspace.longPressMs], ms) from the source's value, through the chip's range, like

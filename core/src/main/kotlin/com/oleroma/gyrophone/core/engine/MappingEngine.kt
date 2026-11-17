@@ -13,6 +13,8 @@ import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.AxisRange
 import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.SetValue
+import com.oleroma.gyrophone.core.model.NamedSens
+import com.oleroma.gyrophone.core.model.SensLink
 import com.oleroma.gyrophone.core.model.SliderOverrides
 import com.oleroma.gyrophone.core.model.valueTarget
 import com.oleroma.gyrophone.core.model.settingTarget
@@ -179,19 +181,68 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val all = sensNow[MotionAxis.NONE.ordinal]
         if (!all.isNaN()) r = r.copy(
             sensitivity = all, yawSensitivity = null, pitchSensitivity = null, rollSensitivity = null,
-            yawScale = null, pitchScale = null, rollScale = null,
+            yawScale = null, pitchScale = null, rollScale = null, yawLink = null, pitchLink = null, rollLink = null,
         )
         val yaw = sensNow[MotionAxis.YAW.ordinal]
-        if (!yaw.isNaN()) r = r.copy(yawSensitivity = yaw, yawScale = null)
+        if (!yaw.isNaN()) r = r.withSensitivity(MotionAxis.YAW, yaw)
         val pitch = sensNow[MotionAxis.PITCH.ordinal]
-        if (!pitch.isNaN()) r = r.copy(pitchSensitivity = pitch, pitchScale = null)
+        if (!pitch.isNaN()) r = r.withSensitivity(MotionAxis.PITCH, pitch)
         val roll = sensNow[MotionAxis.ROLL.ordinal]
-        if (!roll.isNaN()) r = r.copy(rollSensitivity = roll, rollScale = null)
+        if (!roll.isNaN()) r = r.withSensitivity(MotionAxis.ROLL, roll)
         for (i in GYRO_VALUE_SLOTS.indices) {
             val v = gyroValNow[i]
             if (!v.isNaN()) r = SliderOverrides.gyroValue(r, GYRO_VALUE_SLOTS[i], v)
         }
         return r
+    }
+
+    /**
+     * Named Gyro sens and Touch sens chips ([OutputTarget.GyroSens.named], [OutputTarget.TouchSens.named])
+     * in effect, by number (index 0 unused); NaN = none. Set by [refreshSens] like [sensNow].
+     */
+    private var namedGyroNow = FloatArray(1) { Float.NaN }
+    private var namedTouchNow = FloatArray(1) { Float.NaN }
+    private var namedGyroSeq = LongArray(1)
+    private var namedTouchSeq = LongArray(1)
+    private var namedGyroVals = FloatArray(1)
+    private var namedTouchVals = FloatArray(1)
+
+    /**
+     * Sizes the named sensitivities' arrays for [w]'s ([Workspace.namedSens], by id) and names them
+     * for showing ([NamedSens.active]); allocates only when the workspace has more than before.
+     */
+    private fun fitNamed(w: Workspace) {
+        if (w.namedSens != NamedSens.active) NamedSens.active = w.namedSens
+        val size = (w.namedSens.maxOfOrNull { it.id } ?: 0) + 1
+        if (size <= namedGyroNow.size) return
+        namedGyroNow = namedGyroNow.copyOf(size).also { it.fill(Float.NaN, namedGyroNow.size, size) }
+        namedTouchNow = namedTouchNow.copyOf(size).also { it.fill(Float.NaN, namedTouchNow.size, size) }
+        namedGyroSeq = LongArray(size); namedTouchSeq = LongArray(size)
+        namedGyroVals = FloatArray(size); namedTouchVals = FloatArray(size)
+    }
+
+    /** Named Gyro sens [n] now: its chip in effect, else its kept slider value, else none (the shared Sensitivity). */
+    private val namedGyro: (Int) -> Float? = { n ->
+        namedGyroNow.getOrNull(n)?.takeUnless { it.isNaN() } ?: if (ws.sliders.isEmpty()) null else SliderOverrides.named(ws.sliders, false, n)
+    }
+
+    /** Named Touch sens [n] now, like [namedGyro]. */
+    private val namedTouch: (Int) -> Float? = { n ->
+        namedTouchNow.getOrNull(n)?.takeUnless { it.isNaN() } ?: if (ws.sliders.isEmpty()) null else SliderOverrides.named(ws.sliders, true, n)
+    }
+
+    /** The gyro settings for [gyroNow]: [gyroBase] with the sensitivity chips over it, every link worked out. */
+    private fun gyroFrom(base: GyroSettings): GyroSettings = withSens(base).resolved(namedGyro)
+
+    /** The held buttons' touchpad settings ([updateGyroNow]), kept so a named Touch sens change can work them out again. */
+    private var heldTouchNow: ButtonGyro? = null
+
+    /** Sets [touchBase] and the touchpad's settings from the settings in effect, the held buttons' and the chips. */
+    private fun applyTouch() {
+        val under = if (ws.sliders.isEmpty()) eff.touchpad else SliderOverrides.overTouch(eff.touchpad, ws.sliders)
+        touchBase = heldTouchNow?.over(under, namedTouch) ?: under
+        val t = withTouchSens(touchBase).resolved(namedTouch)
+        if (t != touchpad.settings) touchpad.settings = t
     }
 
     /**
@@ -245,11 +296,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun withTouchSens(t: TouchpadSettings): TouchpadSettings {
         var r = t
         val all = touchSensNow[0]
-        if (!all.isNaN()) r = r.copy(sensitivity = all, moves = r.moves?.map { it.copy(sensitivity = null, scale = null) })
+        if (!all.isNaN()) r = r.copy(sensitivity = all, moves = r.moves?.map { it.copy(sensitivity = null, scale = null, link = null) })
         val x = touchSensNow[1]
-        if (!x.isNaN()) r = r.withMove(MoveSlot.X1) { it.copy(sensitivity = x, scale = null) }
+        if (!x.isNaN()) r = r.withMove(MoveSlot.X1) { it.copy(sensitivity = x, scale = null, link = null) }
         val y = touchSensNow[2]
-        if (!y.isNaN()) r = r.withMove(MoveSlot.Y1) { it.copy(sensitivity = y, scale = null) }
+        if (!y.isNaN()) r = r.withMove(MoveSlot.Y1) { it.copy(sensitivity = y, scale = null, link = null) }
         return r
     }
 
@@ -269,6 +320,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         touchBest.fill(null); touchBestSeq.fill(-1L); touchVals.fill(0f)
         tapBestSeq = -1L; tapVal = 0f
         gyroValSeq.fill(-1L); gyroValVals.fill(0f)
+        namedGyroSeq.fill(-1L); namedTouchSeq.fill(-1L)
         val now = clock()
         forEachGroup { ms, dev ->
             for (i in ms.indices) {
@@ -280,7 +332,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (v.isNaN()) continue
                 sensSeen.add(m)
                 val seq = sensOrder.getOrPut(m) { ++sensSeq }
-                if (t is OutputTarget.GyroSens) {
+                if (t is OutputTarget.GyroSens && t.named > 0) {
+                    val n = t.named
+                    if (n < namedGyroSeq.size && seq > namedGyroSeq[n]) {
+                        namedGyroSeq[n] = seq; namedGyroVals[n] = v
+                    }
+                } else if (t is OutputTarget.TouchSens && t.named > 0) {
+                    val n = t.named
+                    if (n < namedTouchSeq.size && seq > namedTouchSeq[n]) {
+                        namedTouchSeq[n] = seq; namedTouchVals[n] = v
+                    }
+                } else if (t is OutputTarget.GyroSens) {
                     val a = t.axis.ordinal
                     if (seq > bestSeq[a]) {
                         bestSeq[a] = seq; best[a] = m; vals[a] = v
@@ -322,7 +384,21 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 gyroValNow[i] = v; changed = true
             }
         }
-        if (changed) gyroNow = withSens(gyroBase)
+        for (n in 1 until namedGyroNow.size) {
+            val v = if (namedGyroSeq[n] < 0L) Float.NaN else namedGyroVals[n].coerceIn(MIN_SENS_CHIP, MAX_SENS_CHIP)
+            if (v.toBits() != namedGyroNow[n].toBits()) {
+                namedGyroNow[n] = v; changed = true
+            }
+        }
+        if (changed) gyroNow = gyroFrom(gyroBase)
+        var namedTouchChanged = false
+        for (n in 1 until namedTouchNow.size) {
+            val v = if (namedTouchSeq[n] < 0L) Float.NaN else namedTouchVals[n].coerceIn(MIN_TOUCH_SENS_CHIP, MAX_TOUCH_SENS_CHIP)
+            if (v.toBits() != namedTouchNow[n].toBits()) {
+                namedTouchNow[n] = v; namedTouchChanged = true
+            }
+        }
+        if (namedTouchChanged) applyTouch()
         var touchChanged = false
         for (i in 0 until 3) {
             val v = if (touchBest[i] == null || (i != 0 && touchBestSeq[i] < touchBestSeq[0])) Float.NaN
@@ -331,8 +407,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 touchSensNow[i] = v; touchChanged = true
             }
         }
-        if (touchChanged) {
-            val t = withTouchSens(touchBase)
+        if (touchChanged && !namedTouchChanged) {
+            val t = withTouchSens(touchBase).resolved(namedTouch)
             if (t != touchpad.settings) touchpad.settings = t
         }
         val tap = if (tapBestSeq < 0L) -1 else SliderOverrides.tapMs(tapVal)
@@ -525,8 +601,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** What sensitivity chip [m] starts a nudge from with no kept value: the setting in effect now. */
     private fun settingOf(m: Mapping): Float = when (val t = m.target) {
-        is OutputTarget.GyroSens -> if (t.axis == MotionAxis.NONE) gyroBase.sensitivity else gyroBase.sensitivityOf(t.axis)
-        is OutputTarget.TouchSens -> when (t.axis) {
+        is OutputTarget.GyroSens -> when {
+            t.named > 0 -> namedGyro(t.named) ?: gyroBase.sensitivity
+            t.axis == MotionAxis.NONE -> gyroBase.sensitivity
+            else -> gyroBase.sensitivityOf(t.axis, namedGyro)
+        }
+        is OutputTarget.TouchSens -> if (t.named > 0) namedTouch(t.named) ?: touchBase.sensitivity else when (t.axis) {
             null -> touchBase.sensitivity
             StickAxis.X -> touchBase.feel(1).sensitivityX
             StickAxis.Y -> touchBase.feel(1).sensitivityY
@@ -709,19 +789,19 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (g.anyGyro) held = held?.under(g) ?: g
             if (g.anyTouch) heldTouch = heldTouch?.under(g) ?: g
         }
-        // Slider overrides lie over everything set, a held button's own included.
-        gyroBase = (held?.over(eff.gyro) ?: eff.gyro).let { if (ws.sliders.isEmpty()) it else SliderOverrides.overGyro(it, ws.sliders) }
-        gyroNow = withSens(gyroBase)
+        // Slider overrides set the workspace's values: a held button's own lie over them.
+        val under = if (ws.sliders.isEmpty()) eff.gyro else SliderOverrides.overGyro(eff.gyro, ws.sliders)
+        gyroBase = held?.over(under) ?: under
+        gyroNow = gyroFrom(gyroBase)
         pcHeldGyro = if (heldPhys.isEmpty() || ws.pads.isEmpty()) emptyList() else heldPhys.mapNotNull { b ->
             if (!b.id.startsWith(PhysicalDevice.CONTROLLER.name + ":")) return@mapNotNull null
             val g = b.gyroIn(sets).takeIf { it.anyGyro } ?: return@mapNotNull null
             val place = b.sources.firstNotNullOfOrNull { src -> pcPlace(src).takeIf { it >= 0 } } ?: return@mapNotNull null
             // Over the settings in effect with the phone's own held button, if any: the PC's wins while held.
-            place to g.over(gyroNow)
+            place to g.over(gyroNow).resolved(namedGyro)
         }.distinctBy { it.first }
-        touchBase = (heldTouch?.over(eff.touchpad) ?: eff.touchpad).let { if (ws.sliders.isEmpty()) it else SliderOverrides.overTouch(it, ws.sliders) }
-        val t = withTouchSens(touchBase)
-        if (t != touchpad.settings) touchpad.settings = t
+        heldTouchNow = heldTouch
+        applyTouch()
         // Every change of the buttons held or the mappings in use comes through here.
         routesCache = null
     }
@@ -1463,7 +1543,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             latched.remove(id)
             if (id !in touches && id.removePrefix(PHYS) !in physDown) pressOrder.remove(id)
         }
-        ws = w
+        // Overrides a chip no longer keeps don't count (a removed or changed slider chip).
+        ws = SliderOverrides.pruned(w)
+        fitNamed(w)
         heldPhys = heldOf(w)
         for (id in physDown) if (PHYS + id !in latched) pressOrder.remove(PHYS + id)
         physDown.clear()
@@ -1553,7 +1635,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         anyDevice.clear()
         touches.clear(); pressOrder.clear(); latched.clear(); physDown.clear(); setTouchHeld.clear(); touchSticks.clear()
         fingers.clear(); fingerPointer.clear(); sensOrder.clear(); sensNow.fill(Float.NaN); touchSensNow.fill(Float.NaN); tapNow = -1
-        gyroValNow.fill(Float.NaN)
+        gyroValNow.fill(Float.NaN); namedGyroNow.fill(Float.NaN); namedTouchNow.fill(Float.NaN)
         kept.clear(); slideBase.clear(); shown.clear()
         updateGyroNow()
         for (s in surfaceList) s.reset()
@@ -2413,7 +2495,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 current = p; applyWorkspace(); return@synchronized
             }
             current = p
-            ws = ws.copy(sliders = loaded.sliders)
+            ws = ws.copy(sliders = SliderOverrides.live(loaded), namedSens = loaded.namedSens)
+            fitNamed(ws)
             kept.values.removeIf { it.committed }
             applyLayerSettings()
             refreshSens()

@@ -146,9 +146,23 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
 
     /**
      * What `adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService` prints.
-     * Args: `on`, `off`, `save`, `keep <minutes>`, `events <n>` (tools/gp-log.sh wraps them).
+     * Args: `on`, `off`, `save`, `keep <minutes>`, `events <n>` (tools/gp-log.sh wraps them);
+     * `workspace [name]` prints the active (or named) workspace as an export file, `everything`
+     * the whole set, as saved: only when asked, on the dumpsys binder thread, never on an input path.
      */
     fun dump(args: Array<out String>): String = buildString {
+        if (args.firstOrNull() == "workspace") {
+            val stored = runtime.activeProfile.value
+            val name = args.drop(1).joinToString(" ")
+            val id = if (name.isEmpty()) stored.workspaces.getOrNull(runtime.workspaceIndex.value)?.id
+            else stored.workspaces.firstOrNull { it.name.equals(name, ignoreCase = true) }?.id
+            append(id?.let { runtime.exportWorkspace(it) } ?: "no workspace \"$name\"")
+            return@buildString
+        }
+        if (args.firstOrNull() == "everything") {
+            append(runtime.exportEverything())
+            return@buildString
+        }
         if ("on" in args) setEnabled(true)
         if ("off" in args) setEnabled(false)
         args.indexOf("keep").takeIf { it >= 0 }?.let { i -> args.getOrNull(i + 1)?.toIntOrNull()?.let { setKeepMinutes(it) } }
