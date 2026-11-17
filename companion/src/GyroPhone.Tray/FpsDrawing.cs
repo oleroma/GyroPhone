@@ -7,8 +7,8 @@ namespace GyroPhone.Tray;
 /// <summary>
 /// The FPS overlay (docs/spec/pc-overlays.md): the game's frames per second big, then 1% low, jumps and the
 /// worst frame of the last minute, and the last 10 seconds of frame times as a strip with jumps as dots. Its
-/// edge lights in the jump colour for a second after a jump. While a link test records, its time and what is
-/// left show top left ("● REC 1:12 · 1:48 left"), and under the frame times a graph of the link's last 60 s.
+/// edge lights in the jump colour for a second after a jump. While Diagnostics is on, "● DIAG" and how long
+/// show top left ("● DIAG 4:12"), and under the frame times a graph of the link's last 60 s.
 /// </summary>
 internal static class FpsDrawing
 {
@@ -32,7 +32,7 @@ internal static class FpsDrawing
             big = "–";
             sub = scene.FpsState switch
             {
-                FrameWatchState.NeedsPermission => "Needs a Windows permission: open Performance",
+                FrameWatchState.NeedsPermission => "Needs the FPS helper: open Performance",
                 FrameWatchState.Failed => "Can't watch frames: see Performance",
                 _ => "Starting…",
             };
@@ -51,7 +51,7 @@ internal static class FpsDrawing
         bool strip = inner.Height >= 70;
         var test = scene.FpsTest;
         string title = scene.FpsGame is { Length: > 0 } game && watching && f is { Pid: > 0 } ? game : "";
-        // A row of its own on top for the REC time and the game's name, so they never run into the number.
+        // A row of its own on top for the DIAG time and the game's name, so they never run into the number.
         float headPx = Math.Clamp(inner.Height * 0.08f, 8f, 18f);
         float headH = test != null || title.Length > 0 ? headPx * 1.5f : 0f;
         var head = new RectangleF(inner.X, inner.Y, inner.Width, headH);
@@ -81,12 +81,11 @@ internal static class FpsDrawing
             g.DrawRectangle(jump, Math.Max(2f, pad / 2), RectangleF.Inflate(area, -pad / 4, -pad / 4));
     }
 
-    /// <summary>"● REC 1:12 · 1:48 left", or "● REC 1:12" for a record that runs until stopped.</summary>
+    /// <summary>"● DIAG 1:12": Diagnostics is on, for how long (the link graph shows under it meanwhile).</summary>
     internal static string TestText(RecordingView r)
     {
-        static string Clock(double s) => $"{(int)s / 60}:{(int)s % 60:00}";
         double elapsed = Math.Max(0, r.Elapsed);
-        return r.Seconds > 0 ? $"● REC {Clock(elapsed)} · {Clock(Math.Ceiling(Math.Max(0, r.Seconds - elapsed)))} left" : $"● REC {Clock(elapsed)}";
+        return $"● DIAG {(int)elapsed / 60}:{(int)elapsed % 60:00}";
     }
 
     /// <summary>The link's last 60 s, a bar per second as high as its latest packet's delay (0 to 100 ms); lost packets,

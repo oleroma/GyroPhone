@@ -93,10 +93,23 @@ public class PressLatencyTests
         Assert.Equal("04030201d0c0b0a0", Convert.ToHexString(b).ToLowerInvariant());
         Assert.Equal(new PressTime(0x01020304, 0xA0B0C0D0), WireCodec.DecodePressTime(b));
         Span<byte> t = stackalloc byte[Wire.TestModePlain];
-        WireCodec.EncodeTestMode(TestModeFlags.PressTimes | TestModeFlags.LatencyScreen, t);
-        Assert.Equal("03000000", Convert.ToHexString(t).ToLowerInvariant());
+        WireCodec.EncodeTestMode(TestModeFlags.PressTimes | TestModeFlags.LinkTest, t);
+        Assert.Equal("05000000", Convert.ToHexString(t).ToLowerInvariant());
         Assert.Equal(Wire.Header + 8 + Wire.GcmTag, PacketType.Size(PacketType.PressTime));
         Assert.Equal(Wire.Header + 4 + Wire.GcmTag, PacketType.Size(PacketType.TestMode));
+    }
+
+    [Fact]
+    public void PhoneStatsRoundTrip()
+    {
+        var p = new PhoneStats(0x01020304, 500, 620, 1, 2, 3000, 2500, 7000, 150_000, 640);
+        Span<byte> b = stackalloc byte[Wire.PhoneStatsPlain];
+        Assert.Equal(32, WireCodec.EncodePhoneStats(p, b));
+        // Same bytes as the phone's phoneStatsBytesMatchThePcs.
+        Assert.Equal("04030201f4016c0201000200b80b0000c4090000581b0000f049020080020000", Convert.ToHexString(b).ToLowerInvariant());
+        Assert.Equal(p, WireCodec.DecodePhoneStats(b));
+        Assert.True(PacketType.IsPhoneToHostSealed(PacketType.PhoneStats));
+        Assert.Equal(Wire.Header + 32 + Wire.GcmTag, PacketType.Size(PacketType.PhoneStats));
     }
 }
 

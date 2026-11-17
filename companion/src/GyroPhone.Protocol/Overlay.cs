@@ -100,6 +100,9 @@ public sealed class OverlayFrame
     public bool IsPressed(int i) => i is >= 0 and < 128 && (Pressed[i >> 3] & (1 << (i & 7))) != 0;
     public bool IsLatched(int i) => i is >= 0 and < 128 && (Latched[i >> 3] & (1 << (i & 7))) != 0;
 
+    /// <summary>Where <see cref="Axes"/> sits in an OVERLAY's plain bytes.</summary>
+    public const int AxesOffset = 30;
+
     /// <summary>Decodes the wire fields; the pose (<see cref="Qw"/>..) is left as it is.</summary>
     public void Decode(ReadOnlySpan<byte> b)
     {
@@ -114,7 +117,7 @@ public sealed class OverlayFrame
         NorthX = Le.I16(b, 24) / 32767f;
         NorthY = Le.I16(b, 26) / 32767f;
         NorthZ = Le.I16(b, 28) / 32767f;
-        Axes = b[30];
+        Axes = b[AxesOffset];
         RatchetPresses = b[31];
         LayoutVersion = Le.U16(b, 32);
         Flags = b[34];
@@ -217,6 +220,51 @@ public sealed class OverlayFrame
     }
 }
 
+/// <summary>
+/// OVERLAY_SAMPLES: each gyro sample's turn in the OVERLAY sent right after it (the same phone time), oldest first, so a
+/// pointer overlay paints along every sample as the phone's does. u32 phone time; u8 count (up to <see cref="Max"/>);
+/// 3 bytes 0; per sample i16 yaw, pitch, roll (thousandths of a degree) and u16 its time (10 us units).
+/// </summary>
+public sealed class OverlaySamples
+{
+    public const int Max = 32;
+    public uint PhoneTimeUs;
+    public int Count;
+    /// <summary>Yaw, pitch, roll (degrees) and seconds per sample.</summary>
+    public readonly float[] Turns = new float[Max * 4];
+    private bool _has;
+
+    public void Decode(ReadOnlySpan<byte> b)
+    {
+        PhoneTimeUs = Le.U32(b, 0);
+        Count = Math.Min((int)b[4], Max);
+        for (int k = 0; k < Count; k++)
+        {
+            int p = 8 + k * 8;
+            Turns[k * 4] = Le.I16(b, p) / 1000f;
+            Turns[k * 4 + 1] = Le.I16(b, p + 2) / 1000f;
+            Turns[k * 4 + 2] = Le.I16(b, p + 4) / 1000f;
+            Turns[k * 4 + 3] = Le.U16(b, p + 6) / 100_000f;
+        }
+        _has = true;
+    }
+
+    /// <summary>They go with <paramref name="f"/> (sent just before it), and add up to its turn (no frame lost between).</summary>
+    public bool Matches(OverlayFrame f)
+    {
+        if (!_has || Count == 0 || PhoneTimeUs != f.PhoneTimeUs) return false;
+        float y = 0, p = 0, r = 0, t = 0;
+        for (int k = 0; k < Count; k++)
+        {
+            y += Turns[k * 4]; p += Turns[k * 4 + 1]; r += Turns[k * 4 + 2]; t += Turns[k * 4 + 3];
+        }
+        // Rounding on the wire: a few thousandths of a degree per sample, 10 us per sample.
+        float tol = 0.002f * Count + 0.05f;
+        return MathF.Abs(t - f.TurnSeconds) < 0.00002f * Count + 0.0005f
+            && MathF.Abs(y - f.TurnYaw) < tol && MathF.Abs(p - f.TurnPitch) < tol && MathF.Abs(r - f.TurnRoll) < tol;
+    }
+}
+
 public enum OverlayControlKind : byte { Button = 0, Stick = 1, Corner = 2, Display = 3 }
 
 /// <summary>One control of <see cref="OverlayLayout"/>: centre and size as fractions of the pad area.</summary>
@@ -270,8 +318,81 @@ public sealed record OverlayLayout(ushort Version, int WidthPx, int HeightPx, st
     }
 }
 
-/// <summary>Puts OVERLAY_LAYOUT pieces back together; a new version starts over.</summary>
-public sealed class OverlayLayoutAssembler
+/// <summary>One line of a button's frame: its text and colour (<see cref="OverlayFrameLine.Plain"/>, a Toggle <see cref="On"/> green, <see cref="Off"/> grey).</summary>
+public sealed record OverlayFrameLine(string Text, byte Color)
+{
+    public const byte Plain = 0, On = 1, Off = 2;
+}
+
+/// <summary>A Position bar on a button: <paramref name="Axis"/> 0 X, 1 Y, 2 distance, 3 angle; value 0..1; its Snap steps (0 none).</summary>
+public sealed record OverlayBar(byte Axis, float Value, int Steps);
+
+/// <summary>
+/// One button's frame and bars as the pad shows them: <paramref name="Control"/> its index in the layout (-1 the
+/// workspace touchpad: the whole pad area). The frame sits in the button's middle in place of its label
+/// (<paramref name="Inside"/>; its lines on one <paramref name="Row"/>), else outside by its top-right corner;
+/// <paramref name="Set"/>: a sliders icon in its top-left corner.
+/// </summary>
+public sealed record OverlayMark(int Control, bool Inside, bool Row, bool Set, IReadOnlyList<OverlayFrameLine> Lines, IReadOnlyList<OverlayBar> Bars);
+
+/// <summary>
+/// OVERLAY_FRAMES put together: what the pad shows over its buttons (its frames: mappings active now, Toggles on or
+/// off, sliders' values; its Position bars), for layout <see cref="LayoutVersion"/>. Text size and one dp in pad pixels.
+/// </summary>
+public sealed record OverlayMarks(ushort Version, ushort LayoutVersion, float TextPx, float Dp, int BarColor, IReadOnlyList<OverlayMark> Marks)
+{
+    /// <summary>Decodes a frames blob (the phone's OverlayFeed.encodeFrames), or null when it is malformed.</summary>
+    public static OverlayMarks? Decode(ushort version, ReadOnlySpan<byte> b)
+    {
+        int p = 0;
+        int total = b.Length;
+        bool Has(int n) => p + n <= total;
+        if (!Has(12) || b[0] != 1) return null;
+        ushort layout = Le.U16(b, 1);
+        float textPx = Le.U16(b, 3) / 10f;
+        float dp = Le.U16(b, 5) / 100f;
+        int color = (int)Le.U32(b, 7);
+        int count = b[11];
+        p = 12;
+        var marks = new List<OverlayMark>(count);
+        for (int i = 0; i < count; i++)
+        {
+            if (!Has(3)) return null;
+            int control = b[p] == 0xFF ? -1 : b[p];
+            int flags = b[p + 1];
+            int lineCount = b[p + 2];
+            p += 3;
+            var lines = new List<OverlayFrameLine>(lineCount);
+            for (int k = 0; k < lineCount; k++)
+            {
+                if (!Has(2)) return null;
+                byte c = b[p];
+                int n = b[p + 1];
+                p += 2;
+                if (!Has(n)) return null;
+                lines.Add(new OverlayFrameLine(Encoding.UTF8.GetString(b.Slice(p, n)), c));
+                p += n;
+            }
+            if (!Has(1)) return null;
+            int barCount = b[p++];
+            var bars = new List<OverlayBar>(barCount);
+            for (int k = 0; k < barCount; k++)
+            {
+                if (!Has(5)) return null;
+                bars.Add(new OverlayBar(b[p], Le.U16(b, p + 1) / 65535f, Le.U16(b, p + 3)));
+                p += 5;
+            }
+            marks.Add(new OverlayMark(control, (flags & 1) != 0, (flags & 2) != 0, (flags & 4) != 0, lines, bars));
+        }
+        return new OverlayMarks(version, layout, textPx, dp, color, marks);
+    }
+}
+
+/// <summary>
+/// Puts versioned pieces (OVERLAY_LAYOUT, OVERLAY_FRAMES: u16 version, u8 index, u8 count, u8 length, then the
+/// bytes) back together into a <typeparamref name="T"/>; a new version starts over.
+/// </summary>
+public abstract class OverlayPieceAssembler<T> where T : class
 {
     public const int PieceData = Wire.OverlayLayoutPlain - 5;
 
@@ -279,11 +400,14 @@ public sealed class OverlayLayoutAssembler
     private int _count;
     private byte[]?[] _pieces = [];
     private bool _renew;
+    private int _hasVersion = -1;
 
-    /// <summary>The newest complete layout, or null before one arrived.</summary>
-    public OverlayLayout? Layout { get; private set; }
+    /// <summary>The newest complete one, or null before one arrived.</summary>
+    protected T? Value { get; private set; }
 
-    /// <summary>Takes one piece; returns true when it completed a layout (now <see cref="Layout"/>).</summary>
+    protected abstract T? Decode(ushort version, byte[] blob);
+
+    /// <summary>Takes one piece; returns true when it completed one (now <see cref="Value"/>).</summary>
     public bool Add(ReadOnlySpan<byte> plain)
     {
         ushort version = Le.U16(plain, 0);
@@ -291,7 +415,7 @@ public sealed class OverlayLayoutAssembler
         int count = plain[3];
         int len = plain[4];
         if (count == 0 || index >= count || len > PieceData) return false;
-        if (Layout != null && Layout.Version == version && !_renew) return false; // already have it
+        if (Value != null && _hasVersion == version && !_renew) return false; // already have it
         if (version != _version || count != _count)
         {
             _version = version;
@@ -307,10 +431,11 @@ public sealed class OverlayLayoutAssembler
             piece!.CopyTo(blob, at);
             at += piece.Length;
         }
-        var l = OverlayLayout.Decode(version, blob);
+        var v = Decode(version, blob);
         _pieces = new byte[]?[count];
-        if (l == null) return false;
-        Layout = l;
+        if (v == null) return false;
+        Value = v;
+        _hasVersion = version;
         _renew = false;
         return true;
     }
@@ -321,11 +446,12 @@ public sealed class OverlayLayoutAssembler
         _count = 0;
         _pieces = [];
         _renew = false;
-        Layout = null;
+        _hasVersion = -1;
+        Value = null;
     }
 
     /// <summary>
-    /// Keeps <see cref="Layout"/> until the next complete one, which is taken even with the same
+    /// Keeps <see cref="Value"/> until the next complete one, which is taken even with the same
     /// version: the phone's app may have restarted, counting its versions from 1 again.
     /// </summary>
     public void Renew()
@@ -333,8 +459,26 @@ public sealed class OverlayLayoutAssembler
         _version = -1;
         _count = 0;
         _pieces = [];
-        _renew = Layout != null;
+        _renew = Value != null;
     }
+}
+
+/// <summary>Puts OVERLAY_LAYOUT pieces back together; a new version starts over.</summary>
+public sealed class OverlayLayoutAssembler : OverlayPieceAssembler<OverlayLayout>
+{
+    /// <summary>The newest complete layout, or null before one arrived.</summary>
+    public OverlayLayout? Layout => Value;
+
+    protected override OverlayLayout? Decode(ushort version, byte[] blob) => OverlayLayout.Decode(version, blob);
+}
+
+/// <summary>Puts OVERLAY_FRAMES pieces back together; a new version starts over.</summary>
+public sealed class OverlayMarksAssembler : OverlayPieceAssembler<OverlayMarks>
+{
+    /// <summary>The newest complete frames, or null before they arrived.</summary>
+    public OverlayMarks? Marks => Value;
+
+    protected override OverlayMarks? Decode(ushort version, byte[] blob) => OverlayMarks.Decode(version, blob);
 }
 
 /// <summary>

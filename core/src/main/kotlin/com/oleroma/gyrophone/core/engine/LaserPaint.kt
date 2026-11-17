@@ -123,7 +123,9 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         val brush = Brush(half, soft.coerceIn(0f, 1f))
         // Long hops in pieces of up to PIECE_DEG, so each piece's straight chord stays on the sphere.
         val hop = acos((ax * bx + ay * by + az * bz).toDouble().coerceIn(-1.0, 1.0))
-        val pieces = maxOf(1, kotlin.math.ceil(Math.toDegrees(hop) / PIECE_DEG).toInt())
+        // A wide brush takes longer pieces (as long as half its width): each piece paints the brush and its
+        // glow all round, so short pieces of a wide one would paint the same texels many times.
+        val pieces = maxOf(1, kotlin.math.ceil(Math.toDegrees(hop) / maxOf(PIECE_DEG, halfDeg.toDouble())).toInt())
         val a = FloatArray(3)
         val b = FloatArray(3)
         val along = (Math.round(alongDeg / ALONG_UNIT) and 0xFFFF).toInt()
@@ -184,7 +186,9 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         val ways = way
         val f = if (kind == FIRE) 1f else 0f
         val ai = if (kind == AIM) 1f else 0f
-        for (j in j0..j1) {
+        // Rows are independent (each texel is in one): a [rows] runner may share them out over cores.
+        val body = { ja: Int, jb: Int ->
+        for (j in ja..jb) {
             val lat = latOf(j)
             // The longitudes of this row within the cap: cos(d) = sin φ sin φc + cos φ cos φc cos Δλ ≥ cos(span).
             val den = cos(lat) * cosLatC
@@ -278,7 +282,21 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
                 lineGlow[k] = (pg * 255f + 0.5f).toInt().toByte()
             }
         }
+        }
+        val r = rows
+        if (r != null && j1 - j0 >= PARALLEL_ROWS) r.run(j0, j1, body) else body(j0, j1)
     }
+
+    /**
+     * Runs a stamp's rows [j0] .. [j1] through `body(from, to)`, all of them, before it returns,
+     * perhaps split over several threads (rows never share a texel). Null: one thread.
+     */
+    fun interface RowRunner {
+        fun run(j0: Int, j1: Int, body: (Int, Int) -> Unit)
+    }
+
+    /** Shares big stamps' rows out (set by the app); null paints on the calling thread alone. */
+    @Volatile var rows: RowRunner? = defaultRows
 
     /** The texel holding unit direction ([x], [y], [z]). */
     fun texelOf(x: Float, y: Float, z: Float): Int {
@@ -302,6 +320,12 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         const val REACH = 3f
 
         private const val PIECE_DEG = 4.0
+
+        /** The [rows] every new map starts with (the app sets one that uses several cores). */
+        @Volatile var defaultRows: RowRunner? = null
+
+        /** A stamp over this many rows or more goes to [rows] to share out. */
+        private const val PARALLEL_ROWS = 24
 
         // How finely the place along a line is kept (degrees), and the slack added to "the same pass".
         private const val ALONG_UNIT = 0.1

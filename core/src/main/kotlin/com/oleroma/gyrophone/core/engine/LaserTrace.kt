@@ -1,5 +1,7 @@
 package com.oleroma.gyrophone.core.engine
 
+import kotlin.concurrent.withLock
+
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -65,6 +67,38 @@ class LaserTrace {
                 dropped = true
             }
             if (dropped) gap[head] = true
+        }
+
+        /**
+         * Shortens the line to [deg] degrees behind the newest point (zip back): the oldest points past it go and the
+         * oldest kept one moves along its span to exactly there; at 0 only the newest point is left.
+         */
+        fun trimTo(deg: Float) {
+            if (count < 2) return
+            val newest = along[(head + count - 1) % capacity]
+            val goal = newest - deg.coerceAtLeast(0f)
+            if (along[head] >= goal) return
+            // Whole points (and line breaks) past the new tail go.
+            while (count > 1) {
+                val next = (head + 1) % capacity
+                if (along[next] > goal && !gap[next]) break
+                head = next
+                count--
+            }
+            gap[head] = true
+            if (count < 2) return
+            // The oldest left moves along the great circle toward the next, to the new tail.
+            val next = (head + 1) % capacity
+            val span = along[next] - along[head]
+            if (span <= 1e-9) return
+            val f = ((goal - along[head]) / span).coerceIn(0.0, 1.0).toFloat()
+            val ax = x[head]; val ay = y[head]; val az = z[head]
+            val dot = (ax * x[next] + ay * y[next] + az * z[next]).coerceIn(-1f, 1f)
+            val w = kotlin.math.acos(dot)
+            val s = sin(w)
+            val (ka, kb) = if (s < 1e-5f) (1f - f) to f else (sin((1f - f) * w) / s) to (sin(f * w) / s)
+            x[head] = ax * ka + x[next] * kb; y[head] = ay * ka + y[next] * kb; z[head] = az * ka + z[next] * kb
+            along[head] = goal
         }
 
         /** Degrees of line from point [i] to the newest. */
@@ -134,12 +168,25 @@ class LaserTrace {
      */
     val moving = FloatArray(3)
 
-    /** Goes up when the strokes are cleared. */
+    /** Goes up when the strokes are cleared (or zipped back). */
     var version = 0L
+        private set
+
+    // Snake zip back: the tail running into the head, the length it started from, the time it last moved and when
+    // the beam last added a point.
+    private var zipping = false
+    private var zipFrom = 0f
+    private var zipMs = 0L
+
+    /** A zip back runs: the display keeps drawing (and feeding the trace) meanwhile. */
+    var zipWants = false
         private set
 
     /** The pose version last fed (the UI feeds once per new pose). */
     var fedVersion = Long.MIN_VALUE
+
+    /** The pose history count ([GyroDisplayFeed.history]) the UI has fed up to. */
+    var historySeen = 0L
 
     /**
      * The beam now points at ([x], [y], [z]) (any length) at [nowMs]. While a ratchet is [held] it
@@ -158,7 +205,7 @@ class LaserTrace {
         fire: Boolean = false, fireOnly: Boolean = false, smooth: Boolean = true, lineSmoothing: Float = 0f,
         brushDeg: Float = 0f, snakeDeg: Float = 0f, wayColors: LongArray? = null, mapWidth: Int = LaserPaint.WIDTH, soft: Float = 0.5f,
         aim: Boolean = false, fireBrushDeg: Float = brushDeg, aimBrushDeg: Float = brushDeg,
-        clearSnakeOnPress: Boolean = false,
+        clearSnakeOnPress: Boolean = false, zip: Zip? = null,
     ) {
         val pressed = held && !wasHeld
         wasHeld = held
@@ -168,9 +215,12 @@ class LaserTrace {
         // A ratchet press: the paint and the Snake each as set (without Snake the strokes aren't shown: they go with the paint).
         if (pressed && clearOnPress && (paintUsed || !snake && strokes.count > 0)) { clearPaint(); if (!snake) clearStrokes() }
         if (pressed && clearSnakeOnPress && snake && strokes.count > 0) clearStrokes()
+        if (snake && zip != null) zipBack(nowMs, pressed, zip) else { zipping = false; zipWants = false }
         val l = sqrt(x * x + y * y + z * z)
         if (l > 1e-6f && !l.isNaN()) follow(x / l, y / l, z / l, nowMs, smooth)
         if (!(draw || snake) || l < 1e-6f || held || l.isNaN() || (fireOnly && !fire && !aim)) {
+            // The line ends: its last run is painted up to where it stopped.
+            if (draw && !strokeGap) flushPaint()
             strokeGap = true
             return
         }
@@ -185,13 +235,77 @@ class LaserTrace {
         val brush = when (kind) { LaserPaint.FIRE -> fireBrushDeg; LaserPaint.AIM -> aimBrushDeg; else -> brushDeg }
         // A new point once the beam moved a little (or the firing or aiming started or stopped): a still beam adds nothing.
         if (!strokeGap && kind == lastKind && lastX * dx + lastY * dy + lastZ * dz > STROKE_STEP_COS) return
+        val painting = draw && brush > 0f
+        // A new line, or new colours: what is left of the run so far is painted first, as it was.
+        if (painting && (strokeGap || kind != runKind)) flushPaint()
+        val hadPoint = strokes.count > 0 && !strokeGap
+        if (painting && hadPoint && kind != runKind) {
+            // The run in the new colours starts at the point before (the line to this one is theirs).
+            strokes.point(strokes.count - 1, runFrom)
+            runAlong = strokes.along(strokes.count - 1)
+        }
         strokes.add(dx, dy, dz, nowMs, strokeGap, kind)
-        if (draw && brush > 0f) stampNewest(brush / 2f, kind, wayColors, if (smooth) SMOOTH_REACH else 0, mapWidth, soft)
+        if (painting) {
+            runHalf = brush / 2f; runKind = kind; runWays = wayColors; runReach = if (smooth) SMOOTH_REACH else 0
+            runWidth = mapWidth; runSoft = soft
+            val b = strokes.count - 1
+            if (strokeGap || !runOpen) {
+                // A line starts: a dot here, and the run from it.
+                stampRun(b, dot = true)
+            } else if (strokes.along(b) - runAlong >= maxOf(RUN_MIN_DEG, runHalf * LaserPaint.REACH.toDouble())) {
+                // Painted in runs as long as the glow reaches (three half widths), not every 0.5°
+                // step: each stamp paints the brush and its glow all round, so short steps would
+                // paint the same texels many times over (a fast turn then took hundreds of
+                // milliseconds a frame). The run is a straight piece on the sphere; at that length its
+                // bend from the beam's path is far under the brush's width.
+                stampRun(b, dot = false)
+            }
+        }
         if (snake) strokes.cut(snakeDeg)
+        // The beam moves again: a zip back ends and the Snake grows from its head.
+        zipping = false
         strokeGap = false
         lastKind = kind
         lastX = dx; lastY = dy; lastZ = dz
     }
+
+    /**
+     * Snake zip back as [zip] sets: with [Zip.always] the tail always runs toward the head at [Zip.speed] degrees a
+     * second, the beam moving or still; with [Zip.ratchet] a ratchet press runs it back into the head, the whole Snake in
+     * [Zip.seconds], on top of that, until only the head is left or the beam moves on. Fed with the clock while it runs,
+     * so a held ratchet (a still pose) doesn't stop it.
+     */
+    private fun zipBack(nowMs: Long, pressed: Boolean, zip: Zip) {
+        val step = (nowMs - zipMs).coerceIn(0L, 100L)
+        zipMs = nowMs
+        if (strokes.count < 2) {
+            zipping = false
+            zipWants = false
+            return
+        }
+        if (zip.ratchet && pressed && !zipping) {
+            zipping = true
+            zipFrom = strokes.behindNewest(0)
+        }
+        zipWants = zip.always || zipping
+        var cut = 0f
+        if (zip.always) cut += zip.speed.coerceAtLeast(1f) * step / 1000f
+        if (zipping) cut += zipFrom / zip.seconds.coerceAtLeast(0.01f) * step / 1000f
+        if (cut <= 0f) return
+        val left = strokes.behindNewest(0) - cut
+        strokes.trimTo(left)
+        version++
+        if (left <= 0f) {
+            zipping = false
+            zipWants = false
+        }
+    }
+
+    /**
+     * Snake zip back settings ([com.oleroma.gyrophone.core.model.GyroDisplay.laserSnakeZipAlways] and the rest):
+     * [always] at [speed] degrees a second; on a [ratchet] press, the whole Snake in [seconds].
+     */
+    data class Zip(val always: Boolean, val ratchet: Boolean, val seconds: Float, val speed: Float)
 
     /**
      * Moves the steadied point toward the beam at unit ([x], [y], [z]) at [nowMs], as a drawing
@@ -227,12 +341,14 @@ class LaserTrace {
     /** Clears the strokes (the Snake; the paint stays). */
     private fun clearStrokes() {
         strokes.clear()
+        runOpen = false
         strokeGap = true
         version++
     }
 
     private fun clearPaint() {
-        paint?.clear()
+        runOpen = false
+        paintLock.withLock { jobs.clear(); paint?.clear() }
         paintUsed = false
         hitCount = 0
         version++
@@ -268,21 +384,79 @@ class LaserTrace {
     private val pa = FloatArray(3)
     private val pb = FloatArray(3)
 
-    /** Paints the newest stroke point into [paint], from the point before it unless it starts a line. */
-    private fun stampNewest(halfDeg: Float, kind: Int, wayColors: LongArray?, reach: Int, mapWidth: Int, soft: Float) {
-        // A new map when the detail changed (the paint so far goes).
-        val p = paint?.takeIf { it.width == mapWidth } ?: LaserPaint(mapWidth, mapWidth / 2).also { paint = it }
-        val n = strokes.count
-        val b = n - 1
-        val a = if (strokes.gap(b) || n < 2) b else b - 1
-        strokes.point(a, pa)
-        strokes.point(b, pb)
-        val rgb = if (wayColors == null) null else {
-            if (a == b) wayDir.fill(0f) else strokes.direction(b, reach, wayDir)
-            (directionColor(wayDir, wayColors) and 0xFFFFFF).toInt()
+    /** One stamp of paint, made by [add] and painted at once or, with [deferPaint], by [paintPending]. */
+    private class Stamp(
+        val p: LaserPaint, val dot: Boolean, val ax: Float, val ay: Float, val az: Float, val bx: Float, val by: Float, val bz: Float,
+        val along: Double, val half: Float, val kind: Int, val soft: Float, val rgb: Int?,
+    ) {
+        fun run() {
+            if (dot) p.newLine()
+            p.stamp(ax, ay, az, bx, by, bz, along, half, kind, soft, rgb)
         }
-        if (a == b) p.newLine()
-        p.stamp(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2], strokes.along(b), halfDeg, kind, soft, rgb)
+    }
+
+    /**
+     * Stamps wait for [paintPending] (on another thread) instead of being painted inside [add], so
+     * a burst of paint never holds up drawing. The paint map is then only touched under [paintLock].
+     */
+    @Volatile var deferPaint = false
+
+    /** Held while the paint map is painted or read (with [deferPaint]). */
+    val paintLock = java.util.concurrent.locks.ReentrantLock()
+    // Added to by the drawing thread without waiting for the painter, which takes them one by one.
+    private val jobs = java.util.concurrent.ConcurrentLinkedQueue<Stamp>()
+
+    /** Stamps waiting to be painted (with [deferPaint]). */
+    val paintWaiting: Boolean get() = jobs.isNotEmpty()
+
+    /** Paints every waiting stamp, oldest first, each under [paintLock] (another thread may read the map between them). The painter's thread. */
+    fun paintPending() {
+        while (true) {
+            paintLock.withLock {
+                val j = jobs.poll() ?: return
+                j.run()
+            }
+        }
+    }
+
+    // The paint's run not painted yet: from [runFrom] ([runAlong] degrees along) to the newest stroke point, with these settings.
+    private val runFrom = FloatArray(3)
+    private var runAlong = 0.0
+    private var runOpen = false
+    private var runHalf = 0f
+    private var runKind = LaserPaint.PAINT
+    private var runWays: LongArray? = null
+    private var runReach = 0
+    private var runWidth = LaserPaint.WIDTH
+    private var runSoft = 0.5f
+
+    /**
+     * Paints what is left of the current run up to the newest stroke point, so the paint reaches
+     * the beam. Called once a frame after the frame's points are in (and by [add] before a new line
+     * or new colours).
+     */
+    fun flushPaint() {
+        if (!runOpen || strokes.count == 0) return
+        val b = strokes.count - 1
+        if (strokes.along(b) > runAlong) stampRun(b, dot = false)
+    }
+
+    /** Paints the run from [runFrom] to stroke point [b] (a dot at [b] that starts a line with [dot]); the run then starts at [b]. */
+    private fun stampRun(b: Int, dot: Boolean) {
+        // A new map when the detail changed (the paint so far goes).
+        val p = paint?.takeIf { it.width == runWidth } ?: LaserPaint(runWidth, runWidth / 2).also { paint = it }
+        strokes.point(b, pb)
+        val ways = runWays
+        val rgb = if (ways == null) null else {
+            if (dot) wayDir.fill(0f) else strokes.direction(b, runReach, wayDir)
+            (directionColor(wayDir, ways) and 0xFFFFFF).toInt()
+        }
+        val job = Stamp(p, dot, if (dot) pb[0] else runFrom[0], if (dot) pb[1] else runFrom[1], if (dot) pb[2] else runFrom[2],
+            pb[0], pb[1], pb[2], strokes.along(b), runHalf, runKind, runSoft, rgb)
+        if (deferPaint) jobs.add(job) else job.run()
+        pb.copyInto(runFrom)
+        runAlong = strokes.along(b)
+        runOpen = true
         paintUsed = true
     }
 
@@ -306,7 +480,8 @@ class LaserTrace {
     /** Clears the strokes. */
     fun clear() {
         strokes.clear()
-        paint?.clear()
+        runOpen = false
+        paintLock.withLock { jobs.clear(); paint?.clear() }
         paintUsed = false
         hitCount = 0
         hitNext = 0
@@ -418,6 +593,9 @@ class LaserTrace {
             return argb
         }
         const val STROKE_STEP_DEG = 0.5f
+
+        /** The shortest run of paint painted at once (degrees); runs are about half the brush's width. */
+        const val RUN_MIN_DEG = 1.0
 
         /** Snake: its curve is cut into steps of at most this many degrees. */
         const val CURVE_STEP_DEG = 0.5f
@@ -685,13 +863,18 @@ class LaserTrace {
             return if (e <= GUN_FRAME) 1f else GUN_FRAME / e
         }
 
-        /** One face of the gun in the picture: its corners (x, y pairs, unit radius, any number) and how lit it is (0..1). */
-        class Face(val xy: FloatArray, val light: Float, val depth: Float)
+        /**
+         * One face of the gun in the picture: its corners (x, y pairs, unit radius, any number), how lit it is (0..1) and
+         * its middle's depth. [plane]: its plane as seen (normal x, y, z and normal · point), [solid]: which box or tube
+         * it belongs to, both for [drawOrder].
+         */
+        class Face(val xy: FloatArray, val light: Float, val depth: Float, internal val plane: FloatArray = FloatArray(4), internal val solid: Int = 0)
 
         /**
-         * [gun] turned by pose [m], seen as [view] sees it ([axon], [turned]): the faces toward the viewer, farthest
-         * first, lit from above left. Aiming ([aim] 0 .. 1, eased) it is shouldered ([AIM_PULL]) and, with [scope], its
-         * round scope grows onto it; firing it kicks ([kick], [rifleAt]); [lower] pitches it down ([LOWER_DEG]).
+         * [gun] turned by pose [m], seen as [view] sees it ([axon], [turned]): the faces toward the viewer (as the
+         * camera sees them with [persp]), in drawing order ([drawOrder]), lit from above left. Aiming ([aim] 0 .. 1,
+         * eased) it is shouldered ([AIM_PULL]) and, with [scope], its round scope grows onto it; firing it kicks
+         * ([kick], [rifleAt]); [lower] pitches it down ([LOWER_DEG]).
          */
         fun rifle(
             m: FloatArray, axon: Boolean, turned: FloatArray?, persp: Boolean = false, aim: Float = 0f, kick: Float = 0f,
@@ -700,41 +883,54 @@ class LaserTrace {
             val faces = ArrayList<Face>(64)
             val q = FloatArray(3)
             val v = FloatArray(3)
+            val nv = FloatArray(3)
             val lx = -0.35f
             val ly = 0.6f
             val lz = 0.72f
             val a = aim.coerceIn(0f, 1f)
+            // Each box and tube is one solid: its own faces never cover each other.
+            var solid = 0
+            fun corner(c: FloatArray, i: Int) {
+                rifleAt(c[i * 3], c[i * 3 + 1], c[i * 3 + 2], a, kick, q, gun = gun, lower = lower, hip = hip)
+                view(m[0] * q[0] + m[1] * q[1] + m[2] * q[2], m[3] * q[0] + m[4] * q[1] + m[5] * q[2], m[6] * q[0] + m[7] * q[1] + m[8] * q[2], v, 0, axon, turned)
+            }
             // One face: its corners in the gun's own frame (x, y, z each), and its normal.
             fun face(c: FloatArray, nx: Float, ny: Float, nz: Float) {
                 rifleAt(nx, ny, nz, a, kick, q, dir = true, gun = gun, lower = lower, hip = hip)
-                view(m[0] * q[0] + m[1] * q[1] + m[2] * q[2], m[3] * q[0] + m[4] * q[1] + m[5] * q[2], m[6] * q[0] + m[7] * q[1] + m[8] * q[2], v, 0, axon, turned)
-                if (v[2] <= 1e-4f) return
-                val light = (0.45f + 0.55f * (v[0] * lx + v[1] * ly + v[2] * lz).coerceAtLeast(0f)).coerceIn(0f, 1f)
+                view(m[0] * q[0] + m[1] * q[1] + m[2] * q[2], m[3] * q[0] + m[4] * q[1] + m[5] * q[2], m[6] * q[0] + m[7] * q[1] + m[8] * q[2], nv, 0, axon, turned)
+                corner(c, 0)
+                val k = nv[0] * v[0] + nv[1] * v[1] + nv[2] * v[2]
+                // Toward the viewer: flat, its normal toward the screen; in perspective, toward the camera.
+                val toward = if (persp) nv[2] * CAMERA_DISTANCE - k else nv[2]
+                if (toward <= 1e-4f) return
+                val light = (0.45f + 0.55f * (nv[0] * lx + nv[1] * ly + nv[2] * lz).coerceAtLeast(0f)).coerceIn(0f, 1f)
                 val n = c.size / 3
                 val xy = FloatArray(n * 2)
                 var depth = 0f
                 for (i in 0 until n) {
-                    rifleAt(c[i * 3], c[i * 3 + 1], c[i * 3 + 2], a, kick, q, gun = gun, lower = lower, hip = hip)
-                    view(m[0] * q[0] + m[1] * q[1] + m[2] * q[2], m[3] * q[0] + m[4] * q[1] + m[5] * q[2], m[6] * q[0] + m[7] * q[1] + m[8] * q[2], v, 0, axon, turned)
+                    if (i > 0) corner(c, i)
                     val f = if (persp) perspective(v[2]) else 1f
                     xy[i * 2] = v[0] * f
                     xy[i * 2 + 1] = v[1] * f
                     depth += v[2]
                 }
-                faces.add(Face(xy, light, depth / n))
+                faces.add(Face(xy, light, depth / n, floatArrayOf(nv[0], nv[1], nv[2], k), solid))
             }
+            // Scratch for box(): face() copies the corners out, so one set serves every face of a frame.
+            val c = FloatArray(12)
+            val h = FloatArray(3)
+            val ctr = FloatArray(3)
             fun box(cx: Float, cy: Float, cz: Float, hx: Float, hy: Float, hz: Float) {
+                h[0] = hx; h[1] = hy; h[2] = hz
+                ctr[0] = cx; ctr[1] = cy; ctr[2] = cz
+                val us = BOX_US
+                val ws = BOX_WS
                 for (f in 0 until 6) {
                     val axis = f / 2
                     val sign = if (f % 2 == 0) -1f else 1f
                     // The face's corners, in order round it.
                     val o1 = (axis + 1) % 3
                     val o2 = (axis + 2) % 3
-                    val c = FloatArray(12)
-                    val us = floatArrayOf(-1f, 1f, 1f, -1f)
-                    val ws = floatArrayOf(-1f, -1f, 1f, 1f)
-                    val h = floatArrayOf(hx, hy, hz)
-                    val ctr = floatArrayOf(cx, cy, cz)
                     for (k in 0 until 4) {
                         for (d in 0..2) c[k * 3 + d] = ctr[d]
                         c[k * 3 + axis] += sign * h[axis]
@@ -743,6 +939,7 @@ class LaserTrace {
                     }
                     face(c, if (axis == 0) sign else 0f, if (axis == 1) sign else 0f, if (axis == 2) sign else 0f)
                 }
+                solid++
             }
             // A round tube along z at height y, from z0 (front) to z1, radius r: its sides and both ends.
             fun tube(y: Float, z0: Float, z1: Float, r: Float) {
@@ -762,6 +959,7 @@ class LaserTrace {
                 for ((z, nz) in arrayOf(z0 to -1f, z1 to 1f)) {
                     face(FloatArray(k * 3) { j -> val t = 2f * PI.toFloat() * (j / 3) / k; when (j % 3) { 0 -> r * cos(t); 1 -> y + r * sin(t); else -> z } }, 0f, 0f, nz)
                 }
+                solid++
             }
             val b = gun.boxes
             for (o in b.indices step 6) box(b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5])
@@ -782,8 +980,134 @@ class LaserTrace {
                 tube(sy, zz(sc.front - 0.03f), zz(sc.front + 0.04f), sc.bell * a)
                 tube(sy, zz(sc.back - 0.03f), zz(sc.back), sc.radius * 1.25f * a)
             }
-            faces.sortBy { it.depth }
-            return faces
+            return drawOrder(faces, persp)
+        }
+
+        /**
+         * [faces] (each toward the viewer, convex) in drawing order: each after every face it hides part of, so nearer
+         * faces cover farther ones. Sorting by each face's middle alone isn't enough: a long face's middle can be nearer
+         * than a small face it is behind (the small one then covers it, and it looks missing). So each two faces of
+         * different solids that overlap in the picture are compared where they overlap, and the faces drawn in that
+         * order (the farther middle first where nothing decides it, or where faces cut through each other).
+         */
+        fun drawOrder(faces: List<Face>, persp: Boolean): List<Face> {
+            val n = faces.size
+            if (n < 2) return faces
+            val box = FloatArray(n * 4)
+            var most = 3
+            for (i in 0 until n) {
+                val xy = faces[i].xy
+                var x0 = Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y1 = -Float.MAX_VALUE
+                for (j in 0 until xy.size / 2) {
+                    x0 = minOf(x0, xy[j * 2]); x1 = maxOf(x1, xy[j * 2])
+                    y0 = minOf(y0, xy[j * 2 + 1]); y1 = maxOf(y1, xy[j * 2 + 1])
+                }
+                box[i * 4] = x0; box[i * 4 + 1] = y0; box[i * 4 + 2] = x1; box[i * 4 + 3] = y1
+                most = maxOf(most, xy.size / 2)
+            }
+            val bufA = FloatArray(most * 4 + 8)
+            val bufB = FloatArray(most * 4 + 8)
+            // after[i]: the faces to draw after face i (the ones in front of it where they overlap).
+            val after = arrayOfNulls<IntArray>(n)
+            val afterCount = IntArray(n)
+            val before = IntArray(n)
+            for (i in 0 until n) for (j in i + 1 until n) {
+                val fi = faces[i]
+                val fj = faces[j]
+                if (fi.solid == fj.solid) continue
+                if (box[i * 4] >= box[j * 4 + 2] || box[j * 4] >= box[i * 4 + 2] || box[i * 4 + 1] >= box[j * 4 + 3] || box[j * 4 + 1] >= box[i * 4 + 3]) continue
+                val cut = overlapMiddle(fi.xy, fj.xy, bufA, bufB) ?: continue
+                val zi = depthAt(fi.plane, cut[0], cut[1], persp)
+                val zj = depthAt(fj.plane, cut[0], cut[1], persp)
+                if (zi.isNaN() || zj.isNaN() || kotlin.math.abs(zi - zj) < 1e-5f) continue
+                val far = if (zi < zj) i else j
+                val near = if (far == i) j else i
+                val list = after[far] ?: IntArray(4).also { after[far] = it }
+                if (afterCount[far] == list.size) after[far] = list.copyOf(list.size * 2)
+                after[far]!![afterCount[far]++] = near
+                before[near]++
+            }
+            // Ready faces (nothing left to draw before them) farthest middle first; a loop (faces cutting through each
+            // other) is broken at its farthest face.
+            val out = ArrayList<Face>(n)
+            val done = BooleanArray(n)
+            repeat(n) {
+                var pick = -1
+                var pickReady = false
+                for (i in 0 until n) {
+                    if (done[i]) continue
+                    val ready = before[i] == 0
+                    if (pick < 0 || (ready && !pickReady) || (ready == pickReady && faces[i].depth < faces[pick].depth)) {
+                        pick = i
+                        pickReady = ready
+                    }
+                }
+                done[pick] = true
+                out.add(faces[pick])
+                val list = after[pick]
+                if (list != null) for (k in 0 until afterCount[pick]) before[list[k]]--
+            }
+            return out
+        }
+
+        /** The depth (view z) of the plane (normal, normal · point) under picture point (x, y); NaN when seen edge on. */
+        private fun depthAt(p: FloatArray, x: Float, y: Float, persp: Boolean): Float {
+            if (!persp) return if (kotlin.math.abs(p[2]) < 1e-6f) Float.NaN else (p[3] - p[0] * x - p[1] * y) / p[2]
+            // Seen in perspective a picture point is the ray x' = x (D - z) / D, y' = y (D - z) / D.
+            val a = (p[0] * x + p[1] * y) / CAMERA_DISTANCE
+            val den = p[2] - a
+            return if (kotlin.math.abs(den) < 1e-6f) Float.NaN else (p[3] - a * CAMERA_DISTANCE) / den
+        }
+
+        /**
+         * The middle of where convex polygons [a] and [b] (x, y pairs) overlap in the picture, or null when they only touch.
+         * [bufA], [bufB]: scratch, room for both polygons' corners twice.
+         */
+        private fun overlapMiddle(a: FloatArray, b: FloatArray, bufA: FloatArray, bufB: FloatArray): FloatArray? {
+            var cur = bufA
+            var next = bufB
+            var count = a.size / 2
+            a.copyInto(cur, 0, 0, count * 2)
+            val nb = b.size / 2
+            // b's corners round counterclockwise, so its inside is on each edge's left.
+            var area = 0f
+            for (i in 0 until nb) {
+                val j = (i + 1) % nb
+                area += b[i * 2] * b[j * 2 + 1] - b[j * 2] * b[i * 2 + 1]
+            }
+            val turn = if (area >= 0f) 1f else -1f
+            for (e in 0 until nb) {
+                if (count == 0) return null
+                val ax = b[e * 2]; val ay = b[e * 2 + 1]
+                val bx = b[((e + 1) % nb) * 2]; val by = b[((e + 1) % nb) * 2 + 1]
+                var outCount = 0
+                for (i in 0 until count) {
+                    val px = cur[i * 2]; val py = cur[i * 2 + 1]
+                    val k = (i + 1) % count
+                    val qx = cur[k * 2]; val qy = cur[k * 2 + 1]
+                    val sp = ((bx - ax) * (py - ay) - (by - ay) * (px - ax)) * turn
+                    val sq = ((bx - ax) * (qy - ay) - (by - ay) * (qx - ax)) * turn
+                    if (sp >= 0f) { next[outCount * 2] = px; next[outCount * 2 + 1] = py; outCount++ }
+                    if ((sp >= 0f) != (sq >= 0f)) {
+                        val t = sp / (sp - sq)
+                        next[outCount * 2] = px + (qx - px) * t; next[outCount * 2 + 1] = py + (qy - py) * t; outCount++
+                    }
+                }
+                val swap = cur; cur = next; next = swap
+                count = outCount
+            }
+            if (count < 3) return null
+            var ar = 0f
+            var sx = 0f
+            var sy = 0f
+            for (i in 0 until count) {
+                val j = (i + 1) % count
+                ar += cur[i * 2] * cur[j * 2 + 1] - cur[j * 2] * cur[i * 2 + 1]
+                sx += cur[i * 2]; sy += cur[i * 2 + 1]
+            }
+            // Only touching along an edge (or a sliver too thin to see): no order needed.
+            if (kotlin.math.abs(ar) / 2f < 1e-6f) return null
+            return floatArrayOf(sx / count, sy / count)
         }
 
         /**
@@ -793,8 +1117,7 @@ class LaserTrace {
          * screen) then swings the beam sideways, and pitch up and down. A · m · Aᵀ with A taking the
          * phone's up into the screen and its screen's normal up.
          */
-        fun aim(m: FloatArray) {
-            val r = FloatArray(9)
+        fun aim(m: FloatArray, r: FloatArray = FloatArray(9)) {
             for (i in 0..2) for (j in 0..2) r[i * 3 + j] = AIM_SIGN[i] * AIM_SIGN[j] * m[AIM_AXIS[i] * 3 + AIM_AXIS[j]]
             r.copyInto(m)
         }
@@ -804,9 +1127,8 @@ class LaserTrace {
          * [FACES] (0 −Z into the screen at rest, 1 +Z, 2 +X, 3 −X, 4 +Y, 5 −Y). m · F, F turning −Z
          * onto that direction.
          */
-        fun faces(m: FloatArray, faces: Int) {
+        fun faces(m: FloatArray, faces: Int, r: FloatArray = FloatArray(9)) {
             val f = FACE_TURNS.getOrNull(faces) ?: return
-            val r = FloatArray(9)
             for (i in 0..2) for (j in 0..2) r[i * 3 + j] = m[i * 3] * f[j] + m[i * 3 + 1] * f[3 + j] + m[i * 3 + 2] * f[6 + j]
             r.copyInto(m)
         }
@@ -822,6 +1144,9 @@ class LaserTrace {
             floatArrayOf(1f, 0f, 0f, 0f, 0f, -1f, 0f, 1f, 0f),
             floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, -1f, 0f),
         )
+
+        private val BOX_US = floatArrayOf(-1f, 1f, 1f, -1f)
+        private val BOX_WS = floatArrayOf(-1f, -1f, 1f, 1f)
 
         private val AIM_AXIS = intArrayOf(0, 2, 1)
         private val AIM_SIGN = floatArrayOf(1f, 1f, -1f)

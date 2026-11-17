@@ -10,3 +10,5 @@ bin/
 obj/
 /companion/out/
 /builds/
+*.jks
+*.keystore

@@ -30,6 +30,14 @@ public static class Wire
     public const int ErrorSize = 16;
     /// <summary>LINK_TEST_CTL: u16 seconds@12 (0 = stop), 2 reserved bytes; only from this PC (loopback).</summary>
     public const int LinkTestCtlSize = 16;
+    /// <summary>
+    /// LOG_CTL: u8 what@12, u8 value@13, 2 reserved bytes; only from this PC (loopback). What: <see cref="LogCtlDiagnostics"/>
+    /// (value 1 on, 0 off), <see cref="LogCtlSave"/>, <see cref="LogCtlKeep"/> (value = minutes).
+    /// </summary>
+    public const int LogCtlSize = 16;
+    public const byte LogCtlDiagnostics = 1;
+    public const byte LogCtlSave = 2;
+    public const byte LogCtlKeep = 3;
     /// <summary>QR code pairing: the phone's key, MACed with the QR's one-time token.</summary>
     public const int KeyEnrollSize = 137;
     public const int KeyEnrollAckSize = 41;
@@ -56,10 +64,16 @@ public static class Wire
     public const int OverlayPlain = 152;
     /// <summary>OVERLAY_LAYOUT: one piece of the layout the overlay draws on the phone's screen.</summary>
     public const int OverlayLayoutPlain = 200;
+    /// <summary>OVERLAY_SAMPLES: each gyro sample's turn in the OVERLAY that follows (<see cref="OverlaySamples"/>).</summary>
+    public const int OverlaySamplesPlain = 264;
+    /// <summary>OVERLAY_FRAMES: one piece of the pad's button frames and bars (<see cref="OverlayMarks"/>), as OVERLAY_LAYOUT's.</summary>
+    public const int OverlayFramesPlain = OverlayLayoutPlain;
     /// <summary>MOTION: the phone's raw gyro and accelerometer samples for the DualShock 4 (<see cref="MotionFrame"/>).</summary>
     public const int MotionPlain = MotionFrame.Size;
     /// <summary>PRESS_TIME: u32 STATE time, u32 input event time (low 32 bits of the phone's µs clock).</summary>
     public const int PressTimePlain = 8;
+    /// <summary>PHONE_STATS: u32 time, u16 states, packets, failed, slow sends, u32 send total µs, send max µs, wake late max µs, STATE gap max µs, phone tx packets (<see cref="PhoneStats"/>).</summary>
+    public const int PhoneStatsPlain = 32;
     /// <summary>TEST_MODE: u8 <see cref="TestModeFlags"/>, 3 reserved bytes.</summary>
     public const int TestModePlain = 4;
     /// <summary>CAPTURE: u8 <see cref="CaptureFlags"/>, 3 reserved bytes.</summary>
@@ -241,10 +255,10 @@ public static class LinkInfoFlags
     /// <summary>With Usb: the cable runs in accessory mode (direct USB), not tethering.</summary>
     public const byte UsbDirect = 1 << 2;
 
-    /// <summary>The phone's debug tools are on: the PC keeps its debug log while LINK_INFOs carry this.</summary>
+    /// <summary>The phone's Diagnostics is on: the PC's switch follows it when it changes.</summary>
     public const byte DebugTrace = 1 << 3;
 
-    /// <summary>With DebugTrace: a 3-bit counter; the PC saves its last 30 s of debug log when it changes.</summary>
+    /// <summary>With DebugTrace: a 3-bit counter of the phone's Saves; the PC saves its side when it changes.</summary>
     public const byte DebugSaveMask = 0x70;
     public const int DebugSaveShift = 4;
 
@@ -265,10 +279,14 @@ public static class TestModeFlags
 {
     /// <summary>"Measure buttons" is on: the phone sends PRESS_TIME for each press and release.</summary>
     public const byte PressTimes = 1 << 0;
-    /// <summary>The latency test window is open: the phone's pad shows the tracking markers.</summary>
-    public const byte LatencyScreen = 1 << 1;
+    // 1 << 1 is unused: it was the video latency test's markers, now a separate tool (tools/latency-test).
     /// <summary>A Link test runs: the phone sends fake moving input at its full rate, marked <see cref="StateFlags.LinkTest"/>.</summary>
     public const byte LinkTest = 1 << 2;
+    /// <summary>Diagnostics is on: the phone measures its side of the link and sends PHONE_STATS once a second.</summary>
+    public const byte PhoneStats = 1 << 3;
+    /// <summary>With <see cref="PhoneStats"/>: a 3-bit counter of the PC's Saves; the phone saves its side when it changes.</summary>
+    public const byte DiagSaveMask = 0x70;
+    public const int DiagSaveShift = 4;
 }
 
 /// <summary>HOST_STATUS's second flags byte (byte 22).</summary>
@@ -276,6 +294,25 @@ public static class HostStatusFlags2
 {
     /// <summary>"Use the phone over the USB cable" is on: the phone tries the cable now (else it leaves a cable nobody answers on alone).</summary>
     public const byte UsbDirect = 1 << 0;
+    /// <summary>
+    /// With <see cref="HostStatusFlags.Overlay"/>: a pointer overlay follows every gyro sample (it paints or has a Snake), so
+    /// the phone sends OVERLAY_SAMPLES before each OVERLAY. Older phones ignore it.
+    /// </summary>
+    public const byte OverlaySamples = 1 << 6;
+    /// <summary>Diagnostics is on: the phone's switch follows it when it changes, and its pad shows a red dot. Older phones ignore it.</summary>
+    public const byte PcLogging = 1 << 7;
+    /// <summary>The PC reaches the phone through its own Wi-Fi as a client (of a router or the phone's hotspot), not by cable or as the hotspot.</summary>
+    public const byte PcWifi = 1 << 1;
+    /// <summary>With <see cref="PcWifi"/>: the PC's Wi-Fi is on 2.4 GHz.</summary>
+    public const byte PcWifi24 = 1 << 2;
+    /// <summary>With <see cref="PcWifi"/>: the PC's Wi-Fi signal is weak (below about -70 dBm).</summary>
+    public const byte PcWifiWeak = 1 << 3;
+    /// <summary>The PC runs on battery.</summary>
+    public const byte PcOnBattery = 1 << 4;
+    /// <summary>The PC saves power: energy (battery) saver on, or power mode "Best power efficiency".</summary>
+    public const byte PcPowerSaving = 1 << 5;
+    /// <summary>The setup bits (all but <see cref="UsbDirect"/>).</summary>
+    public const byte SetupMask = PcWifi | PcWifi24 | PcWifiWeak | PcOnBattery | PcPowerSaving;
 }
 
 public static class HostStatusFlags

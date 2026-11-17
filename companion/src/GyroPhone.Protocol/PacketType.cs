@@ -37,6 +37,12 @@ public static class PacketType
     public const byte PressTime = 0x2A;
     /// <summary>Phone to host, about once a second while the phone's "Press a key" screen is open (and when it closes): <see cref="CaptureFlags"/>.</summary>
     public const byte Capture = 0x2B;
+    /// <summary>Sent before each OVERLAY while HOST_STATUS flags2 has <see cref="HostStatusFlags2.OverlaySamples"/>: each gyro sample's turn in it.</summary>
+    public const byte OverlaySamples = 0x2C;
+    /// <summary>Phone to host once a second while TEST_MODE has <see cref="TestModeFlags.PhoneStats"/>: the phone's side of the link (<see cref="Protocol.PhoneStats"/>).</summary>
+    public const byte PhoneStats = 0x2D;
+    /// <summary>Sent while HOST_STATUS has <see cref="HostStatusFlags.Overlay"/>, on change and every second: the pad's button frames and bars, in pieces.</summary>
+    public const byte OverlayFrames = 0x2E;
     public const byte Bye = 0x2F;
     public const byte Pong = 0x30;
     public const byte HostStatus = 0x31;
@@ -53,6 +59,8 @@ public static class PacketType
     public const byte HostBye = 0x3F;
     /// <summary>Unsealed, from a program on this PC (loopback only): start or stop a Link test (tools/link-test.sh).</summary>
     public const byte LinkTestCtl = 0x7E;
+    /// <summary>Unsealed, from a program on this PC (loopback only): switch a Performance log on or off (tools/gp-log.sh).</summary>
+    public const byte LogCtl = 0x7D;
     public const byte Error = 0x7F;
 
     /// <summary>Sealed (AES-GCM) packets are types 0x20..0x3F.</summary>
@@ -76,6 +84,7 @@ public static class PacketType
         Welcome => Wire.WelcomeSize,
         Error => Wire.ErrorSize,
         LinkTestCtl => Wire.LinkTestCtlSize,
+        LogCtl => Wire.LogCtlSize,
         KeyEnroll => Wire.KeyEnrollSize,
         KeyEnrollAck => Wire.KeyEnrollAckSize,
         _ => PlainSize(type) is var p && p >= 0 ? Wire.Header + p + Wire.GcmTag : -1,
@@ -100,7 +109,10 @@ public static class PacketType
         KeyLabels => Wire.KeyLabelsPlain,
         Overlay => Wire.OverlayPlain,
         OverlayLayout => Wire.OverlayLayoutPlain,
+        OverlaySamples => Wire.OverlaySamplesPlain,
+        OverlayFrames => Wire.OverlayFramesPlain,
         PressTime => Wire.PressTimePlain,
+        PhoneStats => Wire.PhoneStatsPlain,
         TestMode => Wire.TestModePlain,
         Capture => Wire.CapturePlain,
         Captured => Wire.CapturedPlain,

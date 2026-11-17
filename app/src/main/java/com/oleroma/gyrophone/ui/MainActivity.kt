@@ -202,7 +202,10 @@ class MainActivity : ComponentActivity() {
         TouchStream.eventNanos = event.eventTimeNanos
         // "Fade when phone rests": fingers on the screen are input until the last one lifts.
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> runtime.restDetector.fingers(true, System.nanoTime())
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                runtime.restDetector.fingers(true, System.nanoTime())
+                runtime.ratchetTiming.inputDown(event.eventTimeNanos)
+            }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> runtime.restDetector.fingers(false, System.nanoTime())
         }
         // "Measure buttons" on the PC: a finger landing or lifting may press or release something.
