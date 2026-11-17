@@ -291,6 +291,13 @@ public sealed class OverlaySettings
     /// muzzle blasts a forward plume and side jets, as wide as its muzzle and as long as its calibre.
     /// </summary>
     public bool MuzzleFlash { get; set; } = true;
+    /// <summary>Each gun's own muzzle flash size (the Gun look's blast, 1 = as wide as its muzzle and as long as its calibre), by its key, where changed.</summary>
+    public Dictionary<string, float> GunFlash { get; set; } = [];
+    /// <summary>The muzzle flash size slider's range.</summary>
+    public const float FlashSizeMin = 0.25f, FlashSizeMax = 3f;
+
+    /// <summary><paramref name="gun"/>'s muzzle flash size (<see cref="FlashSizeMin"/> .. <see cref="FlashSizeMax"/>): its own setting or 100%.</summary>
+    public float FlashOf(Guns.Gun gun) => Math.Clamp(GunFlash != null && GunFlash.TryGetValue(gun.Key, out var v) ? v : 1f, FlashSizeMin, FlashSizeMax);
     /// <summary>
     /// Crosshair and gun, Simulate spread: each Fire display shot lands off the aim point, a random way, by up to the gun's
     /// spread (<see cref="SpreadOf"/>); the crosshair and gun kick toward it. With LaserBloom shots fired in a row widen it up to

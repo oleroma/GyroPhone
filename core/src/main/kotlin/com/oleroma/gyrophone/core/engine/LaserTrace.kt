@@ -863,13 +863,18 @@ class LaserTrace {
             return if (e <= GUN_FRAME) 1f else GUN_FRAME / e
         }
 
-        /** One face of the gun in the picture: its corners (x, y pairs, unit radius, any number) and how lit it is (0..1). */
-        class Face(val xy: FloatArray, val light: Float, val depth: Float)
+        /**
+         * One face of the gun in the picture: its corners (x, y pairs, unit radius, any number), how lit it is (0..1) and
+         * its middle's depth. [plane]: its plane as seen (normal x, y, z and normal · point), [solid]: which box or tube
+         * it belongs to, both for [drawOrder].
+         */
+        class Face(val xy: FloatArray, val light: Float, val depth: Float, internal val plane: FloatArray = FloatArray(4), internal val solid: Int = 0)
 
         /**
-         * [gun] turned by pose [m], seen as [view] sees it ([axon], [turned]): the faces toward the viewer, farthest
-         * first, lit from above left. Aiming ([aim] 0 .. 1, eased) it is shouldered ([AIM_PULL]) and, with [scope], its
-         * round scope grows onto it; firing it kicks ([kick], [rifleAt]); [lower] pitches it down ([LOWER_DEG]).
+         * [gun] turned by pose [m], seen as [view] sees it ([axon], [turned]): the faces toward the viewer (as the
+         * camera sees them with [persp]), in drawing order ([drawOrder]), lit from above left. Aiming ([aim] 0 .. 1,
+         * eased) it is shouldered ([AIM_PULL]) and, with [scope], its round scope grows onto it; firing it kicks
+         * ([kick], [rifleAt]); [lower] pitches it down ([LOWER_DEG]).
          */
         fun rifle(
             m: FloatArray, axon: Boolean, turned: FloatArray?, persp: Boolean = false, aim: Float = 0f, kick: Float = 0f,
@@ -878,28 +883,38 @@ class LaserTrace {
             val faces = ArrayList<Face>(64)
             val q = FloatArray(3)
             val v = FloatArray(3)
+            val nv = FloatArray(3)
             val lx = -0.35f
             val ly = 0.6f
             val lz = 0.72f
             val a = aim.coerceIn(0f, 1f)
+            // Each box and tube is one solid: its own faces never cover each other.
+            var solid = 0
+            fun corner(c: FloatArray, i: Int) {
+                rifleAt(c[i * 3], c[i * 3 + 1], c[i * 3 + 2], a, kick, q, gun = gun, lower = lower, hip = hip)
+                view(m[0] * q[0] + m[1] * q[1] + m[2] * q[2], m[3] * q[0] + m[4] * q[1] + m[5] * q[2], m[6] * q[0] + m[7] * q[1] + m[8] * q[2], v, 0, axon, turned)
+            }
             // One face: its corners in the gun's own frame (x, y, z each), and its normal.
             fun face(c: FloatArray, nx: Float, ny: Float, nz: Float) {
                 rifleAt(nx, ny, nz, a, kick, q, dir = true, gun = gun, lower = lower, hip = hip)
-                view(m[0] * q[0] + m[1] * q[1] + m[2] * q[2], m[3] * q[0] + m[4] * q[1] + m[5] * q[2], m[6] * q[0] + m[7] * q[1] + m[8] * q[2], v, 0, axon, turned)
-                if (v[2] <= 1e-4f) return
-                val light = (0.45f + 0.55f * (v[0] * lx + v[1] * ly + v[2] * lz).coerceAtLeast(0f)).coerceIn(0f, 1f)
+                view(m[0] * q[0] + m[1] * q[1] + m[2] * q[2], m[3] * q[0] + m[4] * q[1] + m[5] * q[2], m[6] * q[0] + m[7] * q[1] + m[8] * q[2], nv, 0, axon, turned)
+                corner(c, 0)
+                val k = nv[0] * v[0] + nv[1] * v[1] + nv[2] * v[2]
+                // Toward the viewer: flat, its normal toward the screen; in perspective, toward the camera.
+                val toward = if (persp) nv[2] * CAMERA_DISTANCE - k else nv[2]
+                if (toward <= 1e-4f) return
+                val light = (0.45f + 0.55f * (nv[0] * lx + nv[1] * ly + nv[2] * lz).coerceAtLeast(0f)).coerceIn(0f, 1f)
                 val n = c.size / 3
                 val xy = FloatArray(n * 2)
                 var depth = 0f
                 for (i in 0 until n) {
-                    rifleAt(c[i * 3], c[i * 3 + 1], c[i * 3 + 2], a, kick, q, gun = gun, lower = lower, hip = hip)
-                    view(m[0] * q[0] + m[1] * q[1] + m[2] * q[2], m[3] * q[0] + m[4] * q[1] + m[5] * q[2], m[6] * q[0] + m[7] * q[1] + m[8] * q[2], v, 0, axon, turned)
+                    if (i > 0) corner(c, i)
                     val f = if (persp) perspective(v[2]) else 1f
                     xy[i * 2] = v[0] * f
                     xy[i * 2 + 1] = v[1] * f
                     depth += v[2]
                 }
-                faces.add(Face(xy, light, depth / n))
+                faces.add(Face(xy, light, depth / n, floatArrayOf(nv[0], nv[1], nv[2], k), solid))
             }
             // Scratch for box(): face() copies the corners out, so one set serves every face of a frame.
             val c = FloatArray(12)
@@ -924,6 +939,7 @@ class LaserTrace {
                     }
                     face(c, if (axis == 0) sign else 0f, if (axis == 1) sign else 0f, if (axis == 2) sign else 0f)
                 }
+                solid++
             }
             // A round tube along z at height y, from z0 (front) to z1, radius r: its sides and both ends.
             fun tube(y: Float, z0: Float, z1: Float, r: Float) {
@@ -943,6 +959,7 @@ class LaserTrace {
                 for ((z, nz) in arrayOf(z0 to -1f, z1 to 1f)) {
                     face(FloatArray(k * 3) { j -> val t = 2f * PI.toFloat() * (j / 3) / k; when (j % 3) { 0 -> r * cos(t); 1 -> y + r * sin(t); else -> z } }, 0f, 0f, nz)
                 }
+                solid++
             }
             val b = gun.boxes
             for (o in b.indices step 6) box(b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5])
@@ -963,8 +980,134 @@ class LaserTrace {
                 tube(sy, zz(sc.front - 0.03f), zz(sc.front + 0.04f), sc.bell * a)
                 tube(sy, zz(sc.back - 0.03f), zz(sc.back), sc.radius * 1.25f * a)
             }
-            faces.sortBy { it.depth }
-            return faces
+            return drawOrder(faces, persp)
+        }
+
+        /**
+         * [faces] (each toward the viewer, convex) in drawing order: each after every face it hides part of, so nearer
+         * faces cover farther ones. Sorting by each face's middle alone isn't enough: a long face's middle can be nearer
+         * than a small face it is behind (the small one then covers it, and it looks missing). So each two faces of
+         * different solids that overlap in the picture are compared where they overlap, and the faces drawn in that
+         * order (the farther middle first where nothing decides it, or where faces cut through each other).
+         */
+        fun drawOrder(faces: List<Face>, persp: Boolean): List<Face> {
+            val n = faces.size
+            if (n < 2) return faces
+            val box = FloatArray(n * 4)
+            var most = 3
+            for (i in 0 until n) {
+                val xy = faces[i].xy
+                var x0 = Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y1 = -Float.MAX_VALUE
+                for (j in 0 until xy.size / 2) {
+                    x0 = minOf(x0, xy[j * 2]); x1 = maxOf(x1, xy[j * 2])
+                    y0 = minOf(y0, xy[j * 2 + 1]); y1 = maxOf(y1, xy[j * 2 + 1])
+                }
+                box[i * 4] = x0; box[i * 4 + 1] = y0; box[i * 4 + 2] = x1; box[i * 4 + 3] = y1
+                most = maxOf(most, xy.size / 2)
+            }
+            val bufA = FloatArray(most * 4 + 8)
+            val bufB = FloatArray(most * 4 + 8)
+            // after[i]: the faces to draw after face i (the ones in front of it where they overlap).
+            val after = arrayOfNulls<IntArray>(n)
+            val afterCount = IntArray(n)
+            val before = IntArray(n)
+            for (i in 0 until n) for (j in i + 1 until n) {
+                val fi = faces[i]
+                val fj = faces[j]
+                if (fi.solid == fj.solid) continue
+                if (box[i * 4] >= box[j * 4 + 2] || box[j * 4] >= box[i * 4 + 2] || box[i * 4 + 1] >= box[j * 4 + 3] || box[j * 4 + 1] >= box[i * 4 + 3]) continue
+                val cut = overlapMiddle(fi.xy, fj.xy, bufA, bufB) ?: continue
+                val zi = depthAt(fi.plane, cut[0], cut[1], persp)
+                val zj = depthAt(fj.plane, cut[0], cut[1], persp)
+                if (zi.isNaN() || zj.isNaN() || kotlin.math.abs(zi - zj) < 1e-5f) continue
+                val far = if (zi < zj) i else j
+                val near = if (far == i) j else i
+                val list = after[far] ?: IntArray(4).also { after[far] = it }
+                if (afterCount[far] == list.size) after[far] = list.copyOf(list.size * 2)
+                after[far]!![afterCount[far]++] = near
+                before[near]++
+            }
+            // Ready faces (nothing left to draw before them) farthest middle first; a loop (faces cutting through each
+            // other) is broken at its farthest face.
+            val out = ArrayList<Face>(n)
+            val done = BooleanArray(n)
+            repeat(n) {
+                var pick = -1
+                var pickReady = false
+                for (i in 0 until n) {
+                    if (done[i]) continue
+                    val ready = before[i] == 0
+                    if (pick < 0 || (ready && !pickReady) || (ready == pickReady && faces[i].depth < faces[pick].depth)) {
+                        pick = i
+                        pickReady = ready
+                    }
+                }
+                done[pick] = true
+                out.add(faces[pick])
+                val list = after[pick]
+                if (list != null) for (k in 0 until afterCount[pick]) before[list[k]]--
+            }
+            return out
+        }
+
+        /** The depth (view z) of the plane (normal, normal · point) under picture point (x, y); NaN when seen edge on. */
+        private fun depthAt(p: FloatArray, x: Float, y: Float, persp: Boolean): Float {
+            if (!persp) return if (kotlin.math.abs(p[2]) < 1e-6f) Float.NaN else (p[3] - p[0] * x - p[1] * y) / p[2]
+            // Seen in perspective a picture point is the ray x' = x (D - z) / D, y' = y (D - z) / D.
+            val a = (p[0] * x + p[1] * y) / CAMERA_DISTANCE
+            val den = p[2] - a
+            return if (kotlin.math.abs(den) < 1e-6f) Float.NaN else (p[3] - a * CAMERA_DISTANCE) / den
+        }
+
+        /**
+         * The middle of where convex polygons [a] and [b] (x, y pairs) overlap in the picture, or null when they only touch.
+         * [bufA], [bufB]: scratch, room for both polygons' corners twice.
+         */
+        private fun overlapMiddle(a: FloatArray, b: FloatArray, bufA: FloatArray, bufB: FloatArray): FloatArray? {
+            var cur = bufA
+            var next = bufB
+            var count = a.size / 2
+            a.copyInto(cur, 0, 0, count * 2)
+            val nb = b.size / 2
+            // b's corners round counterclockwise, so its inside is on each edge's left.
+            var area = 0f
+            for (i in 0 until nb) {
+                val j = (i + 1) % nb
+                area += b[i * 2] * b[j * 2 + 1] - b[j * 2] * b[i * 2 + 1]
+            }
+            val turn = if (area >= 0f) 1f else -1f
+            for (e in 0 until nb) {
+                if (count == 0) return null
+                val ax = b[e * 2]; val ay = b[e * 2 + 1]
+                val bx = b[((e + 1) % nb) * 2]; val by = b[((e + 1) % nb) * 2 + 1]
+                var outCount = 0
+                for (i in 0 until count) {
+                    val px = cur[i * 2]; val py = cur[i * 2 + 1]
+                    val k = (i + 1) % count
+                    val qx = cur[k * 2]; val qy = cur[k * 2 + 1]
+                    val sp = ((bx - ax) * (py - ay) - (by - ay) * (px - ax)) * turn
+                    val sq = ((bx - ax) * (qy - ay) - (by - ay) * (qx - ax)) * turn
+                    if (sp >= 0f) { next[outCount * 2] = px; next[outCount * 2 + 1] = py; outCount++ }
+                    if ((sp >= 0f) != (sq >= 0f)) {
+                        val t = sp / (sp - sq)
+                        next[outCount * 2] = px + (qx - px) * t; next[outCount * 2 + 1] = py + (qy - py) * t; outCount++
+                    }
+                }
+                val swap = cur; cur = next; next = swap
+                count = outCount
+            }
+            if (count < 3) return null
+            var ar = 0f
+            var sx = 0f
+            var sy = 0f
+            for (i in 0 until count) {
+                val j = (i + 1) % count
+                ar += cur[i * 2] * cur[j * 2 + 1] - cur[j * 2] * cur[i * 2 + 1]
+                sx += cur[i * 2]; sy += cur[i * 2 + 1]
+            }
+            // Only touching along an edge (or a sliver too thin to see): no order needed.
+            if (kotlin.math.abs(ar) / 2f < 1e-6f) return null
+            return floatArrayOf(sx / count, sy / count)
         }
 
         /**
