@@ -673,6 +673,8 @@ fun PadScreen(
     val hasLayers = remember(ws.mappings, ws.keyboard, ws.mouse, ws.phone, ws.pads) {
         (ws.mappings + ws.keyboard + ws.mouse + ws.phone + ws.pads.flatMap { it.mappings }).any { it.target is OutputTarget.Layer }
     }
+    // The PC's Keys overlay names what the pad's keys send in this set ([GamepadRuntime.padLayers]).
+    LaunchedEffect(layers) { runtime.padLayers.value = layers }
     LaunchedEffect(hasLayers, editing, hidden) {
         if (!hasLayers || editing || hidden) {
             layers = MappingEngine.Layers(MappingSet.BASE, emptyList())

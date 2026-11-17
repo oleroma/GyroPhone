@@ -31,6 +31,8 @@ internal sealed class OverlayForm : Form
     private readonly FingerTrails _trails = new();
     /// <summary>The Keys overlay's rows (Keys only), and whether they changed since the last picture.</summary>
     private readonly KeysBoard _keys = new();
+    /// <summary>The Keys overlay: what the phone's controller fires, worked out from each OVERLAY and the phone's table.</summary>
+    private readonly OverlayKeysReader _keysReader = new();
     private bool _keysUndrawn;
     // The laser pointer's trail and paint; the phone's Clear displays presses last seen (-1 = none yet).
     private readonly LaserTrace _laser = new();
@@ -587,7 +589,12 @@ internal sealed class OverlayForm : Form
         var marks = Settings is { Kind: OverlayKind.Phone or OverlayKind.Keys } ? _engine.OverlayMarks : null;
         // The Keys overlay's rows: new keys, or rows fading out, draw again.
         // Kept until drawn: a frame-capped tick leaves it for the next one.
-        if (Settings is { Kind: OverlayKind.Keys } ks && _keys.Update(marks?.Keys, Environment.TickCount64, Math.Clamp(ks.KeysFadeMs, 0, 2000))) _keysUndrawn = true;
+        if (Settings is { Kind: OverlayKind.Keys } ks)
+        {
+            long t = Environment.TickCount64;
+            var view = _keysReader.Read(marks?.Keys, _scene.Frame, t);
+            if (_keys.Update(view, t, Math.Clamp(ks.KeysFadeMs, 0, 2000))) _keysUndrawn = true;
+        }
         bool fresh = age >= 0 && _scene.Frame.PhoneTimeUs != _lastTime;
         long now = Environment.TickCount64;
         if (now - _screenHzAt >= 2000)

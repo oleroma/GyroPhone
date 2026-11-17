@@ -75,6 +75,12 @@ import com.oleroma.gyrophone.sensor.GyroSource
 import com.oleroma.gyrophone.wifi.WifiLink
 import com.oleroma.gyrophone.wifi.WifiPump
 import kotlinx.coroutines.CoroutineScope
+import com.oleroma.gyrophone.core.model.MappingSet
+import com.oleroma.gyrophone.core.model.PhysicalSticks
+import com.oleroma.gyrophone.core.model.layered
+import com.oleroma.gyrophone.core.net.OverlayKeys
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -645,11 +651,6 @@ class GamepadRuntime(context: Context) {
     /** Diagnostics: the Performance switch, the event ring, saves ([PhoneDebug]). */
     val debug = PhoneDebug(appContext, this, scope)
 
-    init {
-        // The PC's Keys overlay: the attached pad's keys are read only while one is open.
-        scope.launch { wifi.keysOverlay.collectLatest { on -> if (on) PadKeysWatch.run(engine, wifi.overlay) } }
-    }
-
     /** Plays the engine's haptic mappings while a PC is connected. */
     private val haptics = PhoneHaptics(appContext) { _linkState.value is LinkState.Connected }.also { h ->
         h.log = { line -> debug.trace?.queue(com.oleroma.gyrophone.core.debug.DebugTrace.Kind.OUT) { line } }
@@ -727,6 +728,29 @@ class GamepadRuntime(context: Context) {
 
     private val _controllers = MutableStateFlow<List<AttachedController>>(emptyList())
     val controllers: StateFlow<List<AttachedController>> = _controllers
+
+    /** The set in use and its overrides as the pad shows them ([com.oleroma.gyrophone.ui.PadScreen] sets it), for the PC's Keys overlay. */
+    val padLayers = MutableStateFlow(MappingEngine.Layers(MappingSet.BASE, emptyList()))
+
+    init {
+        // The PC's Keys overlay: the attached pad's table, made again only when the workspace, the set in use or
+        // the controller changes, off the input threads. Nothing is read from the engine: the PC works out what is
+        // pressed from the OVERLAY it already gets.
+        scope.launch(Dispatchers.Default) {
+            combine(wifi.keysOverlay, _activeProfile, _workspaceIndex, _controllers, padLayers) { on, p, i, cs, l ->
+                if (on) keysTable(p.workspace(i), cs, l) else null
+            }.distinctUntilChanged().collect { wifi.overlay.setKeys(it) }
+        }
+    }
+
+    private fun keysTable(ws: Workspace, cs: List<AttachedController>, l: MappingEngine.Layers): OverlayKeys {
+        for (c in cs) {
+            val pad = ws.pads.firstOrNull { it.matches(c.vendorId, c.productId, c.name) } ?: continue
+            val rx = PhysicalSticks.rightStickOnRx { it in c.axes }
+            return OverlayKeys.of(layered(pad.mappings, l.set, l.overrides), rx, ws.stickTunings, ws.triggerTunings, ws.longPressMs)
+        }
+        return OverlayKeys.NONE
+    }
 
     private val _mouseAttached = MutableStateFlow(false)
 

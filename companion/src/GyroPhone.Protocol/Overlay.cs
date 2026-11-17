@@ -341,7 +341,7 @@ public sealed record OverlayMark(int Control, bool Inside, bool Row, bool Set, I
 /// </summary>
 public sealed record OverlayMarks(ushort Version, ushort LayoutVersion, float TextPx, float Dp, int BarColor, IReadOnlyList<OverlayMark> Marks)
 {
-    /// <summary>The Keys overlay's rows, after the marks; null when the phone sent none (no Keys overlay asked, or an older phone).</summary>
+    /// <summary>The Keys overlay's table of the phone's controller, after the marks; null when the phone sent none (no Keys overlay asked, or an older phone).</summary>
     public OverlayKeys? Keys { get; init; }
 
     /// <summary>Decodes a frames blob (the phone's OverlayFeed.encodeFrames), or null when it is malformed.</summary>
@@ -398,86 +398,6 @@ public sealed record OverlayMarks(ushort Version, ushort LayoutVersion, float Te
     }
 }
 
-/// <summary>
-/// A stick's row in the Keys overlay: <paramref name="Stick"/> 0 left, 1 right; what its whole axes send
-/// (<paramref name="Analog"/>, "Mouse", "" none); what up, right, down, left send (<paramref name="Keys"/>, "" none) and the
-/// ways firing now (<paramref name="Lit"/>: <see cref="Up"/>, <see cref="Right"/>, <see cref="Down"/>, <see cref="Left"/>).
-/// </summary>
-public sealed record OverlayKeyStick(int Stick, string Analog, IReadOnlyList<string> Keys, int Lit)
-{
-    public const int Up = 1, Right = 2, Down = 4, Left = 8;
-
-    public bool Equals(OverlayKeyStick? o) => o is not null && Stick == o.Stick && Analog == o.Analog && Lit == o.Lit && Keys.SequenceEqual(o.Keys);
-    public override int GetHashCode() => HashCode.Combine(Stick, Analog, Lit, Keys.Count > 0 ? Keys[0] : "");
-}
-
-/// <summary>
-/// A button's row in the Keys overlay: its name as the phone's controller editor shows it ("A", "LS click") and what it
-/// sends now ("Space", several joined by " + "); <see cref="Toggle"/>: on only by a Toggle that is on;
-/// <see cref="LeftTrigger"/> or <see cref="RightTrigger"/>: it is that trigger (a pull bar shows).
-/// </summary>
-public sealed record OverlayKeyRow(string Name, string Target, int Flags)
-{
-    public const int Toggle = 1, LeftTrigger = 2, RightTrigger = 4;
-}
-
-/// <summary>
-/// What the Keys overlay shows of the game pad attached to the phone (the phone's OverlayKeys): its sticks that send
-/// something, and its buttons firing now or with a Toggle on. The PC keeps rows in their places and fades them out.
-/// </summary>
-public sealed record OverlayKeys(IReadOnlyList<OverlayKeyStick> Sticks, IReadOnlyList<OverlayKeyRow> Rows)
-{
-    /// <summary>Marks the keys part of a frames blob (the phone's OverlayFeed.KEYS_SECTION).</summary>
-    public const byte Section = 0x4B;
-
-    /// <summary>Reads the keys part from <paramref name="p"/> (after its section byte), or null when it is malformed.</summary>
-    public static OverlayKeys? Decode(ReadOnlySpan<byte> b, ref int p)
-    {
-        int at = p;
-        string? Str(ReadOnlySpan<byte> s)
-        {
-            if (at + 1 > s.Length) return null;
-            int n = s[at];
-            if (at + 1 + n > s.Length) return null;
-            string v = Encoding.UTF8.GetString(s.Slice(at + 1, n));
-            at += 1 + n;
-            return v;
-        }
-        if (at + 1 > b.Length) return null;
-        int stickCount = b[at++];
-        var sticks = new List<OverlayKeyStick>(stickCount);
-        for (int i = 0; i < stickCount; i++)
-        {
-            if (at + 2 > b.Length) return null;
-            int stick = b[at], lit = b[at + 1];
-            at += 2;
-            var analog = Str(b);
-            if (analog == null) return null;
-            var keys = new string[4];
-            for (int k = 0; k < 4; k++)
-            {
-                var t = Str(b);
-                if (t == null) return null;
-                keys[k] = t;
-            }
-            sticks.Add(new OverlayKeyStick(stick, analog, keys, lit));
-        }
-        if (at + 1 > b.Length) return null;
-        int rowCount = b[at++];
-        var rows = new List<OverlayKeyRow>(rowCount);
-        for (int i = 0; i < rowCount; i++)
-        {
-            if (at + 1 > b.Length) return null;
-            int flags = b[at++];
-            var name = Str(b);
-            var target = Str(b);
-            if (name == null || target == null) return null;
-            rows.Add(new OverlayKeyRow(name, target, flags));
-        }
-        p = at;
-        return new OverlayKeys(sticks, rows);
-    }
-}
 
 /// <summary>
 /// Puts versioned pieces (OVERLAY_LAYOUT, OVERLAY_FRAMES: u16 version, u8 index, u8 count, u8 length, then the

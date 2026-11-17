@@ -7,8 +7,8 @@ namespace GyroPhone.Tray;
 /// <summary>
 /// The Keys overlay's rows (docs/spec/pc-overlays.md), kept per window: each new press takes the topmost free row and
 /// keeps it while held; let go, it fades out over the Fade out time and leaves a gap, and nothing below moves up. A
-/// press of the same key while its row still fades takes that row back. Filled from the phone's <see cref="OverlayKeys"/>
-/// on the window's own thread; made once, rows reused.
+/// press of the same key while its row still fades takes that row back. Filled from <see cref="OverlayKeysReader"/>'s
+/// view on the window's own thread; made once, rows reused.
 /// </summary>
 internal sealed class KeysBoard
 {
@@ -25,16 +25,16 @@ internal sealed class KeysBoard
     }
 
     private readonly List<Row> _rows = new();
-    private OverlayKeys? _seen;
+    private OverlayKeysView? _seen;
 
     /// <summary>The rows from the top (unused ones are gaps).</summary>
     public IReadOnlyList<Row> Rows => _rows;
 
-    /// <summary>The newest keys from the phone (its sticks), or null when none came.</summary>
-    public OverlayKeys? Keys => _seen;
+    /// <summary>The newest view (its sticks), or null without the phone's table.</summary>
+    public OverlayKeysView? Keys => _seen;
 
-    /// <summary>Takes <paramref name="keys"/> (null: the phone sends none) at <paramref name="now"/> (ms); true when the picture changed.</summary>
-    public bool Update(OverlayKeys? keys, long now, int fadeMs)
+    /// <summary>Takes <paramref name="keys"/> (null: no table from the phone) at <paramref name="now"/> (ms); true when the picture changed.</summary>
+    public bool Update(OverlayKeysView? keys, long now, int fadeMs)
     {
         bool changed = false;
         if (!ReferenceEquals(keys, _seen))
@@ -115,6 +115,7 @@ internal static class KeysDrawing
         var on = Color.FromArgb(s.Color("on"));
         var dim = Color.FromArgb(s.Color("dim"));
         var panel = Color.FromArgb(s.Color("panel"));
+        if (s.KeysOpaque) panel = Color.FromArgb(255, panel);
         if (panel.A > 0) g.FillRectangle(panel, area);
         float pad = Math.Clamp(Math.Min(area.Width, area.Height) * 0.04f, 3f, 10f);
         var inner = RectangleF.Inflate(area, -pad, -pad);

@@ -376,6 +376,9 @@ public sealed class OverlaySettings
     /// <summary>Keys overlay: how long a let-go key's row takes to fade out, ms (0 = gone at once; up to 2000).</summary>
     public int KeysFadeMs { get; set; } = 400;
 
+    /// <summary>Keys: the panel behind the rows is drawn solid (its colour without see-through), not see-through.</summary>
+    public bool KeysOpaque { get; set; }
+
     /// <summary>The Snake's zip back as LaserTrace.Add takes it, or null when off.</summary>
     [JsonIgnore]
     public LaserTrace.Zip? SnakeZip => !LaserSnakeZipAlways && !LaserSnakeZipRatchet ? null

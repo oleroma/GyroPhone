@@ -158,28 +158,66 @@ public class OverlayTests
         Assert.Null(OverlayMarks.Decode(5, Hex.B(FramesBlob))!.Keys);
     }
 
-    /// <summary>The phone's OverlayKeysTest.KEYS_BLOB: layout 7, no marks, then the Keys overlay's part.</summary>
-    private const string KeysBlob = "0107000000640000000000004b0200030001570144015301410100054d6f75736500000000040001410f5370616365202b204d6f757365205204025254074d6f757365204c000c42206c6f6e6720707265737301450101580443206f6e";
+    /// <summary>The phone's OverlayKeysTest.KEYS_BLOB: layout 7, no marks, then the Keys overlay's table.</summary>
+    private const string KeysBlob = "0107000000640000000000004bfa001af2d987871af2d9878780f24de60b000001410553706163654300074c53206c65667401414100084c5320726967687401444000054c5320757001574200074c5320646f776e0153610009525320782061786973054d6f757365610009525320792061786973054d6f7573650700025254074d6f757365204c01030c42206c6f6e67207072657373014502800158014300000141074d6f7573652052";
 
     [Fact]
     public void KeysFollowTheMarks()
     {
         var m = OverlayMarks.Decode(9, Hex.B(KeysBlob))!;
         Assert.Empty(m.Marks);
-        var k = m.Keys!;
-        Assert.Equal(2, k.Sticks.Count);
-        Assert.Equal(new OverlayKeyStick(0, "", ["W", "D", "S", "A"], OverlayKeyStick.Up | OverlayKeyStick.Right), k.Sticks[0]);
-        Assert.Equal("Mouse", k.Sticks[1].Analog);
+        var t = m.Keys!;
+        Assert.Equal(250, t.TapMs);
+        Assert.Equal(11, t.Keys.Count);
+        Assert.Equal(new OverlayKey(0, OverlayKey.Held, "A", "Space"), t.Keys[0]);
+        Assert.Equal(new OverlayKey(OverlayKey.Way | 3, OverlayKey.Held, "LS left", "A"), t.Keys[1]);
+        Assert.Equal(new OverlayKey(2, OverlayKey.Toggle, "X", "C"), t.Keys[9]);
+        Assert.Equal(0.3f, t.Triggers[1].Press, 2);
+        Assert.Equal(0.1f, t.Sticks[0].Inner, 2);
+        Assert.Equal(135f, t.Sticks[1].PieY);
+        // Cut short in the keys: the whole blob is dropped.
+        Assert.Null(OverlayMarks.Decode(9, Hex.B(KeysBlob).AsSpan(0, 40)));
+    }
+
+    [Fact]
+    public void KeysReaderWorksOutWhatFires()
+    {
+        var t = OverlayMarks.Decode(9, Hex.B(KeysBlob))!.Keys!;
+        var r = new OverlayKeysReader();
+        var f = new OverlayFrame();
+        // Nothing pressed: only the stick rows.
+        var idle = r.Read(t, f, 1000)!;
+        Assert.Equal(
+            [
+                new OverlayKeyStick(0, "", ["W", "D", "S", "A"], 0),
+                new OverlayKeyStick(1, "Mouse", ["", "", "", ""], 0),
+            ],
+            idle.Sticks);
+        Assert.Empty(idle.Rows);
+        Assert.Same(idle, r.Read(t, f, 1010));
+        // A held (both its mappings), the left stick up and right (a diagonal), RT pulled, X pressed (Toggle on), B held.
+        f.PadButtons = OverlayFrame.PadSouth | OverlayFrame.PadR2 | OverlayFrame.PadWest | OverlayFrame.PadEast;
+        f.PadR2Pull = 0.6f;
+        f.PadSticks[0] = 0.7f; f.PadSticks[1] = -0.7f;
+        var k = r.Read(t, f, 1100)!;
+        Assert.Equal(OverlayKeyStick.Up | OverlayKeyStick.Right, k.Sticks[0].Lit);
         Assert.Equal(
             [
                 new OverlayKeyRow("A", "Space + Mouse R", 0),
                 new OverlayKeyRow("RT", "Mouse L", OverlayKeyRow.RightTrigger),
-                new OverlayKeyRow("B long press", "E", 0),
                 new OverlayKeyRow("X", "C on", OverlayKeyRow.Toggle),
             ],
             k.Rows);
-        // Cut short in the keys: the whole blob is dropped.
-        Assert.Null(OverlayMarks.Decode(9, Hex.B(KeysBlob).AsSpan(0, 40)));
+        // B held past the tap time: its long press fires.
+        Assert.Contains(new OverlayKeyRow("B long press", "E", 0), r.Read(t, f, 1400)!.Rows);
+        // All let go: X's Toggle stays on until it is pressed again.
+        f.PadButtons = 0; f.PadR2Pull = 0; f.PadSticks[0] = 0; f.PadSticks[1] = 0;
+        Assert.Equal([new OverlayKeyRow("X", "C on", OverlayKeyRow.Toggle)], r.Read(t, f, 1500)!.Rows);
+        f.PadButtons = OverlayFrame.PadWest;
+        Assert.Empty(r.Read(t, f, 1600)!.Rows);
+        // A stick pushed only a little: under half its travel, no key.
+        f.PadButtons = 0; f.PadSticks[0] = 0.3f;
+        Assert.Equal(0, r.Read(t, f, 1700)!.Sticks[0].Lit);
     }
 
     [Fact]
