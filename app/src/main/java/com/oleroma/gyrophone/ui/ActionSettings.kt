@@ -169,10 +169,10 @@ private fun directionGear(level: SurfaceLevel, key: String, input: BindableInput
         val m = MoveSlot.of(src.fingers, s == SurfaceInput.MOTION_X)
         return ui { MoveGearSettings(level, key, m, touchpad) }
     }
-    // The one Swipe row: each arrow's own settings, both its held and its quick swipe ones.
-    if (s == SurfaceInput.HOLD_ANY) return ui { SwipeArrowSettings(level, key, zones) }
+    // The Swipe card's lines: Any the shared settings, each arrow its own held and quick swipe ones.
+    if (s == SurfaceInput.HOLD_ANY) return ui { AnySwipeSettings(level, key, zones) }
     s.swipeDirection?.let { d -> return ui { DirectionSettings(level, key, d, hold = false, zones) } }
-    s.holdDirection?.let { d -> return ui { DirectionSettings(level, key, d, hold = true, zones) } }
+    s.holdDirection?.let { d -> return ui { ArrowSettings(level, key, d, zones) } }
     return null
 }
 

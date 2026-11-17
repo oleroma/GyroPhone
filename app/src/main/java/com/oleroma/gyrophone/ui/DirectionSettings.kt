@@ -196,7 +196,7 @@ private fun SurfaceQuickSwipe(level: SurfaceLevel, key: String) {
 }
 
 @Composable
-private fun SurfaceSwipe(level: SurfaceLevel, key: String, zones: IntArray) {
+internal fun SurfaceSwipe(level: SurfaceLevel, key: String, zones: IntArray) {
     val current by rememberUpdatedState(level)
     val s = level.eff
     fun edit(change: (TouchpadSettings) -> TouchpadSettings) = current.edit(change)
@@ -652,27 +652,25 @@ private fun SectionTitle(text: String) = NotSearching {
 }
 
 /**
- * The Swipe row's ⚙: pick an arrow (↑ → ↓ ←) to see what it sets for itself over the Settings'
- * shared values, its held swipe's ([DirectionSettings] with hold) and its quick swipe's. Swipe
- * any way has no settings of its own: it uses the shared hold distance and zones.
+ * The ⚙ of a Swipe card's arrow line [d] (each line has its own): that arrow's held swipe and
+ * quick swipe settings, each its own over [level]'s shared ones.
  */
 @Composable
-internal fun SwipeArrowSettings(level: SurfaceLevel, key: String, zones: IntArray) {
-    var d by remember { mutableStateOf(Direction.UP) }
+internal fun ArrowSettings(level: SurfaceLevel, key: String, d: Direction, zones: IntArray) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        NotSearching {
-            DirNote("Swipe any way uses the Settings' hold distance and zones. Each arrow can set its own here.")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (x in Direction.entries) {
-                    val own = DirField.entries.any { level.isDirOwn(x, it) }
-                    SelectChip(Bindings.slotLabel(x.ordinal) + if (own) " •" else "", d == x) { d = x }
-                }
-            }
-        }
         SectionTitle("Swipe " + Bindings.slotLabel(d.ordinal))
         DirectionSettings(level, key, d, hold = true, zones)
         SectionTitle("Quick swipe " + Bindings.slotLabel(d.ordinal))
         DirectionSettings(level, key, d, hold = false, zones)
+    }
+}
+
+/** The ⚙ of a Swipe card's Any line: it has nothing of its own, so the shared held swipe settings every arrow follows. */
+@Composable
+internal fun AnySwipeSettings(level: SurfaceLevel, key: String, zones: IntArray) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        DirNote("Swipe any way has no settings of its own: these are the shared ones every arrow follows unless its own ⚙ sets its own.")
+        SurfaceSwipe(level, key, zones)
     }
 }
 
