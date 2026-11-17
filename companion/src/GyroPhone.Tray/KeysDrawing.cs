@@ -115,7 +115,7 @@ internal static class KeysDrawing
         var on = Color.FromArgb(s.Color("on"));
         var dim = Color.FromArgb(s.Color("dim"));
         var panel = Color.FromArgb(s.Color("panel"));
-        if (s.KeysOpaque) panel = Color.FromArgb(255, panel);
+        if (s.KeysTransparent) panel = Color.Transparent;
         if (panel.A > 0) g.FillRectangle(panel, area);
         float pad = Math.Clamp(Math.Min(area.Width, area.Height) * 0.04f, 3f, 10f);
         var inner = RectangleF.Inflate(area, -pad, -pad);

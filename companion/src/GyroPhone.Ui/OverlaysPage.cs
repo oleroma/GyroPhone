@@ -60,7 +60,7 @@ internal sealed class OverlaysPage : Page
     // Look
     private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook, _ringLook, _graphLook, _keysLook;
     private readonly SliderRow _keysFade;
-    private readonly CheckBox _keysOpaque;
+    private readonly CheckBox _keysTransparent;
     private readonly Seg<int> _graphRange, _graphSeconds;
     private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserGimbal, _laserDraw, _laserClearOnRatchet, _laserSnakeClearOnRatchet;
     private readonly CheckBox _laserPerspective, _laserSnake, _laserOutline;
@@ -376,8 +376,8 @@ internal sealed class OverlaysPage : Page
         kyb.Children.Add(Parts.Text("The keys of the controller attached to the phone that are pressed now and what they send, as \"A = Space\". A new press takes the top free row and stays there while held; let go, its row fades out and leaves a gap the next press fills, so nothing moves. Each stick that sends something has its own row on top: a plus with its keys lit as you push it, or a dot where it points when it moves the mouse or a gamepad stick. Rows that don't fit the window aren't shown: make it taller in Edit.", "Hint"));
         _keysFade = new SliderRow("Fade out", 0, 2000, 50, v => v <= 0 ? "At once" : $"{v / 1000:0.##} s", v => Change(o => o.KeysFadeMs = (int)v));
         kyb.Children.Add(_keysFade.View);
-        _keysOpaque = Parts.Toggle("Opaque background", () => Change(o => o.KeysOpaque = !o.KeysOpaque), "The panel behind the rows is solid, in its Panel colour, instead of see-through.");
-        kyb.Children.Add(_keysOpaque);
+        _keysTransparent = Parts.Toggle("Transparent background", () => Change(o => o.KeysTransparent = !o.KeysTransparent), "No panel behind the rows: only the keys show over the game.");
+        kyb.Children.Add(_keysTransparent);
         _keysLook = keysCard;
         _lookTab.Children.Add(keysCard);
 
@@ -1021,7 +1021,7 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_graphLook, o.Kind == OverlayKind.Graph);
         Parts.Show(_keysLook, o.Kind == OverlayKind.Keys);
         _keysFade.Set(o.KeysFadeMs);
-        _keysOpaque.IsChecked = o.KeysOpaque;
+        _keysTransparent.IsChecked = o.KeysTransparent;
         _graphRange.Set(o.GraphRange);
         _graphSeconds.Set(o.GraphSeconds);
         bool laser = o.Kind == OverlayKind.Laser;
