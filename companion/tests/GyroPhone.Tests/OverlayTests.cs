@@ -215,6 +215,11 @@ public class OverlayTests
         Assert.Equal([new OverlayKeyRow("X", "C on", OverlayKeyRow.Toggle)], r.Read(t, f, 1500)!.Rows);
         f.PadButtons = OverlayFrame.PadWest;
         Assert.Empty(r.Read(t, f, 1600)!.Rows);
+        // A button mapped twice to the same key (by its key and its axis, as the D-pad): shown once.
+        var twice = t with { Keys = [new OverlayKey(14, 0, "↑", "Space"), new OverlayKey(14, 0, "↑", "Space")] };
+        var r2 = new OverlayKeysReader();
+        f.PadButtons = OverlayFrame.PadUp;
+        Assert.Equal([new OverlayKeyRow("↑", "Space", 0)], r2.Read(twice, f, 1650)!.Rows);
         // A stick pushed only a little: under half its travel, no key.
         f.PadButtons = 0; f.PadSticks[0] = 0.3f;
         Assert.Equal(0, r.Read(t, f, 1700)!.Sticks[0].Lit);

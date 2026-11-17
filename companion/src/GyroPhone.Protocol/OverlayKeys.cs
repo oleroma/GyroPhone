@@ -175,7 +175,7 @@ public sealed class OverlayKeysReader
             {
                 int s = (k.Input >> 2) & 1, way = k.Input & 3;
                 var ks = stickKeys[s] ??= ["", "", "", ""];
-                ks[way] = ks[way].Length == 0 ? k.Target : ks[way] + " + " + k.Target;
+                if (!HasPart(ks[way], k.Target)) ks[way] = ks[way].Length == 0 ? k.Target : ks[way] + " + " + k.Target;
                 if (on) lit[s] |= 1 << way;
                 continue;
             }
@@ -185,7 +185,9 @@ public sealed class OverlayKeysReader
             rows ??= new List<OverlayKeyRow>();
             int at = rows.FindIndex(r => r.Name == k.Name);
             if (at < 0) rows.Add(new OverlayKeyRow(k.Name, target, flags));
-            else rows[at] = rows[at] with { Target = rows[at].Target + " + " + target, Flags = rows[at].Flags | flags };
+            // The same thing sent twice (a button mapped by its key and its axis, such as the D-pad or a trigger) shows once.
+            else if (!HasPart(rows[at].Target, target)) rows[at] = rows[at] with { Target = rows[at].Target + " + " + target, Flags = rows[at].Flags | flags };
+            else rows[at] = rows[at] with { Flags = rows[at].Flags | flags };
         }
         var sticks = new List<OverlayKeyStick>(2);
         for (int s = 0; s < 2; s++)
@@ -196,6 +198,13 @@ public sealed class OverlayKeysReader
         var view = new OverlayKeysView(sticks, (IReadOnlyList<OverlayKeyRow>?)rows ?? []);
         if (_view != null && _view.Equals(view)) return _view;
         return _view = view;
+    }
+
+    /// <summary>Whether <paramref name="joined"/> ("Space + Mouse R") already has <paramref name="part"/>.</summary>
+    private static bool HasPart(string joined, string part)
+    {
+        foreach (var p in joined.Split(" + ")) if (p == part) return true;
+        return false;
     }
 
     private static int TriggerFlag(int input)
