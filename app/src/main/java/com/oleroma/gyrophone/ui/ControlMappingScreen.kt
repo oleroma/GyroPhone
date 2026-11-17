@@ -2880,7 +2880,7 @@ private fun ActionCard(
                     parentName, setOrder, setId, onOther, landingLabel,
                 )
             }
-            if (sens != null) SensLineRow(sens)
+            if (sens != null) SensLineRow(sens, parentName, setId, landingLabel)
             if (timing != null) Text(timing, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             if (note != null) Text(note, style = MaterialTheme.typography.bodySmall, color = colors.error)
         }
@@ -2911,43 +2911,89 @@ private class SensLine(
 )
 
 @Composable
-private fun SensLineRow(line: SensLine) {
+private fun SensLineRow(line: SensLine, parentName: String, setId: Int, landingLabel: String?) {
     val colors = MaterialTheme.colorScheme
+    // Laid out like a Swipe card's line: its label, then a framed row with one chip (own or faded).
     Column(
-        Modifier
-            .fillMaxWidth()
-            .onGloballyPositioned { line.onBounds(it.boundsInRoot()) }
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (line.landing) colors.tertiary.copy(alpha = 0.18f) else Color.Transparent)
-            .padding(horizontal = 2.dp, vertical = 2.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        Modifier.fillMaxWidth().onGloballyPositioned { line.onBounds(it.boundsInRoot()) },
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(
-            if (line.landing) "Sensitivity  → follows" else "Sensitivity",
+            "Sensitivity",
             style = MaterialTheme.typography.labelLarge,
-            fontWeight = if (line.landing) FontWeight.SemiBold else null,
             color = if (line.landing) colors.tertiary else colors.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 2.dp),
         )
-        val text = line.own ?: line.faded
-        if (text == null) {
+        if (line.own == null && line.faded == null && !line.landing) {
             Text(
-                if (line.landing) "Release to follow it" else "Drop a sensitivity here",
+                "Drop here",
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.onSurfaceVariant,
+                modifier = Modifier.padding(start = 2.dp, bottom = 4.dp),
             )
-        } else {
-            Surface(
-                onClick = line.onClick,
-                shape = RoundedCornerShape(8.dp),
-                color = if (line.own != null) colors.secondaryContainer else colors.surfaceContainerHighest,
-                modifier = Modifier.alpha(if (line.own != null) 1f else 0.55f),
-            ) {
-                Text(
-                    text,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (line.own != null) colors.onSecondaryContainer else colors.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                )
+            return@Column
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(colors.surface)
+                .border(1.dp, colors.outlineVariant, RoundedCornerShape(12.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            when {
+                // A dropped chip takes the line's one place: shown where it lands.
+                line.landing -> Box(
+                    Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(colors.tertiary.copy(alpha = 0.18f))
+                        .border(2.dp, colors.tertiary, RoundedCornerShape(8.dp))
+                        .heightIn(min = 32.dp)
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(landingLabel ?: "", style = MaterialTheme.typography.labelLarge, color = colors.tertiary, maxLines = 1)
+                }
+
+                line.own != null -> Row(
+                    Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = line.onClick)
+                        .background(if (setId == MappingSet.BASE) colors.secondaryContainer else setColor(setId).copy(alpha = 0.35f))
+                        .heightIn(min = 32.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (setId != MappingSet.BASE) SetNumber(setId, Modifier.padding(start = 6.dp))
+                    Text(
+                        line.own,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.onSecondaryContainer,
+                        maxLines = 1,
+                        modifier = Modifier.padding(start = if (setId == MappingSet.BASE) 10.dp else 6.dp, end = 10.dp),
+                    )
+                }
+
+                else -> Row(
+                    Modifier
+                        .alpha(0.5f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = line.onClick)
+                        .border(1.dp, colors.outline, RoundedCornerShape(8.dp))
+                        .heightIn(min = 32.dp)
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (parentName.isNotEmpty()) Text(parentName, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+                    Text(
+                        line.faded ?: "",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1,
+                        modifier = Modifier.padding(start = if (parentName.isNotEmpty()) 6.dp else 0.dp),
+                    )
+                }
             }
         }
     }
