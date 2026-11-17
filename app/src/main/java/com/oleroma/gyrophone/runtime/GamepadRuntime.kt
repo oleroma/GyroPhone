@@ -308,6 +308,16 @@ class GamepadRuntime(context: Context) {
     /** Open the pad in fullscreen when the app starts. */
     val startFullscreen: StateFlow<Boolean> = _startFullscreen
 
+    private val _doubleBackPanel = MutableStateFlow(prefs.getBoolean(KEY_DOUBLE_BACK_PANEL, false))
+
+    /** Mistouch guard: in fullscreen a lone Back does nothing; two within [doubleBackMs] bring the top row back. */
+    val doubleBackPanel: StateFlow<Boolean> = _doubleBackPanel
+
+    private val _doubleBackMs = MutableStateFlow(prefs.getInt(KEY_DOUBLE_BACK_MS, DEFAULT_DOUBLE_BACK_MS))
+
+    /** Most time between the two Backs of [doubleBackPanel]. */
+    val doubleBackMs: StateFlow<Int> = _doubleBackMs
+
     private val _keepScreenOn = MutableStateFlow(prefs.getBoolean(KEY_KEEP_SCREEN_ON, true))
 
     /** When on (the default), the screen stays on, so the phone doesn't lock, while the pad is shown. */
@@ -1026,6 +1036,16 @@ class GamepadRuntime(context: Context) {
     fun setStartFullscreen(on: Boolean) {
         prefs.edit().putBoolean(KEY_START_FULLSCREEN, on).apply()
         _startFullscreen.value = on
+    }
+
+    fun setDoubleBackPanel(on: Boolean) {
+        prefs.edit().putBoolean(KEY_DOUBLE_BACK_PANEL, on).apply()
+        _doubleBackPanel.value = on
+    }
+
+    fun setDoubleBackMs(ms: Int) {
+        prefs.edit().putInt(KEY_DOUBLE_BACK_MS, ms).apply()
+        _doubleBackMs.value = ms
     }
 
     fun setKeepScreenOn(on: Boolean) {
@@ -1763,6 +1783,10 @@ class GamepadRuntime(context: Context) {
         /** The choices for [idleStopMinutes]; 0 = Off. */
         val IDLE_STOP_CHOICES = listOf(0, 5, 10, 30)
         private const val KEY_START_FULLSCREEN = "start_fullscreen"
+        private const val KEY_DOUBLE_BACK_PANEL = "double_back_panel"
+        private const val KEY_DOUBLE_BACK_MS = "double_back_ms"
+        const val DEFAULT_DOUBLE_BACK_MS = 400
+        val DOUBLE_BACK_MS = listOf(250, 300, 400, 500, 700, 1000)
         private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         private const val KEY_GAME_RUMBLE = "game_rumble"
         private const val KEY_USB_DIRECT = "usb_direct"

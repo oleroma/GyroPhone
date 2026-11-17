@@ -109,6 +109,8 @@ private fun AppTab(runtime: GamepadRuntime) {
     val padOnly by runtime.padOnlyInput.collectAsStateWithLifecycle()
     val padOnlyHardware by runtime.padOnlyHardware.collectAsStateWithLifecycle()
     val startFullscreen by runtime.startFullscreen.collectAsStateWithLifecycle()
+    val doubleBack by runtime.doubleBackPanel.collectAsStateWithLifecycle()
+    val doubleBackMs by runtime.doubleBackMs.collectAsStateWithLifecycle()
     val keepScreenOn by runtime.keepScreenOn.collectAsStateWithLifecycle()
     val gameRumble by runtime.gameRumble.collectAsStateWithLifecycle()
     val blackIdle by runtime.blackScreenIdle.collectAsStateWithLifecycle()
@@ -161,6 +163,24 @@ private fun AppTab(runtime: GamepadRuntime) {
                 "Start in fullscreen", startFullscreen,
                 hint = "The pad opens in fullscreen when the app starts. Press ← and → together, or Back, to leave it.",
             ) { runtime.setStartFullscreen(it) }
+            SwitchRow(
+                "Double Back to leave fullscreen", doubleBack,
+                hint = "Guards against stray Back swipes in play: in fullscreen, one Back does nothing, and two Backs in a row " +
+                        "bring the top row back. A Fullscreen mapping (long press ← or →) still leaves it at once.",
+            ) { runtime.setDoubleBackPanel(it) }
+            if (doubleBack) Searchable("Double Back time", "back twice mistouch fast milliseconds") {
+                Column {
+                    Text("Double Back time", style = MaterialTheme.typography.titleSmall)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        GamepadRuntime.DOUBLE_BACK_MS.forEach { ms ->
+                            FilterChip(
+                                selected = doubleBackMs == ms,
+                                onClick = { runtime.setDoubleBackMs(ms) },
+                                label = { Text(if (ms < 1000) "$ms ms" else "${ms / 1000} s") })
+                        }
+                    }
+                }
+            }
             SwitchRow(
                 "Keep the screen on while the pad is open", keepScreenOn,
                 hint = if (keepScreenOn) "The phone doesn't dim or lock while the pad is on screen. Its pages and other apps lock as usual."

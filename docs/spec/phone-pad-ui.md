@@ -24,7 +24,7 @@ The status and navigation bars never show in the app, on the pad, in settings or
 
 The ← / → buttons are ordinary touch buttons, **global** (in every workspace, see Make global below), with ordinary mappings:
 
-- **Tap** ← / → = **Previous workspace** / **Next workspace** (nothing at an end, unless wrap-around is on); **Long press** either = **Fullscreen** (hides the top row; again, or Back, to leave). These three actions are in the mapping editor's **Other** group and can go on any button, key or controller button. They send nothing to the PC.
+- **Tap** ← / → = **Previous workspace** / **Next workspace** (nothing at an end, unless wrap-around is on); **Long press** either = **Fullscreen** (hides the top row; again, or Back, to leave; with **Double Back to leave fullscreen** on in App settings, a lone Back does nothing and it takes two Backs within the Double Back time, 400 ms by default). These three actions are in the mapping editor's **Other** group and can go on any button, key or controller button. They send nothing to the PC.
 - They are size-synced (teal), so a pinch on one sizes both.
 - Missing ones come back from **Add preset ★ → Workspace arrows** (shown while the workspace has neither), at the old top corners.
 - Profiles from before (`Profile.corners`) are converted once (`NavCorners.toButtons`, `Profile.navButtons`): the corners become these buttons in every workspace, same place, size and opacity (at least 25 %), size-synced if "Same size for all corners" was on. The corners' auto-hide, four-tap reveal, both-together fullscreen and "Same size for all corners" are gone; **Fade when idle** replaces the auto-hide.
