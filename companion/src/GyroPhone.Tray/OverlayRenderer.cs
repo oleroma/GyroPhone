@@ -401,7 +401,8 @@ internal static class OverlayRenderer
                     panel.Shown = screenKey;
                 }
                 int look = HashCode.Combine(HashCode.Combine(settings.Color("body"), settings.Color("handles"), settings.Color("handlesLit"), aspect, handles),
-                    k, cx, cy, live ? HashCode.Combine(f.PadButtons, f.PadL2Pull, f.PadR2Pull) : 0);
+                    k, cx, cy, live ? HashCode.Combine(f.PadButtons, f.PadL2Pull, f.PadR2Pull,
+                        f.PadSticks[0], f.PadSticks[1], f.PadSticks[2], f.PadSticks[3]) : 0); // the sticks move even while the pose holds still (a ratchet)
                 var key = new Gpu3D.Key(look, Gpu3D.TurnOf(m), area, panel.Shown.GetHashCode());
                 return Gpu3D.Draw(g, area, "phone", key, 0, (fr, _) =>
                 {
