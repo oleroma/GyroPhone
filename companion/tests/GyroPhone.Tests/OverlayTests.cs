@@ -185,14 +185,15 @@ public class OverlayTests
         var t = OverlayMarks.Decode(9, Hex.B(KeysBlob))!.Keys!;
         var r = new OverlayKeysReader();
         var f = new OverlayFrame();
-        // Nothing pressed: only the stick rows.
+        // Nothing pressed: only the always-shown sticks (LS and RS by default), not lit.
         var idle = r.Read(t, f, 1000)!;
         Assert.Equal(
             [
-                new OverlayKeyStick(0, "", ["W", "D", "S", "A"], 0),
-                new OverlayKeyStick(1, "Mouse", ["", "", "", ""], 0),
+                new OverlayKeyStick(0, "", ["W", "D", "S", "A"], 0, ["", "", "", "", ""], 0),
+                new OverlayKeyStick(1, "Mouse", ["", "", "", ""], 0, ["", "", "", "", ""], 0),
             ],
-            idle.Sticks);
+            idle.Shown.Select(x => x.Stick));
+        Assert.All(idle.Shown, x => Assert.False(x.Lit));
         Assert.Empty(idle.Rows);
         Assert.Same(idle, r.Read(t, f, 1010));
         // A held (both its mappings), the left stick up and right (a diagonal), RT pulled, X pressed (Toggle on), B held.
@@ -200,7 +201,7 @@ public class OverlayTests
         f.PadR2Pull = 0.6f;
         f.PadSticks[0] = 0.7f; f.PadSticks[1] = -0.7f;
         var k = r.Read(t, f, 1100)!;
-        Assert.Equal(OverlayKeyStick.Up | OverlayKeyStick.Right, k.Sticks[0].Lit);
+        Assert.Equal(OverlayKeyStick.Up | OverlayKeyStick.Right, k.Shown[0].Stick!.Lit);
         Assert.Equal(
             [
                 new OverlayKeyRow("A", "Space + Mouse R", 0),
@@ -232,7 +233,22 @@ public class OverlayTests
         Assert.Equal(("Space on", OverlayKeyRow.Touch | OverlayKeyRow.Toggle), (rows[1].Target, rows[1].Flags));
         // A stick pushed only a little: under half its travel, no key.
         f.PadButtons = 0; f.PadSticks[0] = 0.3f;
-        Assert.Equal(0, r.Read(t, f, 1700)!.Sticks[0].Lit);
+        Assert.Equal(0, r.Read(t, f, 1700)!.Shown[0].Stick!.Lit);
+        // Pushed to the edge, up: its Outer up and its key both fire; an always-shown A sits on top, dim until pressed.
+        var outer = t with { Keys = [.. t.Keys, new OverlayKey(OverlayKey.Way | 0, OverlayKey.Outer, "LS up outer", "Shift"), new OverlayKey(OverlayKey.AnyWay | 0, 0, "LS outer", "Ctrl")] };
+        var r4 = new OverlayKeysReader();
+        f.PadSticks[0] = 0; f.PadSticks[1] = -1f;
+        int shown = OverlayControls.Mask(["ls", "a"]);
+        var v = r4.Read(outer, f, 2000, shown)!;
+        var ls = v.Shown[0].Stick!;
+        Assert.Equal(OverlayKeyStick.Up, ls.Lit);
+        Assert.Equal(OverlayKeyStick.Up | OverlayKeyStick.Any, ls.OuterLit);
+        Assert.Equal(["Shift", "", "", "", "Ctrl"], ls.Outer);
+        Assert.Equal(new OverlayKeyRow("A", "Space + Mouse R", 0) { Lit = false }, v.Shown[1]);
+        // RS isn't always shown here: its row comes only while it moves (it sends the mouse).
+        Assert.DoesNotContain(v.Rows, x => x.Name == "RS");
+        f.PadSticks[2] = 0.5f;
+        Assert.Contains(r4.Read(outer, f, 2010, shown)!.Rows, x => x.Name == "RS" && x.Stick != null);
     }
 
     [Fact]

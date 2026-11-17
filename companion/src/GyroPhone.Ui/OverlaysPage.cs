@@ -61,6 +61,7 @@ internal sealed class OverlaysPage : Page
     private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook, _ringLook, _graphLook, _keysLook;
     private readonly SliderRow _keysFade;
     private readonly CheckBox _keysTransparent;
+    private readonly List<(string Id, RadioButton Chip)> _keysShown = [];
     private readonly Seg<int> _graphRange, _graphSeconds;
     private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserGimbal, _laserDraw, _laserClearOnRatchet, _laserSnakeClearOnRatchet;
     private readonly CheckBox _laserPerspective, _laserSnake, _laserOutline;
@@ -378,6 +379,25 @@ internal sealed class OverlaysPage : Page
         kyb.Children.Add(_keysFade.View);
         _keysTransparent = Parts.Toggle("Transparent background", () => Change(o => o.KeysTransparent = !o.KeysTransparent), "No panel behind the rows: only the keys show over the game.");
         kyb.Children.Add(_keysTransparent);
+        kyb.Children.Add(Parts.Text("Always shown"));
+        kyb.Children.Add(Parts.Text("These stay on top, dim until they fire; the others show only while they fire.", "Hint"));
+        var shownWrap = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+        foreach (int ci in GyroPhone.Protocol.OverlayControls.Order)
+        {
+            string id = GyroPhone.Protocol.OverlayControls.Ids[ci];
+            // Its own group: each chip is on or off by itself.
+            var chip = new RadioButton { Content = GyroPhone.Protocol.OverlayControls.Names[ci], GroupName = "keysShown-" + id, Style = Parts.Style("Chip") };
+            chip.Click += (_, _) => Change(o =>
+            {
+                var l = new List<string>(o.KeysShown);
+                if (!l.Remove(id)) l.Add(id);
+                o.KeysShown = l;
+            });
+            chip.Click += (_, _) => Parts.SetChecked(chip, Picked is { } p && _app.OverlayOf(p)?.KeysShown.Contains(id) == true);
+            shownWrap.Children.Add(chip);
+            _keysShown.Add((id, chip));
+        }
+        kyb.Children.Add(shownWrap);
         _keysLook = keysCard;
         _lookTab.Children.Add(keysCard);
 
@@ -1022,6 +1042,7 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_keysLook, o.Kind == OverlayKind.Keys);
         _keysFade.Set(o.KeysFadeMs);
         _keysTransparent.IsChecked = o.KeysTransparent;
+        foreach (var (id, chip) in _keysShown) Parts.SetChecked(chip, o.KeysShown.Contains(id));
         _graphRange.Set(o.GraphRange);
         _graphSeconds.Set(o.GraphSeconds);
         bool laser = o.Kind == OverlayKind.Laser;

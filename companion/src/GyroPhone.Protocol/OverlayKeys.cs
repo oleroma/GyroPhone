@@ -93,34 +93,74 @@ public sealed record OverlayKeys(int TapMs, OverlayStickTuning[] Sticks, Overlay
 public sealed record OverlayTouchKey(int Control, int Flags, string Target);
 
 /// <summary>
-/// A stick's row in the Keys overlay: <paramref name="Stick"/> 0 left, 1 right; what its whole axes send
-/// (<paramref name="Analog"/>, "Mouse", "" none); what up, right, down, left send (<paramref name="Keys"/>, "" none) and the
-/// ways firing now (<paramref name="Lit"/>: <see cref="Up"/>, <see cref="Right"/>, <see cref="Down"/>, <see cref="Left"/>).
+/// The picture on a stick's or the D-pad's row in the Keys overlay: <paramref name="Stick"/> 0 left, 1 right stick, 2 the
+/// D-pad; what its whole axes send (<paramref name="Analog"/>, "Mouse", "" none); what up, right, down, left send
+/// (<paramref name="Keys"/>, "" none) and the ways firing now (<paramref name="Lit"/>: <see cref="Up"/>, <see cref="Right"/>,
+/// <see cref="Down"/>, <see cref="Left"/>); what its Outer ring sends up, right, down, left and any way
+/// (<paramref name="Outer"/>) and which of those fire (<paramref name="OuterLit"/>, the same bits, <see cref="Any"/>).
 /// </summary>
-public sealed record OverlayKeyStick(int Stick, string Analog, IReadOnlyList<string> Keys, int Lit)
+public sealed record OverlayKeyStick(int Stick, string Analog, IReadOnlyList<string> Keys, int Lit, IReadOnlyList<string> Outer, int OuterLit)
 {
-    public const int Up = 1, Right = 2, Down = 4, Left = 8;
+    public const int Up = 1, Right = 2, Down = 4, Left = 8, Any = 16;
+    public const int DPad = 2;
 
-    public bool Equals(OverlayKeyStick? o) => o is not null && Stick == o.Stick && Analog == o.Analog && Lit == o.Lit && Keys.SequenceEqual(o.Keys);
-    public override int GetHashCode() => HashCode.Combine(Stick, Analog, Lit, Keys.Count > 0 ? Keys[0] : "");
+    /// <summary>Something on it fires, or (a stick that sends its axes) it is pushed.</summary>
+    public bool Active(bool moved) => Lit != 0 || OuterLit != 0 || moved && Analog.Length > 0;
+
+    public bool Equals(OverlayKeyStick? o) => o is not null && Stick == o.Stick && Analog == o.Analog && Lit == o.Lit && OuterLit == o.OuterLit
+        && Keys.SequenceEqual(o.Keys) && Outer.SequenceEqual(o.Outer);
+    public override int GetHashCode() => HashCode.Combine(Stick, Analog, Lit, OuterLit);
 }
 
 /// <summary>
-/// A button's row in the Keys overlay: its name as the phone's controller editor shows it ("A", "LS click") and what it
-/// sends now ("Space", several joined by " + "); <see cref="Toggle"/>: on only by a Toggle that is on;
-/// <see cref="LeftTrigger"/> or <see cref="RightTrigger"/>: it is that trigger (a pull bar shows).
+/// A row in the Keys overlay: its name as the phone's controller editor shows it ("A", "LS click") and what it
+/// sends ("Space", several joined by " + "); <see cref="Toggle"/>: on only by a Toggle that is on;
+/// <see cref="LeftTrigger"/> or <see cref="RightTrigger"/>: it is that trigger (a pull bar shows); <see cref="Touch"/>: a
+/// touch button's row, shown without its name (its <see cref="Name"/> only tells rows apart). A stick's or the D-pad's
+/// row has its <see cref="Stick"/> picture; an always-shown row that fires nothing now is not <see cref="Lit"/>.
 /// </summary>
 public sealed record OverlayKeyRow(string Name, string Target, int Flags)
 {
-    /// <summary><see cref="Touch"/>: a touch button's row, shown without its name (its <see cref="Name"/> only tells rows apart).</summary>
     public const int Toggle = 1, LeftTrigger = 2, RightTrigger = 4, Touch = 8;
+
+    public OverlayKeyStick? Stick { get; init; }
+    public bool Lit { get; init; } = true;
 }
 
-/// <summary>What the Keys overlay shows now: the sticks that send something, and the buttons firing or with a Toggle on.</summary>
-public sealed record OverlayKeysView(IReadOnlyList<OverlayKeyStick> Sticks, IReadOnlyList<OverlayKeyRow> Rows)
+/// <summary>
+/// What the Keys overlay shows now: the always-shown controls on top (<paramref name="Shown"/>, in a fixed order, lit while
+/// they fire), then the rows firing now or with a Toggle on (<paramref name="Rows"/>).
+/// </summary>
+public sealed record OverlayKeysView(IReadOnlyList<OverlayKeyRow> Shown, IReadOnlyList<OverlayKeyRow> Rows)
 {
-    public bool Equals(OverlayKeysView? o) => o is not null && Sticks.SequenceEqual(o.Sticks) && Rows.SequenceEqual(o.Rows);
-    public override int GetHashCode() => HashCode.Combine(Sticks.Count, Rows.Count);
+    public bool Equals(OverlayKeysView? o) => o is not null && Shown.SequenceEqual(o.Shown) && Rows.SequenceEqual(o.Rows);
+    public override int GetHashCode() => HashCode.Combine(Shown.Count, Rows.Count);
+}
+
+/// <summary>The controller's controls the Keys overlay can always show, by <see cref="OverlayKeysReader.ControlOf"/> index.</summary>
+public static class OverlayControls
+{
+    public const int DPad = 14, LeftStick = 15, RightStick = 16, Count = 17;
+
+    /// <summary>Their ids in settings and their names.</summary>
+    public static readonly string[] Ids = ["a", "b", "x", "y", "lb", "rb", "lt", "rt", "select", "start", "home", "capture", "l3", "r3", "dpad", "ls", "rs"];
+    public static readonly string[] Names = ["A", "B", "X", "Y", "LB", "RB", "LT", "RT", "Select", "Start", "Home", "Capture", "LS click", "RS click", "D-pad", "LS", "RS"];
+
+    /// <summary>The order they show in: sticks and D-pad first, then the buttons.</summary>
+    public static readonly int[] Order = [LeftStick, RightStick, DPad, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+
+    /// <summary>The mask of <paramref name="ids"/> (bit per control).</summary>
+    public static int Mask(IEnumerable<string>? ids)
+    {
+        int m = 0;
+        if (ids == null) return m;
+        foreach (var id in ids)
+        {
+            int i = Array.IndexOf(Ids, id);
+            if (i >= 0) m |= 1 << i;
+        }
+        return m;
+    }
 }
 
 /// <summary>
@@ -148,8 +188,12 @@ public sealed class OverlayKeysReader
     private bool[] _shortUp = [], _toggled = [], _was = [];
     private OverlayKeysView? _view;
 
-    /// <summary>The view for <paramref name="table"/> (null: none) and frame <paramref name="f"/> at <paramref name="now"/> (ms); the same instance while nothing changed.</summary>
-    public OverlayKeysView? Read(OverlayKeys? table, OverlayFrame f, long now)
+    /// <summary>
+    /// The view for <paramref name="table"/> (null: none) and frame <paramref name="f"/> at <paramref name="now"/> (ms),
+    /// with the controls of <paramref name="shown"/> (<see cref="OverlayControls.Mask"/>) always on top; the same instance
+    /// while nothing changed.
+    /// </summary>
+    public OverlayKeysView? Read(OverlayKeys? table, OverlayFrame f, long now, int shown = 1 << OverlayControls.LeftStick | 1 << OverlayControls.RightStick)
     {
         if (table == null)
         {
@@ -166,10 +210,18 @@ public sealed class OverlayKeysReader
             for (int i = 0; i < n; i++) _upAt[i] = long.MinValue / 2;
         }
         var keys = table.Keys;
-        var lit = new int[2];
-        var stickKeys = new string[]?[2];
-        var analog = new string?[2];
+        // Per picture (left stick, right stick, D-pad while always shown): its keys, outer keys, analog and what fires.
+        var lit = new int[3];
+        var outerLit = new int[3];
+        var wayKeys = new string[]?[3];
+        var outerKeys = new string[]?[3];
+        var analog = new string?[3];
+        // Per always-shown button: what it sends, whether it fires, its trigger flag.
+        var shownTarget = new string?[OverlayControls.Count];
+        var shownLit = new bool[OverlayControls.Count];
+        var shownFlags = new int[OverlayControls.Count];
         List<OverlayKeyRow>? rows = null;
+        bool dpadPie = (shown & 1 << OverlayControls.DPad) != 0;
         for (int i = 0; i < keys.Count; i++)
         {
             var k = keys[i];
@@ -183,27 +235,41 @@ public sealed class OverlayKeysReader
                 on = _toggled[i];
             }
             int kind = k.Input & 0xF0;
-            // A whole stick: its row shows what it moves.
-            if (kind == OverlayKey.Stick)
+            int control = ControlOf(k.Input);
+            // A stick (or the D-pad while always shown): its picture.
+            int pic = kind is OverlayKey.Way or OverlayKey.AnyWay or OverlayKey.Stick ? (k.Input >> (kind == OverlayKey.Way ? 2 : 0)) & 1
+                : control == OverlayControls.DPad && dpadPie ? OverlayKeyStick.DPad : -1;
+            if (pic >= 0)
             {
-                int s = k.Input & 1;
-                analog[s] ??= k.Target;
+                if (kind == OverlayKey.Stick)
+                {
+                    analog[pic] ??= k.Target;
+                    continue;
+                }
+                bool outer = kind == OverlayKey.AnyWay || (k.Flags & OverlayKey.Outer) != 0;
+                int way = kind == OverlayKey.AnyWay ? 4 : pic == OverlayKeyStick.DPad ? DPadWay(k.Input) : k.Input & 3;
+                var ks = outer ? outerKeys[pic] ??= ["", "", "", "", ""] : wayKeys[pic] ??= ["", "", "", ""];
+                if (!HasPart(ks[way], k.Target)) ks[way] = ks[way].Length == 0 ? k.Target : ks[way] + " + " + k.Target;
+                if (on)
+                {
+                    if (outer) outerLit[pic] |= 1 << way;
+                    else lit[pic] |= 1 << way;
+                }
                 continue;
             }
-            // A stick's way held (not Outer, a gesture or a Toggle): a key on its plus.
-            bool plainWay = kind == OverlayKey.Way
-                && (k.Flags & (OverlayKey.Outer | OverlayKey.Toggle | OverlayKey.GestureMask)) == 0;
-            if (plainWay)
+            string target = toggle ? k.Target + " on" : k.Target;
+            int flags = (toggle ? OverlayKeyRow.Toggle : 0) | TriggerFlag(k.Input);
+            // An always-shown button: its one row, lit while something on it fires.
+            if (control >= 0 && (shown & 1 << control) != 0)
             {
-                int s = (k.Input >> 2) & 1, way = k.Input & 3;
-                var ks = stickKeys[s] ??= ["", "", "", ""];
-                if (!HasPart(ks[way], k.Target)) ks[way] = ks[way].Length == 0 ? k.Target : ks[way] + " + " + k.Target;
-                if (on) lit[s] |= 1 << way;
+                var t = shownTarget[control];
+                if (t == null) shownTarget[control] = target;
+                else if (!HasPart(t, target)) shownTarget[control] = t + " + " + target;
+                shownLit[control] |= on;
+                shownFlags[control] |= flags;
                 continue;
             }
             if (!on) continue;
-            int flags = (toggle ? OverlayKeyRow.Toggle : 0) | TriggerFlag(k.Input);
-            string target = toggle ? k.Target + " on" : k.Target;
             rows ??= new List<OverlayKeyRow>();
             int at = rows.FindIndex(r => r.Name == k.Name);
             if (at < 0) rows.Add(new OverlayKeyRow(k.Name, target, flags));
@@ -229,16 +295,48 @@ public sealed class OverlayKeysReader
             if (at < 0) rows.Add(new OverlayKeyRow(name, target, flags));
             else if (!HasPart(rows[at].Target, target)) rows[at] = rows[at] with { Target = rows[at].Target + " + " + target, Flags = rows[at].Flags | flags };
         }
-        var sticks = new List<OverlayKeyStick>(2);
-        for (int s = 0; s < 2; s++)
+        // The pictures: always shown on top, or a row of their own while something on them fires.
+        var shownRows = new List<OverlayKeyRow>();
+        var picRows = new List<OverlayKeyRow>();
+        foreach (int c in OverlayControls.Order)
         {
-            if (stickKeys[s] == null && analog[s] == null) continue;
-            sticks.Add(new OverlayKeyStick(s, analog[s] ?? "", stickKeys[s] ?? ["", "", "", ""], lit[s]));
+            if (c is OverlayControls.LeftStick or OverlayControls.RightStick or OverlayControls.DPad)
+            {
+                int pic = c == OverlayControls.DPad ? OverlayKeyStick.DPad : c - OverlayControls.LeftStick;
+                if (wayKeys[pic] == null && outerKeys[pic] == null && analog[pic] == null) continue;
+                var st = new OverlayKeyStick(pic, analog[pic] ?? "", wayKeys[pic] ?? ["", "", "", ""], lit[pic], outerKeys[pic] ?? ["", "", "", "", ""], outerLit[pic]);
+                bool moved = pic < 2 && (Math.Abs(f.PadSticks[pic * 2]) > Moved || Math.Abs(f.PadSticks[pic * 2 + 1]) > Moved);
+                var row = new OverlayKeyRow(OverlayControls.Names[c], "", 0) { Stick = st, Lit = st.Active(moved) };
+                if ((shown & 1 << c) != 0) shownRows.Add(row);
+                else if (row.Lit) picRows.Add(row);
+                continue;
+            }
+            if (shownTarget[c] is { } target)
+                shownRows.Add(new OverlayKeyRow(OverlayControls.Names[c], target, shownFlags[c]) { Lit = shownLit[c] });
         }
-        var view = new OverlayKeysView(sticks, (IReadOnlyList<OverlayKeyRow>?)rows ?? []);
+        if (picRows.Count > 0) (rows ??= new List<OverlayKeyRow>()).InsertRange(0, picRows);
+        var view = new OverlayKeysView(shownRows, (IReadOnlyList<OverlayKeyRow>?)rows ?? []);
         if (_view != null && _view.Equals(view)) return _view;
         return _view = view;
     }
+
+    /// <summary>The always-showable control (<see cref="OverlayControls"/>) of an <see cref="OverlayKey.Input"/>, or -1.</summary>
+    public static int ControlOf(int input)
+    {
+        if (input < 14) return input;
+        if (input < 18) return OverlayControls.DPad;
+        if (input < 32) return -1;
+        return (input & 0xF0) switch
+        {
+            OverlayKey.Way => OverlayControls.LeftStick + ((input >> 2) & 1),
+            OverlayKey.AnyWay or OverlayKey.Stick => OverlayControls.LeftStick + (input & 1),
+            OverlayKey.Trigger => 6 + ((input >> 2) & 1),
+            _ => -1,
+        };
+    }
+
+    /// <summary>The way (0 up, 1 right, 2 down, 3 left) of a D-pad button's bit (up 14, down 15, left 16, right 17).</summary>
+    private static int DPadWay(int bit) => bit switch { 14 => 0, 15 => 2, 16 => 3, _ => 1 };
 
     /// <summary>Whether <paramref name="joined"/> ("Space + Mouse R") already has <paramref name="part"/>.</summary>
     private static bool HasPart(string joined, string part)

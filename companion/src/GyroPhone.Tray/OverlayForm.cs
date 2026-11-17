@@ -33,6 +33,9 @@ internal sealed class OverlayForm : Form
     private readonly KeysBoard _keys = new();
     /// <summary>The Keys overlay: what the phone's controller fires, worked out from each OVERLAY and the phone's table.</summary>
     private readonly OverlayKeysReader _keysReader = new();
+    /// <summary>The Keys overlay's Always shown (<see cref="OverlayControls.Mask"/>) and the list it was made from.</summary>
+    private int _keysShown;
+    private List<string>? _keysShownOf;
     private bool _keysUndrawn;
     // The laser pointer's trail and paint; the phone's Clear displays presses last seen (-1 = none yet).
     private readonly LaserTrace _laser = new();
@@ -592,7 +595,8 @@ internal sealed class OverlayForm : Form
         if (Settings is { Kind: OverlayKind.Keys } ks)
         {
             long t = Environment.TickCount64;
-            var view = _keysReader.Read(marks?.Keys, _scene.Frame, t);
+            if (!ReferenceEquals(ks.KeysShown, _keysShownOf)) { _keysShownOf = ks.KeysShown; _keysShown = OverlayControls.Mask(ks.KeysShown); }
+            var view = _keysReader.Read(marks?.Keys, _scene.Frame, t, _keysShown);
             if (_keys.Update(view, t, Math.Clamp(ks.KeysFadeMs, 0, 2000))) _keysUndrawn = true;
         }
         bool fresh = age >= 0 && _scene.Frame.PhoneTimeUs != _lastTime;

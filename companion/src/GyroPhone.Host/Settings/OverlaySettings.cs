@@ -376,6 +376,9 @@ public sealed class OverlaySettings
     /// <summary>Keys overlay: how long a let-go key's row takes to fade out, ms (0 = gone at once; up to 2000).</summary>
     public int KeysFadeMs { get; set; } = 400;
 
+    /// <summary>Keys: the controls always shown on top (GyroPhone.Protocol.OverlayControls.Ids), lit while they fire; others show only while they fire.</summary>
+    public List<string> KeysShown { get; set; } = ["ls", "rs"];
+
     /// <summary>Keys: no panel behind the rows, only the text over the game.</summary>
     public bool KeysTransparent { get; set; }
 
