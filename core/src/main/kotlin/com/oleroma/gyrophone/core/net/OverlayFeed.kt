@@ -123,7 +123,9 @@ data class OverlayBar(val axis: Int, val value: Float, val steps: Int)
  * only with the workspace, the set in use or the controller: u8 [KEYS_SECTION]; u16 tap time (ms); per stick (left,
  * right) u8 inner, u8 outer, u8 Outer ring (0..255 = 0..1), u8 Left/Right pie, u8 Up/Down pie (degrees); per trigger
  * (left, right) u8 Press, u8 Full pull (0..255 = 0..1); u8 key count, per key u8 [OverlayKey.input], u8
- * [OverlayKey.flags], str8 name, str8 what it sends. The PC works out what is pressed from the OVERLAY's pad fields.
+ * [OverlayKey.flags], str8 name, str8 what it sends; u8 touch key count, per touch key u8 control index, u8 flags (as a
+ * key's), str8 what it sends ([OverlayTouchKey]). The PC works out what is pressed from the OVERLAY's pad fields and
+ * its pressed and latched bitmaps.
  *
  * Totals ([FLAG_TOTALS], only while HOST_STATUS has [HostStatusFlags.OVERLAY_TOTALS]; older PCs get
  * the per-frame form above): the yaw, pitch, roll and the camera degrees are running totals since
@@ -738,6 +740,12 @@ class OverlayFeed {
                 for (k in ks) {
                     u8(k.input); u8(k.flags)
                     str(k.name); str(k.target)
+                }
+                val ts = keys.touch.filter { it.id in index }.take(MAX_KEYS)
+                u8(ts.size)
+                for (t in ts) {
+                    u8(index.getValue(t.id)); u8(t.flags)
+                    str(t.target)
                 }
             }
             val b = out.toByteArray()

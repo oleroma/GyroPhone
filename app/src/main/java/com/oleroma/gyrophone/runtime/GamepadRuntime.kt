@@ -744,12 +744,14 @@ class GamepadRuntime(context: Context) {
     }
 
     private fun keysTable(ws: Workspace, cs: List<AttachedController>, l: MappingEngine.Layers): OverlayKeys {
+        val touch = OverlayKeys.touchOf(layered(ws.mappings, l.set, l.overrides))
         for (c in cs) {
             val pad = ws.pads.firstOrNull { it.matches(c.vendorId, c.productId, c.name) } ?: continue
             val rx = PhysicalSticks.rightStickOnRx { it in c.axes }
             return OverlayKeys.of(layered(pad.mappings, l.set, l.overrides), rx, ws.stickTunings, ws.triggerTunings, ws.longPressMs)
+                .copy(touch = touch)
         }
-        return OverlayKeys.NONE
+        return OverlayKeys.NONE.copy(tapMs = ws.longPressMs, touch = touch)
     }
 
     private val _mouseAttached = MutableStateFlow(false)

@@ -159,7 +159,7 @@ public class OverlayTests
     }
 
     /// <summary>The phone's OverlayKeysTest.KEYS_BLOB: layout 7, no marks, then the Keys overlay's table.</summary>
-    private const string KeysBlob = "0107000000640000000000004bfa001af2d987871af2d9878780f24de60b000001410553706163654300074c53206c65667401414100084c5320726967687401444000054c5320757001574200074c5320646f776e0153610009525320782061786973054d6f757365610009525320792061786973054d6f7573650700025254074d6f757365204c01030c42206c6f6e67207072657373014502800158014300000141074d6f7573652052";
+    private const string KeysBlob = "0107000000640000000000004bfa001af2d987871af2d9878780f24de60b000001410553706163654300074c53206c65667401414100084c5320726967687401444000054c5320757001574200074c5320646f776e0153610009525320782061786973054d6f757365610009525320792061786973054d6f7573650700025254074d6f757365204c01030c42206c6f6e67207072657373014502800158014300000141074d6f757365205200";
 
     [Fact]
     public void KeysFollowTheMarks()
@@ -220,6 +220,16 @@ public class OverlayTests
         var r2 = new OverlayKeysReader();
         f.PadButtons = OverlayFrame.PadUp;
         Assert.Equal([new OverlayKeyRow("↑", "Space", 0)], r2.Read(twice, f, 1650)!.Rows);
+        // Touch buttons: by the OVERLAY's pressed and latched bits, without a name.
+        var touched = t with { Keys = [], Touch = [new OverlayTouchKey(2, 0, "Mouse L"), new OverlayTouchKey(5, OverlayKey.Toggle, "Space")] };
+        var r3 = new OverlayKeysReader();
+        var tf = new OverlayFrame();
+        tf.Pressed[0] = 1 << 2;
+        tf.Latched[0] = 1 << 5;
+        var rows = r3.Read(touched, tf, 1000)!.Rows;
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(("Mouse L", OverlayKeyRow.Touch), (rows[0].Target, rows[0].Flags));
+        Assert.Equal(("Space on", OverlayKeyRow.Touch | OverlayKeyRow.Toggle), (rows[1].Target, rows[1].Flags));
         // A stick pushed only a little: under half its travel, no key.
         f.PadButtons = 0; f.PadSticks[0] = 0.3f;
         Assert.Equal(0, r.Read(t, f, 1700)!.Sticks[0].Lit);

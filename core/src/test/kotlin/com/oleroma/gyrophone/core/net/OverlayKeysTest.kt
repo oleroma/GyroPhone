@@ -11,6 +11,7 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MouseButton
 import com.oleroma.gyrophone.core.model.MouseMotion
 import com.oleroma.gyrophone.core.model.OutputTarget
+import com.oleroma.gyrophone.core.model.StickAxis
 import com.oleroma.gyrophone.core.model.TriggerTuning
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -59,6 +60,23 @@ class OverlayKeysTest {
         assertEquals(KEYS_BLOB, OverlayFeed.encodeFrames(OverlayFrames.NONE, 7, emptyMap(), k).hex())
     }
 
+    @Test fun touchButtonsGoByTheirLayoutIndex() {
+        val touch = OverlayKeys.touchOf(
+            listOf(
+                Mapping(InputSource.Touch("fire"), OutputTarget.Mouse(MouseButton.LEFT)),
+                Mapping(InputSource.TouchTap("jump"), usage(0x2C), options = MapOptions(how = How.TOGGLE)),
+                Mapping(InputSource.Touch("gone"), usage(0x04)),
+                Mapping(InputSource.TouchStick("move", StickAxis.X), OutputTarget.MouseAxis(MouseMotion.MOVE_X)),
+            ),
+        )
+        assertEquals(3, touch.size)
+        assertEquals(OverlayTouchKey("jump", OverlayKey.TAP or OverlayKey.TOGGLE, "Space"), touch[1])
+        val k = OverlayKeys.NONE.copy(touch = touch)
+        val hex = OverlayFeed.encodeFrames(OverlayFrames.NONE, 7, mapOf("fire" to 2, "jump" to 5), k).hex()
+        // Only buttons in the layout: fire (index 2) and jump (5).
+        assertEquals("02020007" + "4d6f757365204c" + "0581" + "05" + "5370616365", hex.takeLast(38))
+    }
+
     @Test fun rightStickOnRxMakesZTriggers() {
         assertEquals(-1, OverlayKeys.stickOf(AndroidAxis.Z, rightStickRx = true))
         assertEquals(1, OverlayKeys.stickOf(AndroidAxis.RX, rightStickRx = true))
@@ -83,6 +101,6 @@ class OverlayKeysTest {
 
     companion object {
         /** The frames blob for layout 7 with no marks and the table above (also in the companion's OverlayTests). */
-        const val KEYS_BLOB = "0107000000640000000000004bfa001af2d987871af2d9878780f24de60b000001410553706163654300074c53206c65667401414100084c5320726967687401444000054c5320757001574200074c5320646f776e0153610009525320782061786973054d6f757365610009525320792061786973054d6f7573650700025254074d6f757365204c01030c42206c6f6e67207072657373014502800158014300000141074d6f7573652052"
+        const val KEYS_BLOB = "0107000000640000000000004bfa001af2d987871af2d9878780f24de60b000001410553706163654300074c53206c65667401414100084c5320726967687401444000054c5320757001574200074c5320646f776e0153610009525320782061786973054d6f757365610009525320792061786973054d6f7573650700025254074d6f757365204c01030c42206c6f6e67207072657373014502800158014300000141074d6f757365205200"
     }
 }

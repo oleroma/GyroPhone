@@ -31,6 +31,8 @@ data class OverlayKeys(
     val triggers: List<TriggerTuning>,
     /** The tap time (ms): shorter is a tap, longer a long press; also a double tap's longest gap. */
     val tapMs: Int,
+    /** The touch buttons' mappings in the set in use: shown on the PC while the OVERLAY has the button pressed ([touchOf]). */
+    val touch: List<OverlayTouchKey> = emptyList(),
 ) {
     companion object {
         val NONE = OverlayKeys(emptyList(), List(2) { StickTuning() }, List(2) { TriggerTuning() }, 300)
@@ -59,6 +61,28 @@ data class OverlayKeys(
                 listOf(triggers["lt"] ?: TriggerTuning(), triggers["rt"] ?: TriggerTuning()),
                 tapMs,
             )
+        }
+
+        /**
+         * The touch buttons' mappings of [ms] (a workspace's touch mappings in the set in use): a button's press and its
+         * tap, double tap, long press and release, with their Toggle; sticks, swipes and areas are left out.
+         */
+        fun touchOf(ms: List<Mapping>): List<OverlayTouchKey> {
+            val out = ArrayList<OverlayTouchKey>()
+            for (m in ms) {
+                if (m.target.nothing || Describe.isHaptic(m.target)) continue
+                val (id, gesture) = when (val s = m.source) {
+                    is InputSource.Touch -> s.id to OverlayKey.HELD
+                    is InputSource.TouchTap -> s.id to OverlayKey.TAP
+                    is InputSource.TouchDoubleTap -> s.id to OverlayKey.DOUBLE_TAP
+                    is InputSource.TouchLongPress -> s.id to OverlayKey.LONG_PRESS
+                    is InputSource.TouchRelease -> s.id to OverlayKey.RELEASE
+                    else -> continue
+                }
+                val toggle = if (m.options?.mode == How.TOGGLE) OverlayKey.TOGGLE else 0
+                out.add(OverlayTouchKey(id, gesture or toggle, targetText(m.target)))
+            }
+            return out
         }
 
         private fun gestureOf(g: ButtonGesture): Int = when (g) {
@@ -166,3 +190,6 @@ data class OverlayKey(val input: Int, val flags: Int, val name: String, val targ
         const val TOGGLE = 0x80
     }
 }
+
+/** A touch button's mapping for the Keys overlay: the button ([id], sent as its layout index), [flags] as [OverlayKey.flags], what it sends. */
+data class OverlayTouchKey(val id: String, val flags: Int, val target: String)

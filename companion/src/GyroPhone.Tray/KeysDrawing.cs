@@ -99,7 +99,7 @@ internal sealed class KeysBoard
 /// <summary>
 /// Draws the Keys overlay: a row for each stick that sends something ("LS" with a plus whose arms light as it pushes its
 /// keys, then the keys; or a dot where it points when it moves the mouse or a gamepad stick), then the key rows of
-/// <see cref="KeysBoard"/> ("A = Space"; a trigger's row with a bar for how far it is pulled; a Toggle that is on in its
+/// <see cref="KeysBoard"/> ("A = Space"; a touch button's row only "Space"; a trigger's row with a bar for how far it is pulled; a Toggle that is on in its
 /// colour). The rows are as tall as the window's width allows; rows that don't fit aren't drawn.
 /// </summary>
 internal static class KeysDrawing
@@ -127,7 +127,7 @@ internal static class KeysDrawing
         var board = scene.Keys;
         string? note = !scene.Connected ? "Waiting for the phone"
             : !live || board?.Keys == null ? "Waiting for the phone's keys"
-            : !scene.Frame.PadAttached ? "No controller on the phone" : null;
+            : !scene.Frame.PadAttached && board.Keys.Rows.Count == 0 && board.Rows.Count == 0 ? "No controller on the phone; touch buttons show when pressed" : null;
         if (note != null)
         {
             g.DrawText(note, Math.Max(9f, px * 0.7f), false, dim, new RectangleF(inner.X, inner.Y, inner.Width, rowH), TextAlign.Near, TextAlign.Center);
@@ -155,13 +155,17 @@ internal static class KeysDrawing
     {
         float a = row.Alpha;
         float x = r.X;
-        var name = row.Name;
-        float nw = g.MeasureText(name, px, true).Width;
-        g.DrawText(name, px, true, Faded(nameColor, a), new RectangleF(x, r.Y, r.Right - x, r.Height), TextAlign.Near, TextAlign.Center);
-        x += nw + px * 0.3f;
-        const string Is = "=";
-        g.DrawText(Is, px, false, Faded(nameColor, a * 0.6f), new RectangleF(x, r.Y, Math.Max(0f, r.Right - x), r.Height), TextAlign.Near, TextAlign.Center);
-        x += g.MeasureText(Is, px, false).Width + px * 0.3f;
+        // A touch button's row shows only what it sends.
+        if ((row.Flags & OverlayKeyRow.Touch) == 0)
+        {
+            var name = row.Name;
+            float nw = g.MeasureText(name, px, true).Width;
+            g.DrawText(name, px, true, Faded(nameColor, a), new RectangleF(x, r.Y, r.Right - x, r.Height), TextAlign.Near, TextAlign.Center);
+            x += nw + px * 0.3f;
+            const string Is = "=";
+            g.DrawText(Is, px, false, Faded(nameColor, a * 0.6f), new RectangleF(x, r.Y, Math.Max(0f, r.Right - x), r.Height), TextAlign.Near, TextAlign.Center);
+            x += g.MeasureText(Is, px, false).Width + px * 0.3f;
+        }
         bool toggle = (row.Flags & OverlayKeyRow.Toggle) != 0;
         g.DrawText(row.Target, px, false, Faded(toggle ? on : target, a), new RectangleF(x, r.Y, Math.Max(0f, r.Right - x), r.Height), TextAlign.Near, TextAlign.Center);
         // A trigger's pull, as a thin bar along the row's foot.

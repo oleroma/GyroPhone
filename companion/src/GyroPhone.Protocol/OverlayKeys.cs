@@ -30,6 +30,9 @@ public readonly record struct OverlayTriggerTuning(float Press, float Full);
 /// </summary>
 public sealed record OverlayKeys(int TapMs, OverlayStickTuning[] Sticks, OverlayTriggerTuning[] Triggers, IReadOnlyList<OverlayKey> Keys)
 {
+    /// <summary>The touch buttons' mappings (the phone's OverlayTouchKey): shown while the OVERLAY has the button pressed.</summary>
+    public IReadOnlyList<OverlayTouchKey> Touch { get; init; } = [];
+
     /// <summary>Marks the keys part of a frames blob (the phone's OverlayFeed.KEYS_SECTION).</summary>
     public const byte Section = 0x4B;
 
@@ -66,10 +69,28 @@ public sealed record OverlayKeys(int TapMs, OverlayStickTuning[] Sticks, Overlay
             if (name == null || target == null) return null;
             keys.Add(new OverlayKey(input, flags, name, target));
         }
+        // Touch buttons (older phones of this feature stop here).
+        var touch = new List<OverlayTouchKey>();
+        if (at < b.Length)
+        {
+            int tc = b[at++];
+            for (int i = 0; i < tc; i++)
+            {
+                if (at + 2 > b.Length) return null;
+                int control = b[at], flags = b[at + 1];
+                at += 2;
+                var target = Str(b);
+                if (target == null) return null;
+                touch.Add(new OverlayTouchKey(control, flags, target));
+            }
+        }
         p = at;
-        return new OverlayKeys(tap, sticks, triggers, keys);
+        return new OverlayKeys(tap, sticks, triggers, keys) { Touch = touch };
     }
 }
+
+/// <summary>A touch button's mapping: the button by its layout index, flags as <see cref="OverlayKey.Flags"/>, what it sends.</summary>
+public sealed record OverlayTouchKey(int Control, int Flags, string Target);
 
 /// <summary>
 /// A stick's row in the Keys overlay: <paramref name="Stick"/> 0 left, 1 right; what its whole axes send
@@ -91,7 +112,8 @@ public sealed record OverlayKeyStick(int Stick, string Analog, IReadOnlyList<str
 /// </summary>
 public sealed record OverlayKeyRow(string Name, string Target, int Flags)
 {
-    public const int Toggle = 1, LeftTrigger = 2, RightTrigger = 4;
+    /// <summary><see cref="Touch"/>: a touch button's row, shown without its name (its <see cref="Name"/> only tells rows apart).</summary>
+    public const int Toggle = 1, LeftTrigger = 2, RightTrigger = 4, Touch = 8;
 }
 
 /// <summary>What the Keys overlay shows now: the sticks that send something, and the buttons firing or with a Toggle on.</summary>
@@ -138,7 +160,7 @@ public sealed class OverlayKeysReader
         if (!ReferenceEquals(table, _table))
         {
             _table = table;
-            int n = table.Keys.Count;
+            int n = table.Keys.Count + table.Touch.Count;
             _down = new bool[n]; _shortUp = new bool[n]; _toggled = new bool[n]; _was = new bool[n];
             _downAt = new long[n]; _upAt = new long[n]; _pulseUntil = new long[n];
             for (int i = 0; i < n; i++) _upAt[i] = long.MinValue / 2;
@@ -189,6 +211,24 @@ public sealed class OverlayKeysReader
             else if (!HasPart(rows[at].Target, target)) rows[at] = rows[at] with { Target = rows[at].Target + " + " + target, Flags = rows[at].Flags | flags };
             else rows[at] = rows[at] with { Flags = rows[at].Flags | flags };
         }
+        // Touch buttons: pressed and Toggles on (latched) as the OVERLAY has them.
+        var touch = table.Touch;
+        for (int j = 0; j < touch.Count; j++)
+        {
+            var t = touch[j];
+            int i = keys.Count + j;
+            bool toggle = (t.Flags & OverlayKey.Toggle) != 0;
+            bool on = Fired(i, t.Flags & OverlayKey.GestureMask, f.IsPressed(t.Control), table.TapMs, now);
+            if (toggle) on = f.IsLatched(t.Control);
+            if (!on) continue;
+            string name = TouchName(t.Control);
+            string target = toggle ? t.Target + " on" : t.Target;
+            int flags = OverlayKeyRow.Touch | (toggle ? OverlayKeyRow.Toggle : 0);
+            rows ??= new List<OverlayKeyRow>();
+            int at = rows.FindIndex(r => r.Name == name);
+            if (at < 0) rows.Add(new OverlayKeyRow(name, target, flags));
+            else if (!HasPart(rows[at].Target, target)) rows[at] = rows[at] with { Target = rows[at].Target + " + " + target, Flags = rows[at].Flags | flags };
+        }
         var sticks = new List<OverlayKeyStick>(2);
         for (int s = 0; s < 2; s++)
         {
@@ -206,6 +246,11 @@ public sealed class OverlayKeysReader
         foreach (var p in joined.Split(" + ")) if (p == part) return true;
         return false;
     }
+
+    private static readonly string[] TouchNames = Enumerable.Range(0, 128).Select(i => "touch " + i).ToArray();
+
+    /// <summary>A touch button's row name, by its layout index: never shown, it keeps its row apart from others.</summary>
+    private static string TouchName(int control) => (uint)control < 128 ? TouchNames[control] : "touch " + control;
 
     private static int TriggerFlag(int input)
     {
