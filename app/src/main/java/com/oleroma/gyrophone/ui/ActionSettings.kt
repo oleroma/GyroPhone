@@ -108,7 +108,11 @@ private fun gyroSensRow(level: WorkspaceLevel, axis: MotionAxis): SensRow {
 /** A button's gyro [axis] Sensitivity line while held. */
 private fun buttonSensRow(g: ButtonGyroLevel, axis: MotionAxis): SensRow {
     val own = g.own.ownLink(axis)
-    return SensRow(own, if (own == null) g.inUse.ownLink(axis) else null, { x -> gyroShow(g.parent)(g.inUse.withLink(axis, x).sensitivityOf(axis, g.parent, g.named)) }) { x ->
+    // Not its own: what it follows while held, from Base (in a layer), else the workspace's or
+    // layer's link (unless the button's own value or own Gyro sensitivity hides it).
+    val faded = if (own != null) null else g.inUse.ownLink(axis)
+        ?: g.parent.ownLink(axis).takeIf { g.inUse.own(axis) == null && g.inUse.sensitivity == null }
+    return SensRow(own, faded, { x -> gyroShow(g.parent)(g.inUse.withLink(axis, x).sensitivityOf(axis, g.parent, g.named)) }) { x ->
         g.edit { if (x == null) it.with(axis, null) else it.withLink(axis, x) }
     }
 }
