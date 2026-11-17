@@ -7,6 +7,7 @@ import com.oleroma.gyrophone.core.model.AttachedPad
 import com.oleroma.gyrophone.core.model.ButtonGyro
 import com.oleroma.gyrophone.core.model.DeviceMatch
 import com.oleroma.gyrophone.core.model.DevicePreset
+import com.oleroma.gyrophone.core.model.FingerAxis
 import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.HeldButton
 import com.oleroma.gyrophone.core.model.Inheritance
@@ -219,6 +220,23 @@ class SensLinkTest {
         val e = MappingEngine(single(w.copy(gyro = w.gyro.withLink(pitch, SensLink("YAW", 0.5f)))))
         assertEquals(10f, e.gyroSettings.sensitivityOf(yaw), 0f)
         assertEquals(5f, e.gyroSettings.sensitivityOf(pitch), 0f)
+    }
+
+    @Test fun anOverrideKeptByAChipThatIsGoneNoLongerCounts() {
+        // A slider once set every axis (wiping the pitch link) and pitch; its chip now sets yaw (ROLL) only.
+        val w = aimWorkspace(
+            ButtonGyro(),
+            listOf(
+                SliderOverride(OutputTarget.GyroSens(), 120f, "btn1"),
+                SliderOverride(OutputTarget.GyroSens(MotionAxis.PITCH), 60f, "btn1"),
+                SliderOverride(OutputTarget.GyroSens(MotionAxis.ROLL), 10f, "btn1"),
+            ),
+        )
+        val chip = Mapping(InputSource.Finger("btn1", FingerAxis.X), OutputTarget.GyroSens(MotionAxis.ROLL))
+        val e = MappingEngine(single(w.copy(mappings = w.mappings + chip, gyro = w.gyro.withLink(pitch, SensLink("ROLL", 0.5f)))))
+        assertEquals(10f, e.gyroSettings.sensitivityOf(MotionAxis.ROLL), 0f)
+        assertEquals(5f, e.gyroSettings.sensitivityOf(pitch), 0f)
+        assertEquals(16f, e.gyroSettings.sensitivity, 0f)
     }
 
     // A physical button's Motion tab: gyro mapped while it is held.

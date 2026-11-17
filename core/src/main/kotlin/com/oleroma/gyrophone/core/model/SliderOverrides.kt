@@ -64,6 +64,18 @@ object SliderOverrides {
         else -> false
     }
 
+    /**
+     * [w]'s overrides that a chip still keeps: one kept by a touch control ([SliderOverride.by]) goes
+     * once none of that control's chips sets that setting (the chip was removed or now sets
+     * another). The touchpad's and controllers' ones stay.
+     */
+    fun live(w: Workspace): List<SliderOverride> = if (w.sliders.none { it.by.isNotEmpty() }) w.sliders else w.sliders.filter { o ->
+        o.by.isEmpty() || w.mappings.any { m -> m.target == o.target && MappingProfiles.touchId(m.source) == o.by }
+    }
+
+    /** [w] without overrides no chip keeps any more ([live]). */
+    fun pruned(w: Workspace): Workspace = live(w).let { if (it.size == w.sliders.size) w else w.copy(sliders = it) }
+
     /** [w] with chip [m]'s [value] as its slider override, replacing older ones of that sensitivity (newest wins). */
     fun put(w: Workspace, m: Mapping, value: Float): Workspace {
         if (keyOf(m.target) == null) return w

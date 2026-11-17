@@ -1543,7 +1543,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             latched.remove(id)
             if (id !in touches && id.removePrefix(PHYS) !in physDown) pressOrder.remove(id)
         }
-        ws = w
+        // Overrides a chip no longer keeps don't count (a removed or changed slider chip).
+        ws = SliderOverrides.pruned(w)
         fitNamed(w)
         heldPhys = heldOf(w)
         for (id in physDown) if (PHYS + id !in latched) pressOrder.remove(PHYS + id)
@@ -2494,7 +2495,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 current = p; applyWorkspace(); return@synchronized
             }
             current = p
-            ws = ws.copy(sliders = loaded.sliders, namedSens = loaded.namedSens)
+            ws = ws.copy(sliders = SliderOverrides.live(loaded), namedSens = loaded.namedSens)
             fitNamed(ws)
             kept.values.removeIf { it.committed }
             applyLayerSettings()
