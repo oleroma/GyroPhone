@@ -14,14 +14,14 @@ Physical devices attached to the phone (a clip-on or Bluetooth game pad, a keybo
 - Android asks once per plug-in whether GP may use it. Refused, unreadable or failing reads: the pad stays (or goes back to being) Android's, read as below, until it is plugged in again.
 - "Press a key" and learning get its presses on the main thread; in play they never touch it. Ratchet timing and the PC's phone overlay get them as from any pad.
 
-A pad's axes are read by `PhysicalSticks`: sticks `ls` / `rs`, triggers `lt` / `rt`. Pads that put the right stick on RX / RY (Generic.kl) are detected; Z / RZ are then the triggers. The face layout (Xbox, PlayStation, Nintendo) and the drawing come from `core/.../model/KnownLayouts.kt` and `ControllerDiagrams.kt`; unknown pads get the Xbox drawing.
+A pad's axes are read by `PhysicalSticks`: sticks `ls` / `rs`, triggers `lt` / `rt`. Pads that put the right stick on RX / RY (Generic.kl) are detected; Z / RZ are then the triggers. The engine reads such a pad as a standard one (its RX / RY as the right stick Z / RZ, its Z / RZ as the triggers LTRIGGER / RTRIGGER), so the standard mapping, the drawing, learning an axis and Press a key all work on it. The face layout (Xbox, PlayStation, Nintendo) and the drawing come from `core/.../model/KnownLayouts.kt` and `ControllerDiagrams.kt`; unknown pads get the Xbox drawing.
 
 ## Device presets
 
 `core/.../model/DevicePresets.kt`. A **device preset** says what each physical device does:
 
 - **controller**: any game pad's buttons, sticks (with their directions, Outer ring and click) and triggers (Press and Full pull);
-- **keyboard**: keys;
+- **keyboard**: keys (the standard preset sends each key, media and volume keys too, as the same key on the PC);
 - **mouse**: buttons, wheel and movement. On the pad, while the workspace maps the mouse, a mouse attached to the phone is captured (no phone cursor; raw moves and buttons). A captured mouse still counts as attached (Android lists it as a relative mouse then), so the capture stays put; many game pads also list a mouse of their own (the 8BitDo Ultimate Mobile's second USB interface), which is captured the same way and sends nothing;
 - **phone**: the volume rocker ([Volume rocker](phone-volume-black-screen.md));
 - **timings**: a key's own long-press and double-tap times (`KeyTiming`; none = the workspace's);

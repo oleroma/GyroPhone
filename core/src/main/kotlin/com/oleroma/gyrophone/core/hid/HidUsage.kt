@@ -93,6 +93,9 @@ object AndroidKeyToHid {
         put(85, HidUsage.PLAY_PAUSE); put(87, HidUsage.NEXT_TRACK); put(88, HidUsage.PREVIOUS_TRACK) // KEYCODE_MEDIA_*
     }
 
+    /** Every Android keycode with a HID usage, in keycode order. */
+    val keyCodes: List<Int> = table.keys.sorted()
+
     /** HID usage for an Android keycode, or null if it has no keyboard equivalent. */
     fun usage(androidKeyCode: Int): Int? = table[androidKeyCode]
 }

@@ -10,6 +10,7 @@ import com.oleroma.gyrophone.core.model.DeviceMatch
 import com.oleroma.gyrophone.core.model.DevicePreset
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.InputSource
+import com.oleroma.gyrophone.core.model.KnownLayouts
 import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.PhysicalSticks
@@ -152,23 +153,51 @@ class StickTuningTest {
         assertEquals(0.05f, e.v(InputSource.Axis(AndroidAxis.RX)), 1e-6f)
     }
 
-    @Test fun rightStickOnRxRyLeavesZRzRaw() {
-        // Generic.kl pad: RX / RY stick, triggers on Z / RZ.
+    @Test fun rightStickOnRxRyIsReadAsTheStandardOne() {
+        // Generic.kl pad: RX / RY stick, triggers on Z / RZ (centred axes, at rest -1).
         val p = pad.copy(rightStickRx = true)
         val e = rightStickEngine()
-        e.setAxis(p, AndroidAxis.Z, 0.05f)
-        assertEquals(0.05f, e.v(InputSource.Axis(AndroidAxis.Z)), 1e-6f)
-        // One trigger does not scale the other.
-        e.setAxis(p, AndroidAxis.Z, 0.5f); e.setAxis(p, AndroidAxis.RZ, 0.8f)
-        assertEquals(0.5f, e.v(InputSource.Axis(AndroidAxis.Z)), 1e-6f)
-        assertEquals(0.8f, e.v(InputSource.Axis(AndroidAxis.RZ)), 1e-6f)
+        e.setAxis(p, AndroidAxis.Z, -1f); e.setAxis(p, AndroidAxis.RZ, -1f)
+        assertEquals(0f, e.v(InputSource.Axis(AndroidAxis.LTRIGGER)), 0f)
+        assertEquals(0f, e.v(InputSource.Axis(AndroidAxis.Z)), 0f)
+        // Its triggers are LTRIGGER / RTRIGGER, 0..1; one does not scale the other.
+        e.setAxis(p, AndroidAxis.Z, 0f); e.setAxis(p, AndroidAxis.RZ, 0.6f)
+        assertEquals(0.5f, e.v(InputSource.Axis(AndroidAxis.LTRIGGER)), 1e-6f)
+        assertEquals(0.8f, e.v(InputSource.Axis(AndroidAxis.RTRIGGER)), 1e-6f)
+        assertEquals(0f, e.v(InputSource.Axis(AndroidAxis.Z)), 0f)
+        // Its stick is Z / RZ, tuned as the right stick.
         e.setAxis(p, AndroidAxis.RX, 0.06f); e.setAxis(p, AndroidAxis.RY, 0.06f)
-        assertEquals(0f, e.v(InputSource.Axis(AndroidAxis.RX)), 0f)
+        assertEquals(0f, e.v(InputSource.Axis(AndroidAxis.Z)), 0f)
         e.setAxis(p, AndroidAxis.RX, 0.525f); e.setAxis(p, AndroidAxis.RY, 0f)
-        assertEquals(0.5f, e.v(InputSource.Axis(AndroidAxis.RX)), 1e-4f)
-        val up = InputSource.Axis(AndroidAxis.RY, AxisHalf.NEGATIVE, AxisStage.OUTER)
+        assertEquals(0.5f, e.v(InputSource.Axis(AndroidAxis.Z)), 1e-4f)
+        assertEquals(0f, e.v(InputSource.Axis(AndroidAxis.RX)), 0f)
+        val up = InputSource.Axis(AndroidAxis.RZ, AxisHalf.NEGATIVE, AxisStage.OUTER)
         e.setAxis(p, AndroidAxis.RX, 0f); e.setAxis(p, AndroidAxis.RY, -0.9f)
         assertEquals(1f, e.v(up), 0f)
+    }
+
+    @Test fun rxPadDrivesThePcPadThroughTheStandardMapping() {
+        val p = pad.copy(rightStickRx = true)
+        val e = MappingEngine(
+            single(
+                Workspace(
+                    id = "w", name = "w",
+                    pads = listOf(
+                        AttachedPad(
+                            id = "p", match = DeviceMatch(vendorId = 0x045E, productId = 0x0B13),
+                            mappings = KnownLayouts.standardControllerMappings(),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        e.setAxes(p, intArrayOf(AndroidAxis.Z, AndroidAxis.RZ, AndroidAxis.RX), floatArrayOf(-1f, 1f, 1f), 3)
+        val g = e.snapshot().gamepad
+        // The trigger at rest leaves the right stick alone; the pulled one is RT; the stick is the right stick.
+        assertEquals(0, g.lt)
+        assertTrue(g.rt > 0)
+        assertTrue(g.rx > 0)
+        assertEquals(0, g.ry)
     }
 
     @Test fun rightStickAxesFollowTheReportedAxes() {

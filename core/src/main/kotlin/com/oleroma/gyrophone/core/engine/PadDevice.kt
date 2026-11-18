@@ -10,7 +10,8 @@ package com.oleroma.gyrophone.core.engine
  * L2 / R2 key (which may fire early in the pull) does not drive LT / RT; other keys bound to a
  * trigger, and an L2 / R2 key whose axis is not bound to one, still do. [rightStickRx]: its right
  * stick is RX / RY, not Z / RZ ([com.oleroma.gyrophone.core.model.PhysicalSticks.rightStickOnRx]),
- * so the preset's right stick tuning applies to RX / RY and its Z / RZ stay raw.
+ * so the engine reads its RX / RY as the right stick (Z / RZ) and its Z / RZ as the triggers
+ * (LTRIGGER / RTRIGGER, [com.oleroma.gyrophone.core.model.PhysicalSticks.canonicalAxis]).
  */
 data class PadDevice(
     val id: Int,

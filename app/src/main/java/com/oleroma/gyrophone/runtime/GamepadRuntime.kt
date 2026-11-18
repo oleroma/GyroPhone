@@ -76,7 +76,6 @@ import com.oleroma.gyrophone.wifi.WifiLink
 import com.oleroma.gyrophone.wifi.WifiPump
 import kotlinx.coroutines.CoroutineScope
 import com.oleroma.gyrophone.core.model.MappingSet
-import com.oleroma.gyrophone.core.model.PhysicalSticks
 import com.oleroma.gyrophone.core.model.layered
 import com.oleroma.gyrophone.core.net.OverlayKeys
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -747,8 +746,8 @@ class GamepadRuntime(context: Context) {
         val touch = OverlayKeys.touchOf(layered(ws.mappings, l.set, l.overrides))
         for (c in cs) {
             val pad = ws.pads.firstOrNull { it.matches(c.vendorId, c.productId, c.name) } ?: continue
-            val rx = PhysicalSticks.rightStickOnRx { it in c.axes }
-            return OverlayKeys.of(layered(pad.mappings, l.set, l.overrides), rx, ws.stickTunings, ws.triggerTunings, ws.longPressMs)
+            // The mappings name a pad's axes as the engine reads them: a right stick on RX / RY is Z / RZ there too.
+            return OverlayKeys.of(layered(pad.mappings, l.set, l.overrides), false, ws.stickTunings, ws.triggerTunings, ws.longPressMs)
                 .copy(touch = touch)
         }
         return OverlayKeys.NONE.copy(tapMs = ws.longPressMs, touch = touch)
