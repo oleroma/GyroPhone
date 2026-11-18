@@ -17,7 +17,7 @@ adaptive triggers come later.
 3. Start the game *after* the DualSense is plugged in (the phone connected with that output).
    Many games only look for controllers when they start.
 
-Run `install.cmd` again to update the driver.
+Run `install.cmd` again to update the driver; exit the companion first, so install.cmd can restart the device and the new driver runs at once (otherwise it runs after the next Windows restart).
 
 ## What install.cmd does
 
@@ -37,6 +37,8 @@ the PC trusts is enough to install it.
 
 Run `uninstall.cmd`. It removes the device, the driver from Windows' driver store, the certificate
 (from all three stores) and the signed copy. The PC is back to how it was before `install.cmd`.
+The certificate is shared with the optional input driver (`input-driver/`, the virtual mouse and
+keyboard): while that one is installed, uninstalling this one keeps the certificate for it.
 
 ## Risks
 

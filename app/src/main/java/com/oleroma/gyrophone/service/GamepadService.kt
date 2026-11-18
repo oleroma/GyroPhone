@@ -93,8 +93,8 @@ class GamepadService : Service() {
     }
 
     /**
-     * `adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService [on|off|record|events N]`:
-     * link, gyro and workspace now, the debug log's newest events, and a recording on request
+     * `adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService [on|off|save|keep N|events N]`:
+     * link, gyro and workspace now, Diagnostics' newest events, and a save on request
      * (see [com.oleroma.gyrophone.runtime.PhoneDebug.dump]). Only the shell and the system may call it.
      */
     override fun dump(fd: java.io.FileDescriptor?, writer: java.io.PrintWriter, args: Array<out String>?) {

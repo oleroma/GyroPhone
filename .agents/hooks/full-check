@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Full checks, run once by every build (PC and fallback) after the build. The quick tests
-# already ran before it, so they aren't repeated here.
+# Full checks, run once per feature before the merge by agent-check (on the PC, or the fallback
+# with checks), not by builds. The quick tests already ran in the builds, so they aren't repeated here.
 # Usage: full-check [apk|companion]; no argument: the parts this branch changed (see parts).
 # Only the app has full checks (Android lint).
 set -euo pipefail

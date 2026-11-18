@@ -1,0 +1,18 @@
+<Project>
+  <!-- The video latency test tool (README.md). It is not part of the companion: no build, test or release of the
+       repo includes it. Everything it builds goes in the repo's build/latency-test folder. -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)../../build/latency-test/bin/$(MSBuildProjectName)/</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)../../build/latency-test/obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
+  </PropertyGroup>
+  <!-- OpenCvSharp ships an analyzer that needs a newer compiler than the .NET 8 SDK has; it only adds warnings. -->
+  <Target Name="DropOpenCvSharpAnalyzer" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'OpenCvSharp.Analyzers'" />
+    </ItemGroup>
+  </Target>
+</Project>

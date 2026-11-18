@@ -55,9 +55,8 @@ public sealed class OverlayRest
     }
 
     /// <summary>One OVERLAY at <paramref name="nowUs"/>.</summary>
-    public void Feed(OverlayFrame f, long nowUs, HostSettings settings)
+    public void Feed(OverlayFrame f, long nowUs, OverlayRestFade fade, List<OverlaySettings> overlays)
     {
-        var fade = settings.OverlayRestFade;
         float? dps = Speed(f);
         if (dps is { } d)
         {
@@ -68,7 +67,7 @@ public sealed class OverlayRest
         // No gyro in this frame: it can't be told still, so it counts as moving (never rests in a hand).
         bool moving = !f.PoseLive || dps is { } s && s >= fade.StillBelowDps;
         if (moving || Shaken(f) || HasInput(f) || _busyUs == long.MinValue) _busyUs = nowUs;
-        foreach (var o in settings.Overlays)
+        foreach (var o in overlays)
         {
             if (!o.Shown) continue;
             if (!AtLevel(f, o, fade.FlatWithinDeg) || !_offLevelUs.ContainsKey(o.Id)) _offLevelUs[o.Id] = nowUs;

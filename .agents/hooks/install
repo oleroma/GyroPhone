@@ -4,13 +4,14 @@
 # 1. Installs the companion on this PC at %LOCALAPPDATA%\Programs\GyroPhone, one fixed path,
 #    so its firewall rule and Start with Windows entry survive updates. A running exe is never
 #    touched (it reads parts of itself by path while it runs): the new build waits next to it
-#    as GyroPhoneCompanion.exe.new, and the running companion (or watcher) shuts down, copies
+#    as GyroPhoneCompanion.exe.new, and the running companion (or watcher) shuts down, moves
 #    it into place and starts again within a few seconds, even with a phone connected
 #    (pairing and settings live in %APPDATA%\GyroPhone). OpenCV's DLLs, which ship beside the exe,
 #    are copied next to it when they changed; one a running companion holds waits as <dll>.new,
 #    and the update finisher moves it in.
-# 2. Copies the optional pad driver's files (the folder the build zipped for releases) to the
-#    repo's build\GyroPhonePad-driver folder (next to the newest APK and companion), without installing it: Olex runs its install.cmd himself
+# 2. Copies the optional drivers' files (the folders the build zipped for releases) to the repo's
+#    build\GyroPhonePad-driver and build\GyroPhoneInput-driver folders (next to the newest APK and
+#    companion), without installing them: Olex runs their install.cmd himself
 #    (admin prompt, its own signing key on this PC), and uninstall.cmd removes it.
 # 3. Swaps the key files over adb, so the phone connects over Wi-Fi without a code: the
 #    phone's phone.pub goes to %APPDATA%\GyroPhone\authorized_phones and the PC's host.pub
@@ -25,12 +26,13 @@ note() { echo "note: $*"; }
 
 ver="$1"
 shift
-exe="" driver_zip="" dlls=()
+exe="" driver_zip="" input_zip="" dlls=()
 for f in "$@"; do
   case "$f" in
     */GyroPhoneCompanion.exe) exe="$f" ;;
     *.dll) dlls+=("$f") ;;
     */GyroPhonePad-driver.zip) driver_zip="$f" ;;
+    */GyroPhoneInput-driver.zip) input_zip="$f" ;;
   esac
 done
 
@@ -168,27 +170,29 @@ swap_keys() {
   fi
 }
 
-# ---- PC: the pad driver's files (not the driver itself) ----
-# Copies the folder the build made (build/driver/pkg here in the build worktree) to the repo's
-# build\GyroPhonePad-driver, next to the other build files. No zip: the zip is only for releases.
+# ---- PC: the drivers' files (not the drivers themselves) ----
+# Copies the folder the build made (build/<dir>/pkg here in the build worktree) to the repo's
+# build\<name>-driver, next to the other build files. No zip: the zip is only for releases.
+# unpack_driver <zip> <build dir> <name> <what>
 unpack_driver() {
-  [ -n "$driver_zip" ] || return 0
-  local src=build/driver/pkg dest dest_w dver
+  local zip="$1" src="build/$2/pkg" name="$3" what="$4" dest dest_w dver
+  [ -n "$zip" ] || return 0
   # The build files come from build/builds/<build>/; the folder goes next to the newest build
   # files directly in build/, replacing the previous build's, like the APK and the companion.
-  dest="$(dirname "$(dirname "$(dirname "$driver_zip")")")/GyroPhonePad-driver"
+  dest="$(dirname "$(dirname "$(dirname "$zip")")")/$name-driver"
   dest_w="$(cygpath -w "$dest")"
-  if [ ! -f "$src/GyroPhonePad.inf" ] || ! rm -rf "$dest" || ! mkdir -p "$dest" || ! cp -f "$src"/* "$dest"/; then
-    note "Couldn't copy the pad driver into $dest_w."
+  if [ ! -f "$src/$name.inf" ] || ! rm -rf "$dest" || ! mkdir -p "$dest" || ! cp -f "$src"/* "$dest"/; then
+    note "Couldn't copy the $what into $dest_w."
     return
   fi
   # agent-build also put a copy of the zip there; on the PC only the folder is wanted (the zip
   # stays in build/builds/<build>/ for publishing).
-  rm -f "$(dirname "$dest")/GyroPhonePad-driver.zip"
+  rm -f "$(dirname "$dest")/$name-driver.zip"
   dver="$(head -n 1 "$dest/VERSION.txt" 2>/dev/null | tr -d '\r')"
-  note "Pad driver ${dver:-?} is in $dest_w, not installed: run install.cmd there to install or update it (admin prompt), uninstall.cmd to remove it."
+  note "${what^} ${dver:-?} is in $dest_w, not installed: run install.cmd there to install or update it (admin prompt), uninstall.cmd to remove it."
 }
 
 install_companion
-unpack_driver
+unpack_driver "$driver_zip" driver GyroPhonePad "pad driver"
+unpack_driver "$input_zip" input-driver GyroPhoneInput "input driver"
 swap_keys

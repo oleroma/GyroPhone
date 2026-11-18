@@ -133,6 +133,7 @@ object OverridingChildren {
             is HapticEdge -> v.label
             is Enum<*> -> v.name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
             is String -> v.ifBlank { return null }
+            is SensLink -> return v.label(!key.startsWith(WorkspaceDefaults.gyroKey("")))
             else -> return null
         }
         return if (factor) "×$s" else s
@@ -185,23 +186,27 @@ object OverridingChildren {
                 MotionAxis.YAW -> {
                     add(k("yawSensitivity"), g.yaw) { it.copy(yaw = null) }
                     add(k("yawScale"), g.yawScale, true) { it.copy(yawScale = null) }
+                    add(k("yawLink"), g.yawLink) { it.copy(yawLink = null) }
                     add(k("yawMode"), g.yawMode) { it.copy(yawMode = null) }
                     add(k("yawAccel"), g.yawAccel) { it.copy(yawAccel = null) }
                 }
                 MotionAxis.PITCH -> {
                     add(k("pitchSensitivity"), g.pitch) { it.copy(pitch = null) }
                     add(k("pitchScale"), g.pitchScale, true) { it.copy(pitchScale = null) }
+                    add(k("pitchLink"), g.pitchLink) { it.copy(pitchLink = null) }
                     add(k("pitchMode"), g.pitchMode) { it.copy(pitchMode = null) }
                     add(k("pitchAccel"), g.pitchAccel) { it.copy(pitchAccel = null) }
                 }
                 MotionAxis.ROLL -> {
                     add(k("rollSensitivity"), g.roll) { it.copy(roll = null) }
                     add(k("rollScale"), g.rollScale, true) { it.copy(rollScale = null) }
+                    add(k("rollLink"), g.rollLink) { it.copy(rollLink = null) }
                     add(k("rollMode"), g.rollMode) { it.copy(rollMode = null) }
                     add(k("rollAccel"), g.rollAccel) { it.copy(rollAccel = null) }
                 }
                 MotionAxis.NONE -> {}
             }
+            add(k(GyroSettings.spaceProp(a)!!), g.ownSpace(a)) { it.withSpace(a, null) }
             val p = a.name.lowercase()
             add(k(p + "Inertia"), glide.inertia) { it.withGlide(a, it.ownGlide(a).copy(inertia = null)) }
             add(k(p + "GlideMs"), glide.glideMs) { it.withGlide(a, it.ownGlide(a).copy(glideMs = null)) }
@@ -210,6 +215,7 @@ object OverridingChildren {
         val sens = WorkspaceDefaults.touchpadKey(SurfaceField.SENSITIVITY)
         add(sens, g.touchSensitivity) { it.copy(touchSensitivity = null) }
         add(sens, g.touchScale, true) { it.copy(touchScale = null) }
+        add(sens, g.touchLink) { it.copy(touchLink = null) }
         add(WorkspaceDefaults.touchpadKey(SurfaceField.ACCELERATION), g.touchAcceleration) { it.copy(touchAcceleration = null) }
         return out
     }

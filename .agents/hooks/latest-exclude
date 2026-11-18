@@ -1,0 +1,5 @@
+# Parts that never go on the "latest" release, only on build pre-releases (update-latest).
+# The OpenCV DLLs are only for the latency test.
+*.dll
+# The drivers (input and DualSense pad) are opt-in tools, not for everyone: build pre-releases only (Olex, 2026-11-15).
+*-driver.zip

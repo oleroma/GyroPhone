@@ -53,11 +53,11 @@ public class LaserTraceTests
     }
 
     [Fact]
-    public void RifleShowsItsNearFacesFarthestFirst()
+    public void RifleShowsItsNearFaces()
     {
         var faces = LaserTrace.RifleFaces(Identity, true, null);
         Assert.Equal(30, faces.Count); // 10 boxes, 3 faces of each toward the viewer
-        for (int i = 1; i < faces.Count; i++) Assert.True(faces[i - 1].Depth <= faces[i].Depth);
+        // Their drawing order: GunFaceOrderTests.
         Assert.All(faces, f => Assert.InRange(f.Light, 0f, 1f));
     }
 

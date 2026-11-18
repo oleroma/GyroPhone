@@ -76,6 +76,7 @@ object OldWorkspaceDefaults {
         }
         gyroAxisSens[key]?.let { exact -> return listOf(gyroKey("sensitivity"), exact) }
         if (key in gyroAxisSens.values) return listOf(gyroKey("sensitivity"))
+        if (MotionAxis.entries.any { GyroSettings.spaceProp(it)?.let(::gyroKey) == key }) return listOf(gyroKey("gyroSpace"))
         return emptyList()
     }
 
@@ -139,7 +140,7 @@ object OldWorkspaceDefaults {
         if (!p.isString) return p.booleanOrNull ?: p.doubleOrNull
         val name = p.content
         return when {
-            prop == "gyroSpace" -> GyroSpace.entries.firstOrNull { it.name == name }
+            prop == "gyroSpace" || prop.endsWith("Space") -> GyroSpace.entries.firstOrNull { it.name == name }
             prop == "yawAxis" -> YawAxis.entries.firstOrNull { it.name == name }
             prop == "mode" || prop.endsWith("Mode") -> GyroMode.entries.firstOrNull { it.name == name }
             prop.endsWith("Curve") -> InertiaCurve.entries.firstOrNull { it.name == name }

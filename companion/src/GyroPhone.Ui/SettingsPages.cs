@@ -258,10 +258,9 @@ internal sealed class ConnectionPage : Page
 internal sealed class AppPage : Page
 {
     private readonly StackPanel _root = new();
-    private readonly CheckBox _autoStart, _watcher, _inputLog, _pressListen, _pressNotice;
+    private readonly CheckBox _autoStart, _watcher, _pressListen, _pressNotice;
     private readonly Seg<TrayClickAction> _trayClick;
-    private readonly Seg<int> _catchUp;
-    private readonly TextBlock _log, _version;
+    private readonly TextBlock _version;
 
     public override FrameworkElement View => _root;
 
@@ -297,25 +296,6 @@ internal sealed class AppPage : Page
         pb.Children.Add(_pressNotice);
         _root.Children.Add(press);
 
-        var (input, ib) = Parts.Card("Mouse");
-        ib.Children.Add(Parts.Text("Catch-up time"));
-        _catchUp = new Seg<int>(app.SetCatchUpMs, false, ("Off", 0), ("8 ms", 8), ("16 ms", 16), ("32 ms", 32));
-        _catchUp.View.Margin = new Thickness(0, 8, 0, 4);
-        ib.Children.Add(_catchUp.View);
-        ib.Children.Add(Parts.Text("When Wi-Fi loses or holds up a stretch of gyro or mouse movement, it is played out over up to this long instead of landing as one jump. New movement always goes out at once. Off: the old one-step jump.", "Hint"));
-        _root.Children.Add(input);
-
-        var (help, hb) = Parts.Card("Troubleshooting");
-        _inputLog = Parts.Toggle("Record input log", app.ToggleInputLog,
-            "Notes lost, late and stalled input in input.log in the log folder, so a stutter can be traced after you play. Costs almost nothing.");
-        hb.Children.Add(_inputLog);
-        hb.Children.Add(Parts.Divider());
-        _log = Parts.Text("", "Sub");
-        hb.Children.Add(_log);
-        hb.Children.Add(Parts.Row(
-            Parts.Button("Open log folder", app.OpenLogFolder, glyph: ""),
-            Parts.Button("Debug window…", app.ShowDebugWindow, glyph: "")));
-        _root.Children.Add(help);
 
         var (about, ab) = Parts.Card("About");
         _version = Parts.Text("");
@@ -328,13 +308,10 @@ internal sealed class AppPage : Page
     {
         Parts.SetChecked(_autoStart, v.AutoStart);
         Parts.SetChecked(_watcher, v.Watcher);
-        Parts.SetChecked(_inputLog, v.InputLog);
         Parts.SetChecked(_pressListen, v.PressKeyListen);
         Parts.SetChecked(_pressNotice, v.PressKeyNotice);
         _pressNotice.IsEnabled = v.PressKeyListen;
         _trayClick.Set(v.TrayClick);
-        _catchUp.Set(v.CatchUpMs);
-        _log.Text = $"Log: {v.LogPath}";
         _version.Text = v.UpdatePending is { } p ? $"{v.Version} · restarting into {p}" : v.Version;
     }
 }
