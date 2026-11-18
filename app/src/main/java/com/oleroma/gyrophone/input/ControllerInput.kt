@@ -128,7 +128,8 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         }
         for (i in 0 until mice.size()) engine.deviceRemoved(mice.valueAt(i).id)
         engine.deviceRemoved(PHONE_PAD.id)
-        runtime.wifi.overlay.clearPad()
+        // The PC overlay's controller shows a USB pad read directly as it still is: its buttons stay drawn held.
+        if (!runtime.usbPads.holdsAny) runtime.wifi.overlay.clearPad()
     }
 
     /** Returns true if the event was consumed. */
