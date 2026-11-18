@@ -515,6 +515,56 @@ public class SessionManagerTests
         Assert.Equal(new Rumble(0, 0), WireCodec.DecodeRumble(p));
     }
 
+    private static List<Rumble> Rumbles(Harness h, FakePhone phone)
+    {
+        var list = new List<Rumble>();
+        foreach (var d in h.Sender.Sent)
+            if (phone.TryOpen(d.Data, out var p) == PacketType.Rumble) list.Add(WireCodec.DecodeRumble(p));
+        return list;
+    }
+
+    [Fact]
+    public void RumbleRepeatsWhileOnAndAFewTimesAfterItStops()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        h.Sender.Clear();
+        h.Pad.RaiseRumble(200, 0);
+        h.Engine.Flush(h.Clock.NowUs);
+        Assert.Single(Rumbles(h, phone));
+        // Flushes (the input path) never repeat it; the watchdog does once a second.
+        h.Clock.AdvanceMs(1500);
+        h.Engine.Flush(h.Clock.NowUs);
+        Assert.Single(Rumbles(h, phone));
+        for (int i = 0; i < 100; i++) h.Tick(50); // 5 s
+        int on = Rumbles(h, phone).Count;
+        Assert.InRange(on, 5, 7);
+        Assert.All(Rumbles(h, phone), r => Assert.Equal(new Rumble(200, 0), r));
+        // Off: sent, then 3 more times, then quiet.
+        h.Pad.RaiseRumble(0, 0);
+        for (int i = 0; i < 200; i++) h.Tick(50); // 10 s
+        var all = Rumbles(h, phone);
+        Assert.Equal(on + 1 + 3, all.Count);
+        Assert.All(all.Skip(on), r => Assert.Equal(new Rumble(0, 0), r));
+    }
+
+    [Fact]
+    public void ANewSessionGetsTheOngoingRumble()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        h.Pad.RaiseRumble(120, 30);
+        h.Engine.Flush(h.Clock.NowUs);
+        // The phone reconnects (a new session, its rumble off) while the game keeps rumbling the same.
+        var again = h.NewPhone();
+        h.Sender.Clear();
+        h.Clock.AdvanceMs(20);
+        h.Connect(again);
+        Assert.Contains(new Rumble(120, 30), Rumbles(h, again));
+    }
+
     [Fact]
     public void BuzzIsSentTwiceWithItsPattern()
     {

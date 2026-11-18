@@ -72,6 +72,8 @@ public sealed class HostEngine
     private const long StatusIntervalUs = Wire.StatusIntervalMs * 1000L;
     private const long RumbleMinIntervalUs = 10_000; // at most 100 Hz
     private const int RumbleDirty = 1 << 16;
+    private const long RumbleRepeatUs = 1_000_000;
+    private const int RumbleOffRepeats = 3;
     private const long EndedSidQuietUs = 1_000_000; // stray BYE/STATE copies after an end draw no ERROR
     /// <summary>How long a pad button pressed and released inside one receive burst stays visible to polling games.</summary>
     private const long PadEdgeHoldUs = 20_000;
@@ -221,7 +223,10 @@ public sealed class HostEngine
     private long _lastStatusUs;
     private KeyLabels? _keyLabels;
     private int _rumbleNext; // (large << 8) | small, plus RumbleDirty while unsent
+    /// <summary>The rumble the phone was last sent (a new phone starts at 0).</summary>
     private int _lastRumble;
+    /// <summary>Repeats of <see cref="_lastRumble"/> still to send; int.MaxValue while it is on.</summary>
+    private int _rumbleRepeats;
     private long _lastRumbleUs = -RumbleMinIntervalUs;
     private bool _settingsDirty;
     private bool _anyDatagram;
@@ -1005,6 +1010,9 @@ public sealed class HostEngine
         // The phone restarts its totals and gyro samples at 0 for a new session; the PC controller's toggle stays.
         _mouse.Reset();
         _pcGyro.Rebase();
+        // The phone starts with its rumble off: a game's ongoing rumble goes to it again.
+        _lastRumble = 0;
+        _rumbleRepeats = 0;
         _accWheel = _accHWheel = 0;
         _catchUp.Clear();
         _hasStatePhone = false;
@@ -1343,7 +1351,7 @@ public sealed class HostEngine
                 RequestPad(OutputMode.None);
             }
 
-            SendPendingRumble(nowUs);
+            SendPendingRumble(nowUs, repeat: true);
             a = _sessions.Active;
             if (_capture.On)
             {
@@ -2484,15 +2492,33 @@ public sealed class HostEngine
     private void OnRumble(byte large, byte small) =>
         Interlocked.Exchange(ref _rumbleNext, RumbleDirty | (large << 8) | small);
 
-    /// <summary>Sends a recorded rumble change as RUMBLE, at most 100 Hz. Called under the lock from Flush and OnTick.</summary>
-    private void SendPendingRumble(long nowUs)
+    /// <summary>
+    /// Sends a recorded rumble change as RUMBLE, at most 100 Hz. Called under the lock from Flush and OnTick.
+    /// <paramref name="repeat"/> (OnTick only, never on the input path): a RUMBLE is one datagram, so the value
+    /// the phone should have goes again every second while it is on and <see cref="RumbleOffRepeats"/> times after
+    /// it stops; a lost "stop" would leave the phone vibrating.
+    /// </summary>
+    private void SendPendingRumble(long nowUs, bool repeat = false)
     {
         int v = Volatile.Read(ref _rumbleNext);
-        if ((v & RumbleDirty) == 0 || nowUs - _lastRumbleUs < RumbleMinIntervalUs) return;
-        if (Interlocked.CompareExchange(ref _rumbleNext, v & 0xFFFF, v) != v) return; // newer value: next call
+        if ((v & RumbleDirty) != 0)
+        {
+            if (nowUs - _lastRumbleUs < RumbleMinIntervalUs) return;
+            if (Interlocked.CompareExchange(ref _rumbleNext, v & 0xFFFF, v) != v) return; // newer value: next call
+        }
         var a = _sessions.Active;
         int packed = v & 0xFFFF;
-        if (a == null || packed == _lastRumble) return;
+        if (a == null) return;
+        if (packed != _lastRumble)
+        {
+            if (nowUs - _lastRumbleUs < RumbleMinIntervalUs) return;
+            _rumbleRepeats = packed == 0 ? RumbleOffRepeats : int.MaxValue;
+        }
+        else
+        {
+            if (!repeat || _rumbleRepeats == 0 || nowUs - _lastRumbleUs < RumbleRepeatUs) return;
+            if (_rumbleRepeats != int.MaxValue) _rumbleRepeats--;
+        }
         _lastRumble = packed;
         _lastRumbleUs = nowUs;
         Span<byte> p = stackalloc byte[Wire.RumblePlain];
