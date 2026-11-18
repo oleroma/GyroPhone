@@ -477,7 +477,28 @@ class LaserTrace {
         beamX = x; beamY = y; beamZ = z; beamMs = nowMs
     }
 
-    /** Clears the strokes. */
+    /** Clears asked for ([requestClear]) so far; [clearIfAsked] catches up with it. */
+    private val clearsAsked = java.util.concurrent.atomic.AtomicInteger()
+    private var clearsDone = 0
+
+    /** Clears asked for so far: the display redraws when it changes. */
+    val clearRequests: Int get() = clearsAsked.get()
+
+    /** Asks for a [clear] from any thread; the thread that feeds and draws the trace does it ([clearIfAsked]). */
+    fun requestClear() {
+        clearsAsked.incrementAndGet()
+    }
+
+    /** On the trace's own thread, before feeding it: does a [clear] asked for since the last call; true if it did. */
+    fun clearIfAsked(): Boolean {
+        val c = clearsAsked.get()
+        if (c == clearsDone) return false
+        clearsDone = c
+        clear()
+        return true
+    }
+
+    /** Clears the strokes (the trace's own thread; from another, [requestClear]). */
     fun clear() {
         strokes.clear()
         runOpen = false

@@ -248,6 +248,7 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
             sig = sig * 31 + System.identityHashCode(f)
             sig = sig * 31 + (f?.trace?.version ?: 0L)
             sig = sig * 31 + (f?.laser?.version ?: 0L)
+            sig = sig * 31 + (f?.laser?.clearRequests ?: 0)
             if (f == null) continue
             // Held, firing or aiming change what a pointer paints even on a still phone.
             sig = sig * 31 + (if (f.ratchetHeld) 1 else 0) + (if (f.firing) 2 else 0) + (if (f.aiming) 4 else 0)
@@ -1180,6 +1181,8 @@ private class VisState {
         val moveAlpha = moveColors.sumOf { it shr 24 and 0xFF } / (6f * 255f)
         val lt = feed?.laser
         if (lt != null) {
+            // A Clear asked from elsewhere happens here, on the thread that feeds the trace.
+            lt.clearIfAsked()
             if (!lt.deferPaint) PaintWorker.adopt(lt)
             val v = feed?.pose?.version ?: 0L
             val zip = d.snakeZip

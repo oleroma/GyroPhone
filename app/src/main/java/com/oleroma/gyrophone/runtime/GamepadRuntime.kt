@@ -546,12 +546,13 @@ class GamepadRuntime(context: Context) {
     /** A Clear displays mapping fired (main thread): every laser pointer on the pad and the PC loses its paint and trail. */
     private fun clearDisplays() {
         wifi.overlay.clearDisplays()
-        for (f in gyroFeeds) f.laser?.clear()
+        // Done by the displays' thread, which feeds the traces, before its next frame.
+        for (f in gyroFeeds) f.laser?.requestClear()
     }
 
     /** Clears laser pointer [id]'s paint and trail (its settings' Clear button; main thread). */
     fun clearLaser(id: String) {
-        gyroFeed(id)?.laser?.clear()
+        gyroFeed(id)?.laser?.requestClear()
     }
 
     /**
