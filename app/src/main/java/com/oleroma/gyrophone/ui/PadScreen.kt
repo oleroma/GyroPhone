@@ -3181,6 +3181,7 @@ fun PadScreen(
                             Inheritance.defaults(d.defaults)
                         } else emptyList(),
                         parentName = "Defaults",
+                        level = ws,
                     )
                 }
             } else if (d != null && sel != null && !dragging && menu != EditMenu.NONE) {
