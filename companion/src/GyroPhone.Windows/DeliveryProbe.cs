@@ -31,8 +31,9 @@ namespace GyroPhone.Windows;
 /// in front can show both readers' numbers for the same moves.
 /// </para>
 /// <para>
-/// A process has one raw mouse input target: "Press a key" listening takes it while it runs, and the probe registers
-/// again when it gives it up (<see cref="RawMouseReleased"/>).
+/// A process has one raw mouse input target: "Press a key" listening takes it while it runs (the probe neither takes
+/// nor removes it meanwhile, <see cref="RawMouseOwner"/>), and the probe registers again when it gives it up
+/// (<see cref="RawMouseReleased"/>).
 /// </para>
 /// </summary>
 public sealed class DeliveryProbe : IDisposable
@@ -181,7 +182,9 @@ public sealed class DeliveryProbe : IDisposable
                 DispatchMessage(ref msg);
             }
             var remove = new RawInputDevice { UsagePage = 1, Usage = 2, Flags = RidevRemove, Target = IntPtr.Zero };
-            RegisterRawInputDevices([remove], 1, (uint)Marshal.SizeOf<RawInputDevice>());
+            // While "Press a key" holds the raw mouse input, it is the listener's: removing it would take it from it.
+            lock (RawMouseOwner.Gate)
+                if (!RawMouseOwner.Listener) RegisterRawInputDevices([remove], 1, (uint)Marshal.SizeOf<RawInputDevice>());
             DestroyWindow(hwnd);
             _hwnd = IntPtr.Zero;
             // The class holds this probe's window procedure: the next probe registers its own.
@@ -200,8 +203,14 @@ public sealed class DeliveryProbe : IDisposable
     private void Register(IntPtr hwnd)
     {
         var d = new RawInputDevice { UsagePage = 1, Usage = 2, Flags = RidevInputSink, Target = hwnd };
-        if (!RegisterRawInputDevices([d], 1, (uint)Marshal.SizeOf<RawInputDevice>()))
-            _log?.Invoke($"delivery probe: raw mouse input not registered (error {Marshal.GetLastWin32Error()})");
+        int error = 0;
+        lock (RawMouseOwner.Gate)
+        {
+            // "Press a key" holds it: the probe takes it when the listener lets go (RawMouseReleased).
+            if (RawMouseOwner.Listener) return;
+            if (!RegisterRawInputDevices([d], 1, (uint)Marshal.SizeOf<RawInputDevice>())) error = Marshal.GetLastWin32Error();
+        }
+        if (error != 0) _log?.Invoke($"delivery probe: raw mouse input not registered (error {error})");
     }
 
     private IntPtr WindowProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
