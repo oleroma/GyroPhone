@@ -196,6 +196,10 @@ public class OverlayTests
         Assert.All(idle.Shown, x => Assert.False(x.Lit));
         Assert.Empty(idle.Rows);
         Assert.Same(idle, r.Read(t, f, 1010));
+        // Nothing changed and nothing waits on time: read again without making anything.
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        Assert.Same(idle, r.Read(t, f, 1020));
+        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
         // A held (both its mappings), the left stick up and right (a diagonal), RT pulled, X pressed (Toggle on), B held.
         f.PadButtons = OverlayFrame.PadSouth | OverlayFrame.PadR2 | OverlayFrame.PadWest | OverlayFrame.PadEast;
         f.PadR2Pull = 0.6f;

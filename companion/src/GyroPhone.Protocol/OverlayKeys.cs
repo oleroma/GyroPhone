@@ -188,6 +188,14 @@ public sealed class OverlayKeysReader
     private bool[] _shortUp = [], _toggled = [], _was = [];
     private OverlayKeysView? _view;
 
+    // What the last read was made from: the same again, with no pulse or long press waiting, gives the same view.
+    private bool _settled;
+    private int _lastShown;
+    private uint _lastButtons;
+    private float _lastL2, _lastR2;
+    private readonly float[] _lastSticks = new float[4];
+    private readonly byte[] _lastPressed = new byte[16], _lastLatched = new byte[16];
+
     /// <summary>
     /// The view for <paramref name="table"/> (null: none) and frame <paramref name="f"/> at <paramref name="now"/> (ms),
     /// with the controls of <paramref name="shown"/> (<see cref="OverlayControls.Mask"/>) always on top; the same instance
@@ -208,7 +216,17 @@ public sealed class OverlayKeysReader
             _down = new bool[n]; _shortUp = new bool[n]; _toggled = new bool[n]; _was = new bool[n];
             _downAt = new long[n]; _upAt = new long[n]; _pulseUntil = new long[n];
             for (int i = 0; i < n; i++) _upAt[i] = long.MinValue / 2;
+            _settled = false;
         }
+        // Nothing changed since the last read and nothing waits on time: the same view, made again for nothing.
+        if (_settled && _view != null && shown == _lastShown && SameInputs(f)) return _view;
+        _lastShown = shown;
+        _lastButtons = f.PadButtons;
+        _lastL2 = f.PadL2Pull;
+        _lastR2 = f.PadR2Pull;
+        Array.Copy(f.PadSticks, _lastSticks, 4);
+        Array.Copy(f.Pressed, _lastPressed, 16);
+        Array.Copy(f.Latched, _lastLatched, 16);
         var keys = table.Keys;
         // Per picture (left stick, right stick, D-pad while always shown): its keys, outer keys, analog and what fires.
         var lit = new int[3];
@@ -316,9 +334,16 @@ public sealed class OverlayKeysReader
         }
         if (picRows.Count > 0) (rows ??= new List<OverlayKeyRow>()).InsertRange(0, picRows);
         var view = new OverlayKeysView(shownRows, (IReadOnlyList<OverlayKeyRow>?)rows ?? []);
+        _settled = !Timed(now);
         if (_view != null && _view.Equals(view)) return _view;
         return _view = view;
     }
+
+    /// <summary>Whether <paramref name="f"/>'s controller and touch state is what the last read was made from.</summary>
+    private bool SameInputs(OverlayFrame f) =>
+        f.PadButtons == _lastButtons && f.PadL2Pull == _lastL2 && f.PadR2Pull == _lastR2
+        && f.PadSticks.AsSpan(0, 4).SequenceEqual(_lastSticks)
+        && f.Pressed.AsSpan().SequenceEqual(_lastPressed) && f.Latched.AsSpan().SequenceEqual(_lastLatched);
 
     /// <summary>The always-showable control (<see cref="OverlayControls"/>) of an <see cref="OverlayKey.Input"/>, or -1.</summary>
     public static int ControlOf(int input)
@@ -341,8 +366,16 @@ public sealed class OverlayKeysReader
     /// <summary>Whether <paramref name="joined"/> ("Space + Mouse R") already has <paramref name="part"/>.</summary>
     private static bool HasPart(string joined, string part)
     {
-        foreach (var p in joined.Split(" + ")) if (p == part) return true;
-        return false;
+        // As Split(" + "), without making the pieces.
+        int start = 0;
+        while (true)
+        {
+            int end = joined.IndexOf(" + ", start, StringComparison.Ordinal);
+            int len = (end < 0 ? joined.Length : end) - start;
+            if (len == part.Length && string.CompareOrdinal(joined, start, part, 0, len) == 0) return true;
+            if (end < 0) return false;
+            start = end + 3;
+        }
     }
 
     private static readonly string[] TouchNames = Enumerable.Range(0, 128).Select(i => "touch " + i).ToArray();
@@ -440,7 +473,9 @@ public sealed class OverlayKeysReader
         for (int i = 0; i < _pulseUntil.Length; i++)
         {
             if (now < _pulseUntil[i]) return true;
-            if (_down[i] && (t.Keys[i].Flags & OverlayKey.GestureMask) == OverlayKey.LongPress) return true;
+            // Mappings, then touch buttons (as Read numbers them).
+            int flags = i < t.Keys.Count ? t.Keys[i].Flags : t.Touch[i - t.Keys.Count].Flags;
+            if (_down[i] && (flags & OverlayKey.GestureMask) == OverlayKey.LongPress) return true;
         }
         return false;
     }
