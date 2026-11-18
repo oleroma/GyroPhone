@@ -590,7 +590,7 @@ public sealed class HostEngine
                 if (WireCodec.TryDecodeDiscover(d, out var disc)) Reply(Announce(disc, nowUs), from);
                 return;
             case PacketType.PairStart:
-                if (WireCodec.TryDecodePairStart(d, out var ps)) ReplyPairing(_pairing.OnStart(ps, nowUs, _reply), from);
+                if (WireCodec.TryDecodePairStart(d, out var ps)) ReplyPairing(_pairing.OnStart(ps, nowUs, _reply, RateLimiter.Ipv4Key(from)), from);
                 else _dropped++;
                 return;
             case PacketType.PairReveal:
@@ -948,6 +948,11 @@ public sealed class HostEngine
         var s = _sessions.CreatePending(hello, name, pairKey, _settings.HostId,
             (byte)_settings.OutputMode, (byte)((PadDriverOk ? WelcomeFlags.VigemOk : 0) | WelcomeFlags.HiresWheel | WelcomeFlags.PcGyro | WelcomeFlags.Motion),
             from, nowUs);
+        if (s == null)
+        {
+            _dropped++; // a replayed HELLO while the phone's newer attempt is pending: no reply
+            return;
+        }
         Reply(s.Welcome, from);
     }
 

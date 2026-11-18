@@ -14,6 +14,11 @@ public sealed class SessionManager
 {
     private readonly List<HostSession> _pending = new();
     private readonly Func<int, byte[]> _random;
+    // HELLO nonces already answered (authenticated ones only, so only the phones' own), oldest first.
+    // A HELLO carries no freshness, so a replayed one must not replace a newer pending session.
+    private readonly HashSet<UInt128> _seenNp = new();
+    private readonly Queue<UInt128> _seenOrder = new();
+    internal const int SeenNpMax = 4096;
 
     public SessionManager(Func<int, byte[]>? random = null) =>
         _random = random ?? RandomNumberGenerator.GetBytes;
@@ -40,10 +45,28 @@ public sealed class SessionManager
         return null;
     }
 
-    /// <summary>Creates the pending session for a valid HELLO (replacing that phone's previous pending one) and its WELCOME.</summary>
-    public HostSession CreatePending(Hello hello, string phoneName, ReadOnlySpan<byte> pairKey, byte[] hostId,
+    /// <summary>
+    /// Creates the pending session for a valid HELLO (replacing that phone's previous pending one) and its WELCOME.
+    /// Null for a HELLO whose nP was seen before while that phone has another pending session: a replay
+    /// (anyone on the network can resend a captured HELLO) never replaces the phone's newer attempt.
+    /// A seen nP with nothing pending still gets a session, for a phone whose WELCOME was lost for longer
+    /// than PENDING_SESSION_MS and keeps resending the same HELLO.
+    /// </summary>
+    public HostSession? CreatePending(Hello hello, string phoneName, ReadOnlySpan<byte> pairKey, byte[] hostId,
         byte outputMode, byte hostFlags, SocketAddress from, long nowUs)
     {
+        var np = System.Buffers.Binary.BinaryPrimitives.ReadUInt128LittleEndian(hello.NP);
+        if (_seenNp.Contains(np))
+        {
+            foreach (var p in _pending)
+                if (p.SamePhone(hello.PhoneId)) return null;
+        }
+        else
+        {
+            if (_seenOrder.Count >= SeenNpMax) _seenNp.Remove(_seenOrder.Dequeue());
+            _seenNp.Add(np);
+            _seenOrder.Enqueue(np);
+        }
         RemovePending(hello.PhoneId);
         uint sid;
         do sid = BitConverter.ToUInt32(_random(4)); while (sid == 0 || Find(sid) != null);

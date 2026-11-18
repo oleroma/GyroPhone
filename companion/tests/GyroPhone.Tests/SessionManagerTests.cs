@@ -75,6 +75,42 @@ public class SessionManagerTests
     }
 
     [Fact]
+    public void ReplayedHelloNeverReplacesTheNewerPendingSession()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        var first = phone.Hello();
+        Assert.NotNull(h.Send(phone, first));
+        h.Tick(Wire.PendingSessionMs + 50);
+
+        // The phone tries again with a new nP; an attacker keeps replaying the captured first HELLO.
+        var attacker = h.NewPhone("10.0.0.99", 1234);
+        var welcome2 = h.Send(phone, phone.Hello())!;
+        Assert.Null(h.Send(attacker, first));
+        Assert.True(phone.OnWelcome(welcome2));
+        h.Sender.Clear();
+        h.Send(phone, phone.State());
+        // The new session came up: its first STATE drew no SESSION_UNKNOWN.
+        Assert.True(h.Engine.Snapshot().Connected);
+        Assert.DoesNotContain(h.Sender.Sent, p => WireCodec.TryDecodeError(p.Data, out _));
+    }
+
+    [Fact]
+    public void SameHelloAfterThePendingSessionExpiredStillConnects()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        var hello = phone.Hello();
+        Assert.NotNull(h.Send(phone, hello)); // this WELCOME is lost
+        h.Tick(Wire.PendingSessionMs + 50);
+        var w = h.Send(phone, hello);
+        Assert.NotNull(w);
+        Assert.True(phone.OnWelcome(w!));
+        h.Send(phone, phone.State());
+        Assert.True(h.Engine.Snapshot().Connected);
+    }
+
+    [Fact]
     public void BadMacGetsNoReply()
     {
         var h = new Harness();

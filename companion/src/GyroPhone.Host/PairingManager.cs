@@ -18,6 +18,11 @@ public sealed class PairingManager
     private const long CooldownUs = Wire.PairCooldownMs * 1000L;
     private const long UserTimeoutUs = Wire.PairUserTimeoutS * 1_000_000L;
     private const long AttemptTimeoutUs = Wire.PairingWindowS * 1_000_000L;
+    // The phone reveals as soon as PAIR_HOST arrives (and resends every PAIR_RETX_MS), so an attempt still
+    // unrevealed after this is stale: a lost phone, or a LAN peer holding the slot. The next start replaces it.
+    internal const long RevealTimeoutUs = 2_000_000;
+    // Each new attempt costs a P-256 key generation under the engine lock: a few per second per address at most.
+    private readonly RateLimiter _newAttempts = new(perIp: 2, global: 8);
 
     private readonly Func<int, byte[]> _random;
     private readonly Func<P256> _newKey;
@@ -68,13 +73,22 @@ public sealed class PairingManager
 
     // ---- PAIR_START ----
 
-    public int OnStart(PairStart m, long nowUs, Span<byte> reply)
+    /// <param name="fromIp">The sender's address key (<see cref="RateLimiter.Ipv4Key"/>), for the new-attempt rate limit.</param>
+    public int OnStart(PairStart m, long nowUs, Span<byte> reply, uint fromIp = 0)
     {
+        if (_attempt is { Revealed: false } stale && nowUs - stale.StartedUs >= RevealTimeoutUs)
+            End(nowUs, cooldown: false);
+        bool charged = false;
         if (_attempt != null)
         {
             if (_attempt.SameStart(m)) return Copy(_attempt.HostReply, reply);
-            if (!_attempt.PhoneId.AsSpan().SequenceEqual(m.PhoneId)) return Ack(0, PairAckStatus.Busy, reply);
+            if (!_attempt.PhoneId.AsSpan().SequenceEqual(m.PhoneId))
+                // A fresh unrevealed attempt ends in a moment either way: stay silent so that phone
+                // resends instead of giving up on BUSY.
+                return _attempt.Revealed ? Ack(0, PairAckStatus.Busy, reply) : 0;
             if (!P256.IsValidPublic(m.PkP)) return 0;
+            if (!_newAttempts.TryAcquire(fromIp, nowUs)) return 0; // the phone resends
+            charged = true;
             // The same phone started over (cancelled, or its app restarted): the new attempt replaces its old one.
             // The phone id travels in clear, so replacing a revealed attempt counts toward the failure limit
             // (without a cooldown): a LAN peer cannot keep swapping the code on the PC.
@@ -84,6 +98,7 @@ public sealed class PairingManager
         if (!IsOpen(nowUs)) return Ack(0, PairAckStatus.Closed, reply);
         if (nowUs < _cooldownUntilUs) return Ack(0, PairAckStatus.Cooldown, reply);
         if (!P256.IsValidPublic(m.PkP)) return 0;
+        if (!charged && !_newAttempts.TryAcquire(fromIp, nowUs)) return 0; // the phone resends
 
         uint id;
         do id = BitConverter.ToUInt32(_random(4)); while (id == 0 || id == _finished?.AttemptId);
@@ -216,7 +231,7 @@ public sealed class PairingManager
             Finish(a, PairDoneStatus.Timeout, nowUs, cooldown: true);
             return true;
         }
-        if (nowUs - a.StartedUs >= AttemptTimeoutUs)
+        if (nowUs - a.StartedUs >= (a.Revealed ? AttemptTimeoutUs : RevealTimeoutUs))
         {
             End(nowUs, cooldown: false);
             return true;
