@@ -232,8 +232,9 @@ public sealed class KeyMouseRouter : IKeyMouseSink, IDisposable
 
     /// <summary>
     /// Plugs the driver's mouse and keyboard when "Use input driver" is on, it's installed and they aren't plugged yet:
-    /// once this instance owns the port (an instance on its way out may still hold them), and again when the driver turns
-    /// up later. Called through <c>HostEngine.ChangeKeyMouseRoute</c>, under the engine lock.
+    /// when the switch turns on, or once this instance owns the port (an instance on its way out may still hold them).
+    /// Called through <c>HostEngine.ChangeKeyMouseRoute</c>, under the engine lock. The later retries plug off the lock and
+    /// hand the result to <see cref="Adopt"/>.
     /// </summary>
     public bool Retry()
     {
@@ -241,6 +242,23 @@ public sealed class KeyMouseRouter : IKeyMouseSink, IDisposable
         if (DriverReady) return true;
         _driver?.Dispose();
         _driver = HidInputSink.Create(_log);
+        return DriverReady;
+    }
+
+    /// <summary>
+    /// Takes the driver's mouse and keyboard that <paramref name="plugged"/> (made by <see cref="HidInputSink.Create"/>
+    /// off the engine lock) holds, when "Use input driver" is still on and no driver is ready yet; otherwise closes it.
+    /// True when the driver is ready. Called through <c>HostEngine.ChangeKeyMouseRoute</c>, under the engine lock.
+    /// </summary>
+    public bool Adopt(HidInputSink plugged)
+    {
+        if (!_useInputDriver || DriverReady)
+        {
+            plugged.Dispose();
+            return DriverReady;
+        }
+        _driver?.Dispose();
+        _driver = plugged;
         return DriverReady;
     }
 
