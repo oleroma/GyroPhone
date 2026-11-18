@@ -189,6 +189,12 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
         for (e in prefs.getStringSet(KEY_KNOWN, emptySet()).orEmpty()) decodeListed(e)?.let { m[it.first] = it.second }
     }
 
+    /**
+     * Pads whose generic reading did not match what Android listed, as [encodeListed] gives them:
+     * not asked about or opened again (no permission prompt, no blip) while Android lists them so.
+     */
+    private val mismatched = HashSet<String>(prefs.getStringSet(KEY_MISMATCHED, emptySet()).orEmpty())
+
     /** Devices (by USB name) asked about since they were plugged in, and ones that could not be read: not tried again until replugged. */
     private val asked = HashSet<String>()
     private val failed = HashSet<String>()
@@ -262,7 +268,9 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
         for (dev in devices) {
             if (pads.any { it.usb.deviceName == dev.deviceName }) continue
             if (dev.deviceName in failed) continue
-            if (key(dev.vendorId, dev.productId) !in knownPads) continue
+            val k = key(dev.vendorId, dev.productId)
+            val listed = knownPads[k] ?: continue
+            if (encodeListed(k, listed) in mismatched) continue
             if (!usbManager.hasPermission(dev)) {
                 if (asked.add(dev.deviceName)) {
                     val intent = Intent(ACTION_PERMISSION).setPackage(context.packageName)
@@ -312,6 +320,7 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
     private fun open(dev: UsbDevice) {
         val conn = usbManager.openDevice(dev) ?: run { failed += dev.deviceName; return }
         var taken: Pad? = null
+        var mismatch: String? = null
         for (i in 0 until dev.interfaceCount) {
             val iface = dev.getInterface(i)
             // HID, and not a boot keyboard or mouse (a pad's own mouse stays Android's).
@@ -328,9 +337,11 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
             val name = nameOf(dev)
             // Read generically it must give what Android gave it: a pad Linux or Android remaps
             // (Sony's, Nintendo's, a vendor key layout) would get the wrong buttons and sticks.
-            val listed = knownPads[key(dev.vendorId, dev.productId)]
+            val k = key(dev.vendorId, dev.productId)
+            val listed = knownPads[k]
             if (listed == null || !gp.matchesAndroid(listed.keys, listed.axes)) {
                 Log.i(TAG, "$name: Android maps it differently, leaving it to Android")
+                if (listed != null) mismatch = encodeListed(k, listed)
                 conn.releaseInterface(iface)
                 continue
             }
@@ -344,6 +355,7 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
         if (taken == null) {
             conn.close()
             failed += dev.deviceName
+            if (mismatch != null && mismatched.add(mismatch)) prefs.edit().putStringSet(KEY_MISMATCHED, HashSet(mismatched)).apply()
         } else ui?.usbChanged()
     }
 
@@ -405,6 +417,8 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
         private const val ACTION_PERMISSION = "com.oleroma.gyrophone.USB_PERMISSION"
         /** "vid:pid;keys;axes" per pad (the older "usb_known_pads" had no keys and axes, and is not read). */
         private const val KEY_KNOWN = "usb_pad_layouts"
+        /** Pads left to Android as they don't match ([mismatched]), "vid:pid;keys;axes" as Android listed them then. */
+        private const val KEY_MISMATCHED = "usb_pad_mismatched"
         private const val READ_TIMEOUT_MS = 250
 
         /** Added to the USB device id: apart from Android's input device ids and the other ids GP gives devices. */
