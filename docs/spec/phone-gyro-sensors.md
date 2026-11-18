@@ -13,7 +13,7 @@ The app holds `HIGH_SAMPLING_RATE_SENSORS`, which allows rates above 200 Hz.
 
 **Falling back.** The direct channel is watched:
 
-- If it opens but gives no sample within 1.5 s (seen with gralloc buffers), or its measured rate stays below what the listener would give (the microphone privacy toggle caps it to about 50 Hz, the listener to about 200 Hz), the listener runs instead until the next start or return to the foreground (`onDirectCapped`). A direct channel that gave no samples at all is not tried again until the app process restarts (`directSilent`), so later starts and returns to the app don't pay the 1.5 s of dead gyro again; a capped one is tried again, since the toggle may be off by then. The About section then says why ("direct channel limited to ~50 Hz").
+- If it opens but gives no sample within 1.5 s (seen with gralloc buffers), or its measured rate stays below what the listener would give (the microphone privacy toggle caps it to about 50 Hz, the listener to about 200 Hz), the listener runs instead until the next start, or a return to the foreground at least 10 minutes after it was found capped (`onDirectCapped`, `DIRECT_RETRY_MS`), so returning to the app does not cost ~2 s of capped gyro each time. A direct channel that gave no samples at all is not tried again until the app process restarts (`directSilent`), so later starts and returns to the app don't pay the 1.5 s of dead gyro again; a capped one is tried again then, since the toggle may be off by then. The About section then says why ("direct channel limited to ~50 Hz").
 
 On the OnePlus 15 the listener delivers about 480 Hz and the gralloc direct channel about 950 Hz.
 

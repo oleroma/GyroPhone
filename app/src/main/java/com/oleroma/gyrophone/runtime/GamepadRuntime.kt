@@ -893,7 +893,8 @@ class GamepadRuntime(context: Context) {
 
     /**
      * The direct channel ran capped (the microphone privacy toggle caps it to ~50 Hz, a listener
-     * to ~200 Hz): the listener runs instead until the next [start] or return to the foreground.
+     * to ~200 Hz): the listener runs instead until the next [start], or a return to the foreground
+     * at least [DIRECT_RETRY_MS] after it was found capped.
      * One that gave no samples at all stays avoided for the life of the process ([directSilent]).
      */
     @Volatile private var avoidDirect = false
@@ -907,6 +908,9 @@ class GamepadRuntime(context: Context) {
 
     /** The rate the capped direct channel measured, shown while [avoidDirect]. */
     @Volatile private var cappedHz = 0
+
+    /** When the direct channel was last found capped ([SystemClock.elapsedRealtime]): retried after [DIRECT_RETRY_MS]. */
+    @Volatile private var cappedAtMs = 0L
 
     // Owned by the thread of the running source; reset before each source starts.
     private var lastGyroTs = 0L
@@ -1134,9 +1138,10 @@ class GamepadRuntime(context: Context) {
         if (resumed && !foreground) aimGyroDisplays()
         foreground = resumed
         _onScreen.value = resumed
-        // Back in front: try the capped direct channel again (the toggle may be off by now).
+        // Back in front: try the capped direct channel again (the toggle may be off by now), but not
+        // on every return: each try costs ~2 s of capped gyro before it is found capped again.
         // One that gave no samples is not retried.
-        if (resumed && avoidDirect && !directSilent) {
+        if (resumed && avoidDirect && !directSilent && SystemClock.elapsedRealtime() - cappedAtMs >= DIRECT_RETRY_MS) {
             avoidDirect = false
             gyroControl.post { stopGyro() }
         }
@@ -1757,6 +1762,7 @@ class GamepadRuntime(context: Context) {
         if (gyro !== source || avoidDirect) return
         avoidDirect = true
         cappedHz = hz
+        cappedAtMs = SystemClock.elapsedRealtime()
         if (hz == 0) directSilent = true
         stopGyro()
         startGyro()
@@ -1798,6 +1804,9 @@ class GamepadRuntime(context: Context) {
         /** A sensor time further than this from elapsed realtime (us) is on another clock. */
         private const val SENSOR_CLOCK_SLACK_US = 1_000_000L
         private const val SILENT_DIRECT_MS = 1500L
+
+        /** A capped direct channel is tried again on a return to the app only this long after it was found capped. */
+        private const val DIRECT_RETRY_MS = 10 * 60_000L
         private const val KEY_TRANSPORT = "transport"
         private const val KEY_ORIENTATION = "screen_orientation"
         private const val KEY_PAD_ONLY_INPUT = "pad_only_input"
