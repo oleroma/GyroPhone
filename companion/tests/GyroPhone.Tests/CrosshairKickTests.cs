@@ -53,4 +53,13 @@ public class CrosshairKickTests
         Assert.True(s.Step(t + 8, false, CrosshairKick.Auto, 100));
         Assert.False(s.Step(t + 400, false, CrosshairKick.Auto, 100));
     }
+
+    [Fact]
+    public void AutoRifleKeepsASlowBeatPastTheKick()
+    {
+        // A period longer than the kick and flash: the beat stays at the period, not the kick's length.
+        var s = new CrosshairKick.State();
+        for (long t = 0; t < 3000; t += 8) s.Step(t, true, CrosshairKick.Auto, 1000);
+        Assert.Equal(3L, s.Shots);
+    }
 }

@@ -130,11 +130,12 @@ class PcGyroFeed {
     @Volatile var held: List<Pair<Int, GyroMath.Config>> = emptyList()
 
     /**
-     * PAD_GYRO_SET plaintext for [held] entry [i] ([Wire.PAD_GYRO_SET_PLAIN]): u8 place, u8 0, then
+     * PAD_GYRO_SET plaintext for one [held] [entry] ([Wire.PAD_GYRO_SET_PLAIN]): u8 place, u8 0, then
      * the config block as in STATE_GYRO (its tightening and smoothing unused: the tail's count).
+     * The caller passes the entry from its own copy of [held], which the gyro thread may replace.
      */
-    fun encodeHeld(out: ByteArray, off: Int, i: Int): Int {
-        val (place, c) = held[i]
+    fun encodeHeld(out: ByteArray, off: Int, entry: Pair<Int, GyroMath.Config>): Int {
+        val (place, c) = entry
         out.putU8(off, place)
         out.putU8(off + 1, 0)
         encodeConfig(out, off + 2, c, 0f, 0f)

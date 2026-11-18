@@ -70,8 +70,17 @@ class DebugTrace(
     /** From the send path: one engine snapshot, compared with the one before on the diagnostics thread ([output]). */
     fun queueOutput(s: HidState, gyroDx: Int = 0, gyroDy: Int = 0) = enqueue(null, s, gyroDx, gyroDy, clock())
 
+    // One drainer at a time (the diagnostics thread, a save, a dump): two would each take an entry and
+    // could process them out of order, and [output] diffs each snapshot against the one before.
+    // Never taken by the input paths.
+    private val drainLock = Any()
+
     /** Turns the queued events into lines, oldest first; the diagnostics thread calls it a few times a second. */
     fun drain() {
+        synchronized(drainLock) { drainLocked() }
+    }
+
+    private fun drainLocked() {
         while (true) {
             val nanos: Long; val kind: Kind?; val ref: Any?; val a: Int; val b: Int
             synchronized(qLock) {

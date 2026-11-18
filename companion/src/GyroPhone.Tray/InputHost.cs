@@ -33,6 +33,9 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
     private const string MutexName = SplitNames.InputMutex;
     /// <summary>How long after the companion went away (not by Exit) it is started again.</summary>
     private const int RelaunchDelayMs = 2000;
+    /// <summary>A companion that keeps crashing (more than 5 starts within 10 minutes) is started again only once a minute.</summary>
+    private const int SlowRelaunchDelayMs = 60_000;
+    private readonly Queue<long> _relaunches = new(); // the accept loop's only
     private const int FastBindMs = 5000;
 
     /// <summary>The pipe a companion connects to: one per user and Windows session.</summary>
@@ -237,19 +240,31 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
             using var gone = new ManualResetEventSlim();
             var channel = new PipeChannel(pipe, PipeChannel.Dispatch<IInputControl>(this), null, _log.Write, "gp-pipe");
             channel.Closed += gone.Set;
+            // A companion that died at once: its reader closed the channel before Closed had a handler.
+            if (channel.IsClosed) gone.Set();
             _out.Channel = channel;
             gone.Wait();
             if (ReferenceEquals(_out.Channel, channel)) _out.Channel = null;
             int pid = _companionPid;
             _companionPid = 0;
             if (_exitAsked || Volatile.Read(ref _exited) != 0) return;
-            _log.Write($"input: the companion (pid {pid}) went away without Exit; starting it again");
-            RelaunchCompanionSoon(pid);
+            int delay = RelaunchDelay();
+            _log.Write($"input: the companion (pid {pid}) went away without Exit; starting it again in {delay / 1000} s");
+            RelaunchCompanionSoon(pid, delay);
         }
     }
 
+    /// <summary>Quick at first; once a minute when it keeps crashing, so a crash loop doesn't load the PC during play.</summary>
+    private int RelaunchDelay()
+    {
+        long now = Environment.TickCount64;
+        while (_relaunches.Count > 0 && now - _relaunches.Peek() > 600_000) _relaunches.Dequeue();
+        _relaunches.Enqueue(now);
+        return _relaunches.Count > 5 ? SlowRelaunchDelayMs : RelaunchDelayMs;
+    }
+
     /// <summary>The companion crashed or was killed: start it again once it is surely gone, unless a new one attached.</summary>
-    private void RelaunchCompanionSoon(int pid)
+    private void RelaunchCompanionSoon(int pid, int delayMs)
     {
         ThreadPool.QueueUserWorkItem(_ =>
         {
@@ -263,7 +278,7 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
             {
                 // already gone
             }
-            Thread.Sleep(RelaunchDelayMs);
+            Thread.Sleep(delayMs);
             if (_exitAsked || Volatile.Read(ref _exited) != 0 || _out.Channel != null || Program.CompanionRunning()) return;
             try
             {
@@ -438,9 +453,24 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
             StateChanged();
         }
         if (_server.State != ServerState.Running || !installed || !_keyMouse.UseInputDriver) return;
+        // Plugged here, off the engine lock; the route changes (letting go of everything held first) only once it did,
+        // so a driver that won't plug costs input nothing. The same failure is logged once, not every 5 s.
+        var sink = HidInputSink.Create(LogPlugOnce);
+        if (sink == null) return;
+        _lastPlugLine = null;
         bool ok = false;
-        _engine.ChangeKeyMouseRoute(() => ok = _keyMouse.Retry(), "input driver plugged");
+        _engine.ChangeKeyMouseRoute(() => ok = _keyMouse.Adopt(sink), "input driver plugged");
         if (ok) StateChanged();
+    }
+
+    // The last line the input driver's plug logged, so a plug that keeps failing logs once.
+    private string? _lastPlugLine;
+
+    private void LogPlugOnce(string line)
+    {
+        if (line == _lastPlugLine) return;
+        _lastPlugLine = line;
+        _log.Write(line);
     }
 
     private void RetryHostKey(DpapiKeyProtector protector, string hostName)
@@ -582,7 +612,7 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
         _padError = error;
         _log.Write("gamepad driver found");
         StateChanged();
-        return null;
+        return "";
     }
 
     public void SetCatchUpMs(int ms) => _engine.SetCatchUpMs(ms);
@@ -628,8 +658,6 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
     }
 
     public void TakeUsbFromAdb() => _usb.TakeFromAdb();
-
-    public string? PhoneAddress() => _engine.PhoneAddress()?.ToString();
 
     public void SetStartWithWindows(bool on) => _engine.SetStartWithWindows(on);
 

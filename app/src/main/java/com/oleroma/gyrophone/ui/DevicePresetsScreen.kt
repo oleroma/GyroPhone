@@ -63,7 +63,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.max
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.DevicePreset
 import com.oleroma.gyrophone.core.model.DevicePresets
@@ -71,6 +70,7 @@ import com.oleroma.gyrophone.core.model.HeldButton
 import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.PhysicalDevice
+import com.oleroma.gyrophone.core.model.Profile
 import com.oleroma.gyrophone.core.model.PhysicalControl
 import com.oleroma.gyrophone.core.model.PhysicalKind
 import com.oleroma.gyrophone.core.model.PhysicalLayouts
@@ -106,11 +106,13 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
     var learning by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
 
+    /** [p] with the current workspace using preset [id] (null: none, its devices do nothing). */
+    fun using(p: Profile, id: String?): Profile =
+        p.copy(workspaces = p.workspaces.mapIndexed { i, w -> if (i == current) w.copy(devicePreset = id) else w })
+
     /** The current workspace uses preset [id] from now on (null: none, its devices do nothing). */
     fun use(id: String?) {
-        runtime.editActiveProfile { p ->
-            p.copy(workspaces = p.workspaces.mapIndexed { i, w -> if (i == current) w.copy(devicePreset = id) else w })
-        }
+        runtime.editActiveProfile { p -> using(p, id) }
     }
 
     /** Adds a standard preset, and the current workspace uses it. */
@@ -276,15 +278,9 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
             onSetsChange = { sets, removed ->
                 runtime.editActiveProfile { p ->
                     val next = p.updateWorkspace(current) { it.withSets(sets, removed) }
-                    val now = next.devicePresets.firstOrNull { it.id == preset.id }
                     // The layer's mappings in the preset go too, and the Layer actions to it, unless
                     // another workspace using the preset still has a layer with that id.
-                    if (removed == null || now == null ||
-                        next.workspaces.any { w -> w.devicePreset == now.id && w.sets.any { it.id == removed } }) next
-                    else DevicePresets.put(
-                        next,
-                        PhysicalDevice.entries.fold(now) { d, dev -> d.withMappings(dev, Bindings.dropSet(d.mappings(dev), removed)) },
-                    )
+                    if (removed == null) next else DevicePresets.dropSet(next, preset.id, removed)
                 }
             },
             physicalInputs = e.inputs,
@@ -293,6 +289,7 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
             physicalTimings = preset.timings,
             inherited = held?.let { h -> Inheritance.gyroInherited(Inheritance.workspace(ws, profile.defaults), HeldButton.GYRO_ID + h.id, editSet) }.orEmpty(),
             parentName = "Workspace",
+            level = ws,
             settings = physicalSettings(runtime, preset, ws, held, editSet) { change ->
                 runtime.editActiveProfile { p ->
                     val now = p.devicePresets.firstOrNull { it.id == preset.id } ?: return@editActiveProfile p
@@ -302,7 +299,7 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
         )
     }
 
-    menuFor?.let { p -> PresetMenu(runtime, p, onPick = { use(it) }, onDismiss = { menuFor = null }) }
+    menuFor?.let { p -> PresetMenu(runtime, p, using = { pr, id -> using(pr, id) }, onDismiss = { menuFor = null }) }
 }
 
 /** A preset's tab. */
@@ -327,7 +324,13 @@ private fun PresetTab(name: String, selected: Boolean, onClick: () -> Unit, onLo
 
 /** A long press on a preset's tab: its name, Reset all (its keys' own timings), Duplicate and Delete. */
 @Composable
-private fun PresetMenu(runtime: GamepadRuntime, preset: DevicePreset, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+private fun PresetMenu(
+    runtime: GamepadRuntime,
+    preset: DevicePreset,
+    /** The profile with the current workspace using the given preset. */
+    using: (Profile, String) -> Profile,
+    onDismiss: () -> Unit,
+) {
     val profile by runtime.activeProfile.collectAsStateWithLifecycle()
     var name by remember(preset.id) { mutableStateOf(preset.name) }
     var deleting by remember(preset.id) { mutableStateOf(false) }
@@ -388,8 +391,8 @@ private fun PresetMenu(runtime: GamepadRuntime, preset: DevicePreset, onPick: (S
                     TextButton(onClick = {
                         runtime.editActiveProfile { p ->
                             val id = DevicePresets.newId(p.devicePresets.map { it.id })
-                            onPick(id)
-                            DevicePresets.put(p, preset.copy(id = id, name = preset.name + " copy"))
+                            // One edit: the copy is added and the current workspace uses it.
+                            using(DevicePresets.put(p, preset.copy(id = id, name = preset.name + " copy")), id)
                         }
                         onDismiss()
                     }) { Text("Duplicate") }

@@ -348,6 +348,18 @@ public sealed class InputRecorder
     public void Second(LinkStats stats, long nowUs)
     {
         if (!_active) return;
+        // Asked every second either way: it also rolls the delivery probe's second.
+        string? note = SecondNote?.Invoke();
+        if (WriteLines) SecondLine(stats, note, nowUs);
+        bool lat = stats.LatP50Us != HostStatus.Unknown;
+        Timeline?.Add(new LinkSecond(nowUs, stats.RxPerSec, _sLost, _sLate, _sMaxLateUs / 1000f, _sGaps, _sReleases,
+            lat ? stats.LatP50Us / 1000f : -1, lat && stats.LatP99Us != HostStatus.Unknown ? stats.LatP99Us / 1000f : -1, stats.JitterUs / 1000f));
+        ClearSecond();
+    }
+
+    /// <summary>The "sec" line; made only when it is written.</summary>
+    private void SecondLine(LinkStats stats, string? note, long nowUs)
+    {
         _sb.Clear();
         _sb.Append(CultureInfo.InvariantCulture, $"rx {stats.RxPerSec} moving {_sMoving} lost {_sLost} late {_sLate} maxlate {_sMaxLateUs / 1000.0:0.0}");
         if (stats.LatP50Us != HostStatus.Unknown) _sb.Append(CultureInfo.InvariantCulture, $" lat {stats.LatP50Us / 1000.0:0.0}/{stats.LatP99Us / 1000.0:0.0}");
@@ -361,13 +373,9 @@ public sealed class InputRecorder
             _sb.Append(CultureInfo.InvariantCulture, $" lockwait {_sMaxLockWaitUs / 1000.0:0.0}");
             if (_sLockHolder != null) _sb.Append(" (").Append(_sLockHolder).Append(')');
         }
-        if (SecondNote?.Invoke() is { } note) _sb.Append(note);
+        if (note != null) _sb.Append(note);
         if (_sSkipped > 0) _sb.Append(" (").Append(_sSkipped).Append(" more events not written)");
         Line(nowUs, "sec", _sb.ToString());
-        bool lat = stats.LatP50Us != HostStatus.Unknown;
-        Timeline?.Add(new LinkSecond(nowUs, stats.RxPerSec, _sLost, _sLate, _sMaxLateUs / 1000f, _sGaps, _sReleases,
-            lat ? stats.LatP50Us / 1000f : -1, lat && stats.LatP99Us != HostStatus.Unknown ? stats.LatP99Us / 1000f : -1, stats.JitterUs / 1000f));
-        ClearSecond();
     }
 
     private void ClearSecond()
@@ -393,10 +401,13 @@ public sealed class InputRecorder
 
     /// <summary>
     /// Room for one more event line this second (at most <see cref="MaxEventsPerSecond"/>: a flick at high sensitivity
-    /// can make big moves every millisecond); the rest are only counted. Checked before the line's text is made.
+    /// can make big moves every millisecond); the rest are only counted. Checked before the line's text is made; false while
+    /// no lines are written.
     /// </summary>
     private bool EventAllowed()
     {
+        // No lines written (a Link test watch or an FPS overlay without Diagnostics): no text made either.
+        if (!WriteLines) return false;
         if (_sEvents >= MaxEventsPerSecond)
         {
             _sSkipped++;

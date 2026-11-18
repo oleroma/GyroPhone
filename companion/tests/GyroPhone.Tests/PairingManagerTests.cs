@@ -127,10 +127,58 @@ public class PairingManagerTests
     public void SecondPhoneIsBusy()
     {
         var h = NewHost();
-        var first = NewPhone();
-        Assert.True(first.OnPairHost(h.Send(first, first.PairStart())!));
+        var first = StartAndReveal(h);
         var second = NewPhone(0x70, "192.168.1.70");
         Assert.Equal(PairAckStatus.Busy, Ack(h.Send(second, second.PairStart())).Status);
+    }
+
+    [Fact]
+    public void AnAttemptThatNeverRevealsDoesNotHoldThePcForTheWholeWindow()
+    {
+        var h = NewHost();
+        var squatter = NewPhone(0x50, "192.168.1.50");
+        Assert.True(squatter.OnPairHost(h.Send(squatter, squatter.PairStart())!));
+        // Meanwhile another phone hears nothing (so it keeps resending) rather than a final BUSY.
+        var phone = NewPhone();
+        var start = phone.PairStart();
+        Assert.Null(h.Send(phone, start));
+        h.Clock.AdvanceMs(GyroPhone.Host.PairingManager.RevealTimeoutUs / 1000);
+        Assert.True(phone.OnPairHost(h.Send(phone, start)!));
+        Assert.Equal(PairAckStatus.Ok, Ack(h.Send(phone, phone.PairReveal())).Status);
+        Assert.Equal(phone.AttemptId, Assert.Single(h.Prompt.Shown).AttemptId);
+    }
+
+    [Fact]
+    public void RestartingUnrevealedAttemptsDoNotHoldThePcPastTheFirstDeadline()
+    {
+        var h = NewHost();
+        var squatter = NewPhone(0x50, "192.168.1.50");
+        Assert.True(squatter.OnPairHost(h.Send(squatter, squatter.PairStart())!));
+        var phone = NewPhone();
+        var start = phone.PairStart();
+        // The squatter keeps starting over with new commits, never revealing.
+        for (int i = 0; i < 3; i++)
+        {
+            h.Clock.AdvanceMs(GyroPhone.Host.PairingManager.RevealTimeoutUs / 1000 / 4);
+            Assert.NotNull(h.Send(squatter, squatter.PairStart()));
+            Assert.Null(h.Send(phone, start));
+        }
+        h.Clock.AdvanceMs(GyroPhone.Host.PairingManager.RevealTimeoutUs / 1000 / 4);
+        Assert.True(phone.OnPairHost(h.Send(phone, start)!));
+        Assert.Equal(PairAckStatus.Ok, Ack(h.Send(phone, phone.PairReveal())).Status);
+    }
+
+    [Fact]
+    public void FloodedStartsGenerateFewKeys()
+    {
+        var h = NewHost();
+        var phone = NewPhone();
+        int replies = 0;
+        for (int i = 0; i < 50; i++)
+            if (h.Send(phone, phone.PairStart()) != null) replies++;
+        Assert.Equal(2, replies); // the rest are dropped before any key generation
+        h.Clock.AdvanceMs(1000);
+        Assert.NotNull(h.Send(phone, phone.PairStart()));
     }
 
     [Fact]

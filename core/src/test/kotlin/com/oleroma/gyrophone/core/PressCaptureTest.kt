@@ -55,7 +55,10 @@ class PressCaptureTest {
     @Test fun phoneAxesMapToThePads() {
         assertEquals(OutputTarget.PadAxis(GamepadAxis.LX, -1f), PressTargets.ofPhoneAxis(AndroidAxis.X, false, zStick = true))
         assertEquals(OutputTarget.PadAxis(GamepadAxis.RY), PressTargets.ofPhoneAxis(AndroidAxis.RZ, true, zStick = true))
-        assertNull(PressTargets.ofPhoneAxis(AndroidAxis.RZ, true, zStick = false))
+        // Right stick on RX / RY: Z / RZ are the triggers.
+        assertEquals(OutputTarget.PadAxis(GamepadAxis.RT), PressTargets.ofPhoneAxis(AndroidAxis.RZ, true, zStick = false))
+        assertEquals(OutputTarget.PadAxis(GamepadAxis.LT), PressTargets.ofPhoneAxis(AndroidAxis.Z, true, zStick = false))
+        assertNull(PressTargets.ofPhoneAxis(AndroidAxis.Z, false, zStick = false))
         assertEquals(OutputTarget.PadAxis(GamepadAxis.RT), PressTargets.ofPhoneAxis(AndroidAxis.GAS, true, zStick = false))
         assertEquals(OutputTarget.Pad(GamepadButton.DPAD_LEFT), PressTargets.ofPhoneAxis(AndroidAxis.HAT_X, false, zStick = true))
     }

@@ -198,12 +198,6 @@ object PhysicalSticks {
         "rs" to (AndroidAxis.Z to AndroidAxis.RZ),
     )
 
-    /** [sticks] on a pad whose right stick is RX / RY ([rightStickOnRx]); its Z / RZ are then triggers. */
-    val sticksRx: Map<String, Pair<Int, Int>> = linkedMapOf(
-        "ls" to (AndroidAxis.X to AndroidAxis.Y),
-        "rs" to (AndroidAxis.RX to AndroidAxis.RY),
-    )
-
     /**
      * Whether a pad puts its right stick on RX / RY ([has]: it reports that axis). Pads on
      * Generic.kl do (and sometimes put triggers on Z / RZ); Z / RZ are the stick only without
@@ -215,6 +209,23 @@ object PhysicalSticks {
             (!has(AndroidAxis.RX) || !has(AndroidAxis.RY) || triggers)
         return !zStick && has(AndroidAxis.RX) && has(AndroidAxis.RY)
     }
+
+    /**
+     * Axis [axis] of a pad as the mappings and the controller drawing have it. On a pad whose right
+     * stick is RX / RY ([rx], [rightStickOnRx]) that stick is Z / RZ, and its own Z / RZ (its
+     * triggers) are LTRIGGER / RTRIGGER ([canonicalValue]). Other axes and pads keep theirs.
+     */
+    fun canonicalAxis(axis: Int, rx: Boolean): Int = if (!rx) axis else when (axis) {
+        AndroidAxis.RX -> AndroidAxis.Z
+        AndroidAxis.RY -> AndroidAxis.RZ
+        AndroidAxis.Z -> AndroidAxis.LTRIGGER
+        AndroidAxis.RZ -> AndroidAxis.RTRIGGER
+        else -> axis
+    }
+
+    /** [value] of [axis] as its [canonicalAxis]'s: a trigger on a centred Z / RZ (at rest -1) as 0..1. */
+    fun canonicalValue(axis: Int, value: Float, rx: Boolean): Float =
+        if (rx && (axis == AndroidAxis.Z || axis == AndroidAxis.RZ)) ((value + 1f) * 0.5f).coerceIn(0f, 1f) else value
 
     /** Trigger id to the axes its pull may come as. */
     val triggers: Map<String, Pair<Int, Int>> = linkedMapOf(
@@ -434,10 +445,12 @@ object DevicePresets {
         return if (phone === p.phone) p else p.copy(phone = phone)
     }
 
-    /** Every key of a keyboard to the same key on the PC. */
+    /**
+     * Every key of a keyboard to the same key on the PC: the drawn keys, then the keys the drawing
+     * has no place for (media and volume keys and the like).
+     */
     fun standardKeyboard(): List<Mapping> =
-        PhysicalLayouts.keyboardRows.flatten().mapNotNull { k ->
-            val code = k.code ?: return@mapNotNull null
+        (PhysicalLayouts.keyboardRows.flatten().mapNotNull { it.code } + AndroidKeyToHid.keyCodes).mapNotNull { code ->
             AndroidKeyToHid.usage(code)?.let { Mapping(InputSource.Key(code), OutputTarget.Key(it)) }
         }.distinct()
 
@@ -465,6 +478,25 @@ object DevicePresets {
             devicePresets = if (i < 0) set.devicePresets + preset
             else set.devicePresets.mapIndexed { k, p -> if (k == i) preset else p },
         )
+    }
+
+    /**
+     * [p] with mapping set [set] gone from device preset [presetId]: its mappings on
+     * every device, the Layer actions to it and its held buttons' settings in it ([HeldButton.gyro]).
+     * Left as it is while another workspace pinning that preset still has a layer with that id.
+     */
+    fun dropSet(p: Profile, presetId: String?, set: Int): Profile {
+        val id = presetId ?: return p
+        val preset = p.devicePresets.firstOrNull { it.id == id } ?: return p
+        if (p.workspaces.any { w -> w.devicePreset == id && w.sets.any { it.id == set } }) return p
+        val next = PhysicalDevice.entries.fold(preset) { d, dev -> d.withMappings(dev, Bindings.dropSet(d.mappings(dev), set)) }
+        // A held button left with no settings and no gyro mappings of its own goes ([DevicePreset.withHeld]).
+        val held = next.held.mapNotNull { h ->
+            if (h.gyro.none { it.set == set }) h
+            else h.copy(gyro = h.gyro.filterNot { it.set == set }).takeIf { it.gyro.isNotEmpty() || next.motionMapped(it.id) }
+        }
+        val dropped = next.copy(held = held)
+        return if (dropped == preset) p else put(p, dropped)
     }
 
     /** [set] without preset [id]; the workspaces that pinned it pin none. */

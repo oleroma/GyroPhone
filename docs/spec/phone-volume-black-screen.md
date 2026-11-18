@@ -9,7 +9,7 @@ The phone's own volume keys are a mappable device, **Phone** (`PhysicalDevice.PH
 - Read **only while input is allowed** (the pad open in play). Then the key is consumed, so the phone's own volume slider does not appear (`ControllerInput`). In menus, edit mode, with the pad closed, or while a mapping editor is learning a key, the rocker changes the phone's volume as usual.
 - Android does not deliver the keys with the real screen off; under the black screen (below) they work, since the pad is still open.
 
-**Media keys.** Targets include Volume Up / Down, Mute, Play/Pause, Next, Previous (HID consumer usages; `core/.../hid/HidUsage.kt`). Over Bluetooth they go in the keyboard report; the companion sends them as Windows media keys (Windows shows its volume popup) and repeats a held Volume key (400 ms delay, then every 50 ms).
+**Media keys.** Targets include Volume Up / Down, Mute, Play/Pause, Next, Previous (HID consumer usages; `core/.../hid/HidUsage.kt`). Over Bluetooth they go in the descriptor's media-key (Consumer Control) report, not the keyboard report, so Windows acts on them; the companion sends them as Windows media keys (Windows shows its volume popup) and repeats a held Volume key (400 ms delay, then every 50 ms).
 
 ## Black screen
 
@@ -18,7 +18,7 @@ For playing with a controller while the phone sits on the desk.
 - **Black screen when idle** (App › Screen, default off) blacks out the pad after **Black screen after** (30 s, 1, 2 or 5 min; default 1 min) without a screen touch, in play mode only.
 - A mapping to **Black screen** (Other targets) blacks it out at once, for example from a controller button.
 - While black, the touch controls are off. Gyro, controllers, the volume rocker and the PC link keep working.
-- While black, the gyro displays, the parallax edge, the position ruler and the debug panel stop drawing, and the displays and the edge are not fed: their poses hold, a pointer paints nothing, and the accelerometer and magnetometer stop unless something else needs them (a tilt or shake mapping, World or Player gyro space, the PC overlay). Uncovered, they go on from where they were; one held to gravity settles onto it again at once (`GamepadRuntime.setVisualsCovered`, `GyroPose.resettle`).
+- While black, the gyro displays, the parallax edge, the position ruler and the debug panel stop drawing, and the displays and the edge are not fed: their poses hold, a pointer paints nothing, and the accelerometer and magnetometer stop unless something else needs them (a tilt or shake mapping, World or Player gyro space, the PC overlay). Uncovered, they go on from where they were; one held to gravity settles onto it again at once (`GamepadRuntime.setVisualsCovered`, `GyroPose.resettle`). The same holds while the app is not in front (the screen off or another app on top), even when input keeps flowing.
 - A **tap** on the screen brings the pad back; that tap presses nothing.
 - A black pad keeps the screen on even with **Keep the screen on** off, so the phone doesn't lock under it.
 - The app **never touches brightness**: it draws a black overlay only (black OLED pixels are off anyway). Brightness is left to the phone.

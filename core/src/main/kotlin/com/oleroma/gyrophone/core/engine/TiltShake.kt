@@ -243,10 +243,12 @@ class TiltShake {
 
     /** [deg] of tilt as -1..1: 0 within [deadzone], full at [range]. */
     private fun level(deg: Float, range: Float, deadzone: Float): Float {
-        val dz = deadzone.coerceIn(0f, range - 1f)
+        // Saved data isn't limited like the sliders: a range under 1° would make the deadzone's range empty.
+        val r = range.coerceIn(GyroSettings.MIN_TILT_RANGE_DEG, GyroSettings.MAX_TILT_RANGE_DEG)
+        val dz = deadzone.coerceIn(0f, r - 1f)
         val a = abs(deg)
         if (a <= dz) return 0f
-        return (kotlin.math.sign(deg) * (a - dz) / (range.coerceAtLeast(1f) - dz)).coerceIn(-1f, 1f)
+        return (kotlin.math.sign(deg) * (a - dz) / (r - dz)).coerceIn(-1f, 1f)
     }
 
     private fun wrap(deg: Float): Float {

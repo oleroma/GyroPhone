@@ -77,6 +77,12 @@ public sealed class Ds4MotionFeed
     private ushort _seq;
     private uint _clock;
     private long _lastUs = long.MinValue;
+    /// <summary>Phone time (µs, low 32 bits) of the last sample sent; valid while <see cref="_timeKnown"/>.</summary>
+    private uint _lastPhoneUs;
+    /// <summary>The clock stands at <see cref="_lastPhoneUs"/>: no resting reading moved it on by host time since.</summary>
+    private bool _timeKnown;
+    /// <summary>Lost samples' time the clock catches up at most (a longer gap is a stop, not a loss).</summary>
+    private const long MaxLostUs = 1_000_000;
 
     /// <summary>The reading the pad shows now.</summary>
     public Ds4Motion Current { get; private set; } = Ds4Motion.Neutral;
@@ -101,9 +107,20 @@ public sealed class Ds4MotionFeed
             // Nothing new, or an older packet arriving late.
             if (diff == 0 || diff >= 0x8000) return 0;
             fresh = Math.Min(diff, f.Count);
+            // More were lost than the packet repeats: the first fresh sample's step covers only the gap from its
+            // own lost predecessor, so the lost samples' time comes from the phone's times.
+            if (diff > f.Count && _timeKnown)
+            {
+                long covered = 0;
+                for (int i = 0; i < f.Count; i++) covered += f.DtUs[i];
+                long lost = (long)(uint)(f.NewestTimeUs - _lastPhoneUs) - covered;
+                if (lost > 0) Advance((int)Math.Min(lost, MaxLostUs));
+            }
         }
         _haveSeq = true;
         _seq = f.NewestSeq;
+        _lastPhoneUs = f.NewestTimeUs;
+        _timeKnown = true;
         _lastUs = nowUs;
         int n = 0;
         for (int i = f.Count - fresh; i < f.Count; i++)
@@ -125,6 +142,7 @@ public sealed class Ds4MotionFeed
         long gap = _lastUs == long.MinValue ? 0 : Math.Clamp(nowUs - _lastUs, 0, 1_000_000);
         _lastUs = nowUs;
         Advance((int)gap);
+        _timeKnown = false; // the clock moved by host time: phone times no longer line up with it
         Current = Current.Resting(_clock);
         into[0] = Current;
         return 1;
@@ -137,6 +155,7 @@ public sealed class Ds4MotionFeed
     public void Reset()
     {
         _haveSeq = false;
+        _timeKnown = false;
         _lastUs = long.MinValue;
         Current = Ds4Motion.Neutral with { Clock = _clock };
     }

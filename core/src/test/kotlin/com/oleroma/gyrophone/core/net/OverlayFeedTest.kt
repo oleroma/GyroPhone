@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.core.net
 import com.oleroma.gyrophone.core.model.AndroidKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** OVERLAY / OVERLAY_LAYOUT bytes; the same hex is decoded by the companion's OverlayTests. */
@@ -16,6 +17,53 @@ class OverlayFeedTest {
         assertEquals(180, Wire.sizeOf(PacketType.OVERLAY))
         assertEquals(228, Wire.sizeOf(PacketType.OVERLAY_LAYOUT))
         assertEquals(true, PacketType.isPhoneToHost(PacketType.OVERLAY_LAYOUT))
+    }
+
+    @Test fun aBigFramesBlobLeavesOutWholeRecordsAndCountsWhatItHolds() {
+        val n = 100
+        val index = (0 until n).associate { "b$it" to it }
+        val text = "x".repeat(40)
+        val marks = (0 until n).map { i ->
+            OverlayMark("b$i", inside = false, row = false, set = false, lines = List(3) { OverlayLine(text, OverlayLine.PLAIN) }, bars = emptyList())
+        }
+        val keys = OverlayKeys.NONE.copy(
+            keys = List(30) { OverlayKey(0, OverlayKey.HELD, "key $it ${"n".repeat(20)}", "target ${"t".repeat(20)}") },
+            touch = List(20) { OverlayTouchKey("b$it", 0, "touch ${"t".repeat(20)}") },
+        )
+        val blob = OverlayFeed.encodeFrames(OverlayFrames(10f, 2f, 0, marks), 7, index, keys)
+        assertTrue(blob.size <= OverlayFeed.PIECE_DATA * OverlayFeed.MAX_FRAME_PIECES)
+        // Walk it as the PC does: every count matches the records there, and the blob ends right after them.
+        fun u8(at: Int) = blob[at].toInt() and 0xFF
+        val markCount = u8(11)
+        var p = 12
+        repeat(markCount) {
+            val lines = u8(p + 2); p += 3
+            repeat(lines) { p += 2 + u8(p + 1) }
+            p += 1 + u8(p) * 5
+        }
+        assertEquals(OverlayFeed.KEYS_SECTION, u8(p))
+        p += 1 + 2 + 10 + 4
+        val keyCount = u8(p); p++
+        repeat(keyCount) { p += 2; p += 1 + u8(p); p += 1 + u8(p) }
+        val touchCount = u8(p); p++
+        repeat(touchCount) { p += 2; p += 1 + u8(p) }
+        assertEquals(blob.size, p)
+        // The Keys table goes whole here; the marks take what is left.
+        assertEquals(30, keyCount)
+        assertEquals(20, touchCount)
+        assertTrue(markCount in 1 until n)
+    }
+
+    @Test fun aKeysTableTooBigForTheBlobKeepsWholeKeys() {
+        val keys = OverlayKeys.NONE.copy(keys = List(96) { OverlayKey(0, OverlayKey.HELD, "n".repeat(60), "t".repeat(60)) })
+        val blob = OverlayFeed.encodeFrames(OverlayFrames.NONE, 7, emptyMap(), keys)
+        assertTrue(blob.size <= OverlayFeed.PIECE_DATA * OverlayFeed.MAX_FRAME_PIECES)
+        val keyCountAt = 12 + 1 + 2 + 10 + 4
+        val keyCount = blob[keyCountAt].toInt() and 0xFF
+        assertTrue(keyCount in 1 until 96)
+        // Each key is 2 + 61 + 61 bytes, then the touch key count (0).
+        assertEquals(keyCountAt + 1 + keyCount * 124 + 1, blob.size)
+        assertEquals(0, blob.last().toInt())
     }
 
     @Test fun samplesAddUpToTheFrameThatFollows() {

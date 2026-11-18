@@ -51,6 +51,17 @@ class CrosshairKickTest {
         assertFalse(s.step(t + 400, false, CrosshairKick.AUTO, 100))
     }
 
+    @Test fun autoRifleKeepsASlowBeatPastTheKick() {
+        // A period longer than the kick and flash: the beat stays at the period, not the kick's length.
+        val s = CrosshairKick.State()
+        var t = 0L
+        while (t < 3000) {
+            s.step(t, true, CrosshairKick.AUTO, 1000)
+            t += 8
+        }
+        assertEquals(3L, s.shots)
+    }
+
     @Test fun offNeverKicks() {
         val s = CrosshairKick.State()
         assertFalse(s.step(0, true, CrosshairKick.OFF, 100))

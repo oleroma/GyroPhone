@@ -124,7 +124,10 @@ class PhonePairingFlowTest {
     @Test fun closedWindowRefusesStart() {
         val f = flow()
         f.start(0)
-        f.onPacket(PairAck(0, AckStatus.CLOSED), 5)
+        // A refusal from another address is not the PC's.
+        f.onPacket(PairAck(0, AckStatus.CLOSED), 4, InetSocketAddress("192.168.1.66", Wire.PORT))
+        assertEquals(PairState.Started, f.state)
+        f.onPacket(PairAck(0, AckStatus.CLOSED), 5, addr)
         assertEquals(PairState.Failed(PairFailure.CLOSED), f.state)
     }
 

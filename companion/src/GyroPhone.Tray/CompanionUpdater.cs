@@ -64,6 +64,13 @@ internal sealed class CompanionUpdater : IDisposable
             _log($"self-restart off: {_version} is not a CI build");
             return;
         }
+        if (GyroPhone.Windows.ElevationProbe.IsSelfElevated)
+        {
+            // The folder is writable by any program of this user, so the .new file there is not trusted with
+            // admin rights: the update waits until the companion runs without them again.
+            _log("self-restart off: running as administrator");
+            return;
+        }
         _log($"self-restart on: {_version} watches {_newPath}");
         if (_failedStamp != null) _log($"update to {_failedStamp} failed; not retrying it until it is installed again");
         _timer.Start();

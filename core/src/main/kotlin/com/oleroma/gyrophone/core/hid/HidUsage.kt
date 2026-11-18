@@ -13,7 +13,8 @@ object HidUsage {
 
     // Media keys. Mute and the volume keys are the keyboard page's own; play/pause and the track
     // keys sit in its reserved range above the modifiers, where Linux's HID keyboard table puts
-    // them. The PC companion presses each as its Windows media key.
+    // them. The PC companion presses each as its Windows media key; over Bluetooth they go in
+    // the consumer report (HidDescriptor.consumerBit), as Windows ignores them on a keyboard.
     const val MUTE = 0x7F
     const val VOLUME_UP = 0x80
     const val VOLUME_DOWN = 0x81
@@ -92,6 +93,9 @@ object AndroidKeyToHid {
         put(24, HidUsage.VOLUME_UP); put(25, HidUsage.VOLUME_DOWN); put(164, HidUsage.MUTE) // KEYCODE_VOLUME_*
         put(85, HidUsage.PLAY_PAUSE); put(87, HidUsage.NEXT_TRACK); put(88, HidUsage.PREVIOUS_TRACK) // KEYCODE_MEDIA_*
     }
+
+    /** Every Android keycode with a HID usage, in keycode order. */
+    val keyCodes: List<Int> = table.keys.sorted()
 
     /** HID usage for an Android keycode, or null if it has no keyboard equivalent. */
     fun usage(androidKeyCode: Int): Int? = table[androidKeyCode]

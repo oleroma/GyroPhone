@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.core.model
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -53,8 +54,21 @@ object MappingPresets {
 
     fun encode(presets: List<MappingPreset>): String = json.encodeToString(listSerializer, presets)
 
-    /** Reads a saved list; unreadable text gives null (the caller keeps the file). */
+    /**
+     * Reads a saved list; unreadable text gives null (the caller keeps the file), and so does an
+     * item this build can't read (a newer build's action or input): [decodeLenient] reads the rest.
+     */
     fun decode(text: String): List<MappingPreset>? = runCatching { json.decodeFromString(listSerializer, text) }.getOrNull()
+
+    /**
+     * The items of a saved list this build can read, each unreadable one left out (a newer build's
+     * action or input); null when the text is no list at all. For showing them: saving over the
+     * file is still refused while [decode] can't read it whole, so those items aren't lost.
+     */
+    fun decodeLenient(text: String): List<MappingPreset>? {
+        val items = runCatching { json.parseToJsonElement(text) as? JsonArray }.getOrNull() ?: return null
+        return items.mapNotNull { runCatching { json.decodeFromJsonElement(MappingPreset.serializer(), it) }.getOrNull() }
+    }
 
     fun newId(taken: Collection<String>): String {
         var n = 1

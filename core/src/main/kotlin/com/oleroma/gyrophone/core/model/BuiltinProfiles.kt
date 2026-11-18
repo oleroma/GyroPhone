@@ -363,6 +363,9 @@ object BuiltinProfiles {
         Mapping(InputSource.Key(AndroidKey.BUTTON_SELECT), OutputTarget.Key(0x2B)), // Tab
         Mapping(InputSource.Axis(AndroidAxis.LTRIGGER, AxisHalf.POSITIVE), OutputTarget.Mouse(MouseButton.RIGHT)),
         Mapping(InputSource.Axis(AndroidAxis.RTRIGGER, AxisHalf.POSITIVE), OutputTarget.Mouse(MouseButton.LEFT)),
+        // Pads that report their triggers as brake and gas (Xbox over Bluetooth).
+        Mapping(InputSource.Axis(AndroidAxis.BRAKE, AxisHalf.POSITIVE), OutputTarget.Mouse(MouseButton.RIGHT)),
+        Mapping(InputSource.Axis(AndroidAxis.GAS, AxisHalf.POSITIVE), OutputTarget.Mouse(MouseButton.LEFT)),
         Mapping(InputSource.Key(AndroidKey.BUTTON_L2), OutputTarget.Mouse(MouseButton.RIGHT)),
         Mapping(InputSource.Key(AndroidKey.BUTTON_R2), OutputTarget.Mouse(MouseButton.LEFT)),
         Mapping(InputSource.Key(AndroidKey.DPAD_UP), OutputTarget.Wheel(1)),

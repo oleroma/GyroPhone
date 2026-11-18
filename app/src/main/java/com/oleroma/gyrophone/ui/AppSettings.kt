@@ -94,6 +94,7 @@ private fun DefaultsTab(runtime: GamepadRuntime) {
                 onSettings = null,
                 onClose = { mapping = false },
                 settings = touchpadSettings(runtime, level),
+                level = profile.defaults,
             )
         }
     }

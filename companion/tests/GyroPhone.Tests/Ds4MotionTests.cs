@@ -98,6 +98,30 @@ public class Ds4MotionTests
     }
 
     [Fact]
+    public void FeedCountsTheTimeOfSamplesLostBeyondTheRepeats()
+    {
+        var feed = new Ds4MotionFeed();
+        var o = new Ds4Motion[MotionFrame.MaxSamples];
+        var f = VectorFrame(); // seq 5 at 2000 µs
+        feed.Take(f, o, 0);
+        uint last = o[1].Clock;
+        // 20 samples later, 1 ms apart: the packet holds only the newest 2 (seq 24, 25), 18 are lost.
+        f.NewestSeq = 25;
+        f.NewestTimeUs = 22_000;
+        f.DtUs[0] = 1000; f.DtUs[1] = 1000;
+        Assert.Equal(2, feed.Take(f, o, 20_000));
+        // Seq 24 is 19 ms after seq 5, seq 25 1 ms after that: 3 ticks per µs.
+        Assert.Equal(19_000u * 3, o[0].Clock - last);
+        Assert.Equal(20_000u * 3, o[1].Clock - last);
+
+        // Within the repeats nothing extra is added.
+        f.NewestSeq = 26;
+        f.NewestTimeUs = 23_000;
+        Assert.Equal(1, feed.Take(f, o, 21_000));
+        Assert.Equal(21_000u * 3, o[0].Clock - last);
+    }
+
+    [Fact]
     public void FeedRestsWhenStoppedOrSilent()
     {
         var feed = new Ds4MotionFeed();
@@ -146,6 +170,47 @@ public class Ds4MotionTests
         h.Send(phone, phone.State(f => f.MouseTotalX += 1));
         h.Engine.OnTick(h.Clock.NowUs);
         Assert.False(h.Pad.Ds4Motion[^1].Turning);
+    }
+
+    [Fact]
+    public void AStateInTheSameBurstGoesOutBeforeTheMotion()
+    {
+        var h = new Harness(mode: OutputMode.DualShock4);
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        int calls = h.KeyMouse.Calls.Count;
+        // STATE then MOTION in one receive burst: no Flush between them.
+        h.Send(phone, phone.State(f => { f.Lx = 32767; f.MouseTotalX += 5; }), flush: false);
+        var b = new byte[MotionFrame.Size];
+        VectorFrame().Encode(b);
+        h.Send(phone, phone.Sealed(PacketType.Motion, b), flush: false);
+        // The mouse move went out before the motion readings, which carry the new stick.
+        Assert.Equal(calls + 1, h.KeyMouse.Calls.Count);
+        Assert.Equal(255, h.Pad.Ds4[^1].Lx);
+        Assert.Equal(255, h.Pad.Ds4[^2].Lx);
+        Assert.Equal(253, h.Pad.Ds4Motion[^1].Gz);
+        h.Engine.Flush(h.Clock.NowUs);
+        Assert.Equal(calls + 1, h.KeyMouse.Calls.Count);
+    }
+
+    [Fact]
+    public void APadTapSplitByAMotionInOneBurstStaysVisible()
+    {
+        var h = new Harness(mode: OutputMode.DualShock4);
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        // Press, MOTION, release in one receive burst: the MOTION injects the press first.
+        h.Send(phone, phone.State(f => f.Buttons = 1), flush: false);
+        var b = new byte[MotionFrame.Size];
+        VectorFrame().Encode(b);
+        h.Send(phone, phone.Sealed(PacketType.Motion, b), flush: false);
+        Assert.NotEqual(0, h.Pad.Ds4[^1].Buttons);
+        h.Send(phone, phone.State(f => f.Buttons = 0), flush: false);
+        h.Engine.Flush(h.Clock.NowUs);
+        // The button stays visible to a polling game for a moment, then lets go.
+        Assert.NotEqual(0, h.Pad.Ds4[^1].Buttons);
+        h.Tick(Wire.WatchdogTickMs);
+        Assert.Equal(0, h.Pad.Ds4[^1].Buttons);
     }
 
     [Fact]

@@ -34,14 +34,17 @@ class ReportPump(
     @Volatile private var invalidated = false
     /** The loop sent nothing on its last tick and is waiting: input may end the wait. */
     @Volatile private var idleWaiting = false
-    @Volatile private var inputArrived = false
+    /**
+     * Bumped on every input. The loop reads it before its snapshot, so input that lands between
+     * the snapshot and the start of the wait is still seen there (a lost bump from two threads at
+     * once does not matter: the value still differs).
+     */
+    @Volatile private var inputSeq = 0
 
     /** Set as `engine.onChange` while running; wakes the loop only while it waits idle. */
     private val wake = Runnable {
-        if (idleWaiting) {
-            inputArrived = true
-            LockSupport.unpark(thread)
-        }
+        inputSeq++
+        if (idleWaiting) LockSupport.unpark(thread)
     }
 
     /** Reports handed to the stack / refused by it during the last full second. */
@@ -56,6 +59,7 @@ class ReportPump(
     /** Latest encoded reports, for GET_REPORT requests from the host. */
     val lastGamepadReport: ByteArray get() = scheduler.lastGamepadReport
     val lastKeyboardReport: ByteArray get() = scheduler.lastKeyboardReport
+    val lastConsumerReport: ByteArray get() = scheduler.lastConsumerReport
 
     /**
      * The mouse feature report the host last set: which resolution multipliers are on. Until the
@@ -94,19 +98,35 @@ class ReportPump(
     /** Forces a full re-send on the next tick (after a host connects); safe from any thread. */
     fun invalidate() {
         invalidated = true
+        // The loop may be parked for a long while with no host: let it start at once.
+        thread?.let { LockSupport.unpark(it) }
     }
 
     private fun loop(s: ReportScheduler) {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
         val me = Thread.currentThread()
         val hint = WorkHint.forThisThread()
+        var wasConnected = false
         while (running && thread === me) {
             val start = System.nanoTime()
-            val connected = hid.isConnected
-            val sent = if (connected) tick(s, start) else {
+            if (!hid.isConnected) {
+                // No host: tick slowly (a host connecting unparks the loop via [invalidate]).
+                wasConnected = false
                 engine.snapshot() // drain motion while idle
-                false
+                if (start - statsWindowStart >= 1_000_000_000L) {
+                    sentPerSecond = 0; failedPerSecond = 0
+                    sentCount = 0; failedCount = 0; statsWindowStart = start
+                }
+                waitDisconnected(start + NO_HOST_INTERVAL_NANOS, me)
+                continue
             }
+            if (!wasConnected) {
+                // Just connected: drop motion gathered during the slow idle ticks.
+                wasConnected = true
+                engine.snapshot()
+            }
+            val seenInput = inputSeq
+            val sent = tick(s, start)
             // The pass is done: how long it took goes to the performance hint.
             if (hint != null) {
                 val end = System.nanoTime()
@@ -116,24 +136,39 @@ class ReportPump(
                 sentPerSecond = sentCount; failedPerSecond = failedCount
                 sentCount = 0; failedCount = 0; statsWindowStart = start
             }
-            waitUntil(s, start + intervalNanos, me, inputWakes = connected && !sent)
+            waitUntil(s, start + intervalNanos, me, inputWakes = !sent, seenInput)
         }
         hint?.close()
+    }
+
+    /** Parks until [until], or until a host connects. */
+    private fun waitDisconnected(until: Long, me: Thread) {
+        while (running && thread === me && !hid.isConnected) {
+            val wait = until - System.nanoTime()
+            if (wait <= 0) break
+            LockSupport.parkNanos(wait)
+        }
     }
 
     /**
      * Parks until the periodic tick at [tickAt]. With [inputWakes] (the last tick sent nothing),
      * input shortens the wait: the loop then ticks as soon as the last report is one interval
-     * old. Early returns from park (a stale unpark) never shorten it otherwise.
+     * old. Input counts from [seenInput] ([inputSeq] before the tick's snapshot), so input that
+     * came after the snapshot but before the wait began is not missed. Early returns from park (a
+     * stale unpark) never shorten it otherwise.
      */
-    private fun waitUntil(s: ReportScheduler, tickAt: Long, me: Thread, inputWakes: Boolean) {
+    private fun waitUntil(s: ReportScheduler, tickAt: Long, me: Thread, inputWakes: Boolean, seenInput: Int) {
         var wakeAt = tickAt
-        inputArrived = false
+        var seen = seenInput
+        // Set before reading [inputSeq] below: any input after this read unparks the loop.
         idleWaiting = inputWakes
         while (running && thread === me) {
-            if (inputWakes && inputArrived) {
-                inputArrived = false
-                wakeAt = ReportScheduler.inputTickAt(wakeAt, s.lastSendNanos, intervalNanos)
+            if (inputWakes) {
+                val seq = inputSeq
+                if (seq != seen) {
+                    seen = seq
+                    wakeAt = ReportScheduler.inputTickAt(wakeAt, s.lastSendNanos, intervalNanos)
+                }
             }
             val wait = wakeAt - System.nanoTime()
             if (wait <= 0) break
@@ -166,5 +201,7 @@ class ReportPump(
         const val DEFAULT_RATE_HZ = 60
         const val DEFAULT_INTERVAL_NANOS = 1_000_000_000L / DEFAULT_RATE_HZ
         private const val STOP_JOIN_MS = 500L
+        /** How often the loop wakes with no host connected (only to drain the engine's motion). */
+        private const val NO_HOST_INTERVAL_NANOS = 250_000_000L
     }
 }

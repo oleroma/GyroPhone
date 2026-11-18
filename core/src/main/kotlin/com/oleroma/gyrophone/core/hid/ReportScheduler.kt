@@ -2,7 +2,8 @@ package com.oleroma.gyrophone.core.hid
 
 /**
  * Picks the ONE Bluetooth HID report each pump tick sends (the link allows about one packet per
- * sniff interval). Keyboard changes go first, then mouse button edges, then game pad button / hat
+ * sniff interval). Keyboard changes go first, then media keys (the consumer report: they never go
+ * in the keyboard report, [HidDescriptor.consumerBit]), then mouse button edges, then game pad button / hat
  * edges, then analog game pad changes and mouse motion take turns. Mouse motion that is not sent
  * yet keeps accumulating, so nothing is lost or queued, and mouse and game pad button edges stay
  * latched until a report carries them. When nothing changed for [REFRESH_NANOS]
@@ -19,6 +20,10 @@ class ReportScheduler(private val sink: Sink) {
 
     private var lastGamepad: GamepadState? = null
     private var lastKeyboard: KeyboardState? = null
+    /** Media keys the host has (consumer report bits); none after a reset. */
+    private var lastConsumer = 0
+    /** The consumer report changed and has not been refreshed since, so a dropped release heals once. */
+    private var consumerRefreshDue = false
     private var lastMouseButtons = 0
     private var pendingDx = 0
     private var pendingDy = 0
@@ -47,11 +52,15 @@ class ReportScheduler(private val sink: Sink) {
         private set
     @Volatile var lastKeyboardReport: ByteArray = KeyboardState().encode()
         private set
+    @Volatile var lastConsumerReport: ByteArray = ByteArray(HidDescriptor.CONSUMER_REPORT_SIZE)
+        private set
 
     /** Forgets what the host has: the next ticks re-send full state (a host connected). */
     fun reset() {
         lastGamepad = null
         lastKeyboard = null
+        lastConsumer = 0
+        consumerRefreshDue = false
         lastMouseButtons = 0
         pendingDx = 0; pendingDy = 0; pendingWheel = 0; pendingPan = 0
         latchedDown = 0; latchedUp = 0
@@ -64,6 +73,8 @@ class ReportScheduler(private val sink: Sink) {
      * multiplier feature report. Returns whether a report was handed to the sink.
      */
     fun tick(s: HidState, nowNanos: Long, mouseFeature: Int): Boolean {
+        val media = mediaBits(s.allKeys)
+        val keyboard = if (media == 0 && mediaBits(s.keyboard.keys) == 0) s.keyboard else withoutMedia(s)
         pendingDx += s.mouse.dx
         pendingDy += s.mouse.dy
         pendingWheel += s.mouse.wheel
@@ -91,11 +102,15 @@ class ReportScheduler(private val sink: Sink) {
             wheelOut(pendingWheel, HidDescriptor.wheelHiRes(mouseFeature)) != 0 ||
             wheelOut(pendingPan, HidDescriptor.panHiRes(mouseFeature)) != 0
         when {
-            s.keyboard != lastKeyboard -> {
-                if (sendKeyboard(s.keyboard, nowNanos)) {
+            keyboard != lastKeyboard -> {
+                if (sendKeyboard(keyboard, nowNanos)) {
                     keyboardRefreshDue = lastKeyboard != null // not the first report to this host
-                    lastKeyboard = s.keyboard
+                    lastKeyboard = keyboard
                 }
+            }
+            media != lastConsumer -> if (sendConsumer(media, nowNanos)) {
+                lastConsumer = media
+                consumerRefreshDue = true
             }
             mouseButtons != lastMouseButtons -> sendMouse(mouseFeature, nowNanos) // click edges go out on the next tick
             padDirty && (padEdge || !(mouseDirty && mouseTurn)) -> {
@@ -103,7 +118,7 @@ class ReportScheduler(private val sink: Sink) {
                 mouseTurn = true
             }
             mouseDirty -> sendMouse(mouseFeature, nowNanos)
-            nowNanos - lastSendNanos >= REFRESH_NANOS -> refresh(s, g, nowNanos)
+            nowNanos - lastSendNanos >= REFRESH_NANOS -> refresh(keyboard, g, nowNanos)
             else -> return false
         }
         return true
@@ -113,8 +128,12 @@ class ReportScheduler(private val sink: Sink) {
      * Re-sends absolute state, never a mouse report (it is relative): the keyboard while a key is
      * held (and once after its last change, so a dropped release heals), taking turns with the pad.
      */
-    private fun refresh(s: HidState, g: GamepadState, nowNanos: Long) {
-        val k = s.keyboard
+    private fun refresh(k: KeyboardState, g: GamepadState, nowNanos: Long) {
+        if (consumerRefreshDue) {
+            // Once after the media keys' last change, so a dropped release heals.
+            if (sendConsumer(lastConsumer, nowNanos)) consumerRefreshDue = false
+            return
+        }
         val keyboardWants = keyboardRefreshDue || k.modifiers != 0 || k.keys.isNotEmpty()
         if (keyboardWants && refreshKeyboardNext) {
             if (sendKeyboard(k, nowNanos)) keyboardRefreshDue = false
@@ -132,6 +151,25 @@ class ReportScheduler(private val sink: Sink) {
         lastKeyboardReport = bytes
         return true
     }
+
+    private fun sendConsumer(bits: Int, nowNanos: Long): Boolean {
+        val bytes = byteArrayOf(bits.toByte())
+        lastSendNanos = nowNanos
+        if (!sink.send(HidDescriptor.REPORT_ID_CONSUMER, bytes)) return false
+        lastConsumerReport = bytes
+        return true
+    }
+
+    /** The consumer report bits of the media keys among [keys]. */
+    private fun mediaBits(keys: List<Int>): Int {
+        var bits = 0
+        for (i in keys.indices) bits = bits or HidDescriptor.consumerBit(keys[i])
+        return bits
+    }
+
+    /** [s]'s keyboard report without its media keys (they go in the consumer report). */
+    private fun withoutMedia(s: HidState): KeyboardState =
+        KeyboardState(s.keyboard.modifiers, s.allKeys.filter { HidDescriptor.consumerBit(it) == 0 }.take(6))
 
     private fun sendGamepad(g: GamepadState, nowNanos: Long) {
         val bytes = g.encode()

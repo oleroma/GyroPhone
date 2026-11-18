@@ -68,7 +68,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     private readonly Dictionary<string, OverlayForm> _overlayForms = [];
     // The open windows, for the pacer thread (the dictionary is the UI thread's).
     private volatile OverlayForm[] _overlayList = [];
-    private OverlayWheel? _overlayWheel;
     // The overlays' global shortcuts; null until the server owns the port (one instance holds them).
     private Hotkeys? _hotkeys;
     private OverlayPacer? _pacer;
@@ -224,7 +223,8 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     private void StartOverlays()
     {
         GcWatch.NameCurrentThread("window thread");
-        _pacer = new OverlayPacer(TickOverlays, OverlayWantHz, OverlayScreenHz, _log.Write);
+        _pacer = new OverlayPacer(TickOverlays, OverlayWantHz, OverlayScreenHz, OverlaysBusy, _log.Write);
+        _overlays.Published = _pacer.Wake;
         ApplyOverlays(); // shown last time: shown again
         try
         {
@@ -907,7 +907,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     /// <summary>" (Ctrl+Alt+R)" for a menu item or button, or "" when the action has no keys.</summary>
     public string KeysSuffix(OverlayAction a) => Shortcuts.Get(a) is { Length: > 0 } k ? $" ({k})" : "";
 
-    /// <summary>Whether another app holds <paramref name="a"/>'s keys, so they do nothing here.</summary>
+    /// <summary>Whether another app (or an AltGr character) holds <paramref name="a"/>'s keys, so they do nothing here.</summary>
     public bool ShortcutTaken(OverlayAction a) => _hotkeys?.IsTaken(a) ?? false;
 
     /// <summary>Sets <paramref name="a"/>'s keys ("" = none) and holds them at once.</summary>
@@ -927,9 +927,13 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     private void ApplyShortcuts()
     {
         if (_hotkeys == null) return;
-        foreach (var a in _hotkeys.Apply(Shortcuts))
-            _log.Write($"overlay: {Shortcuts.Get(a)} ({OverlayShortcuts.ActionName(a)}) is taken by another app");
+        _shortcutsActive = _overlays.Ui.Overlays.Count > 0;
+        foreach (var a in _hotkeys.Apply(Shortcuts, _shortcutsActive))
+            _log.Write($"overlay: {Shortcuts.Get(a)} ({OverlayShortcuts.ActionName(a)}) is taken by another app or types a character with AltGr");
     }
+
+    /// <summary>Whether the shortcuts are held: only while at least one overlay is set up.</summary>
+    private bool _shortcutsActive;
 
     private void OnShortcut(OverlayAction a)
     {
@@ -1002,7 +1006,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         _overlays.SetOverlayEdit(on);
         foreach (var f in _overlayForms.Values.ToList()) f.SettingsChanged();
-        UpdateOverlayWheel();
         Refresh();
     }
 
@@ -1163,6 +1166,15 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         return want;
     }
 
+    /// <summary>Whether an open overlay window is busy (pacer thread): else the pacer ticks slowly.</summary>
+    private bool OverlaysBusy()
+    {
+        long now = Environment.TickCount64;
+        foreach (var f in _overlayList)
+            if (OverlayPacing.Busy(now, f.BusyAt)) return true;
+        return false;
+    }
+
     /// <summary>The fastest refresh rate of the screens the open overlay windows are on (pacer thread); 0 = none known yet.</summary>
     private int OverlayScreenHz()
     {
@@ -1176,30 +1188,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         _overlayList = [.. _overlayForms.Values];
         _pacer?.SetRunning(_overlayList.Length > 0);
-        UpdateOverlayWheel();
-    }
-
-    /// <summary>The wheel resizes overlays only while Edit is on and one is open.</summary>
-    private void UpdateOverlayWheel()
-    {
-        bool on = OverlayEdit && _overlayForms.Count > 0;
-        // The hook's own thread calls these: they read only the pacer's copy of the list and the windows' own handles.
-        if (on) _overlayWheel ??= new OverlayWheel(
-            h =>
-            {
-                foreach (var f in _overlayList)
-                    if (h != IntPtr.Zero && f.Hwnd == h) return f;
-                return null;
-            },
-            () =>
-            {
-                var id = _selectedOverlay;
-                if (id == null) return null;
-                foreach (var f in _overlayList)
-                    if (f.Id == id && f.Hwnd != IntPtr.Zero && f.Visible) return f;
-                return null;
-            });
-        if (_overlayWheel != null) _overlayWheel.Enabled = on;
     }
 
     /// <summary>The open overlay windows' draw times, for the Debug window.</summary>
@@ -1237,6 +1225,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         foreach (var id in _overlayForms.Keys.Where(id => OverlayOf(id) == null).ToList())
             if (_overlayForms.Remove(id, out var f)) f.Close();
         _overlays.SetOverlay(PoseOverlaysOpen());
+        if (_shortcutsActive != _overlays.Ui.Overlays.Count > 0) ApplyShortcuts();
         // The game's frames are watched only while an FPS overlay is on.
         _perf.Watch(_overlays.Ui.Overlays.Any(o => o.Kind == OverlayKind.Fps && o.Shown));
         OverlaysChanged();
@@ -1340,7 +1329,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
               .Append(l.RssiDbm != 0 ? $" · {l.RssiDbm} dBm {l.LinkMbps} Mbps" : ""); // 0 on a cable: no radio
         if (s.Connected)
             sb.Append("\r\nconnection: ").Append(LinkPaths.Connection(s.PhoneLink,
-                IPAddress.TryParse(In.PhoneAddress(), out var phoneAt) ? phoneAt : null, PcSetupProbe.Ssid));
+                IPAddress.TryParse(s.PhoneAddress, out var phoneAt) ? phoneAt : null, PcSetupProbe.Ssid));
         sb.Append($"\r\npad: {_debug.CurrentPad}");
         var held = new List<string>();
         var scratch = new StateFrame();
@@ -1422,7 +1411,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         var s = Snap;
         if (!s.Connected || s.PhoneLink is not { } l) return null;
-        var pc = LinkPaths.AdapterFor(IPAddress.TryParse(In.PhoneAddress(), out var a) ? a : null);
+        var pc = LinkPaths.AdapterFor(IPAddress.TryParse(s.PhoneAddress, out var a) ? a : null);
         return (LinkPaths.Describe(l, pc), LinkPaths.Setup(l, pc));
     }
 
@@ -1622,27 +1611,34 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         bool added = FirewallHelper.AddRuleElevated(_exePath);
         bool ok = FirewallHelper.RuleExists(_exePath);
-        _log.Write($"firewall rule add {(added ? "ok" : "failed or declined")}, present {ok}");
+        bool usb = FirewallHelper.UsbRuleExists(_exePath);
+        _log.Write($"firewall rule add {(added ? "ok" : "failed or declined")}, present {ok}, USB rule present {usb}");
         Post(() =>
         {
             _firewallOk = ok;
+            _usbRuleOk = usb;
             Refresh();
             if (!ok)
                 Balloon("Firewall rule not added", "Windows did not add the rule (the prompt was declined or failed).", ToolTipIcon.Warning);
         });
     });
 
-    public void RetryDriver()
+    /// <summary>Looks for the gamepad driver again, off the UI thread (the input process may take seconds).</summary>
+    public void RetryDriver() => Task.Run(() =>
     {
-        if (In.RetryDriver() is { } error)
+        string? result = In.RetryDriver();
+        Post(() =>
         {
-            MessageBox.Show($"{error}.\n\nInstall ViGEmBus from {ViGEmPadSink.DriverDownloadUrl}, then choose Retry driver again.",
-                Program.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
-        }
-        Balloon("Gamepad driver found", "Game pad output is on.", ToolTipIcon.Info);
-        Refresh();
-    }
+            if (result == null)
+                Balloon("Gamepad driver not checked", "The input process didn't answer. Try again in a moment.", ToolTipIcon.Warning);
+            else if (result.Length > 0)
+                MessageBox.Show($"{result}.\n\nInstall ViGEmBus from {ViGEmPadSink.DriverDownloadUrl}, then choose Retry driver again.",
+                    Program.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else
+                Balloon("Gamepad driver found", "Game pad output is on.", ToolTipIcon.Info);
+            Refresh();
+        });
+    });
 
     public void RestartAsAdmin()
     {
@@ -1757,8 +1753,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         _mainWindow?.Close();
         _deliveryTest?.Close();
         foreach (var f in _overlayForms.Values.ToList()) f.Close();
-        _overlayWheel?.Dispose();
-        _overlayWheel = null;
         _hotkeys?.Dispose();
         _hotkeys = null;
         _pacer?.Dispose();
