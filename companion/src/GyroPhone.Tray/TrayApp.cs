@@ -1319,7 +1319,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
               .Append(l.RssiDbm != 0 ? $" · {l.RssiDbm} dBm {l.LinkMbps} Mbps" : ""); // 0 on a cable: no radio
         if (s.Connected)
             sb.Append("\r\nconnection: ").Append(LinkPaths.Connection(s.PhoneLink,
-                IPAddress.TryParse(In.PhoneAddress(), out var phoneAt) ? phoneAt : null, PcSetupProbe.Ssid));
+                IPAddress.TryParse(s.PhoneAddress, out var phoneAt) ? phoneAt : null, PcSetupProbe.Ssid));
         sb.Append($"\r\npad: {_debug.CurrentPad}");
         var held = new List<string>();
         var scratch = new StateFrame();
@@ -1401,7 +1401,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         var s = Snap;
         if (!s.Connected || s.PhoneLink is not { } l) return null;
-        var pc = LinkPaths.AdapterFor(IPAddress.TryParse(In.PhoneAddress(), out var a) ? a : null);
+        var pc = LinkPaths.AdapterFor(IPAddress.TryParse(s.PhoneAddress, out var a) ? a : null);
         return (LinkPaths.Describe(l, pc), LinkPaths.Setup(l, pc));
     }
 

@@ -47,8 +47,6 @@ public interface IInputControl
     // Connection
     void SetUsbDirect(bool on);
     void TakeUsbFromAdb();
-    /// <summary>The active phone's address, for naming the way the packets go (null without a phone).</summary>
-    string? PhoneAddress();
 
     // App and Diagnostics
     void SetStartWithWindows(bool on);

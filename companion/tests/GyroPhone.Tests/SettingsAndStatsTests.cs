@@ -31,6 +31,20 @@ public sealed class SettingsAndStatsTests : IDisposable
     }
 
     [Fact]
+    public void SnapshotCarriesThePhoneAddress()
+    {
+        var h = new Harness();
+        Assert.Null(h.Engine.Snapshot().PhoneAddress);
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        var first = h.Engine.Snapshot().PhoneAddress;
+        Assert.NotNull(first);
+        Assert.Equal(h.Engine.PhoneAddress()?.ToString(), first);
+        // A phone that stays put makes no new string.
+        Assert.Same(first, h.Engine.Snapshot().PhoneAddress);
+    }
+
+    [Fact]
     public void OverlayEditIsNotSaved()
     {
         var store = new SettingsStore(Path.Combine(_dir, "companion.json"));

@@ -644,8 +644,6 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
 
     public void TakeUsbFromAdb() => _usb.TakeFromAdb();
 
-    public string? PhoneAddress() => _engine.PhoneAddress()?.ToString();
-
     public void SetStartWithWindows(bool on) => _engine.SetStartWithWindows(on);
 
     public void SetDiagnostics(bool on) => _engine.SetDiagnostics(on);
