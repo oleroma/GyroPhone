@@ -423,7 +423,7 @@ internal sealed class OverlayForm : Form
     }
 
     /// <summary>
-    /// In Edit, the wheel over a window (<see cref="OverlayWheel"/>) picks it and resizes it, keeping
+    /// In Edit, the wheel over a window (its own WM_MOUSEWHEEL, no hook) picks it and resizes it, keeping
     /// its shape and centre: 10% a notch (<paramref name="delta"/> 120), 2% with Shift held.
     /// </summary>
     public void ScaleBy(int delta, bool fine)
@@ -464,6 +464,11 @@ internal sealed class OverlayForm : Form
         {
             case WmMouseActivate:
                 m.Result = new IntPtr(MaNoActivate);
+                return;
+            case WmMouseWheel when !ClickThrough:
+                // Windows sends the wheel to the window under the pointer ("Scroll inactive windows", on by default).
+                ScaleBy(unchecked((short)((long)m.WParam >> 16)), ((long)m.WParam & MkShift) != 0);
+                m.Result = IntPtr.Zero;
                 return;
             case WmNcHitTest when !ClickThrough:
                 var p = PointToClient(new Point(unchecked((short)(long)m.LParam), unchecked((short)((long)m.LParam >> 16))));
@@ -1220,6 +1225,8 @@ internal sealed class OverlayForm : Form
     private const int WsExTopmost = 0x00000008;
     private const int WmNcHitTest = 0x0084;
     private const int WmMouseActivate = 0x0021;
+    private const int WmMouseWheel = 0x020A;
+    private const long MkShift = 0x0004;
     private const int MaNoActivate = 3;
     private const int HtClient = 1, HtLeft = 10, HtRight = 11, HtTop = 12, HtTopLeft = 13, HtTopRight = 14;
     private const int HtBottom = 15, HtBottomLeft = 16, HtBottomRight = 17;

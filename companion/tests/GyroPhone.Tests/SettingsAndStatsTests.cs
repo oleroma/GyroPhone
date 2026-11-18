@@ -31,6 +31,21 @@ public sealed class SettingsAndStatsTests : IDisposable
     }
 
     [Fact]
+    public void OverlayEditIsNotSaved()
+    {
+        var store = new SettingsStore(Path.Combine(_dir, "companion.json"));
+        var s = store.Load("PC");
+        s.OverlayEdit = true;
+        store.Save(s);
+        var json = File.ReadAllText(store.Path);
+        Assert.DoesNotContain("OverlayEdit", json);
+        // A file an older companion saved with Edit on starts with it off.
+        int at = json.IndexOf('{') + 1;
+        File.WriteAllText(store.Path, json[..at] + "\"OverlayEdit\":true," + json[at..]);
+        Assert.False(new SettingsStore(store.Path).Load("PC").OverlayEdit);
+    }
+
+    [Fact]
     public void CorruptSettingsMovedAsideAndDefaultsUsed()
     {
         Directory.CreateDirectory(_dir);

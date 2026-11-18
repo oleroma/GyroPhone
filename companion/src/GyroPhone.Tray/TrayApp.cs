@@ -68,7 +68,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     private readonly Dictionary<string, OverlayForm> _overlayForms = [];
     // The open windows, for the pacer thread (the dictionary is the UI thread's).
     private volatile OverlayForm[] _overlayList = [];
-    private OverlayWheel? _overlayWheel;
     // The overlays' global shortcuts; null until the server owns the port (one instance holds them).
     private Hotkeys? _hotkeys;
     private OverlayPacer? _pacer;
@@ -1002,7 +1001,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         _overlays.SetOverlayEdit(on);
         foreach (var f in _overlayForms.Values.ToList()) f.SettingsChanged();
-        UpdateOverlayWheel();
         Refresh();
     }
 
@@ -1176,30 +1174,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         _overlayList = [.. _overlayForms.Values];
         _pacer?.SetRunning(_overlayList.Length > 0);
-        UpdateOverlayWheel();
-    }
-
-    /// <summary>The wheel resizes overlays only while Edit is on and one is open.</summary>
-    private void UpdateOverlayWheel()
-    {
-        bool on = OverlayEdit && _overlayForms.Count > 0;
-        // The hook's own thread calls these: they read only the pacer's copy of the list and the windows' own handles.
-        if (on) _overlayWheel ??= new OverlayWheel(
-            h =>
-            {
-                foreach (var f in _overlayList)
-                    if (h != IntPtr.Zero && f.Hwnd == h) return f;
-                return null;
-            },
-            () =>
-            {
-                var id = _selectedOverlay;
-                if (id == null) return null;
-                foreach (var f in _overlayList)
-                    if (f.Id == id && f.Hwnd != IntPtr.Zero && f.Visible) return f;
-                return null;
-            });
-        if (_overlayWheel != null) _overlayWheel.Enabled = on;
     }
 
     /// <summary>The open overlay windows' draw times, for the Debug window.</summary>
@@ -1757,8 +1731,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         _mainWindow?.Close();
         _deliveryTest?.Close();
         foreach (var f in _overlayForms.Values.ToList()) f.Close();
-        _overlayWheel?.Dispose();
-        _overlayWheel = null;
         _hotkeys?.Dispose();
         _hotkeys = null;
         _pacer?.Dispose();

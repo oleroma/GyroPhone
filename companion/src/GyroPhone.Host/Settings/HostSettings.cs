@@ -24,7 +24,11 @@ public sealed class HostSettings
     /// and the window's size, named by <see cref="OverlaySettings.Label"/>; not where the window was.
     /// </summary>
     public List<OverlaySettings> OverlayPresets { get; set; } = [];
-    /// <summary>Overlay windows can be dragged to move and resize; off, the mouse goes through them to the game.</summary>
+    /// <summary>
+    /// Overlay windows can be dragged to move and resize; off, the mouse goes through them to the game.
+    /// Not saved: every start begins with Edit off, so the mouse never stops at an overlay over a game.
+    /// </summary>
+    [JsonIgnore]
     public bool OverlayEdit { get; set; }
     /// <summary>Every overlay window is hidden (shortcut or tray), each keeping its own Show for when this is off.</summary>
     public bool OverlaysHidden { get; set; }
