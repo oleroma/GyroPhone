@@ -38,6 +38,8 @@ internal sealed class OverlayPacer : IDisposable
     private readonly Action<string> _log;
     private readonly ManualResetEventSlim _running = new(false);
     private readonly AutoResetEvent _wake = new(false);
+    // Waiting out a slow tick: only then does Wake set the event (not a kernel call for every phone frame).
+    private volatile bool _idle;
     private readonly Thread _thread;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private volatile bool _stop;
@@ -61,7 +63,10 @@ internal sealed class OverlayPacer : IDisposable
     }
 
     /// <summary>Something new to draw (any thread): an idle pacer ticks now.</summary>
-    public void Wake() => _wake.Set();
+    public void Wake()
+    {
+        if (_idle) _wake.Set();
+    }
 
     private void Loop()
     {
@@ -101,7 +106,9 @@ internal sealed class OverlayPacer : IDisposable
             if (!_busy())
             {
                 // Nothing moving: a slow tick, or at once when new data comes.
+                _idle = true;
                 _wake.WaitOne(OverlayPacing.IdleTickMs);
+                _idle = false;
                 if (_stop) return;
                 Tick();
                 lastPost = ended = _clock.Elapsed.TotalMilliseconds;
