@@ -8,6 +8,13 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 Assert-Admin -Script $PSCommandPath
 
+# The companion holds the device open while it uses the driver, and Windows then can't remove it until a restart.
+if (Get-Process -Name 'GyroPhoneCompanion' -ErrorAction SilentlyContinue) {
+    Write-Fail 'The GyroPhone companion is running. Quit it from its tray icon (turn off "Start when my phone appears" if it is on), then run uninstall.cmd again.'
+    Wait-Close
+    exit 1
+}
+
 $failed = $false
 function Try-Step([string]$what, [scriptblock]$do) {
     try { & $do } catch { Write-Fail "$what failed: $($_.Exception.Message)"; $script:failed = $true }
