@@ -13,7 +13,8 @@ namespace GyroPhone.Windows;
 /// Virtual pad through the ViGEmBus driver: Xbox 360 (XInput) or DualShock 4 (DirectInput HID).
 /// Reports are built in full and sent with one SubmitReport (AutoSubmitReport off). Submit runs under the
 /// engine lock, Plug and Unplug on its pad thread; rumble feedback arrives on the driver's thread and is
-/// only forwarded.
+/// only forwarded. A pad removed underneath (driver reset, disabled) makes Submit throw and
+/// <see cref="Plugged"/> None; the engine has the pad thread plug a new one, never Submit.
 /// </summary>
 public sealed class ViGEmPadSink : IPadSink, IDisposable
 {
@@ -24,8 +25,10 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
     private IXbox360Controller? _x360;
     private IDualShock4Controller? _ds4;
     private readonly byte[] _ds4Report = new byte[Ds4Report.Size];
-    private const long ReplugGapMs = 1000;
-    private long _replugAtMs = -ReplugGapMs;
+    /// <summary>The bus is older than 1.17 and lacks DS4_REPORT_EX: the DualShock 4 gets the simple report, no motion.</summary>
+    private bool _ds4Simple;
+    private Ds4Frame _ds4SimpleLast;
+    private bool _ds4SimpleSent;
 
     private ViGEmPadSink(ViGEmClient client, Action<string>? log)
     {
@@ -74,20 +77,22 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
     public bool Plug(OutputMode mode)
     {
         if (mode == Plugged) return mode != OutputMode.None;
-        Unplug();
+        Unplug(); // also frees a pad lost underneath
+        IXbox360Controller? x = null;
+        IDualShock4Controller? d = null;
         try
         {
             switch (mode)
             {
                 case OutputMode.Xbox360:
-                    var x = _client.CreateXbox360Controller();
+                    x = _client.CreateXbox360Controller();
                     x.AutoSubmitReport = false;
                     x.FeedbackReceived += OnX360Feedback;
                     x.Connect();
                     _x360 = x;
                     break;
                 case OutputMode.DualShock4:
-                    var d = _client.CreateDualShock4Controller();
+                    d = _client.CreateDualShock4Controller();
                     d.AutoSubmitReport = false;
                     // Deprecated upstream in favour of AwaitRawOutputReport; rumble is informational in v1.
 #pragma warning disable CS0618
@@ -95,6 +100,7 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
 #pragma warning restore CS0618
                     d.Connect();
                     _ds4 = d;
+                    _ds4SimpleSent = false;
                     break;
                 default:
                     return false;
@@ -108,6 +114,7 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
             _x360 = null;
             _ds4 = null;
             Plugged = OutputMode.None;
+            Free(x, d);
             return false;
         }
     }
@@ -120,7 +127,7 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
     {
         get
         {
-            var x = _x360;
+            var x = Plugged == OutputMode.Xbox360 ? _x360 : null;
             if (x == null) return -1;
             try
             {
@@ -140,25 +147,52 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
         _x360 = null;
         _ds4 = null;
         Plugged = OutputMode.None;
+        if (x != null)
+        {
+            try
+            {
+                x.Disconnect();
+            }
+            catch (Exception e)
+            {
+                _log?.Invoke($"unplug failed: {e.GetType().Name}");
+            }
+        }
+        if (d != null)
+        {
+            try
+            {
+                d.Disconnect();
+            }
+            catch (Exception e)
+            {
+                _log?.Invoke($"unplug failed: {e.GetType().Name}");
+            }
+        }
+        Free(x, d);
+    }
+
+    /// <summary>Releases the controllers' native targets and feedback registrations, disconnected or never connected.</summary>
+    private void Free(IXbox360Controller? x, IDualShock4Controller? d)
+    {
         try
         {
             if (x != null)
             {
                 x.FeedbackReceived -= OnX360Feedback;
-                x.Disconnect();
+                (x as IDisposable)?.Dispose();
             }
             if (d != null)
             {
 #pragma warning disable CS0618
                 d.FeedbackReceived -= OnDs4Feedback;
 #pragma warning restore CS0618
-                d.Disconnect();
                 d.Dispose();
             }
         }
         catch (Exception e)
         {
-            _log?.Invoke($"unplug failed: {e.GetType().Name}");
+            _log?.Invoke($"pad free failed: {e.GetType().Name}");
         }
     }
 
@@ -179,8 +213,7 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
         }
         catch (VigemTargetNotPluggedInException)
         {
-            // Unplugged underneath us (driver reset): plug a new one, and fail so the engine sends the frame again.
-            Replug();
+            Lost();
             throw;
         }
     }
@@ -191,30 +224,56 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
         if (d == null) return;
         try
         {
+            if (_ds4Simple)
+            {
+                SubmitSimple(d, f);
+                return;
+            }
             // The full report (DS4_REPORT_EX) carries the gyro and accelerometer the simple one lacks.
             Ds4Report.Build(_ds4Report, f, m);
             d.SubmitRawReport(_ds4Report);
         }
+        catch (VigemNotSupportedException)
+        {
+            // ViGEmBus before 1.17 has no DS4_REPORT_EX: buttons, sticks and triggers still go, without motion.
+            _ds4Simple = true;
+            _log?.Invoke("ViGEmBus is older than 1.17: the DualShock 4 gets no gyro; update ViGEmBus for it");
+            SubmitSimple(d, f);
+        }
         catch (VigemTargetNotPluggedInException)
         {
-            Replug();
+            Lost();
             throw;
         }
     }
 
-    /// <summary>
-    /// The pad was removed underneath (disabled in Device Manager, driver reset): Plugged still says it is
-    /// in, so nothing else would make a new one. At most once a second; a failed Plug leaves it unplugged.
-    /// </summary>
-    private void Replug()
+    /// <summary>The simple DS4 report; only when the frame changed, since each motion sample would repeat it.</summary>
+    private void SubmitSimple(IDualShock4Controller d, in Ds4Frame f)
     {
-        long now = Environment.TickCount64;
-        if (now - _replugAtMs < ReplugGapMs) return;
-        _replugAtMs = now;
-        var mode = Plugged;
-        _log?.Invoke($"{mode} pad was unplugged underneath; plugging it again");
-        Unplug();
-        Plug(mode);
+        if (_ds4SimpleSent && f == _ds4SimpleLast) return;
+        int hat = f.Hat <= PadMapper.Ds4HatNone ? f.Hat : PadMapper.Ds4HatNone;
+        d.SetButtonsFull((ushort)((f.Buttons & 0xFFF0) | hat));
+        d.SetSpecialButtonsFull((byte)(f.Special & 0x03));
+        d.SetAxisValue(DualShock4Axis.LeftThumbX, f.Lx);
+        d.SetAxisValue(DualShock4Axis.LeftThumbY, f.Ly);
+        d.SetAxisValue(DualShock4Axis.RightThumbX, f.Rx);
+        d.SetAxisValue(DualShock4Axis.RightThumbY, f.Ry);
+        d.SetSliderValue(DualShock4Slider.LeftTrigger, f.Lt);
+        d.SetSliderValue(DualShock4Slider.RightTrigger, f.Rt);
+        d.SubmitReport();
+        _ds4SimpleLast = f;
+        _ds4SimpleSent = true;
+    }
+
+    /// <summary>
+    /// The pad was removed underneath (disabled in Device Manager, driver reset). Plugging a new one blocks in
+    /// the driver, so it is left to the engine's pad thread: Plugged goes None, and its next Plug frees the old one.
+    /// </summary>
+    private void Lost()
+    {
+        if (Plugged == OutputMode.None) return;
+        _log?.Invoke($"{Plugged} pad was unplugged underneath");
+        Plugged = OutputMode.None;
     }
 
     private void OnX360Feedback(object sender, Xbox360FeedbackReceivedEventArgs e) => Rumble?.Invoke(e.LargeMotor, e.SmallMotor);
