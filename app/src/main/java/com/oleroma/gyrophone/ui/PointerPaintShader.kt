@@ -104,8 +104,10 @@ internal class PointerPaintShader {
         var pb = packed
         val fresh = lp !== packedOf || pb == null || pb.width != lp.width || pb.height != lp.height
         if (fresh) {
+            packed?.close()
+            packed = null
             pb = PaintBuffers.create(lp.width, lp.height)
-            if (pb == null) { packedFailed = true; packed = null; return false }
+            if (pb == null) { packedFailed = true; return false }
             packed = pb
             packedOf = lp
             uploaded = Long.MIN_VALUE
@@ -118,11 +120,11 @@ internal class PointerPaintShader {
         val all = fresh || uploaded == Long.MIN_VALUE
         val j0 = if (all) 0 else lp.changedFrom.coerceAtLeast(0)
         val j1 = if (all) lp.height - 1 else lp.changedTo.coerceAtMost(lp.height - 1)
-        if (!pb.write(lp, j0, j1)) { packedFailed = true; packed = null; return false }
+        if (!pb.write(lp, j0, j1)) { dropPacked(); return false }
         if (wayNow) {
             // A way picture that missed paint (colour by way was off) takes every row again.
             val wAll = all || wayStale
-            if (!pb.writeWay(ways!!, if (wAll) 0 else j0, if (wAll) lp.height - 1 else j1)) { packedFailed = true; packed = null; return false }
+            if (!pb.writeWay(ways!!, if (wAll) 0 else j0, if (wAll) lp.height - 1 else j1)) { dropPacked(); return false }
             wayStale = false
         } else wayStale = true
         lp.takeChanged()
@@ -141,6 +143,20 @@ internal class PointerPaintShader {
         }
         wayMapReady = wayNow
         return true
+    }
+
+    /** The packed path failed here: back to the uploads for good, its buffers let go. */
+    private fun dropPacked() {
+        packedFailed = true
+        packed?.close()
+        packed = null
+    }
+
+    /** This drawing is done with (on the drawing thread): its paint buffers go now. */
+    fun release() {
+        packed?.close()
+        packed = null
+        packedOf = null
     }
 
     // The way colours are on the GPU (packed path): wayMode may be on.
