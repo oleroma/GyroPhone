@@ -2204,9 +2204,9 @@ internal fun ControlMappingScreen(
                                             // Every action of the control in the order shown, the ones mapped in any layer first.
                                             val all = sorted(control, inputs, order)
                                             val keys = all.map { orderKey(control, it) }.distinct()
+                                            // Any of the card's lines counts: its triggers, Wheres, zones and the Swipe card's arrows.
                                             val mapped = all.filter { input ->
-                                                val zones = (0 until zonesOf(input)).map { z -> if (z == 0) input else Bindings.zoneInput(input, z) }
-                                                zones.any { zi -> mappings.any { m -> zi.sources.any { it == m.source } } }
+                                                cardInputs(input).any { ti -> mappings.any { m -> ti.sources.any { Bindings.sameSource(it, m.source) } } }
                                             }.mapTo(HashSet()) { orderKey(control, it) }
                                             saveOrder(keys.filter { it in mapped } + keys.filter { it !in mapped } + order.filter { it !in keys })
                                         },
