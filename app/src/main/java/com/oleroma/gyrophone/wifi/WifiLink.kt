@@ -283,6 +283,16 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             }
         }
     }
+    /**
+     * The interfaces Android tethers now (its sticky TETHER_STATE_CHANGED), or null before one came: the phone's
+     * hotspot is one of them, so a second Wi-Fi client interface is never taken for it ([UsbTether.find]).
+     */
+    @Volatile private var tethered: Set<String>? = null
+    private val tetherReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            tethered = tetheredOf(intent)
+        }
+    }
     /** The session runs over the direct cable (accessory mode), not tethering. */
     @Volatile private var usbDirect = false
     /** The session runs over the phone's own Wi-Fi hotspot, with the PC joined to it. */
@@ -431,6 +441,9 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         val filter = IntentFilter(ACTION_USB_STATE).apply { addAction(AccessoryBridge.ACTION_PERMISSION) }
         appContext.registerReceiver(usbStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
             ?.let { usbCabled = it.getBooleanExtra(EXTRA_USB_CONNECTED, true) }
+        tethered = null
+        appContext.registerReceiver(tetherReceiver, IntentFilter(ACTION_TETHER_STATE_CHANGED), Context.RECEIVER_NOT_EXPORTED)
+            ?.let { tethered = tetheredOf(it) }
         _state.value = LinkState.Searching
         post { autoConnect() }
         rxThread = Thread({ rxLoop() }, "gp-wifi-rx").apply { start() }
@@ -450,6 +463,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         engine.onChange = null
         keys.stopWatching()
         runCatching { appContext.unregisterReceiver(usbStateReceiver) }
+        runCatching { appContext.unregisterReceiver(tetherReceiver) }
         wakeRx() // out of its receive wait now, so the join below is short
         _state.value = LinkState.Off
         stopThread = Thread({ windDown(byeReason) }, "gp-wifi-stop").apply { start() }
@@ -1222,7 +1236,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 accessory.close()
             }
             val t = cable?.takeIf { !quiet }
-                ?: UsbTether.find(wifiIf, hotspot = wifiIf != null || binder.network == null)
+                ?: UsbTether.find(wifiIf, hotspot = wifiIf != null || binder.network == null, tethered = tethered)
             if (t != usb) {
                 if (usbActive) useWifi()
                 closeUsb()
@@ -1566,6 +1580,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         /** The sticky broadcast for a USB cable to a computer (hidden in UsbManager), and its extra. */
         private const val ACTION_USB_STATE = "android.hardware.usb.action.USB_STATE"
         private const val EXTRA_USB_CONNECTED = "connected"
+        /** Android's sticky tether state broadcast (hidden in TetheringManager), and its extra of the interfaces tethered now. */
+        private const val ACTION_TETHER_STATE_CHANGED = "android.net.conn.TETHER_STATE_CHANGED"
+        private const val EXTRA_ACTIVE_TETHER = "tetherArray"
+
+        private fun tetheredOf(intent: Intent): Set<String>? = intent.getStringArrayListExtra(EXTRA_ACTIVE_TETHER)?.toSet()
         /** After a QR code pairing, how long to wait for the PC to answer a key DISCOVER. */
         private const val QR_CONNECT_WAIT_MS = 5000L
         /** When a PC answered several key DISCOVERs, the most useful answer wins. */
