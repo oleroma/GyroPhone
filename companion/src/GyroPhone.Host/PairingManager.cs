@@ -45,6 +45,9 @@ public sealed class PairingManager
 
     public bool IsOpen(long nowUs) => nowUs < _windowUntilUs;
 
+    /// <summary>The window is open or an attempt runs: its timers want the watchdog's every tick.</summary>
+    public bool Busy(long nowUs) => _attempt != null || IsOpen(nowUs);
+
     /// <summary>Seconds left in the pairing window (0 when closed).</summary>
     public int WindowRemainingS(long nowUs) => IsOpen(nowUs) ? (int)((_windowUntilUs - nowUs + 999_999) / 1_000_000) : 0;
 

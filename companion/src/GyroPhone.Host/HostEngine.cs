@@ -692,6 +692,7 @@ public sealed class HostEngine
             case PacketType.LinkInfo:
                 var info = WireCodec.DecodeLinkInfo(plain);
                 _stats.OnLinkInfo(info);
+                _keepAwakeWake.Set(); // the path may have changed between Wi-Fi and a wire
                 OnDebugFlags(info.Flags, nowUs);
                 break;
             // Overlay data: copied as it came for gp-overlay (OverlayWorker), which does the rest.
@@ -1022,6 +1023,7 @@ public sealed class HostEngine
         _hasPending = false;
         _padPhoneId = s.PhoneId;
         PlugPad();
+        WakeTimers();
         if (_phones.TryGetValue(Convert.ToHexString(s.PhoneId), out var phone))
         {
             phone.Info.LastSeenUtc = DateTime.UtcNow;
@@ -1369,6 +1371,8 @@ public sealed class HostEngine
                 SendStatus(a, nowUs);
                 if (Debug.Enabled) Debug.SecondTick(DebugLinkLine(), nowUs);
             }
+            _watchdogIdle = a == null && _sessions.Pending.Count == 0 && !_pairing.Busy(nowUs) && _qr == null &&
+                _linkTestUntilUs == long.MinValue && !_capture.On && !_injectFailed && !_padHeld && !_padBusy && HeldCount() == 0;
         }
     }
 
@@ -1689,11 +1693,54 @@ public sealed class HostEngine
     /// it sends little. Skipped over USB, Ethernet and loopback, where no radio sleeps. Takes no engine lock, so it never
     /// holds up input: a session dropped meanwhile just ignores the send.
     /// </summary>
-    public void KeepAwake()
+    public bool KeepAwake()
     {
         var a = _sessions.Active;
-        if (a == null || !a.Promoted || !KeepAwakeWanted(_stats.LastLinkInfo, a.Endpoint)) return;
+        if (a == null || !a.Promoted || !KeepAwakeWanted(_stats.LastLinkInfo, a.Endpoint)) return false;
         a.SendSealed(PacketType.KeepAwake, _keepAwakePlain, _sender);
+        return true;
+    }
+
+    /// <summary>How long the keep-awake thread rests while no KEEP_AWAKE is wanted (also the catch for a missed wake).</summary>
+    public const int KeepAwakeIdleWaitMs = 1000;
+    /// <summary>How often the watchdog ticks while <see cref="WatchdogIdle"/>.</summary>
+    public const int WatchdogIdleTickMs = 250;
+    private readonly ManualResetEventSlim _keepAwakeWake = new(false), _tickWake = new(false);
+    private volatile bool _watchdogIdle;
+
+    /// <summary>
+    /// The keep-awake thread's rest after <see cref="KeepAwake"/> sent nothing: no 100 Hz timer while no phone is
+    /// connected, or over a wire. Woken when a session starts or a LINK_INFO comes; else it looks again after
+    /// <see cref="KeepAwakeIdleWaitMs"/>.
+    /// </summary>
+    public void RestKeepAwake()
+    {
+        _keepAwakeWake.Reset();
+        var a = _sessions.Active;
+        if (a != null && a.Promoted && KeepAwakeWanted(_stats.LastLinkInfo, a.Endpoint)) return;
+        _keepAwakeWake.Wait(KeepAwakeIdleWaitMs);
+    }
+
+    /// <summary>
+    /// Nothing on the PC needs the watchdog's 50 ms tick: no session, pending session, pairing or QR code, Link test,
+    /// "Press a key", held input or dropped ups. Set by each tick.
+    /// </summary>
+    public bool WatchdogIdle => _watchdogIdle;
+
+    /// <summary>The watchdog's rest while <see cref="WatchdogIdle"/>, up to <see cref="WatchdogIdleTickMs"/>; a new session ends it at once.</summary>
+    public void RestWatchdog()
+    {
+        _tickWake.Reset();
+        if (!_watchdogIdle) return;
+        _tickWake.Wait(WatchdogIdleTickMs);
+    }
+
+    /// <summary>Ends both rests (a session started, the link changed, or the threads stop).</summary>
+    public void WakeTimers()
+    {
+        _watchdogIdle = false;
+        _keepAwakeWake.Set();
+        _tickWake.Set();
     }
 
     /// <summary>False over a wire (the phone's LINK_INFO says USB or Ethernet) or loopback (USB direct); true otherwise, also before the first LINK_INFO.</summary>
