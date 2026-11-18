@@ -51,12 +51,12 @@ public sealed class HeldKeysMarkerTests : IDisposable
         int n = HeldKeysMarker.Recover(PathName, sink);
         Assert.Equal(4, n);
         var e = sink.All.ToArray();
-        Assert.Equal(0x1A, e[0].Usage);
-        Assert.True(e[0].IsKeyUp);
-        Assert.Equal(0xE0, e[1].Usage);
-        Assert.True(e[1].IsKeyUp);
-        Assert.Equal(InjectEvent.MouseLeftUp, e[2].Flags);
-        Assert.Equal((InjectEvent.MouseXUp, InjectEvent.XButton2), (e[3].Flags, e[3].MouseData));
+        Assert.Equal(InjectEvent.MouseLeftUp, e[0].Flags);
+        Assert.Equal((InjectEvent.MouseXUp, InjectEvent.XButton2), (e[1].Flags, e[1].MouseData));
+        Assert.Equal(0x1A, e[2].Usage);
+        Assert.True(e[2].IsKeyUp);
+        Assert.Equal(0xE0, e[3].Usage);
+        Assert.True(e[3].IsKeyUp);
         Assert.False(File.Exists(PathName));
         Assert.Equal(0, HeldKeysMarker.Recover(PathName, sink));
     }

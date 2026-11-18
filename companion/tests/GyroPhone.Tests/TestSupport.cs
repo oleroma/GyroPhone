@@ -78,9 +78,17 @@ internal sealed class FakePad : IPadSink
     public readonly List<Ds4Motion> Ds4Motion = new();
     public int Plugs, Unplugs;
 
+    /// <summary>Plug fails while set, like a driver still resetting.</summary>
+    public bool PlugFails { get; set; }
+
     public bool Plug(OutputMode mode)
     {
         Plugs++;
+        if (PlugFails)
+        {
+            Plugged = OutputMode.None;
+            return false;
+        }
         Plugged = mode;
         return true;
     }
@@ -94,17 +102,27 @@ internal sealed class FakePad : IPadSink
     /// <summary>Thrown by Submit while set, like a ViGEm call after a driver reset.</summary>
     public Exception? FailWith { get; set; }
 
+    /// <summary>A failing Submit also reports the pad gone, as the sinks do when it was removed underneath.</summary>
+    public bool LoseOnFail { get; set; }
+
     public void Submit(in X360Frame frame)
     {
-        if (FailWith != null) throw FailWith;
+        Fail();
         X360.Add(frame);
     }
 
     public void Submit(in Ds4Frame frame, in Ds4Motion motion)
     {
-        if (FailWith != null) throw FailWith;
+        Fail();
         Ds4.Add(frame);
         Ds4Motion.Add(motion);
+    }
+
+    private void Fail()
+    {
+        if (FailWith == null) return;
+        if (LoseOnFail) Plugged = OutputMode.None;
+        throw FailWith;
     }
 
     public event Action<byte, byte>? Rumble;

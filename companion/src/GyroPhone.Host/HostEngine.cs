@@ -78,6 +78,8 @@ public sealed class HostEngine
     /// <summary>How long a pad button pressed and released inside one receive burst stays visible to polling games.</summary>
     private const long PadEdgeHoldUs = 20_000;
     private const long PadRetryUs = 100_000; // a broken ViGEm bus is retried at 10 Hz, not per packet
+    private const long PadReplugUs = 1_000_000; // a pad lost underneath is plugged again after 1 s,
+    private const long PadReplugMaxUs = 10_000_000; // then less often while that fails, up to every 10 s
     /// <summary>The pad stays plugged this long after a session ends, so a reconnect finds the same controller.</summary>
     private const long PadIdleUnplugUs = 5 * 60 * 1_000_000L;
 
@@ -133,6 +135,9 @@ public sealed class HostEngine
     /// <summary>Pad sinks replaced by <see cref="SetPadSink"/>: the pad thread unplugs and disposes them.</summary>
     private readonly List<IPadSink> _padRetired = [];
     private readonly ManualResetEventSlim _padIdle = new(true);
+    /// <summary>The pad went away underneath (driver reset, disabled): the watchdog has the pad thread plug it again.</summary>
+    private bool _padLost;
+    private long _padReplugAtUs, _padReplugGapUs;
     /// <summary>Host time the last session ended: the pad is unplugged <see cref="PadIdleUnplugUs"/> later if none started.</summary>
     private long _padIdleFromUs;
     /// <summary>The phone of the last session: forgetting it with no session up unplugs the pad it would come back to.</summary>
@@ -1343,6 +1348,13 @@ public sealed class HostEngine
     {
         _exceptions++;
         _padFrameValid = false;
+        // The sink says the pad is gone: plugging again blocks in the driver, so the watchdog has the pad thread do it.
+        if (!_padLost && !_padBusy && _padWant != OutputMode.None && _pad.Plugged == OutputMode.None)
+        {
+            _padLost = true;
+            _padReplugAtUs = long.MinValue;
+            _padReplugGapUs = PadReplugUs;
+        }
         if (_loggedPadFailure) return;
         _loggedPadFailure = true;
         _events.Log($"pad submit failed: {e.GetType().Name}");
@@ -1390,6 +1402,18 @@ public sealed class HostEngine
             if (_padHeld && nowUs >= _padHoldUntilUs && !_hasPending && !_paused && !_locked) SubmitPad(_pending, nowUs);
             _sessions.ExpirePending(nowUs);
             if (_pairing.Tick(nowUs)) _events.StateChanged();
+            // A pad lost underneath is plugged again on the pad thread: at once, then after 1, 2, 4, 8 and every 10 s while that fails.
+            if (_padLost && !_padBusy)
+            {
+                if (_padWant == OutputMode.None || _pad.Plugged == _padWant) _padLost = false;
+                else if (nowUs >= _padReplugAtUs)
+                {
+                    if (_padReplugAtUs == long.MinValue) _events.Log($"{_padWant} pad was lost; plugging it again");
+                    _padReplugAtUs = nowUs + _padReplugGapUs;
+                    _padReplugGapUs = Math.Min(_padReplugGapUs * 2, PadReplugMaxUs);
+                    RequestPad(_padWant);
+                }
+            }
             // No session for a long while: the pad is unplugged until the next one.
             if (_sessions.Active == null && _padWant != OutputMode.None && nowUs - _padIdleFromUs >= PadIdleUnplugUs)
             {

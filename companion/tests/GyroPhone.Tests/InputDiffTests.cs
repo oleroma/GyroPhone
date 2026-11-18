@@ -17,7 +17,7 @@ public class InputDiffTests
     }
 
     [Fact]
-    public void OrderIsModDownsKeyDownsKeyUpsModUpsButtonsMoveWheel()
+    public void OrderIsModDownsKeyDownsButtonsKeyUpsModUpsMoveWheel()
     {
         var s = new StateFrame();
         s.SetKey(0x04, true);      // A
@@ -34,10 +34,10 @@ public class InputDiffTests
         Assert.Equal(8, e.Length);
         Assert.Equal((0xE1, false), (e[0].Usage, e[0].IsKeyUp));
         Assert.Equal((0x05, false), (e[1].Usage, e[1].IsKeyUp));
-        Assert.Equal((0x04, true), (e[2].Usage, e[2].IsKeyUp));
-        Assert.Equal((0xE0, true), (e[3].Usage, e[3].IsKeyUp));
-        Assert.Equal(InjectEvent.MouseLeftUp, e[4].Flags);
-        Assert.Equal(InjectEvent.MouseRightDown, e[5].Flags);
+        Assert.Equal(InjectEvent.MouseLeftUp, e[2].Flags);
+        Assert.Equal(InjectEvent.MouseRightDown, e[3].Flags);
+        Assert.Equal((0x04, true), (e[4].Usage, e[4].IsKeyUp));
+        Assert.Equal((0xE0, true), (e[5].Usage, e[5].IsKeyUp));
         Assert.Equal((InjectEvent.MouseMove, 3, -4), (e[6].Flags, e[6].Dx, e[6].Dy));
         Assert.Equal(InjectEvent.MouseWheel, e[7].Flags);
         Assert.Equal(240, e[7].MouseData);
@@ -125,7 +125,7 @@ public class InputDiffTests
     }
 
     [Fact]
-    public void ReleaseAllOrderKeysThenModifiersThenButtons()
+    public void ReleaseAllOrderButtonsThenKeysThenModifiers()
     {
         var s = new StateFrame { MouseButtons = 0b101 };
         s.SetKey(0xE2, true);
@@ -135,11 +135,27 @@ public class InputDiffTests
         int n = InputDiff.ReleaseAll(_injected, ref _mouse, buf);
         var e = buf[..n];
         Assert.Equal(4, n);
-        Assert.Equal(0x2C, e[0].Usage);
-        Assert.Equal(0xE2, e[1].Usage);
-        Assert.Equal(InjectEvent.MouseLeftUp, e[2].Flags);
-        Assert.Equal(InjectEvent.MouseMiddleUp, e[3].Flags);
+        Assert.Equal(InjectEvent.MouseLeftUp, e[0].Flags);
+        Assert.Equal(InjectEvent.MouseMiddleUp, e[1].Flags);
+        Assert.Equal(0x2C, e[2].Usage);
+        Assert.Equal(0xE2, e[3].Usage);
         Assert.False(InputDiff.AnyHeld(_injected, _mouse));
+    }
+
+    [Fact]
+    public void CtrlClickPressesCtrlFirstAndReleasesItLast()
+    {
+        var s = new StateFrame { MouseButtons = 1 };
+        s.SetKey(0xE0, true); // LCtrl + Mouse L on one phone button
+        var down = Diff(s);
+        Assert.Equal(2, down.Length);
+        Assert.Equal((0xE0, false), (down[0].Usage, down[0].IsKeyUp));
+        Assert.Equal(InjectEvent.MouseLeftDown, down[1].Flags);
+
+        var up = Diff(new StateFrame());
+        Assert.Equal(2, up.Length);
+        Assert.Equal(InjectEvent.MouseLeftUp, up[0].Flags);
+        Assert.Equal((0xE0, true), (up[1].Usage, up[1].IsKeyUp));
     }
 
     [Fact]
