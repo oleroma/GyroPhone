@@ -41,7 +41,7 @@ public sealed class OverlayHost
         _region = region;
         _clock = clock ?? StopwatchClock.Instance;
         _tellInput = tellInput;
-        _worker = new OverlayWorker(region.Overlays, _view, SaveLevel, wake);
+        _worker = new OverlayWorker(region.Overlays, _view, SaveLevel, wake, _clock);
         Push();
     }
 
@@ -288,16 +288,22 @@ public sealed class OverlayHost
         Ask();
     }
 
-    // Under _gate: hands the overlay thread a copy of the overlay settings.
+    // Under _gate: hands the overlay thread a copy of the overlay settings, and the windows their own copy.
     private void Push()
     {
         var copies = new List<OverlaySettings>(_ui.Overlays.Count);
-        foreach (var o in _ui.Overlays)
+        var shown = new OverlaySettings[_ui.Overlays.Count];
+        for (int i = 0; i < _ui.Overlays.Count; i++)
         {
+            var o = _ui.Overlays[i];
             var c = o.Copy();
             c.Id = o.Id;
             copies.Add(c);
+            var w = o.Copy();
+            w.Id = o.Id;
+            shown[i] = w;
         }
+        Volatile.Write(ref _windowSettings, shown);
         var fade = new OverlayRestFade();
         fade.CopyFrom(_ui.OverlayRestFade);
         _worker.SetSettings(copies, fade);
@@ -338,6 +344,19 @@ public sealed class OverlayHost
     // =====================================================================================
     // what the windows read, every frame, from any thread, without a lock
     // =====================================================================================
+
+    private OverlaySettings[] _windowSettings = [];
+
+    /// <summary>
+    /// Overlay window <paramref name="id"/>'s settings, or null when there is none: a copy, never changed, that a
+    /// settings change replaces (so a window's draw thread can read it while the settings change).
+    /// </summary>
+    public OverlaySettings? WindowSettings(string id)
+    {
+        foreach (var o in Volatile.Read(ref _windowSettings))
+            if (o.Id == id) return o;
+        return null;
+    }
 
     /// <summary>A phone is connected (the input process says).</summary>
     public bool Connected => _region.Held.Connected;

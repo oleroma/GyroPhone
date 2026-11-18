@@ -1,3 +1,4 @@
+using GyroPhone.Host.Abstractions;
 using GyroPhone.Host.Settings;
 using GyroPhone.Protocol;
 
@@ -28,6 +29,7 @@ internal sealed class OverlayWorker
     private readonly OverlayView _view;
     private readonly SaveLevel _saveLevel;
     private readonly EventWaitHandle _wake;
+    private readonly IClock _clock;
     // Level asked for by a window or a shortcut (the companion's own side, not through the inbox).
     private readonly System.Collections.Concurrent.ConcurrentQueue<string> _levels = new();
     private Thread? _thread;
@@ -50,8 +52,10 @@ internal sealed class OverlayWorker
     private SettingsSet? _nextSettings;
 
     /// <summary>A worker for <paramref name="inbox"/>, woken by <paramref name="wake"/> (set by whoever puts something in).</summary>
-    public OverlayWorker(OverlayInbox inbox, OverlayView view, SaveLevel saveLevel, EventWaitHandle wake)
+    /// <param name="clock">The clock the resting fade reads (<see cref="OverlayHost"/>'s), so "silent since" marks match it.</param>
+    public OverlayWorker(OverlayInbox inbox, OverlayView view, SaveLevel saveLevel, EventWaitHandle wake, IClock clock)
     {
+        _clock = clock;
         _inbox = inbox;
         _view = view;
         _saveLevel = saveLevel;
@@ -133,7 +137,7 @@ internal sealed class OverlayWorker
             if (Interlocked.Exchange(ref _skip, 0) != 0)
             {
                 _inbox.SkipAll();
-                Clear(Environment.TickCount64 * 1000, layoutToo: true);
+                Clear(_clock.NowUs, layoutToo: true);
                 changed = true;
             }
             while (_levels.TryDequeue(out var level))
@@ -152,7 +156,7 @@ internal sealed class OverlayWorker
                 }
                 if (_inbox.ClearLost())
                 {
-                    Clear(Environment.TickCount64 * 1000, layoutToo: true);
+                    Clear(_clock.NowUs, layoutToo: true);
                     changed = true;
                 }
                 if (!_inbox.TryPeek(out var s)) break;

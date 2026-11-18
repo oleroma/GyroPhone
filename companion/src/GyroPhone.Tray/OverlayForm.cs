@@ -176,19 +176,9 @@ internal sealed class OverlayForm : Form
     /// <summary>The refresh rate of the screen it is on (Hz), or 0 before it is known.</summary>
     public int ScreenHz => _screenHz;
 
-    /// <summary>This window's settings, or null once removed.</summary>
+    /// <summary>This window's settings (a copy no one changes, swapped on a change), or null once removed.</summary>
     // The base Form constructor reads CreateParams before this constructor has set _engine.
-    // A plain loop: looked up several times a frame, a lambda would be a new object each time.
-    private OverlaySettings? Settings
-    {
-        get
-        {
-            if (_engine == null) return null;
-            foreach (var o in _engine.Ui.Overlays)
-                if (o.Id == _id) return o;
-            return null;
-        }
-    }
+    private OverlaySettings? Settings => _engine?.WindowSettings(_id);
 
     private bool ClickThrough => !(_engine?.Ui.OverlayEdit ?? false);
 
@@ -647,8 +637,9 @@ internal sealed class OverlayForm : Form
             }
         }
         // A zip back runs on with the clock, not the gyro: with no new frame this tick it is fed the beam as it was.
-        if (_laser.ZipWants && _zipFedAt != now && _feedSettings is { Kind: OverlayKind.Laser } zs && Settings == zs && age >= 0)
+        if (_laser.ZipWants && _zipFedAt != now && _feedSettings is { Kind: OverlayKind.Laser } && Settings is { Kind: OverlayKind.Laser } zs && age >= 0)
         {
+            _feedSettings = zs;
             _feedNow = now;
             FeedBeam(LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, zs), zs)), now);
             _zipFedAt = now;
