@@ -62,11 +62,14 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
     ) : HidGamepad.Sink {
         private fun has(axis: Int) = axis in gamepad.axes
 
+        private val rx = PhysicalSticks.rightStickOnRx { has(it) }
+
+        // On a pad with its right stick on RX / RY, Z / RZ are its analog triggers (the engine reads them as LTRIGGER / RTRIGGER).
         val device = PadDevice(
             id, usb.vendorId, usb.productId, name,
-            analogLeftTrigger = has(AndroidAxis.LTRIGGER) || has(AndroidAxis.BRAKE),
-            analogRightTrigger = has(AndroidAxis.RTRIGGER) || has(AndroidAxis.GAS),
-            rightStickRx = PhysicalSticks.rightStickOnRx { has(it) },
+            analogLeftTrigger = has(AndroidAxis.LTRIGGER) || has(AndroidAxis.BRAKE) || rx && has(AndroidAxis.Z),
+            analogRightTrigger = has(AndroidAxis.RTRIGGER) || has(AndroidAxis.GAS) || rx && has(AndroidAxis.RZ),
+            rightStickRx = rx,
         )
 
         /** The right stick is on Z / RZ (as [ControllerInput]'s Source.zStick). */

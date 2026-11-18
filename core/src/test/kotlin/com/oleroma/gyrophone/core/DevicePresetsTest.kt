@@ -95,7 +95,9 @@ class DevicePresetsTest {
     @Test fun everyDrawnKeyIsMappedByTheStandardKeyboard() {
         val drawn = PhysicalLayouts.keyboardRows.flatten().mapNotNull { it.code }
         val mapped = DevicePresets.standardKeyboard().map { (it.source as InputSource.Key).keyCode }.toSet()
-        assertEquals(drawn.toSet(), mapped)
+        assertTrue(mapped.containsAll(drawn))
+        // Keys the drawing has no place for still reach the PC.
+        for (code in listOf(85, 87, 88, 24, 25, 164)) assertTrue("keycode $code", code in mapped)
         for (row in PhysicalLayouts.keyboardRows) {
             assertTrue(row.sumOf { it.width.toDouble() } <= PhysicalLayouts.KEYBOARD_UNITS + 0.001)
         }
@@ -124,9 +126,18 @@ class DevicePresetsTest {
     }
 
     @Test fun theRockerIsNotAKeyboardKeyAndAKeyboardIsNotTheRocker() {
-        val e = engine(pinned = true)
+        // The rocker's Volume up remapped: a keyboard's Volume up still does what the keyboard maps.
+        val e = engine(pinned = true) {
+            it.copy(phone = listOf(Mapping(InputSource.Key(AndroidKey.VOLUME_UP), OutputTarget.Key(0x04))))
+        }
         e.setKey(keyboard, AndroidKey.VOLUME_UP, true)
-        assertTrue(e.snapshot().keyboard.keys.isEmpty())
+        assertEquals(listOf(HidUsage.VOLUME_UP), e.snapshot().keyboard.keys)
+    }
+
+    @Test fun aKeyboardsMediaKeysReachThePc() {
+        val e = engine(pinned = true)
+        e.setKey(keyboard, 85, true) // KEYCODE_MEDIA_PLAY_PAUSE, not in the drawing
+        assertEquals(listOf(HidUsage.PLAY_PAUSE), e.snapshot().keyboard.keys)
     }
 
     @Test fun storedSetsKeepTheirOwnPhoneMappingsOnly() {

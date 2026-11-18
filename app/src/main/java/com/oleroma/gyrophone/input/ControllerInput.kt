@@ -50,6 +50,8 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         val flat = FloatArray(AndroidAxis.polled.size)
         /** The right stick is on Z / RZ rather than RX / RY, for the PC overlay ([overlayAxes]). */
         var zStick = false
+        /** The right stick is on RX / RY and Z / RZ are triggers (the engine's PadDevice.rightStickRx): learned axes are named as the engine reads them. */
+        var rx = false
         /** "Press a key": each [AndroidAxis.polled] axis pushed past half way, -1 / 0 / 1. */
         val pushed = IntArray(AndroidAxis.polled.size)
         /** One event's axes (deadzone applied, NaN = the device has none), and for MappingEngine.setAxes, reused. */
@@ -66,6 +68,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             fun has(axis: Int) = device.getMotionRange(axis) != null
             val triggers = has(AndroidAxis.LTRIGGER) || has(AndroidAxis.RTRIGGER) || has(AndroidAxis.GAS) || has(AndroidAxis.BRAKE)
             zStick = has(AndroidAxis.Z) && has(AndroidAxis.RZ) && (!has(AndroidAxis.RX) || !has(AndroidAxis.RY) || triggers)
+            rx = PhysicalSticks.rightStickOnRx { has(it) }
             rangesFor = source
         }
     }
@@ -175,6 +178,7 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
         main.post {
             val src = (pad.source as? Source) ?: Source(pad.device).also {
                 it.zStick = pad.zStick
+                it.rx = pad.device.rightStickRx
                 pad.source = it
             }
             values.copyInto(src.values)
@@ -284,8 +288,10 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             if (learn != null) {
                 if (!src.seen) { src.rest[i] = v; continue }
                 if (learned == null) {
-                    learned = AndroidAxis.learnedHalf(axis, v, src.rest[i])
-                    learnedAxis = axis
+                    // As the engine reads it: an RX / RY right stick as Z / RZ, Z / RZ triggers as LTRIGGER / RTRIGGER.
+                    val canonical = PhysicalSticks.canonicalAxis(axis, src.rx)
+                    learned = AndroidAxis.learnedHalf(canonical, v, src.rest[i])
+                    learnedAxis = canonical
                 }
                 continue
             }
@@ -508,16 +514,20 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
      * keyboard mappings for a full keyboard that is not also a game pad. An analog trigger axis on
      * a side makes the engine ignore that side's L2 / R2 key for the game pad trigger.
      */
-    private fun padDevice(device: InputDevice) = PadDevice(
-        device.id, device.vendorId, device.productId, device.name,
-        keyboard = device.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC &&
-            device.sources and InputDevice.SOURCE_GAMEPAD != InputDevice.SOURCE_GAMEPAD,
-        analogLeftTrigger = device.getMotionRange(AndroidAxis.LTRIGGER) != null ||
-            device.getMotionRange(AndroidAxis.BRAKE) != null,
-        analogRightTrigger = device.getMotionRange(AndroidAxis.RTRIGGER) != null ||
-            device.getMotionRange(AndroidAxis.GAS) != null,
-        rightStickRx = PhysicalSticks.rightStickOnRx { device.getMotionRange(it) != null },
-    )
+    private fun padDevice(device: InputDevice): PadDevice {
+        val rx = PhysicalSticks.rightStickOnRx { device.getMotionRange(it) != null }
+        return PadDevice(
+            device.id, device.vendorId, device.productId, device.name,
+            keyboard = device.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC &&
+                device.sources and InputDevice.SOURCE_GAMEPAD != InputDevice.SOURCE_GAMEPAD,
+            // On a pad with its right stick on RX / RY, Z / RZ are its analog triggers (the engine reads them as LTRIGGER / RTRIGGER).
+            analogLeftTrigger = device.getMotionRange(AndroidAxis.LTRIGGER) != null ||
+                device.getMotionRange(AndroidAxis.BRAKE) != null || rx && device.getMotionRange(AndroidAxis.Z) != null,
+            analogRightTrigger = device.getMotionRange(AndroidAxis.RTRIGGER) != null ||
+                device.getMotionRange(AndroidAxis.GAS) != null || rx && device.getMotionRange(AndroidAxis.RZ) != null,
+            rightStickRx = rx,
+        )
+    }
 
     /** The engine's view of a mouse: its own device (id apart from the same device's keys), with the mouse mappings. */
     private fun mousePad(device: InputDevice) =
