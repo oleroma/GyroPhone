@@ -8,6 +8,7 @@ import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -25,6 +26,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -109,9 +111,21 @@ class MainActivity : ComponentActivity() {
                     // No tabs: the app opens on the pad; Connection and Settings open from its capsules.
                     // Full-screen pad: a Fullscreen mapping (long press ← / →), or Back (both ways; it
                     // never closes the app from the pad). Menu pages register their own Back later,
-                    // so there it steps back a page instead.
+                    // so there it steps back a page instead. With the double-Back guard on, leaving
+                    // fullscreen takes two Backs within its time; a lone one does nothing.
                     var fullscreen by rememberSaveable { mutableStateOf(runtime.startFullscreen.value) }
-                    BackHandler { fullscreen = !fullscreen }
+                    val doubleBack by runtime.doubleBackPanel.collectAsStateWithLifecycle()
+                    val doubleBackMs by runtime.doubleBackMs.collectAsStateWithLifecycle()
+                    val lastBack = remember { longArrayOf(0L) }
+                    BackHandler {
+                        if (fullscreen && doubleBack) {
+                            val now = SystemClock.uptimeMillis()
+                            if (lastBack[0] != 0L && now - lastBack[0] <= doubleBackMs) {
+                                lastBack[0] = 0L
+                                fullscreen = false
+                            } else lastBack[0] = now
+                        } else fullscreen = !fullscreen
+                    }
                     PadTab(
                         runtime,
                         fullscreen = fullscreen,
@@ -202,7 +216,10 @@ class MainActivity : ComponentActivity() {
         TouchStream.eventNanos = event.eventTimeNanos
         // "Fade when phone rests": fingers on the screen are input until the last one lifts.
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> runtime.restDetector.fingers(true, System.nanoTime())
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                runtime.restDetector.fingers(true, System.nanoTime())
+                runtime.ratchetTiming.inputDown(event.eventTimeNanos)
+            }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> runtime.restDetector.fingers(false, System.nanoTime())
         }
         // "Measure buttons" on the PC: a finger landing or lifting may press or release something.

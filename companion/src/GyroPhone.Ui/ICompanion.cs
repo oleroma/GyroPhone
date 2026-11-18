@@ -40,10 +40,23 @@ public sealed record CompanionView(
     IReadOnlyList<Problem> Problems,
     bool MeasureButtons = false,
     ButtonLatency? Buttons = null,
-    bool InputLog = true,
+    bool Diagnostics = false,
     int CatchUpMs = 16,
     bool PressKeyNotice = true,
-    bool PressKeyListen = true);
+    bool PressKeyListen = true,
+    int DiagnosticsMinutes = 3,
+    int DiagnosticsSaved = 0,
+    bool UseInputDriver = false,
+    InputDriverState InputDriver = InputDriverState.NotInstalled);
+
+/// <summary>The optional input driver (a virtual USB mouse and keyboard), for Performance › Keyboard and mouse.</summary>
+public enum InputDriverState
+{
+    NotInstalled,
+    /// <summary>Installed, but its mouse and keyboard aren't plugged (another program has them, or it failed: see the log).</summary>
+    NotPlugged,
+    Ready,
+}
 
 /// <summary>
 /// The tray app as the windows see it. Every setter saves the setting and refreshes the open windows,
@@ -59,8 +72,6 @@ public interface ICompanion
 
     // Latency
     void ToggleMeasureButtons();
-    /// <summary>The latency test window is open: the phone shows its tracking markers.</summary>
-    void SetLatencyScreen(bool on);
     /// <summary>A line in the companion's log.</summary>
     void Log(string message);
 
@@ -89,23 +100,35 @@ public interface ICompanion
     void ToggleWatcher();
     void SetTrayClick(TrayClickAction action);
     void OpenLogFolder();
-    void ShowDebugWindow();
-    void ToggleInputLog();
+    /// <summary>"Diagnostics" (Performance): everything logs into a ring of the last Keep minutes, here and on the phone.</summary>
+    void ToggleDiagnostics();
+    /// <summary>Diagnostics' "Keep" slider, 1 to 30 minutes.</summary>
+    void SetDiagnosticsMinutes(int minutes);
+    /// <summary>Diagnostics' "Save": both sides' kept minutes; the PC's side also becomes a record in Results.</summary>
+    void SaveDiagnostics();
+    void OpenDebugFolder();
     /// <summary>"Use this PC's keys for Press a key".</summary>
     void TogglePressKeyListen();
     /// <summary>"Notify when the phone listens for a key".</summary>
     void TogglePressKeyNotice();
     /// <summary>"Catch-up time", ms (0 = off).</summary>
     void SetCatchUpMs(int ms);
+    /// <summary>"Use input driver" (Performance › Keyboard and mouse): the input driver instead of SendInput, when it is installed.</summary>
+    void ToggleUseInputDriver();
+    /// <summary>
+    /// "Delivery test" (Performance › Keyboard and mouse): opens a window that reads raw mouse input in front, like a
+    /// game, next to Diagnostics' background delivery probe, while it is open.
+    /// </summary>
+    void OpenDeliveryTest();
 
     // Performance
     /// <summary>The Performance page's frame watcher, link seconds and test records.</summary>
     GyroPhone.Host.Perf.PerfMonitor Perf { get; }
     /// <summary>
-    /// Adds the user to Windows' "Performance Log Users" (one admin prompt), so the frame watcher works without
-    /// admin from the next sign-in. True when added.
+    /// Sets up the FPS helper (one admin prompt): it reads the game's frames as administrator, started by Windows at
+    /// sign-in, so the companion never needs admin for them. True when set up.
     /// </summary>
-    bool AllowFrameWatch();
+    bool SetUpFpsHelper();
     /// <summary>The way the phone's packets go now ("Phone hotspot · PC Wi-Fi") and which Record Setup that is, or null without a phone.</summary>
     (string Text, string? Setup)? LinkPath();
     void OpenPerfFolder();

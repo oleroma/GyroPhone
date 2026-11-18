@@ -30,14 +30,18 @@ android {
         cmake { path = file("src/main/cpp/CMakeLists.txt") }
     }
 
+    // The signing key lives outside the repo: the build hook passes it in ANDROID_KEYSTORE and friends
+    // (on the PC from ~/.android-keys/gyrophone.env, in CI from the repo's secrets), so every build
+    // is signed the same way and installs over the previous one, keeping saved profiles. A plain
+    // Gradle build without them uses Android's own debug key, which can't update the installed app.
     signingConfigs {
-        // Shared debug key committed to the repo so every build can update the installed app
-        // in place (a fresh per-runner debug key forces an uninstall, wiping saved profiles).
         getByName("debug") {
-            storeFile = rootProject.file("keystore/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+            System.getenv("ANDROID_KEYSTORE")?.let { path ->
+                storeFile = file(path)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
         }
     }
 
@@ -48,8 +52,8 @@ android {
         // serialization and JNI classes, and isn't worth that risk.
         release {
             isMinifyEnabled = false
-            // The shared debug key, like every build, so adb install -r updates the installed app
-            // in place (debug and release builds of it alike) and keeps its data.
+            // The same key as every build (see signingConfigs), so adb install -r updates the
+            // installed app in place (debug and release builds of it alike) and keeps its data.
             signingConfig = signingConfigs.getByName("debug")
         }
     }

@@ -1,4 +1,5 @@
 using System.Runtime;
+using System.Runtime.CompilerServices;
 using GyroPhone.Host;
 using GyroPhone.Host.Settings;
 using GyroPhone.Windows;
@@ -10,8 +11,14 @@ internal static class Program
     public const string AppName = "GyroPhone Companion";
     private const string MutexName = @"Local\GyroPhoneCompanion";
 
-    /// <summary>True while a companion (not the watcher) runs in this session.</summary>
-    public static bool IsRunning()
+    /// <summary>
+    /// True while a companion or its input process (not the watcher) runs in this session: either one means GyroPhone
+    /// is up (the input process holds the port and starts the companion again if it crashed).
+    /// </summary>
+    public static bool IsRunning() => CompanionRunning() || InputHost.IsRunning();
+
+    /// <summary>True while a companion (the tray and windows) runs in this session.</summary>
+    public static bool CompanionRunning()
     {
         try
         {
@@ -27,6 +34,9 @@ internal static class Program
 
     /// <summary>Passed by "Restart as administrator": wait for the old instance to exit instead of bowing out.</summary>
     public const string RestartedArg = "--restarted";
+
+    /// <summary>Passed by the input process when it starts the companion again after a crash.</summary>
+    public const string ReattachArg = "--reattach";
 
     /// <summary>Passed when restarting into a newer build, which then says it was updated.</summary>
     public const string UpdatedArg = "--updated";
@@ -54,6 +64,14 @@ internal static class Program
 
     [STAThread]
     private static int Main(string[] args)
+    {
+        // The input process first, before anything here touches WinForms (it never loads it).
+        if (args.Contains(InputHost.Arg)) return InputHost.Run(args);
+        return RunCompanion(args);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int RunCompanion(string[] args)
     {
         if (args.Contains(InitKeysArg)) return InitKeys();
         if (args.Contains(UpdateFinisher.Arg)) return UpdateFinisher.Run(args);
@@ -105,7 +123,9 @@ internal static class Program
             TrayApp created;
             try
             {
-                created = new TrayApp();
+                // What the first input process this starts is told: wait longer for locked files after a wake or an update.
+                string inputArgs = string.Join(' ', args.Where(a => a == WokenArg || a == UpdatedArg));
+                created = new TrayApp(inputArgs);
             }
             catch (IOException e)
             {

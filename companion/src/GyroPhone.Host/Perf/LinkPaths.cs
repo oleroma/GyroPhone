@@ -8,11 +8,13 @@ namespace GyroPhone.Host.Perf;
 /// <summary>The PC's network adapter that a phone's address belongs to.</summary>
 /// <param name="Name">The adapter's name as Windows shows it ("Wi-Fi", "Ethernet", "Local Area Connection* 10").</param>
 /// <param name="Hotspot">It is Windows' Mobile hotspot (the Wi-Fi Direct virtual adapter, 192.168.137.x).</param>
-public sealed record PcAdapter(string Name, bool Hotspot);
+/// <param name="Wireless">It is a Wi-Fi adapter (the hotspot's included).</param>
+/// <param name="Id">The adapter's id ("{GUID}", as the Wi-Fi API names its interfaces).</param>
+public sealed record PcAdapter(string Name, bool Hotspot, bool Wireless = false, string Id = "");
 
 /// <summary>
 /// The way the phone's packets go (docs/spec/pc-companion.md, "Performance"): the phone's side from LINK_INFO's
-/// path, the PC's from the adapter on the phone's subnet. Named as the Record test's Setup picks are.
+/// path, the PC's from the adapter on the phone's subnet. Named as people name their setups.
 /// </summary>
 public static class LinkPaths
 {
@@ -44,6 +46,61 @@ public static class LinkPaths
 
     /// <summary>Both sides: "Phone hotspot · PC Wi-Fi".</summary>
     public static string Describe(LinkInfo l, PcAdapter? pc) => Phone(l, pc) + (pc != null ? $" · PC {pc.Name}" : "");
+
+    /// <summary>
+    /// The connection line of a PC Diagnostics save (built only at Save): the setup, both sides, the network's name
+    /// when the PC is on that Wi-Fi itself (<paramref name="ssid"/> reads it by adapter id), the PC adapter that
+    /// gets the phone's packets and the addresses on both ends. "PC hotspot 5 GHz ch 36 · PC adapter Local Area
+    /// Connection* 10 (Microsoft Wi-Fi Direct Virtual Adapter #2) 192.168.137.1 · phone 192.168.137.42".
+    /// </summary>
+    public static string Connection(LinkInfo? l, IPAddress? phone, Func<string, string?>? ssid = null)
+    {
+        if (phone == null) return "phone not connected";
+        if (IPAddress.IsLoopback(phone)) return (l is { } lc ? Phone(lc, null) : "USB cable (direct)") + $" · phone at {phone} (the cable's local socket)";
+        var pc = AdapterFor(phone);
+        var parts = new List<string>(6);
+        if (l is { } li)
+        {
+            parts.Add(Phone(li, pc));
+            if (Setup(li, pc) is { } setup) parts.Add("setup " + setup);
+        }
+        else parts.Add("phone link unknown (no LINK_INFO yet)");
+        if (pc == null) parts.Add("PC adapter not found for the phone's address");
+        else
+        {
+            string? name = pc.Hotspot ? null : pc.Wireless ? ssid?.Invoke(pc.Id) : null;
+            if (pc.Hotspot) parts.Add("network the PC's Mobile hotspot");
+            else if (name != null) parts.Add("network " + name);
+            var (desc, own) = Detail(pc.Id, phone);
+            parts.Add($"PC adapter {pc.Name}" + (desc != null ? $" ({desc})" : "") + (own != null ? $" {own}" : ""));
+        }
+        parts.Add($"phone {phone}");
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>The adapter's description and the PC's IPv4 address on the phone's subnet there.</summary>
+    private static (string? Desc, IPAddress? Own) Detail(string id, IPAddress phone)
+    {
+        try
+        {
+            uint p = Bits(phone);
+            foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (ni.Id != id) continue;
+                foreach (var u in ni.GetIPProperties().UnicastAddresses)
+                {
+                    if (u.Address.AddressFamily != AddressFamily.InterNetwork || u.PrefixLength is <= 0 or > 32) continue;
+                    uint mask = u.PrefixLength == 32 ? uint.MaxValue : ~(uint.MaxValue >> u.PrefixLength);
+                    if ((Bits(u.Address) & mask) == (p & mask)) return (ni.Description, u.Address);
+                }
+                return (ni.Description, null);
+            }
+        }
+        catch (Exception e) when (e is NetworkInformationException or PlatformNotSupportedException)
+        {
+        }
+        return (null, null);
+    }
 
     private static int? Channel(int mhz) => mhz switch
     {
@@ -80,7 +137,7 @@ public static class LinkPaths
                     uint a = Bits(u.Address);
                     if ((a & mask) != (p & mask)) continue;
                     bool hotspot = ni.Description.Contains("Wi-Fi Direct", StringComparison.OrdinalIgnoreCase) || (a & 0xFFFFFF00) == 0xC0A88900;
-                    found = new PcAdapter(ni.Name, hotspot);
+                    found = new PcAdapter(ni.Name, hotspot, ni.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 || hotspot, ni.Id);
                     break;
                 }
                 if (found != null) break;

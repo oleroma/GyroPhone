@@ -5,12 +5,13 @@ namespace GyroPhone.Tests;
 /// <summary>OVERLAY / OVERLAY_LAYOUT: the same bytes the phone's OverlayFeedTest encodes.</summary>
 public class OverlayTests
 {
-    private const string LayoutBlob = "0160093804044d61696e000100010008001033036606800141";
-    private const string Frame = "040302010000803f000000bf0000803ee803000000200000000000000180030101003b010080004000000000000000000000000000000000" +
+    internal const string LayoutBlob = "0160093804044d61696e000100010008001033036606800141";
+    internal const string FramesBlob = "01010059011301d4bc00ff02000502000157010943726f756368206f6e010000800a00ff00010004486f6c6400";
+    internal const string Frame = "040302010000803f000000bf0000803ee803000000200000000000000180030101003b010080004000000000000000000000000000000000" +
         "0100000000000000000000000000000000000000000000000000000000000000007fc1ff0000ff0000ff0000ff0000ff0000ff0000ff0000" +
         "0000803f00000000000000c0" + "000000400000000000000000" + "00000000000000000000000000000000";
 
-    private static byte[] Piece(ushort version, int index, int count, ReadOnlySpan<byte> data)
+    internal static byte[] Piece(ushort version, int index, int count, ReadOnlySpan<byte> data)
     {
         var p = new byte[Wire.OverlayLayoutPlain];
         Le.PutU16(p, 0, version);
@@ -122,6 +123,135 @@ public class OverlayTests
     }
 
     [Fact]
+    public void DecodesTheFrames()
+    {
+        Assert.Equal(228, PacketType.Size(PacketType.OverlayFrames));
+        Assert.True(PacketType.IsPhoneToHostSealed(PacketType.OverlayFrames));
+        var a = new OverlayMarksAssembler();
+        Assert.True(a.Add(Piece(4, 0, 1, Hex.B(FramesBlob))));
+        var m = a.Marks!;
+        Assert.Equal(4, m.Version);
+        Assert.Equal(1, m.LayoutVersion);
+        Assert.Equal(34.5f, m.TextPx, 3);
+        Assert.Equal(2.75f, m.Dp, 3);
+        Assert.Equal(unchecked((int)0xFF00BCD4), m.BarColor);
+        Assert.Equal(2, m.Marks.Count);
+        var b = m.Marks[0];
+        Assert.Equal(0, b.Control);
+        Assert.True(b.Inside);
+        Assert.False(b.Row);
+        Assert.True(b.Set);
+        Assert.Equal(["W", "Crouch on"], b.Lines.Select(l => l.Text));
+        Assert.Equal(OverlayFrameLine.On, b.Lines[1].Color);
+        var bar = Assert.Single(b.Bars);
+        Assert.Equal(0, bar.Axis);
+        Assert.Equal(0.5f, bar.Value, 3);
+        Assert.Equal(10, bar.Steps);
+        var pad = m.Marks[1];
+        Assert.Equal(-1, pad.Control);
+        Assert.Equal("Hold", Assert.Single(pad.Lines).Text);
+        Assert.Empty(pad.Bars);
+        Assert.False(a.Add(Piece(4, 0, 1, Hex.B(FramesBlob))));
+        // Cut short: dropped.
+        Assert.Null(OverlayMarks.Decode(5, Hex.B(FramesBlob).AsSpan(0, 30)));
+        // Frames without keys (no Keys overlay open, or an older phone).
+        Assert.Null(OverlayMarks.Decode(5, Hex.B(FramesBlob))!.Keys);
+    }
+
+    /// <summary>The phone's OverlayKeysTest.KEYS_BLOB: layout 7, no marks, then the Keys overlay's table.</summary>
+    private const string KeysBlob = "0107000000640000000000004bfa001af2d987871af2d9878780f24de60b000001410553706163654300074c53206c65667401414100084c5320726967687401444000054c5320757001574200074c5320646f776e0153610009525320782061786973054d6f757365610009525320792061786973054d6f7573650700025254074d6f757365204c01030c42206c6f6e67207072657373014502800158014300000141074d6f757365205200";
+
+    [Fact]
+    public void KeysFollowTheMarks()
+    {
+        var m = OverlayMarks.Decode(9, Hex.B(KeysBlob))!;
+        Assert.Empty(m.Marks);
+        var t = m.Keys!;
+        Assert.Equal(250, t.TapMs);
+        Assert.Equal(11, t.Keys.Count);
+        Assert.Equal(new OverlayKey(0, OverlayKey.Held, "A", "Space"), t.Keys[0]);
+        Assert.Equal(new OverlayKey(OverlayKey.Way | 3, OverlayKey.Held, "LS left", "A"), t.Keys[1]);
+        Assert.Equal(new OverlayKey(2, OverlayKey.Toggle, "X", "C"), t.Keys[9]);
+        Assert.Equal(0.3f, t.Triggers[1].Press, 2);
+        Assert.Equal(0.1f, t.Sticks[0].Inner, 2);
+        Assert.Equal(135f, t.Sticks[1].PieY);
+        // Cut short in the keys: the whole blob is dropped.
+        Assert.Null(OverlayMarks.Decode(9, Hex.B(KeysBlob).AsSpan(0, 40)));
+    }
+
+    [Fact]
+    public void KeysReaderWorksOutWhatFires()
+    {
+        var t = OverlayMarks.Decode(9, Hex.B(KeysBlob))!.Keys!;
+        var r = new OverlayKeysReader();
+        var f = new OverlayFrame();
+        // Nothing pressed: only the always-shown sticks (LS and RS by default), not lit.
+        var idle = r.Read(t, f, 1000)!;
+        Assert.Equal(
+            [
+                new OverlayKeyStick(0, "", ["W", "D", "S", "A"], 0, ["", "", "", "", ""], 0),
+                new OverlayKeyStick(1, "Mouse", ["", "", "", ""], 0, ["", "", "", "", ""], 0),
+            ],
+            idle.Shown.Select(x => x.Stick));
+        Assert.All(idle.Shown, x => Assert.False(x.Lit));
+        Assert.Empty(idle.Rows);
+        Assert.Same(idle, r.Read(t, f, 1010));
+        // A held (both its mappings), the left stick up and right (a diagonal), RT pulled, X pressed (Toggle on), B held.
+        f.PadButtons = OverlayFrame.PadSouth | OverlayFrame.PadR2 | OverlayFrame.PadWest | OverlayFrame.PadEast;
+        f.PadR2Pull = 0.6f;
+        f.PadSticks[0] = 0.7f; f.PadSticks[1] = -0.7f;
+        var k = r.Read(t, f, 1100)!;
+        Assert.Equal(OverlayKeyStick.Up | OverlayKeyStick.Right, k.Shown[0].Stick!.Lit);
+        Assert.Equal(
+            [
+                new OverlayKeyRow("A", "Space + Mouse R", 0),
+                new OverlayKeyRow("RT", "Mouse L", OverlayKeyRow.RightTrigger),
+                new OverlayKeyRow("X", "C on", OverlayKeyRow.Toggle),
+            ],
+            k.Rows);
+        // B held past the tap time: its long press fires.
+        Assert.Contains(new OverlayKeyRow("B long press", "E", 0), r.Read(t, f, 1400)!.Rows);
+        // All let go: X's Toggle stays on until it is pressed again.
+        f.PadButtons = 0; f.PadR2Pull = 0; f.PadSticks[0] = 0; f.PadSticks[1] = 0;
+        Assert.Equal([new OverlayKeyRow("X", "C on", OverlayKeyRow.Toggle)], r.Read(t, f, 1500)!.Rows);
+        f.PadButtons = OverlayFrame.PadWest;
+        Assert.Empty(r.Read(t, f, 1600)!.Rows);
+        // A button mapped twice to the same key (by its key and its axis, as the D-pad): shown once.
+        var twice = t with { Keys = [new OverlayKey(14, 0, "↑", "Space"), new OverlayKey(14, 0, "↑", "Space")] };
+        var r2 = new OverlayKeysReader();
+        f.PadButtons = OverlayFrame.PadUp;
+        Assert.Equal([new OverlayKeyRow("↑", "Space", 0)], r2.Read(twice, f, 1650)!.Rows);
+        // Touch buttons: by the OVERLAY's pressed and latched bits, without a name.
+        var touched = t with { Keys = [], Touch = [new OverlayTouchKey(2, 0, "Mouse L"), new OverlayTouchKey(5, OverlayKey.Toggle, "Space")] };
+        var r3 = new OverlayKeysReader();
+        var tf = new OverlayFrame();
+        tf.Pressed[0] = 1 << 2;
+        tf.Latched[0] = 1 << 5;
+        var rows = r3.Read(touched, tf, 1000)!.Rows;
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(("Mouse L", OverlayKeyRow.Touch), (rows[0].Target, rows[0].Flags));
+        Assert.Equal(("Space on", OverlayKeyRow.Touch | OverlayKeyRow.Toggle), (rows[1].Target, rows[1].Flags));
+        // A stick pushed only a little: under half its travel, no key.
+        f.PadButtons = 0; f.PadSticks[0] = 0.3f;
+        Assert.Equal(0, r.Read(t, f, 1700)!.Shown[0].Stick!.Lit);
+        // Pushed to the edge, up: its Outer up and its key both fire; an always-shown A sits on top, dim until pressed.
+        var outer = t with { Keys = [.. t.Keys, new OverlayKey(OverlayKey.Way | 0, OverlayKey.Outer, "LS up outer", "Shift"), new OverlayKey(OverlayKey.AnyWay | 0, 0, "LS outer", "Ctrl")] };
+        var r4 = new OverlayKeysReader();
+        f.PadSticks[0] = 0; f.PadSticks[1] = -1f;
+        int shown = OverlayControls.Mask(["ls", "a"]);
+        var v = r4.Read(outer, f, 2000, shown)!;
+        var ls = v.Shown[0].Stick!;
+        Assert.Equal(OverlayKeyStick.Up, ls.Lit);
+        Assert.Equal(OverlayKeyStick.Up | OverlayKeyStick.Any, ls.OuterLit);
+        Assert.Equal(["Shift", "", "", "", "Ctrl"], ls.Outer);
+        Assert.Equal(new OverlayKeyRow("A", "Space + Mouse R", 0) { Lit = false }, v.Shown[1]);
+        // RS isn't always shown here: its row comes only while it moves (it sends the mouse).
+        Assert.DoesNotContain(v.Rows, x => x.Name == "RS");
+        f.PadSticks[2] = 0.5f;
+        Assert.Contains(r4.Read(outer, f, 2010, shown)!.Rows, x => x.Name == "RS" && x.Stick != null);
+    }
+
+    [Fact]
     public void PiecesInAnyOrderAndANewVersionStartsOver()
     {
         var blob = Hex.B(LayoutBlob);
@@ -164,27 +294,29 @@ public class OverlayTests
         var secondKey = Hex.Range(0xA0, 32);
         h.AddPaired(secondId, "Pixel", secondKey);
         var engine = new GyroPhone.Host.HostEngine(h.Settings, h.Pad, h.KeyMouse, h.Prompt, new PlainProtector(), h.Clock, h.Events);
+        var overlays = new GyroPhone.Host.OverlayHost(h.Settings, engine.Shared, new AutoResetEvent(false), (on, c, s, k) => engine.SetOverlay(on, c, s, k), h.Clock);
+        engine.OverlayWake = overlays.Signal;
         engine.AttachSender(h.Sender);
         void Send(FakePhone p, byte[] d)
         {
             engine.OnDatagram(d, p.Addr, h.Clock.NowUs);
             engine.Flush(h.Clock.NowUs);
         }
-        engine.SetOverlay(true);
+        overlays.SetOverlay(true);
         var a = h.NewPhone();
         engine.OnDatagram(a.Hello(), a.Addr, h.Clock.NowUs);
         Assert.True(a.OnWelcome(h.Sender.Sent[^1].Data));
         Send(a, a.State());
         Send(a, a.Sealed(PacketType.OverlayLayout, Piece(1, 0, 1, Hex.B(LayoutBlob))));
         Send(a, a.Sealed(PacketType.Overlay, Hex.B(Frame)));
-        engine.OverlaySnapshot(new OverlayFrame(), out var layout);
+        overlays.OverlaySnapshot(new OverlayFrame(), out var layout);
         Assert.NotNull(layout);
 
         var b = FakePhone.Paired(secondId, "Pixel", secondKey, "192.168.1.77", 41000);
         engine.OnDatagram(b.Hello(), b.Addr, h.Clock.NowUs);
         Assert.True(b.OnWelcome(h.Sender.Sent[^1].Data));
         Send(b, b.State());
-        Assert.Equal(-1, engine.OverlaySnapshot(new OverlayFrame(), out layout));
+        Assert.Equal(-1, overlays.OverlaySnapshot(new OverlayFrame(), out layout));
         Assert.Null(layout);
     }
 
@@ -199,7 +331,7 @@ public class OverlayTests
         var phone = h.NewPhone();
         Assert.True(phone.OnWelcome(h.Send(phone, phone.Hello())!));
         h.Send(phone, phone.State());
-        h.Engine.SetOverlay(true);
+        h.Overlays.SetOverlay(true);
         byte[] Frame(byte levelPresses)
         {
             var b = Hex.B(OverlayTests.Frame);
@@ -231,24 +363,24 @@ public class OverlayTests
 
         // Off: OVERLAY is ignored.
         h.Send(phone, phone.Sealed(PacketType.Overlay, Hex.B(Frame)));
-        Assert.Equal(-1, h.Engine.OverlaySnapshot(frame, out _));
+        Assert.Equal(-1, h.Overlays.OverlaySnapshot(frame, out _));
 
         h.Sender.Clear();
-        h.Engine.SetOverlay(true);
+        h.Overlays.SetOverlay(true);
         Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out var st));
         Assert.NotEqual(0, WireCodec.DecodeHostStatus(st).Flags & HostStatusFlags.Overlay);
 
         h.Send(phone, phone.Sealed(PacketType.Overlay, Hex.B(Frame)));
         h.Send(phone, phone.Sealed(PacketType.OverlayLayout, Piece(1, 0, 1, Hex.B(LayoutBlob))));
-        Assert.True(h.Engine.OverlaySnapshot(frame, out var layout) >= 0);
+        Assert.True(h.Overlays.OverlaySnapshot(frame, out var layout) >= 0);
         Assert.True(frame.IsPressed(0));
         Assert.Equal("Main", layout!.Workspace);
 
         h.Sender.Clear();
-        h.Engine.SetOverlay(false);
+        h.Overlays.SetOverlay(false);
         Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out st));
         Assert.Equal(0, WireCodec.DecodeHostStatus(st).Flags & HostStatusFlags.Overlay);
-        Assert.Equal(-1, h.Engine.OverlaySnapshot(frame, out layout));
+        Assert.Equal(-1, h.Overlays.OverlaySnapshot(frame, out layout));
         Assert.Null(layout);
     }
 
@@ -345,14 +477,14 @@ public class OverlayTests
         Assert.True(phone.OnWelcome(h.Send(phone, phone.Hello())!));
         h.Send(phone, phone.State());
         var id = h.Engine.Settings.Overlays[0].Id;
-        h.Engine.UpdateOverlaySettings(id, o => o.Shown = true);
-        h.Engine.SetOverlay(true);
+        h.Overlays.UpdateOverlaySettings(id, o => o.Shown = true);
+        h.Overlays.SetOverlay(true);
         h.Sender.Clear();
-        h.Engine.UpdateOverlaySettings(id, o => o.Compass = true);
+        h.Overlays.UpdateOverlaySettings(id, o => o.Compass = true);
         Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out var st));
         Assert.NotEqual(0, WireCodec.DecodeHostStatus(st).Flags & HostStatusFlags.OverlayCompass);
         h.Sender.Clear();
-        h.Engine.UpdateOverlaySettings(id, o => o.Gravity = false);
+        h.Overlays.UpdateOverlaySettings(id, o => o.Gravity = false);
         Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out st));
         Assert.Equal(0, WireCodec.DecodeHostStatus(st).Flags & HostStatusFlags.OverlayCompass);
     }
@@ -515,21 +647,21 @@ public class OverlayTests
         Assert.True(phone.OnWelcome(h.Send(phone, phone.Hello())!));
         h.Send(phone, phone.State());
         var a = h.Engine.Settings.Overlays[0].Id;
-        h.Engine.UpdateOverlaySettings(a, o => { o.Shown = true; o.Gravity = false; o.Ease = false; });
-        var b = h.Engine.AddOverlay(GyroPhone.Host.Settings.OverlayKind.Shape);
-        h.Engine.UpdateOverlaySettings(b, o => { o.TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Trackball; o.TrackballRws = false; o.TrackballAxes = GyroPhone.Host.Settings.OverlaySettings.TrackballAsPhone; });
-        h.Engine.SetOverlay(true);
+        h.Overlays.UpdateOverlaySettings(a, o => { o.Shown = true; o.Gravity = false; o.Ease = false; });
+        var b = h.Overlays.AddOverlay(GyroPhone.Host.Settings.OverlayKind.Shape);
+        h.Overlays.UpdateOverlaySettings(b, o => { o.TurnsWith = GyroPhone.Host.Settings.OverlayTurnsWith.Trackball; o.TrackballRws = false; o.TrackballAxes = GyroPhone.Host.Settings.OverlaySettings.TrackballAsPhone; });
+        h.Overlays.SetOverlay(true);
         var frame = Hex.B(Frame); // 1° yaw, -0.5° pitch, 0.25° roll; axes yaw + pitch
         h.Send(phone, phone.Sealed(PacketType.Overlay, frame));
         var fa = new OverlayFrame();
         var fb = new OverlayFrame();
-        Assert.True(h.Engine.OverlaySnapshot(fa, a, out _) >= 0);
-        h.Engine.OverlaySnapshot(fb, b, out _);
+        Assert.True(h.Overlays.OverlaySnapshot(fa, a, out _) >= 0);
+        h.Overlays.OverlaySnapshot(fb, b, out _);
         Assert.NotEqual(1f, fa.Qw);
         // The same way (a trackball set to turn as the phone), and the frame's 1° of
         // touchpad yaw turns it as far again.
         Assert.Equal(2 * fa.Qy, fb.Qy, 3);
-        h.Engine.RemoveOverlay(b);
+        h.Overlays.RemoveOverlay(b);
         Assert.Single(h.Engine.Settings.Overlays);
     }
 
@@ -595,15 +727,15 @@ public class OverlayTests
         Assert.True(phone.OnWelcome(h.Send(phone, phone.Hello())!));
         h.Send(phone, phone.State());
         var a = h.Engine.Settings.Overlays[0].Id;
-        h.Engine.UpdateOverlaySettings(a, o => { o.Shown = true; o.Gravity = false; o.Ease = false; });
+        h.Overlays.UpdateOverlaySettings(a, o => { o.Shown = true; o.Gravity = false; o.Ease = false; });
         h.Sender.Clear();
-        h.Engine.SetOverlay(true);
+        h.Overlays.SetOverlay(true);
         Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out var st));
         Assert.NotEqual(0, WireCodec.DecodeHostStatus(st).Flags & HostStatusFlags.OverlayTotals);
         float Turned()
         {
             var f = new OverlayFrame();
-            h.Engine.OverlaySnapshot(f, a, out _);
+            h.Overlays.OverlaySnapshot(f, a, out _);
             return 2 * MathF.Acos(Math.Min(MathF.Abs(f.Qw), 1f)) * 180f / MathF.PI;
         }
         h.Send(phone, phone.Sealed(PacketType.Overlay, TotalsFrame(1000, 5f, 1000))); // the base
@@ -615,8 +747,8 @@ public class OverlayTests
         h.Send(phone, phone.Sealed(PacketType.Overlay, TotalsFrame(2000, 10f, 2000)));
         Assert.Equal(15f, Turned(), 1);
         // Overlay off and on again: the next frame is a base, whatever its totals.
-        h.Engine.SetOverlay(false);
-        h.Engine.SetOverlay(true);
+        h.Overlays.SetOverlay(false);
+        h.Overlays.SetOverlay(true);
         h.Send(phone, phone.Sealed(PacketType.Overlay, TotalsFrame(500, 90f, 5000)));
         Assert.Equal(0f, Turned(), 2);
     }
@@ -626,20 +758,20 @@ public class OverlayTests
     {
         var h = new Harness();
         var a = h.Engine.Settings.Overlays[0].Id;
-        h.Engine.UpdateOverlaySettings(a, o =>
+        h.Overlays.UpdateOverlaySettings(a, o =>
         {
             o.Handles = GyroPhone.Host.Settings.OverlayHandles.Always;
             o.HandleSource = GyroPhone.Host.Settings.OverlayHandleSource.Pc;
             o.Colors["handles"] = 0x11223344;
             o.Colors["body"] = 0x55667788;
         });
-        var bId = h.Engine.AddOverlay(GyroPhone.Host.Settings.OverlayKind.Phone);
+        var bId = h.Overlays.AddOverlay(GyroPhone.Host.Settings.OverlayKind.Phone);
         var b = h.Engine.Settings.Overlays.Find(o => o.Id == bId)!;
         Assert.Equal(GyroPhone.Host.Settings.OverlayHandles.Always, b.Handles);
         Assert.Equal(GyroPhone.Host.Settings.OverlayHandleSource.Pc, b.HandleSource);
         Assert.Equal(0x11223344, b.Color("handles"));
         Assert.False(b.Colors.ContainsKey("body"));
-        var cId = h.Engine.AddOverlay(GyroPhone.Host.Settings.OverlayKind.Shape);
+        var cId = h.Overlays.AddOverlay(GyroPhone.Host.Settings.OverlayKind.Shape);
         var c = h.Engine.Settings.Overlays.Find(o => o.Id == cId)!;
         Assert.Equal(GyroPhone.Host.Settings.OverlayHandles.Auto, c.Handles);
         Assert.Empty(c.Colors);
@@ -782,10 +914,10 @@ public class OverlayTests
 
         var h = new Harness();
         var keys = h.Engine.Settings.OverlayShortcuts;
-        h.Engine.SetOverlayShortcut(GyroPhone.Host.Settings.OverlayAction.Edit, "Ctrl+Alt+R");
+        h.Overlays.SetOverlayShortcut(GyroPhone.Host.Settings.OverlayAction.Edit, "Ctrl+Alt+R");
         Assert.Equal("Ctrl+Alt+R", keys.Edit);
         Assert.Equal("", keys.LevelAll); // one press never does two things
-        h.Engine.SetOverlaysHidden(true);
+        h.Overlays.SetOverlaysHidden(true);
         Assert.True(h.Engine.Settings.OverlaysHidden);
     }
 

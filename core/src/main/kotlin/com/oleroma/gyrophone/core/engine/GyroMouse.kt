@@ -150,6 +150,20 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
         }
     }
 
+    /**
+     * Motion [m] with each axis measured in its own space ([GyroSettings.spaceOf]): yaw from [m] in
+     * yaw's space, pitch in pitch's, roll in roll's ([inSpace]).
+     */
+    fun inSpaces(m: Motion, s: GyroSettings, up: FloatArray?): Motion {
+        // Stored roll is the shown yaw, stored yaw the shown roll.
+        val ys = s.spaceOf(MotionAxis.YAW); val ps = s.spaceOf(MotionAxis.PITCH); val rs = s.spaceOf(MotionAxis.ROLL)
+        if (up == null || ys == ps && ps == rs) return inSpace(m, rs, up)
+        val y = inSpace(m, ys, up)
+        val p = if (ps == ys) y else inSpace(m, ps, up)
+        val r = if (rs == ys) y else if (rs == ps) p else inSpace(m, rs, up)
+        return Motion(y.yaw, p.pitch, r.roll)
+    }
+
     private val math = GyroMath()
 
     /** The app's jitter tightening and smoothing (deg/s, 0 = off); null = [settings]' own (tests). */

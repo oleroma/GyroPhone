@@ -9,8 +9,7 @@ namespace GyroPhone.Windows;
 /// "Press a key" on the phone: reads this PC's keyboard and mouse through raw input (RIDEV_INPUTSINK, on a hidden
 /// message-only window on its own thread) while the phone listens. Raw input only reads: every key and click still
 /// goes to Windows and the game as usual (no hook, nothing held back). Keyboard input with no device behind it (SendInput,
-/// ours included) is skipped. The latency test window reads raw mouse input too; a process has one raw input
-/// target per device kind, so while both run the latency window's mouse bar stops until it is opened again.
+/// ours included) is skipped.
 /// </summary>
 public sealed class RawInputListener : IKeyMouseListener, IDisposable
 {
@@ -132,6 +131,8 @@ public sealed class RawInputListener : IKeyMouseListener, IDisposable
             };
             RegisterRawInputDevices(remove, (uint)remove.Length, (uint)Marshal.SizeOf<RawInputDevice>());
             DestroyWindow(hwnd);
+            // That took the process's raw mouse input away from Diagnostics' delivery probe too: it registers again.
+            DeliveryProbe.RawMouseReleased();
         }
         catch (Exception e)
         {
@@ -178,6 +179,8 @@ public sealed class RawInputListener : IKeyMouseListener, IDisposable
         IntPtr device = IntPtr.Size == 8 ? (IntPtr)BitConverter.ToInt64(_buffer, 8) : BitConverter.ToInt32(_buffer, 8);
         // No device behind it: injected (SendInput, ours too) for a key. A laptop's precision touchpad sends its
         // clicks with no device too, so a mouse button counts anyway: GyroPhone sends no clicks while the phone listens.
+        // The input driver's own mouse and keyboard are GyroPhone's output too, never the PC's keys.
+        if (OwnInputDevice.Is(device)) return;
         if (type == 1 && device != IntPtr.Zero) Keyboard(header);
         else if (type == 0) Mouse(header);
     }

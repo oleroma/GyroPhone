@@ -10,6 +10,8 @@ namespace GyroPhone.Tray;
 /// D-pad, sticks, − + Home on the front, L1 / R1 on the top edge and L2 / R2 on the back
 /// near the top. The shoulder buttons barely show from the screen side, so each handle's front also
 /// has two pills by its top edge: the bumper's lights while pressed, the trigger's fills as it's pulled.
+/// Every button is a raised shape (a short cylinder or block) standing out of its face; while it fires it
+/// sinks almost flush and lights, as a real one goes down. A trigger sinks as far as it is pulled.
 /// </summary>
 internal static class HandleDrawing
 {
@@ -19,6 +21,12 @@ internal static class HandleDrawing
     public const float ShoulderDepth = 0.035f;
     private const float OuterRadius = 0.12f;
     private const float InnerRadius = 0.015f;
+    /// <summary>How far a button stands out of the front, up and pressed, in handle heights; a stick's knob stands taller.</summary>
+    private const float ButtonUp = 0.022f, ButtonDown = 0.005f, KnobUp = 0.045f, KnobDown = 0.02f;
+    /// <summary>A bumper pressed keeps this share of its height; a trigger pulled all the way, this share of its depth.</summary>
+    private const float BumperDown = 0.35f, TriggerDown = 0.35f;
+    /// <summary>Points round a round button.</summary>
+    private const int RoundPoints = 32;
 
     /// <summary>
     /// The drawing's point arrays, made once per thread (the pacer's, or the UI thread's) and filled in
@@ -27,13 +35,15 @@ internal static class HandleDrawing
     /// </summary>
     private sealed class Scratch
     {
-        public readonly PointF[] Round = new PointF[20], Well = new PointF[28], Box = new PointF[4], Quad = new PointF[4];
-        public readonly PointF[] Pill = new PointF[18];
+        public readonly PointF[] Round = new PointF[48], Well = new PointF[64], Box = new PointF[4], Quad = new PointF[4];
+        public readonly PointF[] Pill = new PointF[StadiumPoints];
         // The handle's outline and the 4-point bumper and trigger take turns: each keeps its own pair.
         public PointF[]? PillPart, Front, Back;
         public readonly PointF[] Front4 = new PointF[4], Back4 = new PointF[4];
+        public readonly PointF[] FrontRound = new PointF[RoundPoints], BackRound = new PointF[RoundPoints];
+        public readonly (float X, float Y)[] RoundShape = new (float, float)[RoundPoints], BoxShape = new (float, float)[4];
         public readonly (float X, float Y)[] BumperRect = new (float, float)[4], TriggerRect = new (float, float)[4];
-        public readonly (float X, float Y)[] Shape4 = new (float, float)[4], Stadium = new (float, float)[18];
+        public readonly (float X, float Y)[] Shape4 = new (float, float)[4], Stadium = new (float, float)[StadiumPoints];
         public readonly List<(float X, float Y)> Cut = new(40), CutScratch = new(40);
         // Each side's outline in the phone frame, for the sizes it was made for.
         private readonly (float X, float Y)[]?[] _outline = new (float X, float Y)[]?[2];
@@ -89,12 +99,14 @@ internal static class HandleDrawing
         // Shoulder buttons: L1 / R1 on the top edge, L2 / R2 out of the back near the top.
         float d = ShoulderDepth * h;
         float ba = 0.03f * h, bb = 0.25f * h; // inside the outer corner's curve
-        var bumper = Rect(buf.BumperRect, Math.Min(X(ba), X(bb)), h / 2, Math.Max(X(ba), X(bb)), h / 2 + d);
+        // Pressed, the bumper sinks into the top edge; the trigger into the back as far as it is pulled.
+        var bumper = Rect(buf.BumperRect, Math.Min(X(ba), X(bb)), h / 2, Math.Max(X(ba), X(bb)), h / 2 + d * (l1 ? BumperDown : 1f));
         var trigger = Rect(buf.TriggerRect, Math.Min(X(ba), X(bb)), h / 2 - 0.2f * h, Math.Max(X(ba), X(bb)), h / 2);
+        float sink = Math.Clamp(l2 ? Math.Max(pull, 1f) : pull, 0f, 1f);
         var bumperColor = l1 ? lit : Mix(body, Color.White, 0.08f);
         var triggerColor = Mix(Mix(body, Color.White, 0.08f), lit, l2 ? Math.Max(pull, 0.6f) : pull);
         void Bumper() => Prism(g, v, buf, bumper, zb, zf, bumperColor);
-        void Trigger() => Prism(g, v, buf, trigger, zb - d, zb, triggerColor);
+        void Trigger() => Prism(g, v, buf, trigger, zb - d * (1f - (1f - TriggerDown) * sink), zb, triggerColor);
 
         bool topSeen = v.Faces((X(0.4f * h), h / 2, 0), (0, 1, 0));
         bool backSeen = v.Faces((X(0.4f * h), 0, zb), (0, 0, -1));
@@ -119,19 +131,26 @@ internal static class HandleDrawing
         float Y(float b) => h / 2 - b * h;
         var idleFill = Tint(body, 0.62f);
 
-        void Round(float cx, float cy, float r, bool on, Color? ring = null)
+        // A round button: a short cylinder out of the front, sunk almost flush and lit while it fires; its rim
+        // outlined on its top when that faces the viewer.
+        void Round(float cx, float cy, float r, bool on, Color? ring = null, float up = ButtonUp, float down = ButtonDown)
         {
-            var pts = buf.Round;
-            CircleInto(pts, cx, cy, r, project);
-            g.FillPolygon(on ? lit : idleFill, pts);
-            g.DrawPolygon(ring ?? idle, penWidth, pts);
+            var shape = buf.RoundShape;
+            for (int i = 0; i < shape.Length; i++)
+            {
+                float a = i * 2 * MathF.PI / shape.Length;
+                shape[i] = (cx + r * MathF.Cos(a), cy + r * MathF.Sin(a));
+            }
+            if (Prism(g, v, buf, shape, zs, zs + (on ? down : up) * h, on ? lit : idleFill))
+                g.DrawPolygon(ring ?? idle, penWidth, buf.FrontRound);
         }
+        // A block button (− / +): the same, square.
         void Box(float x0b, float y0b, float x1b, float y1b, bool on)
         {
-            var pts = buf.Box;
-            (pts[0], pts[1], pts[2], pts[3]) = (P(x0b, y0b), P(x1b, y0b), P(x1b, y1b), P(x0b, y1b));
-            g.FillPolygon(on ? lit : idleFill, pts);
-            g.DrawPolygon(idle, penWidth * 0.75f, pts);
+            var shape = Rect(buf.BoxShape, Math.Min(x0b, x1b), Math.Min(y0b, y1b), Math.Max(x0b, x1b), Math.Max(y0b, y1b));
+            // Counter-clockwise (y up) whichever way x runs.
+            if (Prism(g, v, buf, shape, zs, zs + (on ? ButtonDown : ButtonUp) * h, on ? lit : idleFill))
+                g.DrawPolygon(idle, penWidth * 0.75f, buf.Front4);
         }
         bool Held(uint b) => f?.PadHeld(b) == true;
 
@@ -180,7 +199,7 @@ internal static class HandleDrawing
             float kx = cx + sxv * travel, ky = cy - syv * travel;
             bool clicked = Held(click);
             bool moved = MathF.Abs(sxv) > 0.15f || MathF.Abs(syv) > 0.15f;
-            Round(kx, ky, 0.085f * h, clicked, moved ? lit : (Color?)null);
+            Round(kx, ky, 0.085f * h, clicked, moved ? lit : (Color?)null, KnobUp, KnobDown);
         }
     }
 
@@ -217,8 +236,8 @@ internal static class HandleDrawing
     /// </summary>
     private static bool Prism(ICanvas g, View v, Scratch buf, (float X, float Y)[] outline, float zb, float zf, Color color)
     {
-        var front = outline.Length == 4 ? buf.Front4 : Sized(ref buf.Front, outline.Length);
-        var back = outline.Length == 4 ? buf.Back4 : Sized(ref buf.Back, outline.Length);
+        var front = outline.Length == 4 ? buf.Front4 : outline.Length == RoundPoints ? buf.FrontRound : Sized(ref buf.Front, outline.Length);
+        var back = outline.Length == 4 ? buf.Back4 : outline.Length == RoundPoints ? buf.BackRound : Sized(ref buf.Back, outline.Length);
         for (int i = 0; i < outline.Length; i++)
         {
             front[i] = v.Project((outline[i].X, outline[i].Y, zf));
@@ -259,9 +278,9 @@ internal static class HandleDrawing
             (ri, -h / 2 + ri, ri, MathF.PI),
         ];
         foreach (var (cx, cy, r, start) in corners)
-            for (int i = 0; i <= 6; i++)
+            for (int i = 0; i <= 12; i++)
             {
-                float a = start + i * (MathF.PI / 2) / 6;
+                float a = start + i * (MathF.PI / 2) / 12;
                 pts.Add((cx + r * MathF.Cos(a), cy + r * MathF.Sin(a)));
             }
         return pts.ToArray();
@@ -285,12 +304,17 @@ internal static class HandleDrawing
         }
     }
 
-    /// <summary>A rounded bar, counter-clockwise, filled into <paramref name="pts"/> (18 long).</summary>
+    /// <summary>Steps round each end of a <see cref="Stadium"/> (enough that its ends look round however big the window).</summary>
+    private const int StadiumSteps = 16;
+
+    private const int StadiumPoints = 2 * (StadiumSteps + 1);
+
+    /// <summary>A rounded bar, counter-clockwise, filled into <paramref name="pts"/> (<see cref="StadiumPoints"/> long).</summary>
     private static (float X, float Y)[] Stadium((float X, float Y)[] pts, float x0, float y0, float x1, float y1, float r)
     {
         float cy = (y0 + y1) / 2;
-        for (int i = 0; i <= 8; i++) { float a = -MathF.PI / 2 + i * MathF.PI / 8; pts[i] = (x1 - r + r * MathF.Cos(a), cy + r * MathF.Sin(a)); }
-        for (int i = 0; i <= 8; i++) { float a = MathF.PI / 2 + i * MathF.PI / 8; pts[9 + i] = (x0 + r + r * MathF.Cos(a), cy + r * MathF.Sin(a)); }
+        for (int i = 0; i <= StadiumSteps; i++) { float a = -MathF.PI / 2 + i * MathF.PI / StadiumSteps; pts[i] = (x1 - r + r * MathF.Cos(a), cy + r * MathF.Sin(a)); }
+        for (int i = 0; i <= StadiumSteps; i++) { float a = MathF.PI / 2 + i * MathF.PI / StadiumSteps; pts[StadiumSteps + 1 + i] = (x0 + r + r * MathF.Cos(a), cy + r * MathF.Sin(a)); }
         return pts;
     }
 

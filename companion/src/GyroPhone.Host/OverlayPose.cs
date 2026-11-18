@@ -70,6 +70,41 @@ public sealed class OverlayPose
         _aimPending = true;
     }
 
+    /// <summary>
+    /// The poses it took sample by sample (<see cref="FeedSamples"/>), for a pointer to paint along every gyro sample;
+    /// made the first time.
+    /// </summary>
+    public PoseHistory? History { get; private set; }
+
+    /// <summary>
+    /// One OVERLAY with each gyro sample's turn in it (<paramref name="samples"/>, matching it): the pose turns sample by
+    /// sample, as the phone's does, each pose kept in <see cref="History"/> with its time (ms, the
+    /// <see cref="Environment.TickCount64"/> clock: <paramref name="rxMs"/> when the frame came, the newest sample's).
+    /// The camera's turn and presses go with the first step that takes them; <paramref name="sub"/> is scratch.
+    /// </summary>
+    public void FeedSamples(OverlayFrame f, OverlaySettings s, OverlaySamples samples, OverlayFrame sub, long rxMs)
+    {
+        History ??= new PoseHistory();
+        f.CopyTo(sub);
+        int n = samples.Count;
+        // The samples' times end at the frame's.
+        float after = 0f;
+        for (int k = 0; k < n; k++) after += samples.Turns[k * 4 + 3];
+        for (int k = 0; k < n; k++)
+        {
+            sub.TurnYaw = samples.Turns[k * 4];
+            sub.TurnPitch = samples.Turns[k * 4 + 1];
+            sub.TurnRoll = samples.Turns[k * 4 + 2];
+            sub.TurnSeconds = samples.Turns[k * 4 + 3];
+            // The other camera moves of the frame turn it once, with the last sample.
+            if (k < n - 1) sub.CameraYaw = sub.CameraPitch = sub.CameraRoll = 0f;
+            else { sub.CameraYaw = f.CameraYaw; sub.CameraPitch = f.CameraPitch; sub.CameraRoll = f.CameraRoll; }
+            Feed(sub, s);
+            after -= sub.TurnSeconds;
+            History.Add(_w, _x, _y, _z, rxMs - (long)MathF.Round(Math.Max(after, 0f) * 1000f));
+        }
+    }
+
     /// <summary>One OVERLAY: turns the pose by its motion with settings <paramref name="s"/>.</summary>
     public void Feed(OverlayFrame f, OverlaySettings s)
     {

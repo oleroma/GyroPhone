@@ -36,14 +36,18 @@ public interface IForeground
     string? NameOf(int pid);
 }
 
-/// <summary>A test record in progress, for the page.</summary>
+/// <summary>Diagnostics is on (for the FPS overlay's "● DIAG"): for how long, s, and how many minutes it keeps.</summary>
 public sealed record RecordingView(string Name, double Elapsed, int Seconds, double GameSeconds);
+
+/// <summary>One second of the PC's load while Diagnostics is on, with the program in front and the link's path.</summary>
+public readonly record struct LoadSecond(long AtUs, LoadSample? Load, string? Front, string? Path);
 
 /// <summary>
 /// The Performance page's monitor (docs/spec/pc-companion.md, "Performance"): watches the game's frames only
-/// while an FPS overlay is on (<see cref="Watch"/>), keeps link test records (the phone link's seconds, the
-/// path the packets took, the PC's load, and the frames when watched): the newest <see cref="MaxRuns"/> in
-/// perf/runs.jsonl, shown together in perf/results.html (<see cref="PerfReport"/>).
+/// while an FPS overlay is on (<see cref="Watch"/>); while Diagnostics is on (<see cref="SetDiagnostics"/>) keeps
+/// the PC's load each second, and a Save (<see cref="Save"/>) makes a record of the kept minutes (the phone link's
+/// seconds, the path the packets took, the PC's load): the newest <see cref="MaxRuns"/> in perf/runs.jsonl, shown
+/// together in perf/results.html (<see cref="PerfReport"/>).
 /// </summary>
 public sealed class PerfMonitor : IDisposable
 {
@@ -61,7 +65,11 @@ public sealed class PerfMonitor : IDisposable
     private Timer? _timer;
     private bool _watch, _checking;
     private string? _busy;
-    private PerfRecording? _recording;
+    private long _diagSinceUs = long.MinValue;
+    private int _diagMinutes = 3;
+    private const int KeepLoads = 1860;
+    private readonly LoadSecond[] _loads = new LoadSecond[KeepLoads];
+    private int _loadsHead, _loadsCount;
     private LoadSample? _lastLoad;
     private int _game;
 
@@ -81,6 +89,8 @@ public sealed class PerfMonitor : IDisposable
     public FrameStats Frames { get; }
     /// <summary>The phone link's seconds; the input log fills it.</summary>
     public LinkTimeline Link { get; } = new();
+    /// <summary>The phone's side of the link (PHONE_STATS), sent only while Diagnostics is on; the engine fills it.</summary>
+    public PhoneTimeline Phone { get; } = new();
     public string Folder { get; }
     public FrameWatchState State { get; private set; } = FrameWatchState.Off;
     public string? Error { get; private set; }
@@ -98,7 +108,7 @@ public sealed class PerfMonitor : IDisposable
 
     /// <summary>
     /// The programs other than the game and GyroPhone keeping the PC busy now ("java 45%, dotnet 12%"), or null;
-    /// known while <see cref="Check"/> is on or a record runs.
+    /// known while <see cref="Check"/> is on or Diagnostics is on.
     /// </summary>
     public string? Busy
     {
@@ -115,6 +125,22 @@ public sealed class PerfMonitor : IDisposable
             if (!on) _busy = null;
             Apply();
         }
+        RaiseShowsLink();
+    }
+
+    /// <summary>The Performance page is shown or an FPS overlay is on: they show the link's seconds, so the engine counts them.</summary>
+    public bool ShowsLink
+    {
+        get { lock (_lock) return _checking || _watch; }
+    }
+
+    /// <summary><see cref="ShowsLink"/> may have changed (raised on the thread that changed it).</summary>
+    public event Action? ShowsLinkChanged;
+
+    private void RaiseShowsLink()
+    {
+        try { ShowsLinkChanged?.Invoke(); }
+        catch (Exception e) { _log($"performance link notice failed: {e.GetType().Name}: {e.Message}"); }
     }
 
     /// <summary>The PC's load in the last second, while checking or recording.</summary>
@@ -128,12 +154,13 @@ public sealed class PerfMonitor : IDisposable
         get { lock (_lock) return [.. _runs]; }
     }
 
+    /// <summary>While Diagnostics is on: how long it has been on and the minutes it keeps; else null.</summary>
     public RecordingView? Recording
     {
         get
         {
             lock (_lock)
-                return _recording is { } r ? new RecordingView(r.Name, (_clock.NowUs - r.StartUs) / 1e6, r.Seconds, r.GameSeconds) : null;
+                return _diagSinceUs != long.MinValue ? new RecordingView("DIAG", (_clock.NowUs - _diagSinceUs) / 1e6, _diagMinutes * 60, 0) : null;
         }
     }
 
@@ -164,6 +191,7 @@ public sealed class PerfMonitor : IDisposable
             _watch = on;
             Apply();
         }
+        RaiseShowsLink();
     }
 
     /// <summary>Tries again after the user was given the right (or restarted as administrator).</summary>
@@ -192,8 +220,8 @@ public sealed class PerfMonitor : IDisposable
             Error = null;
             _log("frame watch: off");
         }
-        // The timer runs while watching (picks the game), checking (load) or recording (load, path, the end).
-        bool tick = State == FrameWatchState.On || _checking || _recording != null;
+        // The timer runs while watching (picks the game), checking (load) or Diagnostics is on (load, path).
+        bool tick = State == FrameWatchState.On || _checking || _diagSinceUs != long.MinValue;
         if (tick) _timer ??= new Timer(_ => Tick(), null, 1000, 1000);
         else
         {
@@ -202,44 +230,57 @@ public sealed class PerfMonitor : IDisposable
         }
     }
 
-    /// <summary>Starts a test record of <paramref name="seconds"/> (0: until <see cref="StopRecording"/>).</summary>
-    public void StartRecording(string name, string link, int seconds)
+    /// <summary>Diagnostics switched: on, the PC's load is kept each second (with the minutes it keeps, for the FPS overlay).</summary>
+    public void SetDiagnostics(bool on, int minutes)
     {
         lock (_lock)
         {
-            if (_recording != null) return;
-            _recording = new PerfRecording(name.Trim().Length > 0 ? name.Trim() : link, link, _clock.NowUs, DateTime.Now, seconds);
-            _recording.NotePath(PathNow?.Invoke());
-            _recording.Self = Name(Environment.ProcessId);
-            _load?.Sample(); // starts its count from now
+            _diagMinutes = minutes;
+            if (on == (_diagSinceUs != long.MinValue)) return;
+            _diagSinceUs = on ? _clock.NowUs : long.MinValue;
+            _loadsHead = _loadsCount = 0;
+            if (on) _load?.Sample(); // starts its count from now
             Apply();
-            Frames.Recording = _recording;
-            _log($"performance test '{_recording.Name}' started, {seconds} s");
         }
-        try { Started?.Invoke(); }
-        catch (Exception e) { _log($"performance test start notice failed: {e.GetType().Name}: {e.Message}"); }
     }
 
-    /// <summary>A test record started (raised on the thread that started it).</summary>
-    public event Action? Started;
-
-    /// <summary>A test record ended and was saved (raised on the thread that stopped it).</summary>
-    public event Action<PerfRun>? Ended;
-
-    public void StopRecording()
+    /// <summary>
+    /// Diagnostics' Save: a record of the last <paramref name="minutes"/> (since Diagnostics came on at most): the link's
+    /// seconds, the phone's, the PC's load and the path, added to Results. Returns it, or null while Diagnostics is off.
+    /// </summary>
+    public PerfRun? Save(int minutes, string name)
     {
-        PerfRecording? r;
+        long end = _clock.NowUs;
+        List<LoadSecond> loads = [];
+        long from;
         lock (_lock)
         {
-            r = _recording;
-            if (r == null) return;
-            _recording = null;
-            Frames.Recording = null;
-            Apply();
+            if (_diagSinceUs == long.MinValue) return null;
+            from = Math.Max(_diagSinceUs, end - minutes * 60_000_000L);
+            int start = (_loadsHead - _loadsCount + KeepLoads) % KeepLoads;
+            for (int i = 0; i < _loadsCount; i++)
+            {
+                var l = _loads[(start + i) % KeepLoads];
+                if (l.AtUs > from && l.AtUs <= end) loads.Add(l);
+            }
         }
-        long end = _clock.NowUs;
-        var (run, text) = r.Finish(end, Link.Between(r.StartUs, end + 1_100_000));
+        string path = PathNow?.Invoke() ?? "";
+        var r = new PerfRecording(name, path, from, DateTime.Now.AddSeconds(-(end - from) / 1e6), 0) { Self = Name(Environment.ProcessId) };
+        foreach (var l in loads)
+        {
+            r.NotePath(l.Path);
+            if (l.Load is { } load) r.AddLoad(load, l.AtUs, l.Front);
+        }
+        r.NotePath(path);
+        var (run, text) = r.Finish(end, Link.Between(from, end + 1_100_000), Phone.Between(from, end + 1_100_000));
         run = run with { Text = text, File = ReportPath };
+        Keep(run);
+        _log($"diagnostics saved '{run.Name}': {run.Seconds:0} s, lost {run.Lost}, late {run.Late}");
+        return run;
+    }
+
+    private void Keep(PerfRun run)
+    {
         List<PerfRun> kept;
         lock (_lock)
         {
@@ -259,12 +300,9 @@ public sealed class PerfMonitor : IDisposable
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            _log($"performance test not saved: {e.GetType().Name}: {e.Message}");
+            _log($"performance record not saved: {e.GetType().Name}: {e.Message}");
         }
         WriteReport(kept);
-        _log($"performance test '{run.Name}' ended: {run.AvgFps:0.0} fps, 1% low {run.Low1Fps:0.0}, jumps {run.Jumps}, lost {run.Lost}, late {run.Late}");
-        try { Ended?.Invoke(run); }
-        catch (Exception e) { _log($"performance test end notice failed: {e.GetType().Name}: {e.Message}"); }
     }
 
     /// <summary>results.html, the page of every kept record.</summary>
@@ -331,12 +369,10 @@ public sealed class PerfMonitor : IDisposable
         {
             long now = _clock.NowUs;
             int game = State == FrameWatchState.On ? Frames.Tick(_foreground.ForegroundPid(), now) : 0;
-            PerfRecording? r;
-            lock (_lock) r = _recording;
-            bool checking;
-            lock (_lock) checking = _checking;
-            // The PC's load: only for the page or a record.
-            var load = r != null || checking ? _load?.Sample() : null;
+            bool checking, diag;
+            lock (_lock) { checking = _checking; diag = _diagSinceUs != long.MinValue; }
+            // The PC's load: only for the page or Diagnostics.
+            var load = diag || checking ? _load?.Sample() : null;
             // Without the FPS overlay the game isn't known: the program in front stands for it.
             string? front = load != null ? (game != 0 ? Name(game) : Name(_foreground.ForegroundPid())) : null;
             var busy = load is { } ld ? PcBusy.Of(ld, front, Name(Environment.ProcessId))?.Text : null;
@@ -346,11 +382,14 @@ public sealed class PerfMonitor : IDisposable
                 _lastLoad = load;
                 _busy = checking ? busy : null;
             }
-            if (r == null) return;
-            r.NotePath(PathNow?.Invoke());
-            if (game != 0 && r.Game.Length == 0) r.Game = Name(game) ?? "";
-            if (load is { } l) r.AddLoad(l, now, front);
-            if (r.Seconds > 0 && now - r.StartUs >= r.Seconds * 1_000_000L) StopRecording();
+            if (!diag) return;
+            var second = new LoadSecond(now, load, front, PathNow?.Invoke());
+            lock (_lock)
+            {
+                _loads[_loadsHead] = second;
+                _loadsHead = (_loadsHead + 1) % KeepLoads;
+                if (_loadsCount < KeepLoads) _loadsCount++;
+            }
         }
         catch (Exception e)
         {
@@ -360,7 +399,6 @@ public sealed class PerfMonitor : IDisposable
 
     public void Dispose()
     {
-        if (Recording != null) StopRecording();
         lock (_lock)
         {
             _watch = false;
