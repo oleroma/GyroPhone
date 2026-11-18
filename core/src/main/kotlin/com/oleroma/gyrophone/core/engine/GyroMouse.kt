@@ -190,14 +190,14 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
     /**
      * One sample (angular velocity [gx], [gy], [gz] in rad/s, Android sensor frame) sent where gyro
      * mappings [routes] ([InputSource.Gyro] sources) say ([GyroMath.step]), of the gyro axes [axes]
-     * says move ([MappingEngine.gyroAxes]: a ratchet stops or starts one), measured in [space].
-     * The result is reused by the next call.
+     * says move ([MappingEngine.gyroAxes]: a ratchet stops or starts one), measured in [space],
+     * in the base orientation [yawAxis] makes ([motion]). The result is reused by the next call.
      */
     fun route(
         gx: Float, gy: Float, gz: Float, dtSeconds: Float, routes: List<Mapping>, axes: Int = MappingEngine.ALL_GYRO,
         space: GyroSpace = GyroSpace.LOCAL, up: FloatArray? = null,
     ): GyroMath.Routed {
-        val m = inSpace(motion(gx, gy, gz, resolvedOrientation()), space, up)
+        val m = inSpace(motion(gx, gy, gz), space, up)
         return route(m, dtSeconds, routes, axes)
     }
 

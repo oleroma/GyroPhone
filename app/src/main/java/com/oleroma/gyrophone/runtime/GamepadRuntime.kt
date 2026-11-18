@@ -2109,7 +2109,7 @@ class GamepadRuntime(context: Context) {
                 val gs = engine.gyroSettings
                 if (gs !== gyroMouse.settings) gyroMouse.settings = gs
                 val routes = engine.gyroRoutes()
-                val r = gyroMouse.route(if (mapReal) gyroMouse.inSpaces(screen, gs, upNow) else screen, dt, routes, axes)
+                val r = gyroMouse.route(if (mapReal) gyroMouse.inSpaces(local, gs, upNow) else local, dt, routes, axes)
                 if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel, fromGyro = active)
                 engine.setGyroAxes(r.pad)
                 gyroPadSet = true
