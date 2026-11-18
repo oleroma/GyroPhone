@@ -1685,7 +1685,7 @@ class GamepadRuntime(context: Context) {
         // The PC's DualShock 4 carries the phone's turn whatever the workspace's gyro does.
         // Input not allowed: its gyro rests (the sender is woken so the stop goes out now).
         if (!(running && inputAllowed) && wifi.motion.still()) engine.onChange?.run()
-        if (running && ((inputAllowed && (!gyroOff() || wifi.overlay.wanted || wifi.motion.wanted)) || calibration != null || accelWatchers.get() > 0)) {
+        if (running && ((inputAllowed && (!gyroOff() || wifi.overlay.wanted || wifi.motion.wanted)) || calibration != null || (foreground && accelWatchers.get() > 0))) {
             setGyroWant(GyroWant.RUN)
         } else if (running) {
             setGyroWant(GyroWant.PAUSE)

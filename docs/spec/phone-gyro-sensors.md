@@ -31,7 +31,7 @@ The gyro poll thread, the Wi-Fi sender (`WifiPump`) and the Bluetooth sender (`R
 
 - input is allowed (the pad is on screen in play, or **Send input only while the pad is open** is off) and the workspace's gyro is not **Gyro off**, or
 - the PC's phone overlay asks for motion (it shows the phone turning even when the gyro moves nothing), or
-- a rest calibration runs, or an acceleration graph on screen shows its live line.
+- a rest calibration runs, or an acceleration graph on screen shows its live line (only while the app is in front: left open in the background it neither runs the gyro nor polls).
 
 Otherwise it stops, saving CPU and battery. Ratchets, toggles and the other gyro modes never stop it, so aiming never waits for the sensor to start. Each start resets the sample clock, the rate window and any sub-count remainder. `updateGyro` only decides: the source is started, switched (`onDirectCapped`) and stopped on its own `GyroControl` thread (`syncGyro`), so opening a direct channel (shared memory and binder calls) or waiting for a stopped source's last sample never holds up the main thread, as when the pad comes back from a menu page. A rest calibration whose gyro can't start ends there.
 
