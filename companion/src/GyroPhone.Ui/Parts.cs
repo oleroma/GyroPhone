@@ -361,7 +361,7 @@ internal sealed class ShortcutBox
         clear.FontSize = 11;
         clear.ToolTip = "No shortcut";
         clear.Margin = new Thickness(4, 0, 0, 0);
-        _note = Parts.Text("Taken by another app", "Sub");
+        _note = Parts.Text("Taken by another app or a keyboard character (AltGr)", "Sub");
         _note.SetResourceReference(TextBlock.ForegroundProperty, "DangerBrush");
         _note.Visibility = Visibility.Collapsed;
 

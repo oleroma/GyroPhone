@@ -906,7 +906,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     /// <summary>" (Ctrl+Alt+R)" for a menu item or button, or "" when the action has no keys.</summary>
     public string KeysSuffix(OverlayAction a) => Shortcuts.Get(a) is { Length: > 0 } k ? $" ({k})" : "";
 
-    /// <summary>Whether another app holds <paramref name="a"/>'s keys, so they do nothing here.</summary>
+    /// <summary>Whether another app (or an AltGr character) holds <paramref name="a"/>'s keys, so they do nothing here.</summary>
     public bool ShortcutTaken(OverlayAction a) => _hotkeys?.IsTaken(a) ?? false;
 
     /// <summary>Sets <paramref name="a"/>'s keys ("" = none) and holds them at once.</summary>
@@ -926,9 +926,13 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     private void ApplyShortcuts()
     {
         if (_hotkeys == null) return;
-        foreach (var a in _hotkeys.Apply(Shortcuts))
-            _log.Write($"overlay: {Shortcuts.Get(a)} ({OverlayShortcuts.ActionName(a)}) is taken by another app");
+        _shortcutsActive = _overlays.Ui.Overlays.Count > 0;
+        foreach (var a in _hotkeys.Apply(Shortcuts, _shortcutsActive))
+            _log.Write($"overlay: {Shortcuts.Get(a)} ({OverlayShortcuts.ActionName(a)}) is taken by another app or types a character with AltGr");
     }
+
+    /// <summary>Whether the shortcuts are held: only while at least one overlay is set up.</summary>
+    private bool _shortcutsActive;
 
     private void OnShortcut(OverlayAction a)
     {
@@ -1211,6 +1215,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         foreach (var id in _overlayForms.Keys.Where(id => OverlayOf(id) == null).ToList())
             if (_overlayForms.Remove(id, out var f)) f.Close();
         _overlays.SetOverlay(PoseOverlaysOpen());
+        if (_shortcutsActive != _overlays.Ui.Overlays.Count > 0) ApplyShortcuts();
         // The game's frames are watched only while an FPS overlay is on.
         _perf.Watch(_overlays.Ui.Overlays.Any(o => o.Kind == OverlayKind.Fps && o.Shown));
         OverlaysChanged();
