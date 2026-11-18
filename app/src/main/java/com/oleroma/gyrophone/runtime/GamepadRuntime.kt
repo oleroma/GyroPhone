@@ -999,8 +999,11 @@ class GamepadRuntime(context: Context) {
         engine.cameraSink = { dx, dy ->
             cameraPendingX.addAndGet(dx)
             cameraPendingY.addAndGet(dy)
-            // No gyro samples to carry them: the gyro control thread takes them (one post at a time).
-            if (gyro == null && cameraDrainPosted.compareAndSet(false, true)) gyroControl.post(cameraDrainIdle)
+            // No gyro samples to carry them (the workspace's gyro off): the gyro control thread takes
+            // them about once a frame, and only for a display that follows the camera.
+            if (gyro == null && !visualsCovered && followsCameraAny() && cameraDrainPosted.compareAndSet(false, true)) {
+                gyroControl.postDelayed(cameraDrainIdle, CAMERA_IDLE_DRAIN_MS)
+            }
         }
         hid.reportProvider = { id ->
             when (id) {
@@ -1830,6 +1833,9 @@ class GamepadRuntime(context: Context) {
         private const val SENSOR_CLOCK_SLACK_US = 1_000_000L
         private const val SILENT_DIRECT_MS = 1500L
 
+        /** With no gyro samples, other camera moves reach the displays this often at most (about a frame). */
+        private const val CAMERA_IDLE_DRAIN_MS = 8L
+
         /** A capped direct channel is tried again on a return to the app only this long after it was found capped. */
         private const val DIRECT_RETRY_MS = 10 * 60_000L
         private const val KEY_TRANSPORT = "transport"
@@ -1886,6 +1892,12 @@ class GamepadRuntime(context: Context) {
     private val cameraPendingY = java.util.concurrent.atomic.AtomicInteger()
     private val cameraDrainPosted = java.util.concurrent.atomic.AtomicBoolean()
     private val cameraDeg = FloatArray(3)
+
+    /** Some display on the pad follows the camera (no allocation: it runs on the pump's thread). */
+    private fun followsCameraAny(): Boolean {
+        for (f in gyroFeeds) if (f.display.followsCamera) return true
+        return false
+    }
 
     /** [drainCamera] while no gyro samples come (on the gyro control thread, which starts and stops them). */
     private val cameraDrainIdle = Runnable {
