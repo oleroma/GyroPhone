@@ -8,7 +8,8 @@ package com.oleroma.gyrophone.core.net
  * - A packet is due as soon as the state differs from the last one sent.
  * - After a packet carrying a discrete change, repeats follow at +2 ms and +6 ms (replacing any
  *   pending repeats); a repeat carries the full current state.
- * - A KEEPALIVE goes out when nothing was sent for 20 ms.
+ * - A KEEPALIVE goes out when nothing was sent for [keepaliveNs] (20 ms; [IDLE_KEEPALIVE_NS] while no
+ *   input can be sent at all).
  */
 class SendScheduler(rateHz: Int = Wire.DEFAULT_RATE_HZ) {
     var rateHz: Int = rateHz
@@ -20,6 +21,9 @@ class SendScheduler(rateHz: Int = Wire.DEFAULT_RATE_HZ) {
 
     var minIntervalNs: Long = 1_000_000_000L / rateHz
         private set
+
+    /** Nothing sent this long: a KEEPALIVE goes out. */
+    var keepaliveNs: Long = KEEPALIVE_NS
 
     private var hasSent = false
     private var lastSentNs = 0L
@@ -44,7 +48,7 @@ class SendScheduler(rateHz: Int = Wire.DEFAULT_RATE_HZ) {
         if (nowNs - lastSentNs < minIntervalNs) return NONE
         if (dirty) return NORMAL
         if (repeatCount > 0 && nowNs >= repeatAt[0]) return REPEAT
-        if (nowNs - lastSentNs >= KEEPALIVE_NS) return KEEPALIVE
+        if (nowNs - lastSentNs >= keepaliveNs) return KEEPALIVE
         return NONE
     }
 
@@ -76,7 +80,7 @@ class SendScheduler(rateHz: Int = Wire.DEFAULT_RATE_HZ) {
     /** When [poll] may next return something other than [NONE] without a new input change. */
     fun nextDeadline(): Long {
         if (!hasSent) return Long.MIN_VALUE
-        var t = lastSentNs + KEEPALIVE_NS
+        var t = lastSentNs + keepaliveNs
         if (repeatCount > 0) t = minOf(t, maxOf(repeatAt[0], lastSentNs + minIntervalNs))
         if (dirtyPending) t = minOf(t, lastSentNs + minIntervalNs)
         return t
@@ -88,6 +92,11 @@ class SendScheduler(rateHz: Int = Wire.DEFAULT_RATE_HZ) {
         const val REPEAT = 2
         const val KEEPALIVE = 3
         const val KEEPALIVE_NS = Wire.KEEPALIVE_MS * 1_000_000L
+        /**
+         * The keepalive while the phone can send no input (the pad left with "Only while the pad is open"): below the
+         * PC's release timeout ([Wire.RELEASE_TIMEOUT_MS]), so the PC sees no silence and nothing changes there.
+         */
+        const val IDLE_KEEPALIVE_NS = 150_000_000L
 
         /** STATE flags to add for a send [kind]. */
         fun flagsFor(kind: Int): Int = when (kind) {

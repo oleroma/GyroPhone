@@ -5,6 +5,7 @@ import com.oleroma.gyrophone.core.net.SendScheduler.Companion.NONE
 import com.oleroma.gyrophone.core.net.SendScheduler.Companion.NORMAL
 import com.oleroma.gyrophone.core.net.SendScheduler.Companion.REPEAT
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SendSchedulerTest {
@@ -111,5 +112,19 @@ class SendSchedulerTest {
         assertEquals(StateFlags.REPEAT, SendScheduler.flagsFor(REPEAT))
         assertEquals(StateFlags.KEEPALIVE, SendScheduler.flagsFor(KEEPALIVE))
         assertEquals(0, SendScheduler.flagsFor(NORMAL))
+    }
+
+    @Test fun idleKeepaliveIsSlowerAndTheNormalOneComesBackAtOnce() {
+        val s = SendScheduler(1000)
+        s.step(0)
+        s.keepaliveNs = SendScheduler.IDLE_KEEPALIVE_NS
+        assertEquals(NONE, s.step(20 * ms))
+        assertEquals(150 * ms, s.nextDeadline())
+        assertTrue(SendScheduler.IDLE_KEEPALIVE_NS < Wire.RELEASE_TIMEOUT_MS * ms)
+        assertEquals(KEEPALIVE, s.step(150 * ms))
+        // Input allowed again: overdue, so a keepalive with the current state goes out on the next pass.
+        s.keepaliveNs = SendScheduler.KEEPALIVE_NS
+        assertEquals(KEEPALIVE, s.step(200 * ms))
+        assertEquals(NONE, s.step(210 * ms))
     }
 }

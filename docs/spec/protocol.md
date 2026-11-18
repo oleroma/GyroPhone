@@ -116,7 +116,7 @@ The PC's pairing window shows `gyrophone://pair?v=1&n=<name>&k=<host public key>
 4. Nonce for AES-GCM: `u32le direction (P→H 1, H→P 2) ‖ u32le sid ‖ u32le seq`. Each direction counts seq up from 1; a packet is accepted only with seq above the highest seen (replay protection). The phone rekeys (BYE REKEY, new HELLO) before seq reaches 0xF0000000.
 5. The first valid STATE **promotes** the pending session to the active one; a different phone's session then gets HOST_BYE REPLACED.
 
-**While live**: STATE as described in [Connection](phone-connection.md) (on change, ≤ report rate, +2/+6 ms repeats after a discrete change, keepalive every 20 ms); PING and LINK_INFO each second; HOST_STATUS from the PC each second. The phone calls the PC silent after **3 s** without anything and reconnects; the PC releases everything after **250 ms** without a STATE and drops the session after **10 s**. BYE / HOST_BYE end it at once.
+**While live**: STATE as described in [Connection](phone-connection.md) (on change, ≤ report rate, +2/+6 ms repeats after a discrete change, keepalive every 20 ms, every 150 ms while the phone can send no input); PING and LINK_INFO each second; HOST_STATUS from the PC each second. The phone calls the PC silent after **3 s** without anything and reconnects; the PC releases everything after **250 ms** without a STATE and drops the session after **10 s**. BYE / HOST_BYE end it at once.
 
 ## USB framing
 

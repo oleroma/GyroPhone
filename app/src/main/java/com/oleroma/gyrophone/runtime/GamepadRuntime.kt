@@ -1164,6 +1164,8 @@ class GamepadRuntime(context: Context) {
             // Everything held lets go (a held hardware button is pressed again to send it again).
             if (!allowed) engine.reset()
         } else if (was && !hardware) engine.reset()
+        // Nothing at all can be sent: the Wi-Fi link's keepalives slow down until input is allowed again.
+        wifi.inputIdle = !hardware
         updateGyro()
         if (usbPadsLazy.isInitialized()) usbPads.update()
     }
