@@ -502,6 +502,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         _nothingFound.value = false
         _notice.value = null
         hostStatus = null
+        pcCableOn = false
         testMode = 0
         welcomeHostFlags = null
         _state.value = LinkState.Off
@@ -980,6 +981,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         if (usbActive) useWifi()
         locks.release()
         hostStatus = null
+        pcCableOn = false
         testMode = 0
         welcomeHostFlags = null
         publishState()
@@ -1146,11 +1148,14 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 clockOffsetUs = 0L
                 rttMinUs = -1L
                 // A replacement is the same PC: its overlay stays on until its next HOST_STATUS says otherwise.
-                if (s == null) { hostStatus = null; testMode = 0; onPcPresses?.invoke(emptyList()) }
+                // pcCableOn too, so the next session's first HOST_STATUS with the cable switch on retries the cable.
+                if (s == null) { hostStatus = null; pcCableOn = false; testMode = 0; onPcPresses?.invoke(emptyList()) }
                 // Until the first HOST_STATUS, WELCOME's output mode says whether the pad takes motion.
                 else if (hostStatus == null) motion.padTakesMotion = OutputMode.takesMotion(s.outputMode)
                 welcomeHostFlags = s?.hostFlags
-                if (s != null) locks.acquire() else locks.release()
+                // The low-latency lock only while the session runs on Wi-Fi: over USB, Ethernet or the
+                // phone's hotspot it would only keep the Wi-Fi radio out of power save for nothing.
+                if (s != null && !usbActive) locks.acquire() else locks.release()
                 changed = true
             }
             is PhoneSessionFlow.Out.Status -> {
@@ -1206,7 +1211,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             // The cable is used only while the PC answers on it: when the companion has it off, the cable
             // still shows but nobody answers, and tethering or the hotspot must not wait behind it.
             val cable = if (usbCabled && !cableRefused) accessory.poll() else null
-            if (cable == null || usbHostAddr != null) cableQuietSinceMs = 0L
+            // Not during the USB back-off either: the probe sends no DISCOVER then, so no PC could answer.
+            if (cable == null || usbHostAddr != null || nowMs < usbBackoffUntilMs) cableQuietSinceMs = 0L
             else if (cableQuietSinceMs == 0L) cableQuietSinceMs = nowMs
             val quiet = cable != null && !usbActive && cableQuietSinceMs != 0L && nowMs - cableQuietSinceMs >= CABLE_QUIET_MS
             if (quiet) {
@@ -1341,6 +1347,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbEthernet = false
         socket = w
         pump.useSocket(w)
+        if (live != null) locks.acquire()
         usbSocket?.close()
         usbSocket = null
         usbHostId = null
