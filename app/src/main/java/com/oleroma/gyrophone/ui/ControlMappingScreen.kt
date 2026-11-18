@@ -896,7 +896,8 @@ internal fun ControlMappingScreen(
 
     /**
      * Changes the workspace with [change] (then [after], such as this button's chips) as one Undo step, which Undo
-     * takes back exactly ([NamedSens.rebase]): adding, renaming or deleting a named sensitivity.
+     * takes back exactly ([NamedSens.rebase]): adding, renaming or deleting a named sensitivity, or a gyro card's
+     * Sensitivity line changed. A change outside the workspace (the Defaults) is no step.
      */
     fun workspaceStep(message: String, change: (Workspace) -> Workspace, after: () -> Unit = {}) {
         val prev = allMappings
@@ -918,6 +919,9 @@ internal fun ControlMappingScreen(
             if (result == SnackbarResult.ActionPerformed) undoLast()
         }
     }
+
+    /** [edit] (a Sensitivity line's link, and the chips it moves) as one Undo step, like [workspaceStep]. */
+    fun settingsStep(message: String, edit: () -> Unit) = workspaceStep(message, { it }, edit)
 
     /**
      * [next] is the edited set's view; undo keeps every set as it was. [controlBefore]: the control
@@ -1516,13 +1520,15 @@ internal fun ControlMappingScreen(
                     val to = sensRow(sh)
                     val link = sensLinkOf(d.target, g.axis)
                     if (to != null && link != null) {
-                        from.set(null)
-                        to.set(link.copy(scale = own.scale))
+                        settingsStep("Moved " + Describe.shortTarget(d.target)) {
+                            from.set(null)
+                            to.set(link.copy(scale = own.scale))
+                        }
                         selectedSrc = sh.sources.first()
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     }
                 } else if (libraryBounds.contains(dragPos)) {
-                    from.set(null)
+                    settingsStep("Removed " + Describe.shortTarget(d.target)) { from.set(null) }
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 }
             }
@@ -1534,8 +1540,16 @@ internal fun ControlMappingScreen(
             val link = sensLinkOf(d.target, g.axis)
             val row = sensRow(sh)
             if (link != null && row != null) {
-                row.set(link)
-                if (d.from == null) addRecent(d.target) else if (!d.inherited) remove(d.from, d.target, d.n)
+                // One Undo step: the axis following it, and the chip leaving the card it came from.
+                val moved = d.from?.takeIf { !d.inherited }
+                settingsStep("Mapped " + Describe.shortTarget(d.target)) {
+                    row.set(link)
+                    if (moved != null) {
+                        val next = Bindings.removeEntry(currentMappings, moved, d.target, d.n)
+                        emit(Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(next, currentSet))))
+                    }
+                }
+                if (d.from == null) addRecent(d.target)
                 selectedSrc = sh.sources.first()
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             }
@@ -2716,11 +2730,11 @@ internal fun ControlMappingScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         sensDialog = null
-                        if (sr.link == null || v != l.scale) sr.set(l.copy(scale = v))
+                        if (sr.link == null || v != l.scale) settingsStep("Changed " + g.axis.label + " sensitivity") { sr.set(l.copy(scale = v)) }
                     }) { Text("Done") }
                 },
                 dismissButton = {
-                    if (sr.link != null) TextButton(onClick = { sensDialog = null; sr.set(null) }) { Text("Remove") }
+                    if (sr.link != null) TextButton(onClick = { sensDialog = null; settingsStep("Removed " + g.axis.label + " sensitivity") { sr.set(null) } }) { Text("Remove") }
                 },
             )
         }
