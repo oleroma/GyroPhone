@@ -1137,6 +1137,8 @@ class GamepadRuntime(context: Context) {
     fun setForeground(resumed: Boolean) {
         if (resumed && !foreground) aimGyroDisplays()
         foreground = resumed
+        // Leaving the app or locking the screen stops a measure's stream: the PC's camera stops turning.
+        if (!resumed) measureStop()
         _onScreen.value = resumed
         // Back in front: try the capped direct channel again (the toggle may be off by now), but not
         // on every return: each try costs ~2 s of capped gyro before it is found capped again.
@@ -1197,6 +1199,10 @@ class GamepadRuntime(context: Context) {
 
     @Synchronized
     fun stop() {
+        // A measure's stream ends with the runtime.
+        measureStop()
+        turnJob?.cancel()
+        _turnRunning.value = false
         setGyroWant(GyroWant.OFF)
         stopMotion()
         stopCompass()
