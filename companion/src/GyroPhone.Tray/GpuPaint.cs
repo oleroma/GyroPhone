@@ -82,15 +82,23 @@ internal static class GpuPaint
     /// <summary>One half's pictures and what they show.</summary>
     private sealed class Half : IDisposable
     {
-        public Target? Paint, Line, Glow;
+        public Target? Paint;
+        // The Snake's line and glow, one picture each per kind (PaintRenderer.SnakeKinds), shown at that kind's opacity.
+        public readonly Target?[] Line = new Target?[3], Glow = new Target?[3];
+        public readonly float[] Alpha = new float[3];
         public object? PaintKey, SnakeKey;
-        public bool HasSnake, HasGlow;
-        public float Alpha;
+        public int Kinds;
+        public bool HasGlow;
 
         public void Dispose()
         {
-            Paint?.Dispose(); Line?.Dispose(); Glow?.Dispose();
-            Paint = Line = Glow = null;
+            Paint?.Dispose();
+            Paint = null;
+            for (int k = 0; k < 3; k++)
+            {
+                Line[k]?.Dispose(); Glow[k]?.Dispose();
+                Line[k] = Glow[k] = null;
+            }
             PaintKey = SnakeKey = null;
         }
     }
@@ -219,17 +227,25 @@ internal static class GpuPaint
                 if (!Equals(snakeKey, half.SnakeKey))
                 {
                     float glow = Math.Clamp(s.LaserSnakeGlow, 0f, 1f);
-                    float alpha = 0f;
-                    foreach (var m in moves) alpha += (m >> 24) / 255f;
-                    alpha /= 6f;
                     bool any = buildPieces(size, e, r);
-                    half.HasSnake = any;
-                    half.HasGlow = any && glow > 0f;
-                    half.Alpha = alpha;
+                    int kinds = 0;
                     if (any)
+                        for (int i = 0; i < pieces.Count; i++) kinds |= 1 << pieces.Items[i].Kind;
+                    foreach (int kind in PaintRenderer.SnakeKinds)
                     {
-                        half.Line ??= new Target(gpu.D3D, dc, size);
-                        if (half.HasGlow) half.Glow ??= new Target(gpu.D3D, dc, size);
+                        half.Alpha[kind] = PaintRenderer.SnakeAlpha(kind, s, moves);
+                        if (half.Alpha[kind] <= 0f) kinds &= ~(1 << kind);
+                    }
+                    half.Kinds = kinds;
+                    half.HasGlow = kinds != 0 && glow > 0f;
+                    if (kinds != 0)
+                    {
+                        foreach (int kind in PaintRenderer.SnakeKinds)
+                        {
+                            if ((kinds & 1 << kind) == 0) continue;
+                            half.Line[kind] ??= new Target(gpu.D3D, dc, size);
+                            if (half.HasGlow) half.Glow[kind] ??= new Target(gpu.D3D, dc, size);
+                        }
                         gpu.Enter();
                         try
                         {
@@ -246,7 +262,7 @@ internal static class GpuPaint
             else
             {
                 half.SnakeKey = null;
-                half.HasSnake = false;
+                half.Kinds = 0;
                 half.HasGlow = false;
             }
         }
@@ -261,11 +277,12 @@ internal static class GpuPaint
         var rect = new Rect(dest.X, dest.Y, dest.Width, dest.Height);
         var dcs = g.Dc;
         if (lp != null && half.Paint != null) dcs.DrawBitmap(half.Paint.Bitmap, rect, 1f, BitmapInterpolationMode.Linear, null);
-        if (half.HasSnake)
+        // Each kind's glow, then its line, over the paint at that kind's colours' opacity: moving, aiming, then firing on top.
+        foreach (int kind in PaintRenderer.SnakeKinds)
         {
-            // The glow, then the line, over the paint at the colours' opacity.
-            if (half.HasGlow && half.Glow != null) dcs.DrawBitmap(half.Glow.Bitmap, rect, half.Alpha, BitmapInterpolationMode.Linear, null);
-            if (half.Line != null) dcs.DrawBitmap(half.Line.Bitmap, rect, half.Alpha, BitmapInterpolationMode.Linear, null);
+            if ((half.Kinds & 1 << kind) == 0) continue;
+            if (half.HasGlow && half.Glow[kind] is { } gl) dcs.DrawBitmap(gl.Bitmap, rect, half.Alpha[kind], BitmapInterpolationMode.Linear, null);
+            if (half.Line[kind] is { } ln) dcs.DrawBitmap(ln.Bitmap, rect, half.Alpha[kind], BitmapInterpolationMode.Linear, null);
         }
         return true;
     }
@@ -518,7 +535,7 @@ internal static class GpuPaint
                     {
                         Ends = new Vector4(p.Ax, p.Ay, p.Bx, p.By),
                         Look = new Vector4(p.Half, p.Op, reach, glow),
-                        Col = new Vector4((p.Col >> 16 & 0xFF) / 255f, (p.Col >> 8 & 0xFF) / 255f, (p.Col & 0xFF) / 255f, 1f),
+                        Col = new Vector4((p.Col >> 16 & 0xFF) / 255f, (p.Col >> 8 & 0xFF) / 255f, (p.Col & 0xFF) / 255f, p.Kind),
                     };
                 }
             }
@@ -527,17 +544,28 @@ internal static class GpuPaint
         {
             ctx.Unmap(t.Pieces!, 0);
         }
-        var snake = new SnakeData { TargetW = size, TargetH = size };
-        ctx.UpdateSubresource(in snake, kit.SnakeCb);
-        var line = half.Line!;
-        var glowTarget = half.HasGlow ? half.Glow : null;
-        ctx.ClearRenderTargetView(line.View, new Color4(0f, 0f, 0f, 0f));
-        if (glowTarget != null)
+        // One pass per kind into that kind's pictures; the vertex shader drops the other kinds' pieces.
+        foreach (int kind in PaintRenderer.SnakeKinds)
         {
-            ctx.ClearRenderTargetView(glowTarget.View, new Color4(0f, 0f, 0f, 0f));
-            ctx.OMSetRenderTargets([line.View, glowTarget.View]);
+            if ((half.Kinds & 1 << kind) == 0) continue;
+            var snake = new SnakeData { TargetW = size, TargetH = size, Kind = kind };
+            ctx.UpdateSubresource(in snake, kit.SnakeCb);
+            var line = half.Line[kind]!;
+            var glowTarget = half.HasGlow ? half.Glow[kind] : null;
+            ctx.ClearRenderTargetView(line.View, new Color4(0f, 0f, 0f, 0f));
+            if (glowTarget != null)
+            {
+                ctx.ClearRenderTargetView(glowTarget.View, new Color4(0f, 0f, 0f, 0f));
+                ctx.OMSetRenderTargets([line.View, glowTarget.View]);
+            }
+            else ctx.OMSetRenderTargets(line.View);
+            DrawSnakeKind(kit, t, ctx, size, n);
         }
-        else ctx.OMSetRenderTargets(line.View);
+        Unbind(ctx);
+    }
+
+    private static void DrawSnakeKind(Kit kit, Trace t, ID3D11DeviceContext ctx, int size, int n)
+    {
         ctx.OMSetBlendState(kit.Max);
         ctx.RSSetState(kit.Raster);
         ctx.RSSetViewport(0f, 0f, size, size);
@@ -550,7 +578,6 @@ internal static class GpuPaint
         ctx.PSSetShaderResource(7, t.PiecesView!);
         ctx.PSSetConstantBuffer(1, kit.SnakeCb);
         ctx.DrawInstanced(6, (uint)n, 0, 0);
-        Unbind(ctx);
     }
 
     /// <summary>Leaves nothing of ours bound (Direct2D reads these pictures next).</summary>
@@ -580,7 +607,7 @@ internal static class GpuPaint
     [StructLayout(LayoutKind.Sequential)]
     private struct SnakeData
     {
-        public float TargetW, TargetH, Pad0, Pad1;
+        public float TargetW, TargetH, Kind, Pad1;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -605,7 +632,7 @@ internal static class GpuPaint
         };
         cbuffer SnakeLook : register(b1)
         {
-            float2 TargetSize; float2 SnakePad;
+            float2 TargetSize; float SnakeKind; float SnakePad;
         };
         Texture2D<float> AmountMap : register(t0);
         Texture2D<float> FireMap : register(t1);
@@ -723,14 +750,16 @@ internal static class GpuPaint
         SnakeOut SnakeVs(uint v : SV_VertexID, uint id : SV_InstanceID)
         {
             Piece pc = Pieces[id];
+            SnakeOut o;
+            o.Id = id;
+            // Another kind's piece (drawn in its own pass): no area, nothing drawn.
+            if (pc.Col.w != SnakeKind) { o.Pos = float4(0.0, 0.0, 0.0, 1.0); return o; }
             float reach = pc.Look.z;
             float2 lo = min(pc.Ends.xy, pc.Ends.zw) - reach;
             float2 hi = max(pc.Ends.xy, pc.Ends.zw) + reach;
             uint k = v % 6;
             float2 at = float2((k == 1 || k == 4 || k == 5) ? hi.x : lo.x, (k == 2 || k == 3 || k == 5) ? hi.y : lo.y);
-            SnakeOut o;
             o.Pos = float4(at.x / TargetSize.x * 2.0 - 1.0, 1.0 - at.y / TargetSize.y * 2.0, 0.0, 1.0);
-            o.Id = id;
             return o;
         }
 
