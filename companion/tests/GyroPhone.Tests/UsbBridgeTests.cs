@@ -137,6 +137,29 @@ public sealed class UsbBridgeTests : IDisposable
     }
 
     [Fact]
+    public void LocalOnlyControlsFromTheCableAreDropped()
+    {
+        var log = new byte[Wire.LogCtlSize];
+        log[0] = Wire.Magic0; log[1] = Wire.Magic1; log[2] = Wire.Version; log[3] = PacketType.LogCtl;
+        log[12] = Wire.LogCtlDiagnostics; log[13] = 1;
+        var test = (byte[])log.Clone();
+        test[3] = PacketType.LinkTestCtl;
+        Assert.False(UsbBridge.Forwards(log));
+        Assert.False(UsbBridge.Forwards(test));
+        Assert.True(UsbBridge.Forwards(new byte[] { Wire.Magic0, Wire.Magic1, Wire.Version, PacketType.Discover }));
+
+        var frame = new byte[UsbFraming.MaxSize(log.Length)];
+        _pipe.FromPhone.Add(frame[..UsbFraming.Encode(log, frame)]);
+        // A DISCOVER behind it still gets its ANNOUNCE: by then the LOG_CTL would have been handled.
+        var disc = new byte[Wire.MaxDatagram];
+        int n = WireCodec.EncodeDiscover(new Discover(5, Hex.Range(0x20, 16), 0), disc);
+        var f2 = new byte[UsbFraming.MaxSize(n)];
+        _pipe.FromPhone.Add(f2[..UsbFraming.Encode(disc.AsSpan(0, n), f2)]);
+        Assert.True(_pipe.ToPhone.TryTake(out _, 2000));
+        Assert.False(_engine.Settings.Diagnostics);
+    }
+
+    [Fact]
     public void UnpluggingEndsTheBridge()
     {
         _pipe.Cancel();

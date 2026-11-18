@@ -147,6 +147,13 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             pump.wake.run()
         }
 
+    /** No input can be sent now (the pad left with "Only while the pad is open"): keepalives slow down ([WifiPump.idle]). */
+    var inputIdle: Boolean
+        get() = pump.idle
+        set(v) {
+            pump.idle = v
+        }
+
     /** What is held on the PC while [pressCapture] (CAPTURED); empty when the session ends. Called on the link's thread. */
     @Volatile var onPcPresses: ((List<PcPress>) -> Unit)? = null
 
@@ -419,6 +426,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         }
         socket = s
         wifiSocket = s
+        allowCableSenders()
         running = true
         commands.clear()
         binder.register(s)
@@ -488,6 +496,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         accessory.close()
         wifiSocket?.close()
         wifiSocket = null
+        allowCableSenders()
         socket = null
         locks.release()
         foundMap.clear()
@@ -1276,6 +1285,13 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             null
         }
         nextUsbProbeMs = 0L
+        allowCableSenders()
+    }
+
+    /** The direct cable takes datagrams only from this link's own sockets, not from other apps ([AccessoryBridge.allowFrom]). */
+    private fun allowCableSenders() {
+        val probe = usbProbe?.let { p -> runCatching { (p.localAddress as? InetSocketAddress)?.port }.getOrNull() } ?: 0
+        accessory.allowFrom(wifiSocket?.localPort ?: 0, probe, usbSocket?.localPort ?: 0)
     }
 
     /** Reads the probe's ANNOUNCEs without waiting: the PC that answered and its USB address. */
@@ -1315,6 +1331,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbProbe?.let { runCatching { it.close() } }
         usbProbe = null
         usbSocket = s
+        allowCableSenders()
         usbActive = true
         usbDirect = u.direct
         usbHotspot = u.hotspot
@@ -1343,6 +1360,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         pump.useSocket(w)
         usbSocket?.close()
         usbSocket = null
+        allowCableSenders()
         usbHostId = null
         usbHostAddr = null
         // A fresh ANNOUNCE first, else where the PC was on Wi-Fi before USB, else its stored address.
@@ -1370,6 +1388,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbEthernet = false
         usbHostId = null
         usbHostAddr = null
+        // Closed ports leave the list, so another app can't bind one and send down the cable.
+        allowCableSenders()
     }
 
     private fun onNetworkChanged() {
