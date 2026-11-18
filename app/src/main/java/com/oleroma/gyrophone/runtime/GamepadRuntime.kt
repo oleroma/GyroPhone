@@ -994,6 +994,7 @@ class GamepadRuntime(context: Context) {
             when (id) {
                 HidDescriptor.REPORT_ID_GAMEPAD -> pump.lastGamepadReport
                 HidDescriptor.REPORT_ID_KEYBOARD -> pump.lastKeyboardReport
+                HidDescriptor.REPORT_ID_CONSUMER -> pump.lastConsumerReport
                 HidDescriptor.REPORT_ID_MOUSE -> ByteArray(HidDescriptor.MOUSE_REPORT_SIZE)
                 else -> null
             }

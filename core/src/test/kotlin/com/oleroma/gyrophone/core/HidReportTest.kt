@@ -46,6 +46,7 @@ class HidReportTest {
         assertEquals(HidDescriptor.KEYBOARD_REPORT_SIZE * 8, input[HidDescriptor.REPORT_ID_KEYBOARD])
         assertEquals(HidDescriptor.MOUSE_REPORT_SIZE * 8, input[HidDescriptor.REPORT_ID_MOUSE])
         assertEquals(HidDescriptor.MOUSE_FEATURE_SIZE * 8, feature[HidDescriptor.REPORT_ID_MOUSE_FEATURE])
+        assertEquals(HidDescriptor.CONSUMER_REPORT_SIZE * 8, input[HidDescriptor.REPORT_ID_CONSUMER])
     }
 
     @Test fun gamepadEncoding() {
