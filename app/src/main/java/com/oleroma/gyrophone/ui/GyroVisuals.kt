@@ -173,8 +173,12 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
             val drew = step(frameTimeNanos / 1_000_000L)
             if (drew) {
                 val t1 = System.nanoTime()
-                val h = hint ?: com.oleroma.gyrophone.runtime.WorkHint.forThisThread(HINT_TARGET_NS).also { hint = it }
-                h?.done(t1 - t0, t1)
+                // Asked once: a phone without hint support would otherwise pay a binder call every frame.
+                if (!hintTried) {
+                    hintTried = true
+                    hint = com.oleroma.gyrophone.runtime.WorkHint.forThisThread(HINT_TARGET_NS)
+                }
+                hint?.done(t1 - t0, t1)
                 timing.frame(t1 - t0, t1, runtime.debug.trace)
             }
             choreographer?.postFrameCallback(this)
@@ -183,6 +187,7 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
 
     // Keeps this thread on cores and clocks that finish a frame in time ([com.oleroma.gyrophone.runtime.WorkHint]).
     private var hint: com.oleroma.gyrophone.runtime.WorkHint? = null
+    private var hintTried = false
     private val timing = DrawTiming()
 
     override fun surfaceCreated(holder: SurfaceHolder) = Unit
@@ -213,6 +218,7 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
         handler.post {
             stopSurface()
             hint?.close(); hint = null
+            st.release()
             thread.quitSafely()
         }
     }
@@ -373,7 +379,14 @@ internal class GyroDisplaysRenderer(private val runtime: GamepadRuntime) : Surfa
             }
         } finally {
             val p0 = DrawProbe.now()
-            s.unlockCanvasAndPost(canvas)
+            try {
+                s.unlockCanvasAndPost(canvas)
+            } catch (_: IllegalStateException) {
+                // surfaceDestroyed gave up waiting on a long frame and the surface was released under it:
+                // the frame is dropped rather than crashing the app.
+            } catch (_: IllegalArgumentException) {
+                // The same, seen as a canvas that no longer belongs to the surface.
+            }
             DrawProbe.since(DrawProbe.POST, p0)
         }
     }
@@ -649,6 +662,12 @@ private class VisState {
     private val way = FloatArray(3)
     // Each pointer's paint drawing (its map's upload).
     private val paintShaders = java.util.WeakHashMap<LaserTrace, PointerPaintShader>()
+
+    /** The renderer is going (on its thread): the pointers' paint buffers go with it. */
+    fun release() {
+        for (s in paintShaders.values) s.release()
+        paintShaders.clear()
+    }
     // The pointer whose paint this frame already waited for ([PaintWorker.await]), and the frame.
     private var paintAwaited: LaserTrace? = null
     private var paintAwaitedAt = Long.MIN_VALUE
@@ -674,6 +693,7 @@ private class VisState {
     private var snakeA = FloatArray(0)
     private var snakeCol = IntArray(0)
     private var snakeFront = BooleanArray(0)
+    private var snakeKind = ByteArray(0)
     // Reused from frame to frame: the paint's look, the gimbal rings' points, the rifle's muzzle.
     private val paintLook = PointerPaintShader.Look()
     private val gimbalPts = Array(3) { FloatArray(65 * 3) }
@@ -966,6 +986,7 @@ private class VisState {
                     snakeA[m] = 1f - fade * (1f - tail)
                     snakeCol[m] = snakeShade(d, kind, byWay, z, isFront, ld)
                     snakeFront[m] = isFront
+                    snakeKind[m] = kind.toByte()
                     m++
                 }
                 prevX = p.x; prevY = p.y; prevFront = isFront
@@ -987,44 +1008,55 @@ private class VisState {
             snakeA[m] = 1f
             snakeCol[m] = snakeShade(d, kind, byWay, z, z > 0f, ld)
             snakeFront[m] = z > 0f
+            snakeKind[m] = kind.toByte()
             m++
         }
         return m
     }
 
     /**
-     * Draws the [m] pieces on the [front] (near) or far half, newest first, in one layer: each piece
-     * goes under what is drawn already (DST_OVER), so overlapping pieces never add up; the glow's
-     * wider, fainter copies go under the line the same way, so together they fall off softly.
+     * Draws the [m] pieces on the [front] (near) or far half, newest first, one layer per kind (moving,
+     * aiming, firing) at that kind's colours' opacity, as the paint takes it: in a layer each piece goes
+     * under what is drawn already (DST_OVER), so overlapping pieces never add up; the glow's wider,
+     * fainter copies go under the line the same way, so together they fall off softly.
      */
     private fun DrawScope.drawSnake(d: GyroDisplay, front: Boolean, c: Offset, r: Float, m: Int) {
         if (m == 0) return
-        var any = false
-        for (k in 0 until m) if (snakeFront[k] == front) { any = true; break }
-        if (!any) return
+        var kinds = 0
+        for (k in 0 until m) if (snakeFront[k] == front) kinds = kinds or (1 shl snakeKind[k].toInt())
+        if (kinds == 0) return
         val canvas = drawContext.canvas.nativeCanvas
-        val alpha = moveColors.sumOf { it shr 24 and 0xFF } / (6f * 255f)
         val e = r * 1.3f
         snakePaint.strokeCap = Paint.Cap.ROUND
         snakePaint.style = Paint.Style.STROKE
         snakePaint.isAntiAlias = true
-        val layer = canvas.saveLayerAlpha(c.x - e, c.y - e, c.x + e, c.y + e, (255f * alpha).toInt().coerceIn(0, 255))
-        snakePaint.blendMode = android.graphics.BlendMode.DST_OVER
-        snakePieces(canvas, m, front, 1f, 1f)
         val glow = d.laserSnakeGlow.coerceIn(0f, 1f)
-        // Narrowest (strongest) first: each wider copy only shows outside the ones before it.
-        if (glow > 0f) for (g in SNAKE_GLOW.indices.reversed()) {
-            val (wide, share) = SNAKE_GLOW[g]
-            snakePieces(canvas, m, front, wide, glow * share)
+        for (kind in SNAKE_KINDS) {
+            if (kinds and (1 shl kind) == 0) continue
+            val alpha = when (kind) {
+                LaserPaint.FIRE -> ((snakeFire[0] ushr 24) + (snakeFire[1] ushr 24)) / (2f * 255f)
+                LaserPaint.AIM -> ((snakeFire[2] ushr 24) + (snakeFire[3] ushr 24)) / (2f * 255f)
+                else -> moveColors.sumOf { it shr 24 and 0xFF } / (6f * 255f)
+            }
+            val a = (255f * alpha).toInt().coerceIn(0, 255)
+            if (a == 0) continue
+            val layer = canvas.saveLayerAlpha(c.x - e, c.y - e, c.x + e, c.y + e, a)
+            snakePaint.blendMode = android.graphics.BlendMode.DST_OVER
+            snakePieces(canvas, m, front, kind, 1f, 1f)
+            // Narrowest (strongest) first: each wider copy only shows outside the ones before it.
+            if (glow > 0f) for (g in SNAKE_GLOW.indices.reversed()) {
+                val (wide, share) = SNAKE_GLOW[g]
+                snakePieces(canvas, m, front, kind, wide, glow * share)
+            }
+            canvas.restoreToCount(layer)
+            snakePaint.blendMode = null
         }
-        canvas.restoreToCount(layer)
-        snakePaint.blendMode = null
     }
 
-    /** The Snake's [m] pieces on the [front] or far half, newest first, [wide] times their width, [share] of their opacity. */
-    private fun snakePieces(canvas: android.graphics.Canvas, m: Int, front: Boolean, wide: Float, share: Float) {
+    /** The Snake's [m] pieces of [kind] on the [front] or far half, newest first, [wide] times their width, [share] of their opacity. */
+    private fun snakePieces(canvas: android.graphics.Canvas, m: Int, front: Boolean, kind: Int, wide: Float, share: Float) {
         for (k in m - 1 downTo 0) {
-            if (snakeFront[k] != front) continue
+            if (snakeFront[k] != front || snakeKind[k].toInt() != kind) continue
             val a = (snakeA[k] * share * 255f + 0.5f).toInt().coerceIn(0, 255)
             if (a == 0) continue
             snakePaint.color = (snakeCol[k] and 0xFFFFFF) or (a shl 24)
@@ -1040,6 +1072,7 @@ private class VisState {
         snakeA = snakeA.copyOf(size)
         snakeCol = snakeCol.copyOf(size)
         snakeFront = snakeFront.copyOf(size)
+        snakeKind = snakeKind.copyOf(size)
     }
 
     /**
@@ -2221,6 +2254,8 @@ private const val HIT_SIDES = 12
 
 // The Snake's glow: copies this many times its width, at this share of the glow's strength (widest first).
 private val SNAKE_GLOW = listOf(3.2f to 0.18f, 2.2f to 0.3f, 1.5f to 0.45f)
+// The Snake's layers, bottom to top: moving, then aiming, then firing.
+private val SNAKE_KINDS = intArrayOf(LaserPaint.PAINT, LaserPaint.AIM, LaserPaint.FIRE)
 
 /** The edge's swing per degree, its furthest swing, each layer's step inwards and the outer corner radius. */
 private const val EDGE_PX_PER_DEG = 1.5f

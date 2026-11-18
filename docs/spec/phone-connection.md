@@ -37,7 +37,7 @@ Windows sees a DirectInput pad, not XInput: XInput needs a Microsoft VID/PID in 
 
 **Reconnect.** When the link drops without the person asking, `core/.../hid/HostReconnect.kt` reconnects to the last host after 1, 2 and 4 s, then every 5 s with no end, for as long as the service runs and the host stays bonded, so a PC that takes minutes to reboot or wake is picked up within seconds. A new connection, a connect or disconnect by the person, or stopping cancels it; a link the person ended is never retried. The last host's address is kept (prefs `gyrophone_bt`, `last_host`; cleared by the person's Disconnect or the PC removing the phone), so at start, when the Bluetooth stack reports no host of its own, the phone tries that one, and retries it the same way.
 
-**Bluetooth panel** (`ui/ConnectScreen.kt`): the HID registration state, **Make discoverable**, the bonded PCs with Connect and Disconnect, and reports sent per second.
+**Bluetooth panel** (`ui/ConnectScreen.kt`): the HID registration state, **Make discoverable** (without the Bluetooth permissions it asks for them instead), the bonded PCs with Connect and Disconnect, and reports sent per second.
 
 ## Wi-Fi link
 
