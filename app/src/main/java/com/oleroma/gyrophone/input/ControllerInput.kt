@@ -126,7 +126,11 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             device.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC && !isPad(device)
         ) return true
         val pressed = event.action == KeyEvent.ACTION_DOWN
-        if (listenKey(device.id, event.keyCode, pressed, isPad(device), isMouse(device)) { kindOf(device) }) return true
+        if (listenKey(device.id, event.keyCode, pressed, isPad(device), isMouse(device)) { kindOf(device) }) {
+            // A key held when the listener started still gets its release.
+            if (!pressed) runtime.engine.setKey(source(device).pad, event.keyCode, false)
+            return true
+        }
         // Unmapped pad buttons must do nothing, not fall back to BACK / focus navigation.
         val fromPad = event.source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
             runtime.controllers.value.any { it.deviceId == device.id }
@@ -241,6 +245,8 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             src.learnFor = listening
             src.last.copyInto(src.rest)
             src.pushed.fill(0)
+            // A stick held when the listener started must not stay held in the engine.
+            if (listening != null) runtime.engine.clearAxes(src.pad.id)
         }
         val polled = AndroidAxis.polled
         for (i in polled.indices) {
@@ -262,6 +268,8 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
             src.learnFor = listening
             src.last.copyInto(src.rest)
             src.pushed.fill(0)
+            // A stick held when the listener started must not stay held in the engine.
+            if (listening != null) runtime.engine.clearAxes(src.pad.id)
         }
         val polled = AndroidAxis.polled
         var n = 0

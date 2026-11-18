@@ -15,7 +15,12 @@ import com.oleroma.gyrophone.core.model.AndroidAxis
  * with Linux's flat (1/16 of the range) as the deadzone ([AndroidAxis.deadzone]).
  *
  * [decode] takes one input report (with its report id first when the descriptor has ids) and tells
- * a [Sink] which keys changed and, when an axis moved, every axis's value now.
+ * a [Sink] which keys changed and, when an axis moved, every axis's value now. It allocates nothing
+ * (it runs for every report, up to 1000 a second).
+ *
+ * Pads that Linux or Android remap (a kernel driver of their own, such as Sony's and Nintendo's, or
+ * a vendor key layout file) come out differently read this way; [matchesAndroid] tells them apart,
+ * so they are left to Android.
  */
 class HidGamepad(descriptor: ByteArray) {
     /** One Input field of the descriptor. */
@@ -47,7 +52,8 @@ class HidGamepad(descriptor: ByteArray) {
     private class KeyMap(val field: Int, val slot: Int, val keyCode: Int)
     private class AxisMap(val field: Int, val slot: Int, val polled: Int, val scale: Float, val offset: Float, val flat: Float)
     private class HatMap(val field: Int, val slot: Int, val min: Int, val max: Int)
-    private class ArrayKeys(val field: Int, val byUsage: Map<Int, Int>)
+    /** An array field's keys: [byIndex] is the key code of each value from the logical minimum (-1: none). */
+    private class ArrayKeys(val field: Int, val byIndex: IntArray, val codes: IntArray)
 
     private val keyMaps = ArrayList<KeyMap>()
     private val axisMaps = ArrayList<AxisMap>()
@@ -63,9 +69,11 @@ class HidGamepad(descriptor: ByteArray) {
     /** Whether this is a game pad or joystick with something to read. */
     val usable: Boolean
 
-    // Each key's state, by key code; and the axes as last sent.
-    private val held = HashSet<Int>()
-    private val nowHeld = HashSet<Int>()
+    // Each key's state, by key code (as sent, and in the report being decoded); the pad's key codes
+    // in order; and the axes as last sent.
+    private val held = BooleanArray(KEY_CODES)
+    private val nowHeld = BooleanArray(KEY_CODES)
+    private val keyCodes: IntArray
     private val axisNow = FloatArray(AndroidAxis.polled.size) { Float.NaN }
     private val axisSent = FloatArray(AndroidAxis.polled.size) { Float.NaN }
 
@@ -75,9 +83,14 @@ class HidGamepad(descriptor: ByteArray) {
         for ((fi, f) in fields.withIndex()) {
             if (f.application != GD_GAMEPAD && f.application != GD_JOYSTICK) continue
             if (!f.variable) {
-                val by = HashMap<Int, Int>()
-                for (u in f.usages) keyOf(u, f.application)?.let { by[u] = it; k += it }
-                if (by.isNotEmpty()) arrayKeys += ArrayKeys(fi, by)
+                // Value v names usage f.usages[v - logicalMin].
+                val n = minOf(f.usages.size, maxOf(0, f.logicalMax - f.logicalMin + 1))
+                val by = IntArray(n) { keyOf(f.usages[it], f.application) ?: -1 }
+                val codes = by.filter { it >= 0 }.distinct().toIntArray()
+                if (codes.isNotEmpty()) {
+                    arrayKeys += ArrayKeys(fi, by, codes)
+                    for (c in codes) k += c
+                }
                 continue
             }
             for (slot in 0 until f.count) {
@@ -108,6 +121,7 @@ class HidGamepad(descriptor: ByteArray) {
             }
         }
         keys = k
+        keyCodes = k.sorted().toIntArray()
         axes = a
         usable = k.isNotEmpty() || a.isNotEmpty()
         if (hatMaps.isNotEmpty()) {
@@ -121,41 +135,54 @@ class HidGamepad(descriptor: ByteArray) {
         if (len <= 0) return
         val id = if (hasIds) report[0].toInt() and 0xFF else 0
         val base = if (hasIds) 8 else 0
+        val bits = len * 8
         var any = false
-        nowHeld.clear()
-        nowHeld.addAll(held)
-        for (m in keyMaps) {
+        held.copyInto(nowHeld)
+        for (i in 0 until keyMaps.size) {
+            val m = keyMaps[i]
             val f = fields[m.field]
             if (f.reportId != id) continue
-            val v = read(report, len, base + f.bitOffset + m.slot * f.bitSize, f.bitSize, false) ?: continue
-            if (v != 0) nowHeld.add(m.keyCode) else nowHeld.remove(m.keyCode)
+            val bit = base + f.bitOffset + m.slot * f.bitSize
+            if (!fits(bits, bit, f.bitSize)) continue
+            nowHeld[m.keyCode] = readBits(report, bit, f.bitSize, false) != 0
             any = true
         }
-        for (ak in arrayKeys) {
+        for (i in 0 until arrayKeys.size) {
+            val ak = arrayKeys[i]
             val f = fields[ak.field]
             if (f.reportId != id) continue
-            for (code in ak.byUsage.values) nowHeld.remove(code)
+            for (c in ak.codes) nowHeld[c] = false
             for (slot in 0 until f.count) {
-                val v = read(report, len, base + f.bitOffset + slot * f.bitSize, f.bitSize, f.logicalMin < 0) ?: continue
+                val bit = base + f.bitOffset + slot * f.bitSize
+                if (!fits(bits, bit, f.bitSize)) continue
+                val v = readBits(report, bit, f.bitSize, f.logicalMin < 0)
                 if (v < f.logicalMin || v > f.logicalMax) continue
-                val usage = arrayUsage(f, v) ?: continue
-                ak.byUsage[usage]?.let { nowHeld.add(it) }
+                val idx = v - f.logicalMin
+                if (idx >= ak.byIndex.size) continue
+                val code = ak.byIndex[idx]
+                if (code >= 0) nowHeld[code] = true
             }
             any = true
         }
-        for (m in axisMaps) {
+        for (i in 0 until axisMaps.size) {
+            val m = axisMaps[i]
             val f = fields[m.field]
             if (f.reportId != id) continue
-            val raw = read(report, len, base + f.bitOffset + m.slot * f.bitSize, f.bitSize, f.logicalMin < 0) ?: continue
+            val bit = base + f.bitOffset + m.slot * f.bitSize
+            if (!fits(bits, bit, f.bitSize)) continue
+            val raw = readBits(report, bit, f.bitSize, f.logicalMin < 0)
             if (raw < f.logicalMin || raw > f.logicalMax) continue
             val axis = AndroidAxis.polled[m.polled]
             val v = (raw * m.scale + m.offset).coerceIn(if (AndroidAxis.isTrigger(axis)) 0f else -1f, 1f)
             axisNow[m.polled] = AndroidAxis.deadzone(axis, v, m.flat)
         }
-        for (m in hatMaps) {
+        for (i in 0 until hatMaps.size) {
+            val m = hatMaps[i]
             val f = fields[m.field]
             if (f.reportId != id) continue
-            val raw = read(report, len, base + f.bitOffset + m.slot * f.bitSize, f.bitSize, f.logicalMin < 0) ?: continue
+            val bit = base + f.bitOffset + m.slot * f.bitSize
+            if (!fits(bits, bit, f.bitSize)) continue
+            val raw = readBits(report, bit, f.bitSize, f.logicalMin < 0)
             // Linux: the eight ways from the logical range, anything else (the null state) centred.
             var dir = (raw - m.min) * 8 / (m.max - m.min + 1) + 1
             if (raw < m.min || raw > m.max || dir < 0 || dir > 8) dir = 0
@@ -164,9 +191,9 @@ class HidGamepad(descriptor: ByteArray) {
         }
         if (any) {
             // Ups before downs, each in key code order: the same report always gives the same events.
-            for (code in held.sorted()) if (code !in nowHeld) sink.key(code, false)
-            for (code in nowHeld.sorted()) if (code !in held) sink.key(code, true)
-            held.clear(); held.addAll(nowHeld)
+            for (c in keyCodes) if (held[c] && !nowHeld[c]) sink.key(c, false)
+            for (c in keyCodes) if (nowHeld[c] && !held[c]) sink.key(c, true)
+            nowHeld.copyInto(held)
         }
         var moved = false
         for (i in axisNow.indices) {
@@ -182,8 +209,8 @@ class HidGamepad(descriptor: ByteArray) {
 
     /** Lets go of every key and centres every axis (the pad went away), telling [sink]. */
     fun release(sink: Sink) {
-        for (code in held.sorted()) sink.key(code, false)
-        held.clear()
+        for (c in keyCodes) if (held[c]) sink.key(c, false)
+        held.fill(false)
         var any = false
         for (i in axisNow.indices) if (!axisNow[i].isNaN()) { axisNow[i] = 0f; any = true }
         if (any) {
@@ -192,12 +219,32 @@ class HidGamepad(descriptor: ByteArray) {
         }
     }
 
-    private fun arrayUsage(f: Field, v: Int): Int? = f.usages.getOrNull(v - f.logicalMin)
+    /**
+     * Whether this reading gives the same buttons and axes as Android gave the same pad:
+     * [androidKeys] the key codes it has (of [PROBE_KEYS]), [androidAxes] its joystick axes. Linux
+     * drivers of their own (Sony, Nintendo, ...) and vendor key layout files remap a pad; read
+     * generically it then has other buttons or axes (a DualShock 4's triggers would move the right
+     * stick), and it must stay Android's. Only the buttons, D-pad keys, sticks, hat and triggers are
+     * compared; GAS and BRAKE count as the right and left trigger.
+     */
+    fun matchesAndroid(androidKeys: Set<Int>, androidAxes: Set<Int>): Boolean {
+        fun probedKeys(s: Set<Int>) = PROBE_KEYS.filter { it in s }.toSet()
+        fun probedAxes(s: Set<Int>) = s.mapNotNull { a ->
+            when (a) {
+                AndroidAxis.GAS -> AndroidAxis.RTRIGGER
+                AndroidAxis.BRAKE -> AndroidAxis.LTRIGGER
+                else -> a.takeIf { it in PROBE_AXES }
+            }
+        }.toSet()
+        return probedKeys(keys) == probedKeys(androidKeys) && probedAxes(axes) == probedAxes(androidAxes)
+    }
 
     companion object {
         const val GD_JOYSTICK = 0x00010004
         const val GD_GAMEPAD = 0x00010005
         private const val HAT = 0x00010039
+        /** Key codes are below this (BUTTON_16 = 203 is the highest given). */
+        private const val KEY_CODES = 256
         private val HAT_X_I = AndroidAxis.polled.indexOf(AndroidAxis.HAT_X)
         private val HAT_Y_I = AndroidAxis.polled.indexOf(AndroidAxis.HAT_Y)
 
@@ -209,6 +256,15 @@ class HidGamepad(descriptor: ByteArray) {
             96, 97, 98, 99, 100, 101, // A B C X Y Z
             102, 103, 104, 105, // L1 R1 L2 R2
             109, 108, 110, 106, 107, // Select Start Mode ThumbL ThumbR
+        )
+
+        /** The key codes [matchesAndroid] compares: the game pad buttons, BUTTON_1..16 and the D-pad keys. */
+        val PROBE_KEYS: IntArray = GAMEPAD_KEYS + IntArray(16) { 188 + it } + intArrayOf(19, 20, 21, 22)
+
+        /** The axes [matchesAndroid] compares (GAS and BRAKE count as RTRIGGER and LTRIGGER). */
+        val PROBE_AXES: IntArray = intArrayOf(
+            AndroidAxis.X, AndroidAxis.Y, AndroidAxis.Z, AndroidAxis.RX, AndroidAxis.RY, AndroidAxis.RZ,
+            AndroidAxis.HAT_X, AndroidAxis.HAT_Y, AndroidAxis.LTRIGGER, AndroidAxis.RTRIGGER, AndroidAxis.GAS, AndroidAxis.BRAKE,
         )
 
         /** The Android key code Android gives HID usage [u] on a pad of [application], or null. */
@@ -264,8 +320,14 @@ class HidGamepad(descriptor: ByteArray) {
         }
 
         /** [size] bits from bit [bit] of [r] (little endian), sign-extended when [signed]; null past [len]. */
-        fun read(r: ByteArray, len: Int, bit: Int, size: Int, signed: Boolean): Int? {
-            if (size <= 0 || size > 32 || bit + size > len * 8) return null
+        fun read(r: ByteArray, len: Int, bit: Int, size: Int, signed: Boolean): Int? =
+            if (fits(len * 8, bit, size)) readBits(r, bit, size, signed) else null
+
+        /** Whether a field of [size] bits at [bit] is inside a report of [bits] bits. */
+        private fun fits(bits: Int, bit: Int, size: Int) = size in 1..32 && bit + size <= bits
+
+        /** [read] without the bounds check (no boxing: it runs for every field of every report). */
+        private fun readBits(r: ByteArray, bit: Int, size: Int, signed: Boolean): Int {
             var v = 0L
             for (i in 0 until size) {
                 val b = bit + i

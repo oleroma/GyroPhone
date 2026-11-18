@@ -9,7 +9,7 @@ The phone's own volume keys are a mappable device, **Phone** (`PhysicalDevice.PH
 - Read **only while input is allowed** (the pad open in play). Then the key is consumed, so the phone's own volume slider does not appear (`ControllerInput`). In menus, edit mode, with the pad closed, or while a mapping editor is learning a key, the rocker changes the phone's volume as usual.
 - Android does not deliver the keys with the real screen off; under the black screen (below) they work, since the pad is still open.
 
-**Media keys.** Targets include Volume Up / Down, Mute, Play/Pause, Next, Previous (HID consumer usages; `core/.../hid/HidUsage.kt`). Over Bluetooth they go in the keyboard report; the companion sends them as Windows media keys (Windows shows its volume popup) and repeats a held Volume key (400 ms delay, then every 50 ms).
+**Media keys.** Targets include Volume Up / Down, Mute, Play/Pause, Next, Previous (HID consumer usages; `core/.../hid/HidUsage.kt`). Over Bluetooth they go in the descriptor's media-key (Consumer Control) report, not the keyboard report, so Windows acts on them; the companion sends them as Windows media keys (Windows shows its volume popup) and repeats a held Volume key (400 ms delay, then every 50 ms).
 
 ## Black screen
 
