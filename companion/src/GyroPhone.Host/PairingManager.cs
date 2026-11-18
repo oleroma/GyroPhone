@@ -76,9 +76,10 @@ public sealed class PairingManager
     /// <param name="fromIp">The sender's address key (<see cref="RateLimiter.Ipv4Key"/>), for the new-attempt rate limit.</param>
     public int OnStart(PairStart m, long nowUs, Span<byte> reply, uint fromIp = 0)
     {
-        if (_attempt is { Revealed: false } stale && nowUs - stale.StartedUs >= RevealTimeoutUs)
+        if (_attempt is { Revealed: false } stale && nowUs >= stale.RevealByUs)
             End(nowUs, cooldown: false);
         bool charged = false;
+        long revealByUs = nowUs + RevealTimeoutUs;
         if (_attempt != null)
         {
             if (_attempt.SameStart(m)) return Copy(_attempt.HostReply, reply);
@@ -93,6 +94,9 @@ public sealed class PairingManager
             // The phone id travels in clear, so replacing a revealed attempt counts toward the failure limit
             // (without a cooldown): a LAN peer cannot keep swapping the code on the PC.
             if (_attempt.Revealed && ++_failures >= Wire.PairMaxFails) _windowUntilUs = long.MinValue;
+            // Replacing an unrevealed attempt keeps its reveal deadline, so a LAN peer that keeps restarting
+            // with new commits cannot hold the PC past it while another phone waits.
+            else if (!_attempt.Revealed) revealByUs = _attempt.RevealByUs;
             End(nowUs, cooldown: false);
         }
         if (!IsOpen(nowUs)) return Ack(0, PairAckStatus.Closed, reply);
@@ -116,6 +120,7 @@ public sealed class PairingManager
             PkH = key.PublicKey,
             NH = _random(Wire.NonceSize),
             StartedUs = nowUs,
+            RevealByUs = revealByUs,
         };
         a.HostReply = new byte[Wire.PairHostSize];
         WireCodec.EncodePairHost(new PairHost(id, hostId, a.PkH, a.NH, hostName), a.HostReply);
@@ -231,7 +236,7 @@ public sealed class PairingManager
             Finish(a, PairDoneStatus.Timeout, nowUs, cooldown: true);
             return true;
         }
-        if (nowUs - a.StartedUs >= (a.Revealed ? AttemptTimeoutUs : RevealTimeoutUs))
+        if (a.Revealed ? nowUs - a.StartedUs >= AttemptTimeoutUs : nowUs >= a.RevealByUs)
         {
             End(nowUs, cooldown: false);
             return true;
@@ -304,6 +309,8 @@ public sealed class PairingManager
         public byte[] NH = [];
         public byte[] HostReply = [];
         public long StartedUs;
+        /// <summary>When an attempt still unrevealed by then goes stale (<see cref="RevealTimeoutUs"/> after its phone's first start).</summary>
+        public long RevealByUs;
         public bool Revealed;
         public byte[]? NP;
         public byte[]? Th;

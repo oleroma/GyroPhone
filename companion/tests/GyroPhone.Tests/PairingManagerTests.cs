@@ -149,6 +149,26 @@ public class PairingManagerTests
     }
 
     [Fact]
+    public void RestartingUnrevealedAttemptsDoNotHoldThePcPastTheFirstDeadline()
+    {
+        var h = NewHost();
+        var squatter = NewPhone(0x50, "192.168.1.50");
+        Assert.True(squatter.OnPairHost(h.Send(squatter, squatter.PairStart())!));
+        var phone = NewPhone();
+        var start = phone.PairStart();
+        // The squatter keeps starting over with new commits, never revealing.
+        for (int i = 0; i < 3; i++)
+        {
+            h.Clock.AdvanceMs(GyroPhone.Host.PairingManager.RevealTimeoutUs / 1000 / 4);
+            Assert.NotNull(h.Send(squatter, squatter.PairStart()));
+            Assert.Null(h.Send(phone, start));
+        }
+        h.Clock.AdvanceMs(GyroPhone.Host.PairingManager.RevealTimeoutUs / 1000 / 4);
+        Assert.True(phone.OnPairHost(h.Send(phone, start)!));
+        Assert.Equal(PairAckStatus.Ok, Ack(h.Send(phone, phone.PairReveal())).Status);
+    }
+
+    [Fact]
     public void FloodedStartsGenerateFewKeys()
     {
         var h = NewHost();

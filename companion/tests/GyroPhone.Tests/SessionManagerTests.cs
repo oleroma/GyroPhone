@@ -113,6 +113,29 @@ public class SessionManagerTests
     }
 
     [Fact]
+    public void AReplayedOlderHelloDoesNotBlockTheResentNewerOne()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        var first = phone.Hello();
+        Assert.NotNull(h.Send(phone, first));
+        h.Tick(Wire.PendingSessionMs + 50);
+        var second = phone.Hello();
+        Assert.NotNull(h.Send(phone, second)); // this WELCOME is lost
+        h.Tick(Wire.PendingSessionMs + 50);
+
+        // With nothing pending, a replay of the first HELLO gets a pending session of its own...
+        var attacker = h.NewPhone("10.0.0.99", 1234);
+        h.Send(attacker, first);
+        // ...but the phone's resent, newer HELLO still replaces it and connects.
+        var w = h.Send(phone, second);
+        Assert.NotNull(w);
+        Assert.True(phone.OnWelcome(w!));
+        h.Send(phone, phone.State());
+        Assert.True(h.Engine.Snapshot().Connected);
+    }
+
+    [Fact]
     public void ForgedPacketsFromElsewhereAreLimitedButTheSessionKeepsWorkingAndCanMove()
     {
         var h = new Harness();
