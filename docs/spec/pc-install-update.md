@@ -32,7 +32,7 @@ If the copy fails, the old build starts again with `--update-failed` and doesn't
 
 ## Direct USB cable
 
-With **USB direct** on (default), `GyroPhone.Windows/AoaUsb.cs` switches a phone on the PC's USB port into Android Open Accessory mode (the phone must be in "No data transfer" mode) and `UsbBridge` carries the cable into the UDP server on loopback ([Connection](phone-connection.md#usb)). Thread gp-usb looks at the USB devices when Windows reports a device interface arriving or leaving (`DeviceChangeNotifier`, CM_Register_Notification), so each step of the switch and a pulled cable are handled at once; it also looks every 250 ms while the phone is switching and once a second otherwise, in case a notification is missed.
+With **USB direct** on (default off: it switches any Android device with USB debugging that is in "No data transfer" mode, so a second phone or tablet charging on the PC would lose its USB mode), `GyroPhone.Windows/AoaUsb.cs` switches a phone on the PC's USB port into Android Open Accessory mode (the phone must be in "No data transfer" mode) and `UsbBridge` carries the cable into the UDP server on loopback ([Connection](phone-connection.md#usb)). Thread gp-usb looks at the USB devices when Windows reports a device interface arriving or leaving (`DeviceChangeNotifier`, CM_Register_Notification), so each step of the switch and a pulled cable are handled at once; it also looks every 250 ms while the phone is switching, and in case a notification is missed once a second while the cable is in use, adb holds the phone or a device is waiting to be tried again, otherwise every 30 s (once a second when notifications could not be registered).
 
 ## Key files
 

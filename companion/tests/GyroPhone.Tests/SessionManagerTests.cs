@@ -1,4 +1,5 @@
 using System.Net;
+using GyroPhone.Host.Settings;
 using GyroPhone.Protocol;
 using GyroPhone.Protocol.Mapping;
 
@@ -34,15 +35,16 @@ public class SessionManagerTests
         using var h = new Harness();
         var phone = h.NewPhone();
         h.Connect(phone);
-        // On by default. Each change goes out at once, not with the next second's status.
-        h.Sender.Clear();
-        h.Engine.SetUsbDirect(false);
-        Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out var off));
-        Assert.Equal(0, WireCodec.DecodeHostStatus(off).Flags2);
+        // Off by default. Each change goes out at once, not with the next second's status.
+        Assert.False(new HostSettings().UsbDirect);
         h.Sender.Clear();
         h.Engine.SetUsbDirect(true);
         Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out var on));
         Assert.Equal(HostStatusFlags2.UsbDirect, WireCodec.DecodeHostStatus(on).Flags2);
+        h.Sender.Clear();
+        h.Engine.SetUsbDirect(false);
+        Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out var off));
+        Assert.Equal(0, WireCodec.DecodeHostStatus(off).Flags2);
     }
 
     [Fact]
