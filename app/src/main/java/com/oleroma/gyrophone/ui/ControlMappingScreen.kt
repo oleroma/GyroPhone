@@ -833,7 +833,8 @@ internal fun ControlMappingScreen(
     // Each undone step, to redo: the mappings after it, and the control after it when the step changed it too.
     val redo = remember(control.id) { mutableStateListOf<Pair<List<Mapping>, TouchControl?>>() }
     var recent by remember { mutableStateOf(loadRecent(runtime)) }
-    var hapticDraft by remember { mutableStateOf<Pair<BindableInput, OutputTarget>?>(null) }
+    // The buzz chip being set up: its input, target and which of that target's chips (n).
+    var hapticDraft by remember { mutableStateOf<Triple<BindableInput, OutputTarget, Int>?>(null) }
     var layerDraft by remember { mutableStateOf<Pair<BindableInput, OutputTarget.Layer>?>(null) }
     var setMenu by remember { mutableStateOf<MappingSet?>(null) }
     var capturing by remember { mutableStateOf(false) }
@@ -2528,7 +2529,7 @@ internal fun ControlMappingScreen(
             onTargetSettings = if (Describe.isHaptic(chip.target)) {
                 {
                     chipDialog = null
-                    hapticDraft = ti to chip.target
+                    hapticDraft = Triple(ti, chip.target, chip.n)
                 }
             } else null,
             targetOptions = if (chip.target is OutputTarget.SetOrientation) {
@@ -2595,8 +2596,9 @@ internal fun ControlMappingScreen(
                         setMenu = null
                         if (editSet == st.id) onEditSet(MappingSet.BASE)
                         onSetsChange?.invoke(sets.filterNot { it.id == st.id }, st.id)
-                        // The undo steps hold the deleted layer's mappings: undoing one would bring them back without it.
+                        // The undo and redo steps hold the deleted layer's mappings: either would bring them back without it.
                         undo.clear()
+                        redo.clear()
                         snackbar.currentSnackbarData?.dismiss()
                     }) { Text("Delete", color = colors.error) }
                 } else {
@@ -2653,20 +2655,20 @@ internal fun ControlMappingScreen(
             )
         }
     }
-    hapticDraft?.let { (input, t) ->
+    hapticDraft?.let { (input, t, n) ->
         HapticTargetDialog(
             start = t,
             runtime = runtime,
             onOk = { configured ->
                 hapticDraft = null
                 // The chip's buzz changes in place, keeping its place, When and How.
-                val old = Bindings.targets(currentMappings, input)
-                if (configured != t && t in old) {
-                    val opts = Bindings.options(currentMappings, input, t)
+                // Only that chip: another chip of the same buzz with another How stays as it is.
+                val es = Bindings.entries(currentMappings, input)
+                var k = -1
+                val at = es.indexOfFirst { it.target == t && ++k == n }
+                if (configured != t && at >= 0) {
                     change(
-                        Bindings.setTargets(currentMappings, input, old.map { if (it == t) configured else it }.distinct()) { x ->
-                            if (x == configured) opts else Bindings.options(currentMappings, input, x)
-                        },
+                        Bindings.setEntries(currentMappings, input, es.toMutableList().apply { set(at, es[at].copy(target = configured)) }),
                         Describe.shortTarget(configured) + " set up",
                     )
                 }
