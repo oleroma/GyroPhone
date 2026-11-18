@@ -163,7 +163,11 @@ object MappingPresets {
         fun addZoned(i: BindableInput) {
             val s = i.sources.firstOrNull() as? InputSource.Surface
             if (s != null && s.input.heldSwipe) for (z in 0 until TouchpadSettings.MAX_HOLD_ZONES) add(Bindings.zoneInput(i, z))
-            else add(i)
+            else {
+                add(i)
+                // A stick direction's outer zone (its chips after the separator).
+                Bindings.stickOuter(i)?.let(::add)
+            }
         }
         val surfaces = LinkedHashSet<Pair<Int, String>>()
         for (top in tops.filterNot(Bindings::isTriggerOf)) {
@@ -178,7 +182,7 @@ object MappingPresets {
 
     /** The settings of a touch control a preset brings: everything but its id, look and place. */
     val BUTTON_SETTINGS: Set<String> = setOf(
-        "deadzone", "zones", "longPressMs", "zoneInterrupt", "zoneResume", "followLayers", "surface",
+        "deadzone", "zones", "outerRing", "longPressMs", "zoneInterrupt", "zoneResume", "followLayers", "surface",
         "sharesTouches", "gyro", "fingers",
     )
 
@@ -187,7 +191,7 @@ object MappingPresets {
         is InputSource.Touch -> setOf("followLayers", "sharesTouches")
         is InputSource.TouchTap, is InputSource.TouchLongPress, is InputSource.TouchDoubleTap -> setOf("longPressMs")
         is InputSource.TouchArea -> setOf("zoneInterrupt", "zoneResume", "longPressMs")
-        is InputSource.TouchStick, is InputSource.TouchStickDiagonal -> setOf("deadzone", "zones")
+        is InputSource.TouchStick, is InputSource.TouchStickDiagonal -> setOf("deadzone", "zones", "outerRing")
         // A move, swipe or held direction: the surface's settings (sensitivity, directions...); a tap: its timing.
         is InputSource.Surface -> when (kind.input) {
             SurfaceInput.TAP, SurfaceInput.DOUBLE_TAP, SurfaceInput.LONG_PRESS -> setOf("longPressMs")

@@ -25,6 +25,7 @@ import com.oleroma.gyrophone.core.hid.HidDescriptor
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.ButtonActivators
+import com.oleroma.gyrophone.core.model.DevicePresets
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownController
 import com.oleroma.gyrophone.core.model.MappingProfile
@@ -1644,9 +1645,13 @@ class GamepadRuntime(context: Context) {
         return upgraded
     }
 
-    /** Turns any old touch button switches into tap and long press mappings ([ButtonActivators]), saving the set if anything changed. */
+    /**
+     * Turns any old touch button switches into tap and long press mappings ([ButtonActivators]) and
+     * old any-direction stick Outer mappings into the directions' outer zones ([DevicePresets.foldOuterAny]),
+     * saving the set if anything changed.
+     */
     private fun upgradeButtons(set: Profile): Profile {
-        val (upgraded, _) = ButtonActivators.upgrade(set, emptyList())
+        val upgraded = DevicePresets.foldOuterAny(ButtonActivators.upgrade(set, emptyList()).first)
         if (upgraded === set) return set
         store.save(upgraded)
         return upgraded

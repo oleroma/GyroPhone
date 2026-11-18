@@ -184,6 +184,11 @@ data class TouchControl(
     val cardOrder: List<String> = emptyList(),
     /** The card order last arranged by hand ([cardOrder] after a drag): the editor's Sort > Custom brings it back. */
     val customOrder: List<String> = emptyList(),
+    /**
+     * STICK: how far it is pushed (0..1 past the [deadzone]) for a direction's outer zone (its
+     * chips after the separator, [InputSource.TouchStick.outer]), such as Shift to sprint.
+     */
+    val outerRing: Float = DEFAULT_OUTER_RING,
 ) {
     /** Finger position input [axis]'s settings. */
     fun fingerOf(axis: FingerAxis): FingerAxisSettings = fingers.fingerOf(axis)
@@ -220,6 +225,8 @@ data class TouchControl(
         /** Fractions of the shorter side: over 1 a control can span the long side (and fill the screen). */
         const val MAX_SIZE = 3f
         const val MAX_DEADZONE = 0.6f
+        const val DEFAULT_OUTER_RING = 0.85f
+        const val MIN_OUTER_RING = 0.5f
         const val MAX_SWIPE_SENS = 12f
         const val MAX_RELEASE_TAP_MS = 1000
 

@@ -21,7 +21,7 @@ A pad's axes are read by `PhysicalSticks`: sticks `ls` / `rs`, triggers `lt` / `
 
 `core/.../model/DevicePresets.kt`. A **device preset** says what each physical device does:
 
-- **controller**: any game pad's buttons, sticks (with their directions, Outer ring and click) and triggers (Press and Full pull);
+- **controller**: any game pad's buttons, sticks (with their directions, each with its outer zone after a separator, and click) and triggers (Press and Full pull);
 - **keyboard**: keys (the standard preset sends each key, media and volume keys too, as the same key on the PC);
 - **mouse**: buttons, wheel and movement. On the pad, while the workspace maps the mouse, a mouse attached to the phone is captured (no phone cursor; raw moves and buttons). A captured mouse still counts as attached (Android lists it as a relative mouse then), so the capture stays put; many game pads also list a mouse of their own (the 8BitDo Ultimate Mobile's second USB interface), which is captured the same way and sends nothing;
 - **phone**: the volume rocker ([Volume rocker](phone-volume-black-screen.md));
@@ -42,7 +42,7 @@ Mappings use the same model as touch ([Mapping system](phone-mapping.md)): every
 
 ## Stick and trigger tuning
 
-`StickTuning` per stick, in the preset: the stick is one round vector; nothing below **inner deadzone** 0.10, full from **outer** 0.95; between them shaped by the **curve** (Linear, Soft = squared, Aggressive = square root) and scaled by **sensitivity** 1.0. The **Outer** inputs fire past **outer ring** 0.85. Directions are pies around each axis, **135°** wide by default (30–180°; over 90° overlap so a diagonal presses both). The stick's ⚙ shows a **picture** above its sliders (`ui/StickPie.kt`), like the touchpad's pies: the four direction pies, the inner deadzone (a hole in the middle), the outer deadzone (a grey band at the rim) and the Outer ring (dashed), redrawn while a slider is dragged. Opened from one direction's card, that pie is bright and the others faint. A dot follows the real stick while the ⚙ is open (the controller readers copy the sticks into `runtime.StickWatch` only meanwhile), or the finger on the circle, and the text beside it says what that way presses (directions, how far past the deadzone, and Outer).
+`StickTuning` per stick, in the preset: the stick is one round vector; nothing below **inner deadzone** 0.10, full from **outer** 0.95; between them shaped by the **curve** (Linear, Soft = squared, Aggressive = square root) and scaled by **sensitivity** 1.0. A direction's **outer zone** (its chips after the separator on its card, [Mapping](phone-mapping.md)) fires past the **outer ring** 0.85, set in the stick's ⚙ or by tapping the separator. Directions are pies around each axis, **135°** wide by default (30–180°; over 90° overlap so a diagonal presses both). The stick's ⚙ shows a **picture** above its sliders (`ui/StickPie.kt`), like the touchpad's pies: the four direction pies, the inner deadzone (a hole in the middle), the outer deadzone (a grey band at the rim) and the Outer ring (dashed), redrawn while a slider is dragged. Opened from one direction's card, that pie is bright and the others faint. A dot follows the real stick while the ⚙ is open (the controller readers copy the sticks into `runtime.StickWatch` only meanwhile), or the finger on the circle, and the text beside it says what that way presses (directions, how far past the deadzone, and Outer).
 
 `TriggerTuning`: **Press** from 0.5 of the pull, **Full pull** from 0.95.
 

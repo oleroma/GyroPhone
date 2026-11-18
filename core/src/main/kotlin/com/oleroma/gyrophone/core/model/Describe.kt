@@ -24,8 +24,8 @@ object Describe {
             AxisStage.FULL_PULL -> " full pull"
         }
         is InputSource.Touch -> "Touch ${s.id}"
-        is InputSource.TouchStick -> "Touch stick ${s.id} ${s.axis}" + half(s.half)
-        is InputSource.TouchStickDiagonal -> "Touch stick ${s.id} ${s.diagonal.label}"
+        is InputSource.TouchStick -> "Touch stick ${s.id} ${s.axis}" + half(s.half) + if (s.outer) " outer" else ""
+        is InputSource.TouchStickDiagonal -> "Touch stick ${s.id} ${s.diagonal.label}" + if (s.outer) " outer" else ""
         is InputSource.TouchSwipe -> "Swipe on ${s.id} ${s.axis}" + half(s.half)
         is InputSource.TouchRelease -> "Touch ${s.id} release"
         is InputSource.TouchDoubleTap -> "Touch ${s.id} double tap"

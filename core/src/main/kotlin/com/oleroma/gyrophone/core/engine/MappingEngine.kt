@@ -1160,8 +1160,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private val setTouchHeld = HashMap<String, Long>()
     private val touchSticks = HashMap<String, StickState>()
 
-    /** Deadzone and zones of a touch stick; [diagonalMapped] by [StickDiagonal] ordinal. */
-    private class StickCfg(val deadzone: Float, val zones: StickZones, val diagonalMapped: BooleanArray)
+    /** Deadzone, zones and outer ring of a touch stick; [diagonalMapped] by [StickDiagonal] ordinal. */
+    private class StickCfg(val deadzone: Float, val zones: StickZones, val diagonalMapped: BooleanArray, val outerRing: Float)
 
     private var stickCfgs: Map<String, StickCfg> = emptyMap()
 
@@ -1175,6 +1175,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         var mag = 0f
         var zoned = false
         var dirs = 0
+        /** Past its outer ring ([TouchControl.outerRing]): the directions' outer zones may fire. */
+        var outer = false
     }
 
     // Fingers on touch buttons (see buttonDown), fixed slots so pointer events allocate little.
@@ -1700,7 +1702,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             areaGestures[areaKey(k.id, k.kind)] = st; areaSources[areaKey(k.id, k.kind)] = k; areaTimes[k.id] = st; tapList.add(st)
         }
         stickCfgs = w.touchControls.filter { it.kind == TouchKind.STICK }.associate { c ->
-            c.id to StickCfg(c.deadzone.coerceIn(0f, TouchControl.MAX_DEADZONE), c.zones, BooleanArray(StickDiagonal.entries.size))
+            c.id to StickCfg(
+                c.deadzone.coerceIn(0f, TouchControl.MAX_DEADZONE), c.zones, BooleanArray(StickDiagonal.entries.size),
+                c.outerRing.coerceIn(TouchControl.MIN_OUTER_RING, 1f),
+            )
         }
         releaseHeld()
         for (d in deviceList) d.pad = resolvePad(d.device)
@@ -2147,6 +2152,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 v.mag = mag
                 v.zoned = cfg != null && cfg.zones != StickZones.OVERLAP
                 v.dirs = if (!v.zoned || mag == 0f) 0 else zoneDirs(v.x, v.y, cfg!!)
+                v.outer = mag > 0f && mag >= (cfg?.outerRing ?: TouchControl.DEFAULT_OUTER_RING)
             }
         }
         onChange?.run()
@@ -3949,7 +3955,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
         is InputSource.TouchStick -> {
             val v = touchSticks[source.id]
-            when {
+            val plain = when {
                 v == null -> 0f
                 v.zoned && source.half != AxisHalf.FULL -> {
                     val bit = when (source.axis) {
@@ -3961,6 +3967,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
                 else -> half(if (source.axis == StickAxis.X) v.x else v.y, source.half)
             }
+            // A direction's outer zone: that direction pressed, the stick past its outer ring.
+            if (!source.outer) plain
+            else if (v != null && v.outer && source.half != AxisHalf.FULL && plain >= PRESS_THRESHOLD) 1f else 0f
         }
         // Upgraded to surface inputs when the workspace loads (Bindings.upgradeSwipes).
         is InputSource.TouchSwipe -> 0f
@@ -3977,7 +3986,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         is InputSource.Finger -> fingerValue(source)
         is InputSource.TouchStickDiagonal -> {
             val v = touchSticks[source.id]
-            if (v != null && v.dirs and (DIR_DIAGONAL shl source.diagonal.ordinal) != 0) v.mag else 0f
+            val on = v != null && v.dirs and (DIR_DIAGONAL shl source.diagonal.ordinal) != 0
+            when {
+                !on -> 0f
+                !source.outer -> v!!.mag
+                v!!.outer && v.mag >= PRESS_THRESHOLD -> 1f
+                else -> 0f
+            }
         }
     }
 
