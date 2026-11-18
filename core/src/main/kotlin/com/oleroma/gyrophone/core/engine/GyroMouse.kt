@@ -185,7 +185,7 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
     }
 
     /** An axis glides, or one was on last sample (turning it off may start a glide): [route] wants every sample. */
-    val coasting: Boolean get() = math.coasting
+    val coasting: Boolean get() = !resetPending && math.coasting
 
     /**
      * One sample (angular velocity [gx], [gy], [gz] in rad/s, Android sensor frame) sent where gyro
@@ -203,12 +203,25 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
 
     /** As [route], for a sample already turned and measured in its space ([motion], [inSpace]). */
     fun route(m: Motion, dtSeconds: Float, routes: List<Mapping>, axes: Int = MappingEngine.ALL_GYRO): GyroMath.Routed {
+        if (resetPending) reset()
         val s = settings
         return math.step(m.yaw, m.pitch, m.roll, dtSeconds, config(s, routes), axes,
             tightening ?: s.tighteningThreshold, smoothing ?: s.smoothingThreshold)
     }
 
-    fun reset() = math.reset()
+    /** Starts again: no sub-count remainder, smoothing or glide left. On the sampling thread only. */
+    fun reset() {
+        resetPending = false
+        math.reset()
+    }
+
+    /** [reset] asked from another thread: the sampling thread does it before its next [route]. */
+    @Volatile private var resetPending = false
+
+    /** Asks for a [reset] from any thread; the sampling thread does it at its next [route] (or [reset]). */
+    fun requestReset() {
+        resetPending = true
+    }
 
     private enum class Resolved { LANDSCAPE_LEFT, LANDSCAPE_RIGHT, PORTRAIT, PORTRAIT_UPSIDE_DOWN }
 

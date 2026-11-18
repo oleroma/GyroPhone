@@ -1212,8 +1212,11 @@ class GamepadRuntime(context: Context) {
     }
 
     fun setDisplayRotation(degrees: Int) {
+        // Called again on every return to the app: unchanged, nothing held (a tilt) is let go.
+        if (degrees == gyroMouse.displayRotation) return
         gyroMouse.displayRotation = degrees
-        gyroMouse.reset()
+        // On the gyro's thread, before its next sample ([GyroMouse.requestReset]).
+        gyroMouse.requestReset()
         tiltShake.displayRotation = degrees
         tiltShake.reset()
         // The pose is kept in the screen's frame, which just turned.
@@ -1649,7 +1652,7 @@ class GamepadRuntime(context: Context) {
     /** Gyro settings follow the active workspace. */
     private fun applyWorkspaceGyro() {
         gyroMouse.settings = _activeProfile.value.workspace(_workspaceIndex.value).gyro
-        gyroMouse.reset()
+        gyroMouse.requestReset()
         updateGyro()
     }
 
