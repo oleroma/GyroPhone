@@ -295,7 +295,8 @@ private fun CapsuleChip(
 ) {
     val tap by rememberUpdatedState(onTap)
     Surface(
-        modifier = modifier.pointerInput(Unit) { detectTapGestures(onTap = { tap() }) },
+        // A held press is no tap: it starts a reorder ([CapsuleRow]), also when let go without moving.
+        modifier = modifier.pointerInput(Unit) { detectTapGestures(onLongPress = {}, onTap = { tap() }) },
         shape = RoundedCornerShape(50),
         color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color(0xE02B313A),
     ) {

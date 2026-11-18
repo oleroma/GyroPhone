@@ -137,8 +137,8 @@ import com.oleroma.gyrophone.core.model.FingerAxis
 import com.oleroma.gyrophone.core.model.FingerAxisSettings
 import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
+import com.oleroma.gyrophone.core.model.DevicePresets
 import com.oleroma.gyrophone.core.model.GyroMode
-import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.InputSource
@@ -471,6 +471,8 @@ fun PadScreen(
     val profile by runtime.activeProfile.collectAsStateWithLifecycle().heldWhile(hidden)
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle().heldWhile(hidden)
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
+    // The app in front: the frames stop while it isn't and the PC's overlay is off (polls are not paused with the activity).
+    val onScreen by runtime.onScreen.collectAsStateWithLifecycle()
     val library by runtime.buttonLibrary.collectAsStateWithLifecycle()
     /** A library button being removed (asks first). */
     var removingLib by remember { mutableStateOf<LibraryButton?>(null) }
@@ -617,6 +619,8 @@ fun PadScreen(
     /** Pointers currently routed to engine.buttonDown/Move/Up. */
     val buttonFingers = remember { HashSet<Long>() }
     var fingersOnButtons by remember { mutableIntStateOf(0) }
+    /** Fingers on the touchpad in play (its frame's labels follow them every frame, [ValueBars]). */
+    var fingersOnPad by remember { mutableIntStateOf(0) }
     var pressedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var latchedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
 
@@ -653,12 +657,15 @@ fun PadScreen(
     /** Quick-tap run for the reveal: last touch-down (event nanos) and taps so far. */
     val tapRun = remember { LongArray(2) }
 
+    /** Bumped by each start of the play touch handler: only the newest one's end lets go of what is held. */
+    val playGen = remember { IntArray(1) }
+
     /**
-     * Restarts the play touch handler on layout changes but not on gyro changes, so the gyro
-     * corner switching the mode leaves held sticks and buttons alone.
+     * Restarts the play touch handler only when what it reads changes ([Profile.playTouchKey]): a
+     * slider's saved value, a gyro change (the gyro corner) or Set orientation leaves held sticks and
+     * buttons alone.
      */
-    val playKey =
-        remember(profile) { profile.copy(workspaces = profile.workspaces.map { it.copy(gyro = GyroSettings()) }) }
+    val playKey = remember(profile, wsIndex) { profile.playTouchKey(wsIndex) }
     val shown = draft ?: profile
     val shownIndex = (if (editing) editIndex else wsIndex).coerceIn(0, shown.workspaces.lastIndex)
     val ws = shown.workspace(shownIndex)
@@ -698,6 +705,8 @@ fun PadScreen(
     val inUseShown = remember { arrayOf<List<Mapping>>(emptyList()) }
     val liveWatchUntil = remember { LongArray(1) }
     var liveWatching by remember { mutableStateOf(false) }
+    // Read fresh by the play handler, which a long press time saved from a slider doesn't restart.
+    val longPressMs by rememberUpdatedState(ws.longPressMs)
 
     /** The touch mappings in use that light or label their control: not haptics, empty ones or gyro cards. */
     fun shownInUse(): List<Mapping> {
@@ -728,7 +737,7 @@ fun PadScreen(
 
     /** A touch began or ended: watch the mappings for a while (gestures fire after lifts). */
     fun watchLive() {
-        liveWatchUntil[0] = SystemClock.uptimeMillis() + ws.longPressMs + LIVE_LINGER_MS
+        liveWatchUntil[0] = SystemClock.uptimeMillis() + longPressMs + LIVE_LINGER_MS
         if (!liveWatching) liveWatching = true
     }
 
@@ -738,6 +747,7 @@ fun PadScreen(
         swipeLines.clear()
         moveRulers.clear()
         fingersOnButtons = 0
+        fingersOnPad = 0
         for (id in stickPos.keys.toList()) runtime.engine.setTouchStick(id, 0f, 0f)
         stickPos.clear()
         runtime.wifi.overlay.clearTouches()
@@ -949,6 +959,14 @@ fun PadScreen(
                 val next = change(old)
                 WorkspaceDefaults.markOwn(old, if (Bindings.sameSwipeInputs(old, next)) next else Bindings.matchSwipeModes(next))
             })
+        }
+
+        /** The edited workspace's layers changed; a removed one also goes from its pinned device preset ([Profile.withSets]). */
+        fun editSets(sets: List<MappingSet>, removed: Int?) {
+            editWorkspace { it.withSets(sets, removed) }
+            if (removed == null) return
+            val d = draft ?: return
+            draft = DevicePresets.dropSet(d, d.workspace(editIndex).devicePreset, removed)
         }
 
         fun isCorner(d: Profile, id: String) = d.corners.any { it.id == id }
@@ -1484,6 +1502,7 @@ fun PadScreen(
                 // Hidden under a menu page: a finger still down from before acts on nothing (and the
                 // handler starts afresh, with no finger of before, when the pad shows again).
                 if (hidden) return@pointerInput
+                val gen = ++playGen[0]
                 val workspace = profile.workspace(wsIndex)
                 // Gyro displays are only drawn: they take no touches.
                 val controls = workspace.touchControls.filterNot { it.kind == TouchKind.DISPLAY }
@@ -1694,7 +1713,7 @@ fun PadScreen(
                     if (f.outside) count(outsideCount, f.origin!!.id, TouchAreaKind.OUTSIDE, -1)
                 }
 
-                awaitPointerEventScope {
+                try { awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
                         // Event time for the touchpad's speed math (processing time jitters).
@@ -1894,10 +1913,15 @@ fun PadScreen(
                                 chordFired[0] = false
                             }
                             if (fingersOnButtons != buttonFingers.size) fingersOnButtons = buttonFingers.size
+                            if (fingersOnPad != padOwner.size) fingersOnPad = padOwner.size
                             watchLive()
                             refreshHighlights()
                         }
                     }
+                } } finally {
+                    // Restarted (a workspace switch, a layout change) or gone: what this handler held lets go
+                    // now, not on the next touch. A newer handler already started owns what is held.
+                    if (playGen[0] == gen) releaseAll()
                 }
             }
         }
@@ -1961,7 +1985,16 @@ fun PadScreen(
         // The buttons' frames (their mappings active now, their Toggles, their sliders' values), read
         // once for the frames behind the buttons and the bars and frames over them.
         val frames = visuals.liveMappings
-        val valueBars = if (editing || covered || !(frames || visuals.positionRuler)) null else {
+        // Whether the PC's overlay is on (it shows the frames too), polled in play while the pad shows.
+        val overlayOn by produceState(runtime.wifi.overlay.wanted, editing, hidden) {
+            while (!editing && !hidden) {
+                value = runtime.wifi.overlay.wanted
+                delay(OVERLAY_ON_POLL_MS)
+            }
+        }
+        // Hidden under a menu page, or the app in the background with the PC's overlay off: no frames
+        // (nothing would show them).
+        val valueBars = if (editing || covered || hidden || (!onScreen && !overlayOn) || !(frames || visuals.positionRuler)) null else {
             // Only the buttons and mappings decide the marks: a workspace edit that changes neither (a
             // slider's saved value) keeps the overlay as it is.
             val valueMarks = remember(ws.touchControls, ws.mappings, ws.padFingers, ws.gyro.gameCountsPer360, w, h, portrait, frames, visuals.positionRuler) {
@@ -1995,10 +2028,12 @@ fun PadScreen(
                     }
                 }
             }
+            // Every frame only while something can change them: a finger on the touchpad (when it has a
+            // frame) or a button, a press, or a while after a touch; else at the idle rate.
             val padMarked = valueMarks.any { it.id.isEmpty() }
             rememberValueBars(
                 runtime.engine, valueMarks,
-                { padMarked || fingersOnButtons > 0 || pressedIds.isNotEmpty() || liveWatching },
+                { (padMarked && fingersOnPad > 0) || fingersOnButtons > 0 || pressedIds.isNotEmpty() || liveWatching },
                 bars = visuals.positionRuler, frames = frames,
             )
         }
@@ -2067,13 +2102,7 @@ fun PadScreen(
                         runtime.wifi.overlay.uiLit = null
                     }
                 }
-                // The frames and bars as the pad shows them, built only while the PC's overlay is on.
-                val overlayOn by produceState(runtime.wifi.overlay.wanted) {
-                    while (true) {
-                        value = runtime.wifi.overlay.wanted
-                        delay(OVERLAY_ON_POLL_MS)
-                    }
-                }
+                // The frames and bars as the pad shows them, built only while the PC's overlay is on ([overlayOn]).
                 val frameDensity = LocalDensity.current
                 val barColor = visuals.rulerColor.toInt()
                 LaunchedEffect(valueBars, overlayOn, frameDensity, barColor) {
@@ -3136,7 +3165,7 @@ fun PadScreen(
                         sets = ws.sets,
                         editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
                         onEditSet = { mapSet = it },
-                        onSetsChange = { sets, removed -> editWorkspace { it.withSets(sets, removed) } },
+                        onSetsChange = { sets, removed -> editSets(sets, removed) },
                         zoneSettings = ws.touchpad,
                         onZoneSettings = { a, b ->
                             editWorkspace { it.copy(touchpad = it.touchpad.copy(holdZones = a, dirHoldZones = b)) }
@@ -3252,7 +3281,7 @@ fun PadScreen(
                             sets = ws.sets,
                             editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
                             onEditSet = { mapSet = it },
-                            onSetsChange = { sets, removed -> editWorkspace { it.withSets(sets, removed) } },
+                            onSetsChange = { sets, removed -> editSets(sets, removed) },
                             zoneSettings = if (sel.swipes) sel.surfaceSettings(ws.touchpad) else null,
                             onZoneSettings = { a, b ->
                                 updateControl(sel.id) { it.copy(surface = it.ownSurface.copy(holdZones = a, dirHoldZones = b)) }

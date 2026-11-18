@@ -44,12 +44,29 @@ object WorkspaceEdits {
 
 /**
  * This workspace with mapping [sets]; set [removed] (if any) goes with its mappings and the layer
- * actions that switch to it, on the controls, the touchpad, the keyboard and every pad.
+ * actions that switch to it, on the controls, the touchpad, the keyboard, the mouse, the phone's keys
+ * and every pad, and with the buttons' own gyro settings in it ([TouchControl.gyro]).
+ * Its pinned device preset keeps them: [Profile.withSets] removes them there too.
  */
 fun Workspace.withSets(sets: List<MappingSet>, removed: Int?): Workspace =
     if (removed == null) copy(sets = sets) else copy(
         sets = sets,
         mappings = Bindings.dropSet(mappings, removed),
         keyboard = Bindings.dropSet(keyboard, removed),
+        mouse = Bindings.dropSet(mouse, removed),
+        phone = Bindings.dropSet(phone, removed),
         pads = pads.map { it.copy(mappings = Bindings.dropSet(it.mappings, removed)) },
+        touchControls = touchControls.map { c ->
+            if (c.gyro.none { it.set == removed }) c else c.copy(gyro = c.gyro.filterNot { it.set == removed })
+        },
     )
+
+/**
+ * This profile with workspace [index]'s mapping [sets] ([Workspace.withSets]). A [removed] set also
+ * goes from the device preset that workspace pins ([DevicePresets.dropSet]), so no button there
+ * switches to a layer that no longer exists (and a new layer reusing its id starts empty).
+ */
+fun Profile.withSets(index: Int, sets: List<MappingSet>, removed: Int?): Profile {
+    val next = updateWorkspace(index) { it.withSets(sets, removed) }
+    return if (removed == null) next else DevicePresets.dropSet(next, next.workspace(index).devicePreset, removed)
+}
