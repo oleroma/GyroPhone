@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.ui
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -30,22 +31,49 @@ fun rememberExportFile(onDone: (String) -> Unit): (name: String, text: String) -
     val done by rememberUpdatedState(onDone)
     var pending by remember { mutableStateOf<String?>(null) }
     val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
-        val text = pending
+        val held = pending
         pending = null
-        if (uri == null || text == null) return@rememberLauncherForActivityResult
         scope.launch {
-            val ok = withContext(Dispatchers.IO) {
-                runCatching {
-                    context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray(Charsets.UTF_8)) } != null
-                }.getOrDefault(false)
+            val result = withContext(Dispatchers.IO) {
+                val stash = pendingExportFile(context)
+                // The app may have been restarted while the picker was open (its memory gone): the
+                // text waits in the cache too.
+                val text = held ?: runCatching { stash.readText(Charsets.UTF_8) }.getOrNull()
+                stash.delete()
+                when {
+                    uri == null -> null
+                    text == null -> {
+                        // The picker already made the file: don't leave it empty.
+                        runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) }
+                        "Could not save the file"
+                    }
+                    writeExport(context, uri, text) -> "Exported"
+                    else -> "Could not save the file"
+                }
             }
-            done(if (ok) "Exported" else "Could not save the file")
+            if (result != null) done(result)
         }
     }
     return { name, text ->
         pending = text
-        saver.launch(name)
+        scope.launch {
+            withContext(Dispatchers.IO) { runCatching { pendingExportFile(context).writeText(text, Charsets.UTF_8) } }
+            saver.launch(name)
+        }
     }
+}
+
+/** Where the text being exported waits while the "Save to" picker is open. */
+private fun pendingExportFile(context: Context) = java.io.File(context.cacheDir, "pending-export.json")
+
+/** Writes [text] to the new document [uri]: truncating where the provider allows it, else plain "w" (it is new and empty). */
+private fun writeExport(context: Context, uri: Uri, text: String): Boolean {
+    val bytes = text.toByteArray(Charsets.UTF_8)
+    for (mode in arrayOf("wt", "w")) {
+        val ok = runCatching { context.contentResolver.openOutputStream(uri, mode)?.use { it.write(bytes) } != null }.getOrDefault(false)
+        if (ok) return true
+    }
+    return false
 }
 
 /**

@@ -164,6 +164,13 @@ import kotlinx.serialization.json.Json
 
 private const val MAX_RECENT = 12
 private const val MAX_UNDO = 50
+
+/**
+ * One undo (or redo) step of the mapping editor: the [mappings] to put back, and the [control] when a preset
+ * changed its settings too; or, for a step that changed more than this button (a named sensitivity deleted),
+ * the whole [workspace] as it was, which Undo puts back exactly.
+ */
+private data class UndoStep(val mappings: List<Mapping>, val control: TouchControl? = null, val workspace: Workspace? = null)
 private const val MIN_SPLIT = 0.25f
 private const val MAX_SPLIT = 0.75f
 private const val PREF_SPLIT = "map.split"
@@ -520,6 +527,11 @@ internal fun ControlMappingScreen(
     timing: (BindableInput) -> Pair<Int, Int>? = { null },
     /** The workspace a touch control is in: presets bring only the settings that change what it does there. */
     workspace: Workspace? = null,
+    /**
+     * The level edited (a workspace, edit mode's draft or the Defaults): its gyro and touchpad settings
+     * convert and centre sensitivity chips. Null = [workspace], else the running workspace.
+     */
+    level: Workspace? = null,
     /** Changes the touch control (a preset's settings); null = presets bring mappings only. */
     onControlChange: (((TouchControl) -> TouchControl) -> Unit)? = null,
     /** Its label, edited in the title ([LabelField]); null = the title is not editable. */
@@ -531,6 +543,9 @@ internal fun ControlMappingScreen(
 ) {
     // The edited set seen as Base, so the Base-only Bindings helpers edit it.
     val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
+
+    /** The workspace whose game and sensitivities the sensitivity chips are worked out with. */
+    fun sensLevel(): Workspace = level ?: workspace ?: runtime.engine.workspace
 
     /** The How (null = Held) and Repeat count of the button or key [src] belongs to, or null when it is no button's. */
     fun buttonHowOf(src: InputSource): Pair<How?, Int>? {
@@ -829,11 +844,12 @@ internal fun ControlMappingScreen(
     val selectedAllowed = remember(selected) { selected?.let(::allowedTargets).orEmpty() }
 
     // Each step: the mappings before, and the control before when a preset changed its settings too.
-    val undo = remember(control.id) { mutableStateListOf<Pair<List<Mapping>, TouchControl?>>() }
+    val undo = remember(control.id) { mutableStateListOf<UndoStep>() }
     // Each undone step, to redo: the mappings after it, and the control after it when the step changed it too.
-    val redo = remember(control.id) { mutableStateListOf<Pair<List<Mapping>, TouchControl?>>() }
+    val redo = remember(control.id) { mutableStateListOf<UndoStep>() }
     var recent by remember { mutableStateOf(loadRecent(runtime)) }
-    var hapticDraft by remember { mutableStateOf<Pair<BindableInput, OutputTarget>?>(null) }
+    // The buzz chip being set up: its input, target and which of that target's chips (n).
+    var hapticDraft by remember { mutableStateOf<Triple<BindableInput, OutputTarget, Int>?>(null) }
     var layerDraft by remember { mutableStateOf<Pair<BindableInput, OutputTarget.Layer>?>(null) }
     var setMenu by remember { mutableStateOf<MappingSet?>(null) }
     var capturing by remember { mutableStateOf(false) }
@@ -841,22 +857,32 @@ internal fun ControlMappingScreen(
         mutableFloatStateOf(runtime.uiPref(PREF_SPLIT)?.toFloatOrNull()?.coerceIn(MIN_SPLIT, MAX_SPLIT) ?: 0.5f)
     }
 
+    /** Puts back [step] (undoing or redoing it) and returns the step that takes it back again. */
+    fun apply(step: UndoStep): UndoStep {
+        // A whole-workspace step (a named sensitivity deleted): the workspace exactly as it was, its mappings included.
+        if (step.workspace != null) {
+            var now: Workspace? = null
+            editWorkspace { w -> now = w; step.workspace }
+            return UndoStep(allMappings, null, now)
+        }
+        val back = UndoStep(allMappings, if (step.control != null) currentControl else null)
+        emit(step.mappings)
+        // Undo brings back a preset's settings, not the card order arranged since.
+        if (step.control != null) onControlChange?.invoke { step.control.copy(cardOrder = it.cardOrder, customOrder = it.customOrder) }
+        return back
+    }
+
     fun undoLast() {
-        val (prev, was) = undo.removeLastOrNull() ?: return
+        val step = undo.removeLastOrNull() ?: return
         // Its snackbar's Undo would undo the change before it.
         snackbar.currentSnackbarData?.dismiss()
-        redo.add(allMappings to (if (was != null) currentControl else null))
-        emit(prev)
-        // Undo brings back a preset's settings, not the card order arranged since.
-        if (was != null) onControlChange?.invoke { was.copy(cardOrder = it.cardOrder, customOrder = it.customOrder) }
+        redo.add(apply(step))
     }
 
     fun redoLast() {
-        val (next, was) = redo.removeLastOrNull() ?: return
+        val step = redo.removeLastOrNull() ?: return
         snackbar.currentSnackbarData?.dismiss()
-        undo.add(allMappings to (if (was != null) currentControl else null))
-        emit(next)
-        if (was != null) onControlChange?.invoke { was.copy(cardOrder = it.cardOrder, customOrder = it.customOrder) }
+        undo.add(apply(step))
     }
 
     /**
@@ -869,7 +895,7 @@ internal fun ControlMappingScreen(
         // Mapping something to a cleared action replaces the clear.
         val all = Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(next, currentSet)))
         if (all == prev && controlBefore == null) return
-        undo.add(prev to controlBefore)
+        undo.add(UndoStep(prev, controlBefore))
         if (undo.size > MAX_UNDO) undo.removeAt(0)
         redo.clear()
         emit(all)
@@ -890,7 +916,7 @@ internal fun ControlMappingScreen(
         addRecent(t)
         var next = Bindings.addTarget(currentMappings, input, t)
         if (t is OutputTarget.TouchSens) {
-            val base = runtime.engine.workspace.touchpad.sensitivity
+            val base = sensLevel().touchpad.sensitivity
             next = next.map { if (Bindings.belongs(it, input) && it.target == t && it.range == null) it.copy(range = AxisRange(base * 0.8f, base * 1.2f)) else it }
         }
         val newRange = when (t) {
@@ -904,7 +930,7 @@ internal fun ControlMappingScreen(
         }
         if (t is OutputTarget.GyroSens) {
             // It needs a range to do anything: around the sensitivity it would change.
-            val g = runtime.engine.workspace.gyro
+            val g = sensLevel().gyro
             val base = if (t.named > 0) g.sensitivity else g.sensitivityOf(if (t.axis == MotionAxis.NONE) MotionAxis.ROLL else t.axis)
             next = next.map { if (Bindings.belongs(it, input) && it.target == t && it.range == null) it.copy(range = AxisRange(base * 0.8f, base * 1.2f)) else it }
         }
@@ -1163,7 +1189,7 @@ internal fun ControlMappingScreen(
         return when (chip.target) {
             is OutputTarget.PadAxis -> "%.0f–%.0f %%".format(r.from * 100, r.to * 100)
             is OutputTarget.GyroSens -> {
-                val c = runtime.engine.workspace.gyro.gameCountsPer360
+                val c = sensLevel().gyro.gameCountsPer360
                 if (c > 0f) "%.2f–%.2f".format(GameSens.rws(r.from, c), GameSens.rws(r.to, c)) else "%.1f–%.1f".format(r.from, r.to)
             }
             is OutputTarget.TouchSens -> "%.2f–%.2f".format(r.from, r.to)
@@ -1595,6 +1621,7 @@ internal fun ControlMappingScreen(
 
     val trackMove by rememberUpdatedState<(Offset) -> Unit> { moveDrag(it) }
     val trackEnd by rememberUpdatedState<() -> Unit> { endDrag() }
+    val trackCancel by rememberUpdatedState<() -> Unit> { cancelDrag() }
 
     // While dragging near the top or bottom of the actions pane, scroll it; faster closer to the edge.
     // A card may be pulled past the edge (full speed); targets and chips scroll only inside the pane.
@@ -2066,8 +2093,24 @@ internal fun ControlMappingScreen(
                                     val t = m.target
                                     (t is OutputTarget.GyroSens && !ns.touch && t.named == ns.id) || (t is OutputTarget.TouchSens && ns.touch && t.named == ns.id)
                                 }
-                                if (currentMappings.any(gone)) change(currentMappings.filterNot(gone), "Removed " + ns.name)
-                                editWorkspace { w -> NamedSens.delete(w, ns.id) }
+                                // One step that Undo takes back exactly: the whole workspace as it was before (the
+                                // sensitivity, its slider chips and value, every link to it and this button's chips).
+                                // Taken before this button's chips go, so the step holds them too.
+                                val prev = allMappings
+                                var before: Workspace? = null
+                                editWorkspace { w -> if (before == null) before = w; NamedSens.delete(w, ns.id) }
+                                if (currentMappings.any(gone)) emit(Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(currentMappings.filterNot(gone), currentSet))))
+                                val was = before
+                                if (was != null) {
+                                    undo.add(UndoStep(prev, null, was))
+                                    if (undo.size > MAX_UNDO) undo.removeAt(0)
+                                    redo.clear()
+                                    scope.launch {
+                                        snackbar.currentSnackbarData?.dismiss()
+                                        val result = snackbar.showSnackbar("Deleted " + ns.name, actionLabel = "Undo", duration = SnackbarDuration.Short)
+                                        if (result == SnackbarResult.ActionPerformed) undoLast()
+                                    }
+                                }
                             },
                         )
                     }
@@ -2115,7 +2158,10 @@ internal fun ControlMappingScreen(
                                 if (dragged == null) continue
                                 val c = e.changes.firstOrNull { it.pressed }
                                 if (c == null) {
-                                    trackEnd()
+                                    // A lift drops it. A cancel (a call, palm rejection) comes as lifts
+                                    // already consumed: the drag stops and nothing changes. (A finger lifted
+                                    // in the event before a cancel comes again unpressed and unconsumed.)
+                                    if (e.changes.none { it.previousPressed && !it.isConsumed }) trackCancel() else trackEnd()
                                     continue
                                 }
                                 e.changes.forEach { it.consume() }
@@ -2192,9 +2238,9 @@ internal fun ControlMappingScreen(
                                             // Every action of the control in the order shown, the ones mapped in any layer first.
                                             val all = sorted(control, inputs, order)
                                             val keys = all.map { orderKey(control, it) }.distinct()
+                                            // Any of the card's lines counts: its triggers, Wheres, zones and the Swipe card's arrows.
                                             val mapped = all.filter { input ->
-                                                val zones = (0 until zonesOf(input)).map { z -> if (z == 0) input else Bindings.zoneInput(input, z) }
-                                                zones.any { zi -> mappings.any { m -> zi.sources.any { it == m.source } } }
+                                                cardInputs(input).any { ti -> mappings.any { m -> ti.sources.any { Bindings.sameSource(it, m.source) } } }
                                             }.mapTo(HashSet()) { orderKey(control, it) }
                                             saveOrder(keys.filter { it in mapped } + keys.filter { it !in mapped } + order.filter { it !in keys })
                                         },
@@ -2483,8 +2529,8 @@ internal fun ControlMappingScreen(
             swipe = Triggers.isSwipe(input.sources.first()),
             analog = chip.target is OutputTarget.PadAxis || chip.target is OutputTarget.MouseAxis,
             options = Bindings.entry(view, ti, chip.target, chip.n)?.options,
-            range = chipRange(chip.target, Bindings.entry(view, ti, chip.target, chip.n)?.range, runtime.engine.workspace.gyro),
-            value = chipValue(chip.target, zi.sources.first(), Bindings.entry(view, ti, chip.target, chip.n), runtime.engine.workspace.gyro),
+            range = chipRange(chip.target, Bindings.entry(view, ti, chip.target, chip.n)?.range, sensLevel().gyro, sensLevel().touchpad.sensitivity),
+            value = chipValue(chip.target, zi.sources.first(), Bindings.entry(view, ti, chip.target, chip.n), sensLevel().gyro),
             position = zi.sources.first() is InputSource.Finger,
             buttonHow = ti.sources.firstOrNull()?.let { chipButtonHow(it, chip.target) },
             onApply = { tr, o, w, r, pd ->
@@ -2528,7 +2574,7 @@ internal fun ControlMappingScreen(
             onTargetSettings = if (Describe.isHaptic(chip.target)) {
                 {
                     chipDialog = null
-                    hapticDraft = ti to chip.target
+                    hapticDraft = Triple(ti, chip.target, chip.n)
                 }
             } else null,
             targetOptions = if (chip.target is OutputTarget.SetOrientation) {
@@ -2595,8 +2641,9 @@ internal fun ControlMappingScreen(
                         setMenu = null
                         if (editSet == st.id) onEditSet(MappingSet.BASE)
                         onSetsChange?.invoke(sets.filterNot { it.id == st.id }, st.id)
-                        // The undo steps hold the deleted layer's mappings: undoing one would bring them back without it.
+                        // The undo and redo steps hold the deleted layer's mappings: either would bring them back without it.
                         undo.clear()
+                        redo.clear()
                         snackbar.currentSnackbarData?.dismiss()
                     }) { Text("Delete", color = colors.error) }
                 } else {
@@ -2653,20 +2700,20 @@ internal fun ControlMappingScreen(
             )
         }
     }
-    hapticDraft?.let { (input, t) ->
+    hapticDraft?.let { (input, t, n) ->
         HapticTargetDialog(
             start = t,
             runtime = runtime,
             onOk = { configured ->
                 hapticDraft = null
                 // The chip's buzz changes in place, keeping its place, When and How.
-                val old = Bindings.targets(currentMappings, input)
-                if (configured != t && t in old) {
-                    val opts = Bindings.options(currentMappings, input, t)
+                // Only that chip: another chip of the same buzz with another How stays as it is.
+                val es = Bindings.entries(currentMappings, input)
+                var k = -1
+                val at = es.indexOfFirst { it.target == t && ++k == n }
+                if (configured != t && at >= 0) {
                     change(
-                        Bindings.setTargets(currentMappings, input, old.map { if (it == t) configured else it }.distinct()) { x ->
-                            if (x == configured) opts else Bindings.options(currentMappings, input, x)
-                        },
+                        Bindings.setEntries(currentMappings, input, es.toMutableList().apply { set(at, es[at].copy(target = configured)) }),
                         Describe.shortTarget(configured) + " set up",
                     )
                 }
@@ -3608,10 +3655,10 @@ private const val MAX_TOUCH_SENS_TYPED = 50f
 /**
  * The Range of a chip of [target] ([ChipRange]), null for a target that takes none: a game pad
  * axis or trigger in %, Gyro sensitivity in RWS when [g]'s game is known, else counts per
- * degree, its slider up to the Slider cap (App › Gyro).
+ * degree, its slider up to the Slider cap (App › Gyro). A new Touch sensitivity range is centred on [touchSens].
  */
 @Composable
-private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings): ChipRange? {
+private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings, touchSens: Float): ChipRange? {
     val runtime = LocalContext.current.runtime
     val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
     val capCounts by runtime.sensCapCounts.collectAsStateWithLifecycle()
@@ -3641,7 +3688,7 @@ private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings
         }
 
         is OutputTarget.TouchSens -> {
-            val base = runtime.engine.workspace.touchpad.sensitivity
+            val base = touchSens
             ChipRange(
                 current, AxisRange(base * 0.8f, base * 1.2f), null, 0f..10f, 0f..MAX_TOUCH_SENS_TYPED, 0.05f, { "%.2f".format(it) },
                 "The touchpad's Move sensitivity at the input's 0 and at full; it changes evenly between them while " +

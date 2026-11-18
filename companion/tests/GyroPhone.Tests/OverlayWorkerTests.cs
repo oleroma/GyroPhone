@@ -43,6 +43,37 @@ public class OverlayWorkerTests
     }
 
     [Fact]
+    public void StartingAgainMarksSilenceOnTheFadesClock()
+    {
+        var h = new Harness();
+        // Far from Environment.TickCount64: a stamp from another clock would fade at once.
+        h.Clock.NowUs = Environment.TickCount64 * 1000 + 10_000_000_000;
+        var shape = new GyroPhone.Host.Settings.OverlaySettings { Kind = GyroPhone.Host.Settings.OverlayKind.Shape, Shown = true };
+        h.Settings.Overlays.Add(shape);
+        h.Settings.OverlayRestFade.On = true;
+        h.Settings.OverlayRestFade.WhenSilent = true;
+        h.Overlays.StartAgain();
+        h.Overlays.Pump();
+        Assert.False(h.Overlays.OverlayResting(shape.Id));
+        h.Clock.AdvanceMs(h.Settings.OverlayRestFade.QuietMs);
+        Assert.True(h.Overlays.OverlayResting(shape.Id));
+    }
+
+    [Fact]
+    public void WindowsReadACopyThatAChangeSwaps()
+    {
+        var h = new Harness();
+        var id = h.Overlays.AddOverlay(GyroPhone.Host.Settings.OverlayKind.Shape);
+        var before = h.Overlays.WindowSettings(id)!;
+        Assert.NotSame(h.Settings.Overlays.Find(o => o.Id == id), before);
+        h.Overlays.UpdateOverlaySettings(id, o => o.Opacity = 0.5f);
+        Assert.NotEqual(0.5f, before.Opacity);
+        Assert.Equal(0.5f, h.Overlays.WindowSettings(id)!.Opacity);
+        h.Overlays.RemoveOverlay(id);
+        Assert.Null(h.Overlays.WindowSettings(id));
+    }
+
+    [Fact]
     public void AFullInboxDropsTheNewestAndALostMarkStartsAgain()
     {
         var inbox = new OverlayInbox();

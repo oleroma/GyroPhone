@@ -27,8 +27,9 @@ public sealed class RawInputListener : IKeyMouseListener, IDisposable
     private readonly HashSet<PcPress> _held = new();
     private readonly HashSet<PcPress> _pressed = new();
     private int _wheelUp, _wheelDown;
+    // The listen under way (null: none), and the thread of the latest one (the next waits for it to have let go).
+    private RunState? _run;
     private Thread? _thread;
-    private IntPtr _hwnd;
     private readonly byte[] _buffer = new byte[256];
     // Kept alive while the window class exists: native code calls it.
     private WndProc? _proc;
@@ -36,35 +37,46 @@ public sealed class RawInputListener : IKeyMouseListener, IDisposable
 
     public RawInputListener(Action<string>? log = null) => _log = log;
 
+    /// <summary>One listen: its window once made, and whether it was stopped (both under _gate).</summary>
+    private sealed class RunState
+    {
+        public IntPtr Hwnd;
+        public bool Stopped;
+    }
+
+    /// <summary>
+    /// Starts listening without waiting for the listener's window (the engine calls this under its lock on gp-rx): until
+    /// it is up, <see cref="Read"/> has nothing.
+    /// </summary>
     public void Start()
     {
         lock (_gate)
         {
-            if (_thread != null) return;
-            var ready = new ManualResetEventSlim();
-            _thread = new Thread(() => Run(ready)) { IsBackground = true, Name = "gp-press-listen" };
+            if (_run != null) return;
+            var run = new RunState();
+            var previous = _thread;
+            _run = run;
+            _thread = new Thread(() => Run(run, previous)) { IsBackground = true, Name = "gp-press-listen" };
             _thread.Start();
-            ready.Wait(1000);
         }
     }
 
+    /// <summary>Stops listening without waiting for the listener's thread (the engine calls this under its lock): it ends on its own.</summary>
     public void Stop()
     {
-        Thread? t;
         IntPtr hwnd;
         lock (_gate)
         {
-            t = _thread;
-            hwnd = _hwnd;
-            _thread = null;
-            _hwnd = IntPtr.Zero;
             _held.Clear();
             _pressed.Clear();
             _wheelUp = _wheelDown = 0;
+            var run = _run;
+            if (run == null) return;
+            _run = null;
+            run.Stopped = true;
+            hwnd = run.Hwnd;
         }
-        if (t == null) return;
         if (hwnd != IntPtr.Zero) PostMessage(hwnd, WmClose, IntPtr.Zero, IntPtr.Zero);
-        t.Join(1000);
     }
 
     public int Read(Span<PcPress> into)
@@ -86,11 +98,13 @@ public sealed class RawInputListener : IKeyMouseListener, IDisposable
 
     public void Dispose() => Stop();
 
-    private void Run(ManualResetEventSlim ready)
+    private void Run(RunState run, Thread? previous)
     {
         IntPtr hwnd = IntPtr.Zero;
         try
         {
+            // The listen before may still be letting go of raw input: registering before it did would lose ours.
+            previous?.Join();
             _proc ??= WindowProc;
             var cls = new WndClassEx
             {
@@ -111,15 +125,26 @@ public sealed class RawInputListener : IKeyMouseListener, IDisposable
                 new RawInputDevice { UsagePage = 1, Usage = 6, Flags = RidevInputSink, Target = hwnd }, // keyboard
                 new RawInputDevice { UsagePage = 1, Usage = 2, Flags = RidevInputSink, Target = hwnd }, // mouse
             };
-            if (!RegisterRawInputDevices(devices, (uint)devices.Length, (uint)Marshal.SizeOf<RawInputDevice>()))
+            bool registered;
+            lock (RawMouseOwner.Gate)
+            {
+                registered = RegisterRawInputDevices(devices, (uint)devices.Length, (uint)Marshal.SizeOf<RawInputDevice>());
+                // The process's raw mouse input is this listen's now: the delivery probe leaves it alone until it ends.
+                if (registered) RawMouseOwner.Listener = true;
+            }
+            if (!registered)
             {
                 Fail($"raw input not registered (error {Marshal.GetLastPInvokeError()})");
                 DestroyWindow(hwnd);
                 return;
             }
-            lock (_gate) _hwnd = hwnd;
-            ready.Set();
-            while (GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
+            bool stopped;
+            lock (_gate)
+            {
+                stopped = run.Stopped;
+                if (!stopped) run.Hwnd = hwnd;
+            }
+            while (!stopped && GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
             {
                 if (msg.Message == WmClose && msg.Hwnd == hwnd) break;
                 DispatchMessage(ref msg);
@@ -129,7 +154,11 @@ public sealed class RawInputListener : IKeyMouseListener, IDisposable
                 new RawInputDevice { UsagePage = 1, Usage = 6, Flags = RidevRemove, Target = IntPtr.Zero },
                 new RawInputDevice { UsagePage = 1, Usage = 2, Flags = RidevRemove, Target = IntPtr.Zero },
             };
-            RegisterRawInputDevices(remove, (uint)remove.Length, (uint)Marshal.SizeOf<RawInputDevice>());
+            lock (RawMouseOwner.Gate)
+            {
+                RegisterRawInputDevices(remove, (uint)remove.Length, (uint)Marshal.SizeOf<RawInputDevice>());
+                RawMouseOwner.Listener = false;
+            }
             DestroyWindow(hwnd);
             // That took the process's raw mouse input away from Diagnostics' delivery probe too: it registers again.
             DeliveryProbe.RawMouseReleased();
@@ -137,10 +166,6 @@ public sealed class RawInputListener : IKeyMouseListener, IDisposable
         catch (Exception e)
         {
             Fail("listener stopped: " + e.Message);
-        }
-        finally
-        {
-            ready.Set();
         }
     }
 
@@ -157,7 +182,7 @@ public sealed class RawInputListener : IKeyMouseListener, IDisposable
         {
             try
             {
-                OnInput(lParam);
+                OnInput(hwnd, lParam);
             }
             catch (Exception)
             {
@@ -167,7 +192,7 @@ public sealed class RawInputListener : IKeyMouseListener, IDisposable
         return DefWindowProc(hwnd, msg, wParam, lParam);
     }
 
-    private unsafe void OnInput(IntPtr lParam)
+    private unsafe void OnInput(IntPtr hwnd, IntPtr lParam)
     {
         int header = 8 + 2 * IntPtr.Size;
         uint size = (uint)_buffer.Length;
@@ -181,12 +206,12 @@ public sealed class RawInputListener : IKeyMouseListener, IDisposable
         // clicks with no device too, so a mouse button counts anyway: GyroPhone sends no clicks while the phone listens.
         // The input driver's own mouse and keyboard are GyroPhone's output too, never the PC's keys.
         if (OwnInputDevice.Is(device)) return;
-        if (type == 1 && device != IntPtr.Zero) Keyboard(header);
-        else if (type == 0) Mouse(header);
+        if (type == 1 && device != IntPtr.Zero) Keyboard(hwnd, header);
+        else if (type == 0) Mouse(hwnd, header);
     }
 
     /// <summary>RAWKEYBOARD: MakeCode u16, Flags u16, Reserved u16, VKey u16, ...</summary>
-    private void Keyboard(int at)
+    private void Keyboard(IntPtr hwnd, int at)
     {
         ushort scan = BitConverter.ToUInt16(_buffer, at);
         ushort flags = BitConverter.ToUInt16(_buffer, at + 2);
@@ -194,34 +219,39 @@ public sealed class RawInputListener : IKeyMouseListener, IDisposable
         if (vk == 0xFF) return; // the fake shifts some keyboards wrap round other keys
         int usage = HidScanCodes.UsageOf(scan, (flags & RiKeyE0) != 0, vk);
         if (usage == 0) return;
-        Edge(new PcPress(PcPress.Key, (ushort)usage), (flags & RiKeyBreak) == 0);
+        Edge(hwnd, new PcPress(PcPress.Key, (ushort)usage), (flags & RiKeyBreak) == 0);
     }
 
     /// <summary>RAWMOUSE: usFlags u16, 2 bytes, usButtonFlags u16, usButtonData u16, ...</summary>
-    private void Mouse(int at)
+    private void Mouse(IntPtr hwnd, int at)
     {
         ushort buttons = BitConverter.ToUInt16(_buffer, at + 4);
         if (buttons == 0) return;
         for (int b = 0; b < 5; b++)
         {
-            if ((buttons & (1 << (2 * b))) != 0) Edge(new PcPress(PcPress.Mouse, (ushort)b), true);
-            if ((buttons & (2 << (2 * b))) != 0) Edge(new PcPress(PcPress.Mouse, (ushort)b), false);
+            if ((buttons & (1 << (2 * b))) != 0) Edge(hwnd, new PcPress(PcPress.Mouse, (ushort)b), true);
+            if ((buttons & (2 << (2 * b))) != 0) Edge(hwnd, new PcPress(PcPress.Mouse, (ushort)b), false);
         }
         if ((buttons & 0x0400) != 0)
         {
             short delta = BitConverter.ToInt16(_buffer, at + 6);
             lock (_gate)
             {
+                if (!Current(hwnd)) return;
                 if (delta > 0) _wheelUp++;
                 else if (delta < 0) _wheelDown++;
             }
         }
     }
 
-    private void Edge(PcPress p, bool down)
+    /// <summary>Input came to the window of the listen under way (not one stopped and still letting go); under _gate.</summary>
+    private bool Current(IntPtr hwnd) => _run != null && _run.Hwnd == hwnd;
+
+    private void Edge(IntPtr hwnd, PcPress p, bool down)
     {
         lock (_gate)
         {
+            if (!Current(hwnd)) return;
             if (down)
             {
                 _held.Add(p);

@@ -35,7 +35,7 @@ public enum UsbDirectState
 /// <summary>
 /// The direct USB link (Android Open Accessory). Thread gp-usb looks at the USB devices as soon as a
 /// device interface arrives or goes (<see cref="DeviceChangeNotifier"/>), every 250 ms while a phone is
-/// switching to accessory mode, and once a second otherwise as a fallback: a phone in accessory mode with the WinUSB driver gets a <see cref="UsbBridge"/> into the
+/// switching to accessory mode, and otherwise as a fallback (<see cref="WaitMs"/>): a phone in accessory mode with the WinUSB driver gets a <see cref="UsbBridge"/> into the
 /// UDP server; an Android phone in normal mode (found by its adb interface, the one interface of
 /// a phone Windows lets an app send requests to) is asked to switch to accessory mode, naming
 /// GyroPhone, so the app on the phone picks the cable up. Nothing is installed here: the accessory
@@ -117,10 +117,22 @@ public sealed class AoaUsbLink : IDisposable
             }
             // Each step of the switch (the phone leaving, coming back as an accessory, its driver loading)
             // is a device arrival, which wakes this at once; the short wait only backs up a missed one.
-            _wake.Wait(State == UsbDirectState.Switching ? 250 : 1000);
+            _wake.Wait(WaitMs(State, _devices != null));
         }
         CloseBridge();
     }
+
+    /// <summary>
+    /// How long gp-usb sleeps between looks. Each look without a bridge enumerates every USB device, so with
+    /// device notifications working the states that only a device change (or the switch in the menu) can
+    /// end sleep long; a phone held by adb, or one waiting for its next try, still gets looked at each second.
+    /// </summary>
+    internal static int WaitMs(UsbDirectState state, bool notified) => state switch
+    {
+        UsbDirectState.Switching => 250,
+        UsbDirectState.Off or UsbDirectState.NoPhone or UsbDirectState.NeedsDriver when notified => 30_000,
+        _ => 1000,
+    };
 
     private void Scan()
     {

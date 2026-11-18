@@ -3,13 +3,16 @@ package com.oleroma.gyrophone.core.hid
 /**
  * Composite HID report descriptor exposed over the Bluetooth HID Device profile.
  *
- * One Bluetooth HID device carries three top-level collections, each with its own report ID:
+ * One Bluetooth HID device carries four top-level collections, each with its own report ID:
  *  - [REPORT_ID_GAMEPAD]: DirectInput-style game pad (16 buttons, hat, two sticks, two triggers).
  *  - [REPORT_ID_KEYBOARD]: standard 6KRO keyboard.
  *  - [REPORT_ID_MOUSE]: 5-button mouse with 16-bit relative X/Y, a wheel and horizontal pan (AC Pan).
  *    Wheel and pan each sit in a logical collection with a Resolution Multiplier (feature report
  *    [REPORT_ID_MOUSE_FEATURE]); a host that enables it (Windows does) reads them in 1/120 notch,
  *    otherwise in whole notches.
+ *  - [REPORT_ID_CONSUMER]: media keys (Consumer page: play/pause, next, previous, mute, volume up /
+ *    down), one bit each. Windows' keyboard driver drops the keyboard page's media usages, so they
+ *    go here ([consumerBit]).
  *
  * Windows enumerates the game pad as a generic HID (DirectInput) controller. Native XInput needs a
  * Microsoft VID/PID in the Bluetooth Device ID record, which Android apps cannot set; XInput is
@@ -20,12 +23,14 @@ object HidDescriptor {
     const val REPORT_ID_KEYBOARD: Int = 2
     const val REPORT_ID_MOUSE: Int = 3
     const val REPORT_ID_MOUSE_FEATURE: Int = 4
+    const val REPORT_ID_CONSUMER: Int = 5
 
     /** Payload sizes in bytes, excluding the report ID byte (Android's sendReport adds it). */
     const val GAMEPAD_REPORT_SIZE: Int = 15
     const val KEYBOARD_REPORT_SIZE: Int = 8
     const val MOUSE_REPORT_SIZE: Int = 9
     const val MOUSE_FEATURE_SIZE: Int = 1
+    const val CONSUMER_REPORT_SIZE: Int = 1
 
     /** Resolution multiplier at its logical maximum = 120x. */
     const val RESOLUTION_MULTIPLIER: Int = 120
@@ -186,6 +191,43 @@ object HidDescriptor {
         0xC0,                   // End Collection
     )
 
+    // Media keys, one bit each in [consumerBit]'s order, then 2 bits of padding.
+    private val consumer = intArrayOf(
+        0x05, 0x0C,             // Usage Page (Consumer)
+        0x09, 0x01,             // Usage (Consumer Control)
+        0xA1, 0x01,             // Collection (Application)
+        0x85, REPORT_ID_CONSUMER, //   Report ID
+        0x15, 0x00,             //   Logical Minimum (0)
+        0x25, 0x01,             //   Logical Maximum (1)
+        0x75, 0x01,             //   Report Size (1)
+        0x95, 0x06,             //   Report Count (6)
+        0x09, 0xCD,             //   Usage (Play/Pause)
+        0x09, 0xB5,             //   Usage (Scan Next Track)
+        0x09, 0xB6,             //   Usage (Scan Previous Track)
+        0x09, 0xE2,             //   Usage (Mute)
+        0x09, 0xE9,             //   Usage (Volume Increment)
+        0x09, 0xEA,             //   Usage (Volume Decrement)
+        0x81, 0x02,             //   Input (Data, Var, Abs)
+        0x75, 0x02,             //   Report Size (2)
+        0x95, 0x01,             //   Report Count (1)
+        0x81, 0x03,             //   Input (Const)
+        0xC0,                   // End Collection
+    )
+
+    /**
+     * The consumer report's bit for keyboard-page media usage [usage] ([HidUsage.media]), or 0 when
+     * it is not a media key. Those keys go in the consumer report, never the keyboard report.
+     */
+    fun consumerBit(usage: Int): Int = when (usage) {
+        HidUsage.PLAY_PAUSE -> 0x01
+        HidUsage.NEXT_TRACK -> 0x02
+        HidUsage.PREVIOUS_TRACK -> 0x04
+        HidUsage.MUTE -> 0x08
+        HidUsage.VOLUME_UP -> 0x10
+        HidUsage.VOLUME_DOWN -> 0x20
+        else -> 0
+    }
+
     /** The full descriptor passed to BluetoothHidDeviceAppSdpSettings. */
-    val bytes: ByteArray = (gamepad + keyboard + mouse).map { it.toByte() }.toByteArray()
+    val bytes: ByteArray = (gamepad + keyboard + mouse + consumer).map { it.toByte() }.toByteArray()
 }

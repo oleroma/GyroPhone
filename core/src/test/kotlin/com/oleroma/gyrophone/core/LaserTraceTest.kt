@@ -112,6 +112,19 @@ class LaserTraceTest {
         assertFalse(t.strokes.gap(1))
     }
 
+    @Test fun aClearAskedFromElsewhereWaitsForTheTracesThread() {
+        val t = LaserTrace()
+        t.add(0f, 0f, -1f, 0, draw = true, held = false)
+        t.add(0.1f, 0f, -1f, 20, draw = true, held = false)
+        val v = t.version
+        t.requestClear()
+        assertEquals(2, t.strokes.count)
+        assertTrue(t.clearIfAsked())
+        assertEquals(0, t.strokes.count)
+        assertTrue(t.version > v)
+        assertFalse(t.clearIfAsked())
+    }
+
     private val normalMap = longArrayOf(0xFFFF8080, 0xFF008080, 0xFF80FF80, 0xFF800080, 0xFF8080FF, 0xFF808000)
 
     @Test fun wayColoursBlendAsANormalMap() {

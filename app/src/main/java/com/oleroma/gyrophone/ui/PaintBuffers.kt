@@ -36,6 +36,19 @@ internal class PaintBuffers private constructor(val width: Int, val height: Int)
         return true
     }
 
+    /**
+     * Lets the buffers go now rather than when a GC finds them (they report almost none of their size
+     * to it). Shaders already handed out keep their own reference until they are dropped, so a frame
+     * still in flight is safe. Not written again after.
+     */
+    fun close() {
+        mainShader = null; glowShader = null; wayShader = null
+        runCatching { main.close() }
+        runCatching { glows.close() }
+        runCatching { way?.close() }
+        way = null
+    }
+
     /** Writes rows [j0] .. [j1] of the way colours ([LaserPaint.way], ARGB); false if it could not. */
     fun writeWay(ways: IntArray, j0: Int, j1: Int): Boolean {
         val w = way ?: buffer(width, height).also { way = it }

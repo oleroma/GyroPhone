@@ -183,9 +183,10 @@ object Bindings {
         return setEntries(mappings, input, es)
     }
 
+    /** Adds [target] as a new chip of [input] (none if it has it already); its other chips stay as they are. */
     fun addTarget(mappings: List<Mapping>, input: BindableInput, target: OutputTarget): List<Mapping> {
-        val current = targets(mappings, input)
-        return if (target in current) mappings else setTargets(mappings, input, current + target)
+        if (target in targets(mappings, input)) return mappings
+        return setEntries(mappings, input, entries(mappings, input) + Entry(target, null))
     }
 
     fun removeTarget(mappings: List<Mapping>, input: BindableInput, target: OutputTarget): List<Mapping> =

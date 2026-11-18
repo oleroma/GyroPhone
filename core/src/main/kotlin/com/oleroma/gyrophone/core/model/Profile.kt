@@ -436,7 +436,8 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
     dirHoldZones = o.dirHoldZones,
     // A direction keeps the parent's own value unless this sets its own, or the shared one.
     dirs = DirSettings.merge(
-        dirs?.mapIndexed { i, it ->
+        // Only the entries this build knows: a newer build's extra ones have no direction here.
+        dirs?.take(Direction.entries.size)?.mapIndexed { i, it ->
             val x = Direction.entries[i].x
             DirSettings(
                 swipePie = it.swipePie.takeIf { (if (x) o.swipePieX else o.swipePieY) == null },
@@ -456,7 +457,7 @@ fun TouchpadSettings.with(o: SurfaceSettings?): TouchpadSettings = if (o == null
     ),
     // A Move X / Y keeps the parent's own value unless this sets its own, or the shared one.
     moves = MoveSettings.merge(
-        moves?.mapIndexed { i, m ->
+        moves?.take(MoveSlot.entries.size)?.mapIndexed { i, m ->
             val x = MoveSlot.entries[i].x
             MoveSettings(
                 sensitivity = m.sensitivity.takeIf { o.sensitivity == null },
@@ -1747,7 +1748,14 @@ data class TouchpadSettings(
         (dir(d).let { if (hold) it.holdTurn else it.swipeTurn } ?: if (hold) holdTurnDp else swipeTurnDp).coerceIn(0f, MAX_MOVE_TURN_DP)
 
     /** Some held direction locks its heading: of the X axis ([x]) or the Y axis. */
-    fun holdLocks(x: Boolean): Boolean = Direction.entries.any { it.x == x && lockOf(it, true) }
+    fun holdLocks(x: Boolean): Boolean {
+        // By index: runs on every touch step, so no iterator.
+        for (i in 0 until 4) {
+            val d = Direction.entries[i]
+            if (d.x == x && lockOf(d, true)) return true
+        }
+        return false
+    }
 
     /** Some held direction locks its heading. */
     val anyHoldLock: Boolean get() = holdLocks(true) || holdLocks(false)
@@ -1762,7 +1770,7 @@ data class TouchpadSettings(
      * on to the edge. Not with [dragStart] (the start point never trails far enough).
      */
     fun holdZone(d: Direction, i: Int): HoldZone =
-        (dirHoldZones?.getOrNull(d.ordinal) ?: holdZones).getOrNull(i) ?: HoldZone()
+        (dirHoldZones?.getOrNull(d.ordinal) ?: holdZones).getOrNull(i) ?: HoldZone.DEFAULT
 
     /** How long zone [i] of [d] is (dp): its own length, else the first zone's, else the hold distance. */
     fun holdZoneDp(d: Direction, i: Int): Float =
@@ -1773,7 +1781,7 @@ data class TouchpadSettings(
 
     /** Zone [i] of held swipe slot [slot] ([holdZone]; any way: the shared zones). */
     fun holdZoneAt(slot: Int, i: Int): HoldZone =
-        if (slot in 0..3) holdZone(Direction.entries[slot], i) else holdZones.getOrNull(i) ?: HoldZone()
+        if (slot in 0..3) holdZone(Direction.entries[slot], i) else holdZones.getOrNull(i) ?: HoldZone.DEFAULT
 
     /** How long zone [i] of slot [slot] is (dp), as [holdZoneDp]. */
     fun holdZoneDpAt(slot: Int, i: Int): Float =
@@ -1849,7 +1857,12 @@ data class HoldZone(
     val lengthDp: Float? = null,
     val onRelease: Boolean = false,
     val keep: ZoneKeep = ZoneKeep.OFF,
-)
+) {
+    companion object {
+        /** A zone with no settings of its own, shared so the touch path allocates none. */
+        val DEFAULT = HoldZone()
+    }
+}
 
 /**
  * How long a reached zone stays held ([HoldZone.keep]). OFF: while the finger is in it. GOING_ON:
@@ -1875,7 +1888,7 @@ enum class Direction(val deg: Float, val label: String) {
 fun TouchpadSettings.directionsAt(x: Float, y: Float, hold: Boolean = false): Int {
     if (x == 0f && y == 0f) return 0
     var mask = 0
-    for (d in Direction.entries) if (inPie(x, y, d, hold)) mask = mask or (1 shl d.ordinal)
+    for (i in 0 until 4) if (inPie(x, y, Direction.entries[i], hold)) mask = mask or (1 shl i)
     return mask
 }
 
@@ -2052,6 +2065,23 @@ data class Profile(
     fun updateWorkspace(index: Int, change: (Workspace) -> Workspace): Profile {
         val i = index.coerceIn(0, workspaces.lastIndex)
         return copy(workspaces = workspaces.mapIndexed { k, w -> if (k == i) change(w) else w })
+    }
+
+    /**
+     * What the pad's touch handler in play reads of workspace [index]: its controls that take touches
+     * (gyro displays only draw), its mappings, the ← / → corners and where they lead. Equal keys keep
+     * the handler, and so every held stick and button: a slider's saved value, the gyro or Set
+     * orientation (a display's level) changes none of it.
+     */
+    fun playTouchKey(index: Int): List<Any?> {
+        val w = workspace(index)
+        return listOf(
+            w.touchControls.filter { it.kind != TouchKind.DISPLAY }.map { if (it.display == null) it else it.copy(display = null) },
+            w.mappings,
+            shownCorners.map { if (it.display == null) it else it.copy(display = null) },
+            wrapWorkspaces,
+            workspaces.size,
+        )
     }
 
     /** Where ← / → from [index] lead; null at an end without wrap-around. */

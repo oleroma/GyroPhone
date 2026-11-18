@@ -2,8 +2,8 @@ namespace GyroPhone.Protocol.Mapping;
 
 /// <summary>
 /// Diffs the injected keyboard/mouse state against a target STATE and writes SendInput events
-/// (SPEC 3.3). Order: modifier downs, key downs, key ups, modifier ups, mouse buttons, move, wheel,
-/// horizontal wheel.
+/// (SPEC 3.3). Order: modifier downs, key downs, mouse buttons, key ups, modifier ups, move, wheel,
+/// horizontal wheel: releases mirror presses, so a Ctrl + click lets go of the button before Ctrl.
 /// The injected state is updated in place for every event written, so anything that did not fit
 /// in the output span is picked up by the next call.
 /// </summary>
@@ -34,12 +34,7 @@ public static class InputDiff
         n = Keys(injected, target, ModByte, ModByte + 1, down: true, output, n, keyLimit, ref unknown);
         for (int i = 0; i < StateFrame.KeyBitmapSize; i++)
             if (i != ModByte) n = Keys(injected, target, i, i + 1, down: true, output, n, keyLimit, ref unknown);
-        // 3. key ups, 4. modifier ups
-        for (int i = 0; i < StateFrame.KeyBitmapSize; i++)
-            if (i != ModByte) n = Keys(injected, target, i, i + 1, down: false, output, n, keyLimit, ref unknown);
-        n = Keys(injected, target, ModByte, ModByte + 1, down: false, output, n, keyLimit, ref unknown);
-
-        // 5. mouse buttons
+        // 3. mouse buttons: after the keys that go down with them, before the keys that go up with them
         int changed = (injectedMouse ^ targetMouse) & 0x1F;
         for (int bit = 0; bit < MouseButtonCount; bit++)
         {
@@ -49,6 +44,11 @@ public static class InputDiff
         }
         injectedMouse = (byte)(targetMouse & 0x1F);
 
+        // 4. key ups, 5. modifier ups
+        for (int i = 0; i < StateFrame.KeyBitmapSize; i++)
+            if (i != ModByte) n = Keys(injected, target, i, i + 1, down: false, output, n, keyLimit, ref unknown);
+        n = Keys(injected, target, ModByte, ModByte + 1, down: false, output, n, keyLimit, ref unknown);
+
         // 6. move, 7. wheel, 8. horizontal wheel
         if (dx != 0 || dy != 0) output[n++] = InjectEvent.Move(dx, dy);
         if (wheel != 0) output[n++] = InjectEvent.Wheel(wheel);
@@ -56,20 +56,20 @@ public static class InputDiff
         return n;
     }
 
-    /// <summary>Releases everything injected: key ups, then modifier ups, then mouse-button ups. Clears the state.</summary>
+    /// <summary>Releases everything injected: mouse-button ups, then key ups, then modifier ups. Clears the state.</summary>
     public static int ReleaseAll(Span<byte> injected, ref byte injectedMouse, Span<InjectEvent> output)
     {
         Span<byte> none = stackalloc byte[StateFrame.KeyBitmapSize];
         int unknown = 0;
         int n = 0;
-        // Release may need more than the normal key budget, so loop until nothing is held.
-        int limit = output.Length - MouseButtonCount;
-        for (int i = 0; i < StateFrame.KeyBitmapSize; i++)
-            if (i != ModByte) n = Keys(injected, none, i, i + 1, down: false, output, n, limit, ref unknown);
-        n = Keys(injected, none, ModByte, ModByte + 1, down: false, output, n, limit, ref unknown);
         for (int bit = 0; bit < MouseButtonCount; bit++)
             if ((injectedMouse & (1 << bit)) != 0) output[n++] = InjectEvent.MouseButton(bit, up: true);
         injectedMouse = 0;
+        // Release may need more than the normal key budget, so loop until nothing is held.
+        int limit = output.Length;
+        for (int i = 0; i < StateFrame.KeyBitmapSize; i++)
+            if (i != ModByte) n = Keys(injected, none, i, i + 1, down: false, output, n, limit, ref unknown);
+        n = Keys(injected, none, ModByte, ModByte + 1, down: false, output, n, limit, ref unknown);
         return n;
     }
 

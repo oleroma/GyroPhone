@@ -13,7 +13,7 @@ The app holds `HIGH_SAMPLING_RATE_SENSORS`, which allows rates above 200 Hz.
 
 **Falling back.** The direct channel is watched:
 
-- If it opens but gives no sample within 1.5 s (seen with gralloc buffers), or its measured rate stays below what the listener would give (the microphone privacy toggle caps it to about 50 Hz, the listener to about 200 Hz), the listener runs instead until the next start or return to the foreground (`onDirectCapped`). A direct channel that gave no samples at all is not tried again until the app process restarts (`directSilent`), so later starts and returns to the app don't pay the 1.5 s of dead gyro again; a capped one is tried again, since the toggle may be off by then. The About section then says why ("direct channel limited to ~50 Hz").
+- If it opens but gives no sample within 1.5 s (seen with gralloc buffers), or its measured rate stays below what the listener would give (the microphone privacy toggle caps it to about 50 Hz, the listener to about 200 Hz), the listener runs instead until the next start, or a return to the foreground at least 10 minutes after it was found capped (`onDirectCapped`, `DIRECT_RETRY_MS`), so returning to the app does not cost ~2 s of capped gyro each time. A direct channel that gave no samples at all is not tried again until the app process restarts (`directSilent`), so later starts and returns to the app don't pay the 1.5 s of dead gyro again; a capped one is tried again then, since the toggle may be off by then. The About section then says why ("direct channel limited to ~50 Hz").
 
 On the OnePlus 15 the listener delivers about 480 Hz and the gralloc direct channel about 950 Hz.
 
@@ -31,7 +31,7 @@ The gyro poll thread, the Wi-Fi sender (`WifiPump`) and the Bluetooth sender (`R
 
 - input is allowed (the pad is on screen in play, or **Send input only while the pad is open** is off) and the workspace's gyro is not **Gyro off**, or
 - the PC's phone overlay asks for motion (it shows the phone turning even when the gyro moves nothing), or
-- a rest calibration runs, or an acceleration graph on screen shows its live line.
+- a rest calibration runs, or an acceleration graph on screen shows its live line (only while the app is in front: left open in the background it neither runs the gyro nor polls).
 
 Otherwise it stops, saving CPU and battery. Ratchets, toggles and the other gyro modes never stop it, so aiming never waits for the sensor to start. Each start resets the sample clock, the rate window and any sub-count remainder. `updateGyro` only decides: the source is started, switched (`onDirectCapped`) and stopped on its own `GyroControl` thread (`syncGyro`), so opening a direct channel (shared memory and binder calls) or waiting for a stopped source's last sample never holds up the main thread, as when the pad comes back from a menu page. A rest calibration whose gyro can't start ends there.
 
@@ -41,7 +41,7 @@ Otherwise it stops, saving CPU and battery. Ratchets, toggles and the other gyro
 
 - `dt` is the time since the previous sample, clamped to 0..50 ms (the first sample after a start has 0).
 - The rest-calibration bias is subtracted.
-- The sample goes to the debug trace, the gyro displays and parallax edge, the PC overlay feed, and then either to the PC (in PC gyro mode, see [Controllers](phone-controllers.md)) or to `GyroMouse.route`, which turns it into mouse counts, wheel or stick deflection in the engine.
+- The sample goes to the debug trace, then first to the input: either to the PC (in PC gyro mode, see [Controllers](phone-controllers.md)) or to `GyroMouse.route`, which turns it into mouse counts, wheel or stick deflection in the engine, then tilt and the PC DualShock 4's motion. Only then does it go to the gyro displays and parallax edge (with the other camera moves since the last sample, counted by the sender and applied here), the rest detector and the PC overlay feed, so display work never delays the sample's input.
 
 The measured rate is shown in App › About and the debug panel (`core/.../sensor/GyroRateWindow.kt`).
 

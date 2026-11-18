@@ -62,6 +62,13 @@ class BindingsTest {
         assertEquals(listOf(padB), Bindings.targets(p, a))
     }
 
+    @Test fun addTargetKeepsEveryChipOfOneTarget() {
+        val repeat = com.oleroma.gyrophone.core.model.MapOptions(how = com.oleroma.gyrophone.core.model.How.REPEAT, repeat = 2)
+        var p = listOf(t("a", padA), t("a", padA).copy(options = repeat))
+        p = Bindings.addTarget(p, a, padB)
+        assertEquals(listOf(t("a", padA), t("a", padA).copy(options = repeat), t("a", padB)), p)
+    }
+
     @Test fun triggerFullAndPositiveAreTheSameSource() {
         val lt = BindableInput(
             "LT",

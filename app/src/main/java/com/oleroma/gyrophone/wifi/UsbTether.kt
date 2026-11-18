@@ -40,20 +40,29 @@ object UsbTether {
     /**
      * USB tethering now, else wired Ethernet, else the hotspot, or null when there is neither. [wifiInterface] is the
      * Wi-Fi network's own interface, never taken for the hotspot; with [hotspot] false (a Wi-Fi network
-     * whose interface isn't known yet) only USB is looked for. Cheap enough for a check every second.
+     * whose interface isn't known yet) only USB is looked for. [tethered]: the interfaces Android tethers now
+     * (its tether state), when known; then only one of them is the hotspot, so a second Wi-Fi client
+     * interface (dual Wi-Fi) or one still holding its address after its network left is never taken for it.
+     * Cheap enough for a check every second.
      */
-    fun find(wifiInterface: String? = null, hotspot: Boolean = true): UsbTetherInfo? =
+    fun find(wifiInterface: String? = null, hotspot: Boolean = true, tethered: Set<String>? = null): UsbTetherInfo? =
         find(NAMES, null) ?: find(ETHERNET_NAMES, null, ethernet = true)
-            ?: if (hotspot) find(HOTSPOT_NAMES, wifiInterface, hotspot = true) else null
+            ?: if (hotspot) find(HOTSPOT_NAMES, wifiInterface, hotspot = true, only = tethered) else null
 
-    private fun find(names: Regex, skip: String?, hotspot: Boolean = false, ethernet: Boolean = false): UsbTetherInfo? {
+    private fun find(
+        names: Regex,
+        skip: String?,
+        hotspot: Boolean = false,
+        ethernet: Boolean = false,
+        only: Set<String>? = null,
+    ): UsbTetherInfo? {
         val all = try {
             NetworkInterface.getNetworkInterfaces() ?: return null
         } catch (e: SocketException) {
             return null
         }
         for (ni in all) {
-            if (!names.matches(ni.name) || ni.name == skip) continue
+            if (!names.matches(ni.name) || ni.name == skip || (only != null && ni.name !in only)) continue
             val up = try {
                 ni.isUp && !ni.isLoopback
             } catch (e: SocketException) {

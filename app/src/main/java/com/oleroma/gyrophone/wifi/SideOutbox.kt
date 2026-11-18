@@ -88,7 +88,10 @@ internal class SideOutbox(
     fun start() {
         if (running) return
         running = true
-        thread = Thread({ loop() }, "gp-side").apply { start() }
+        // Set before it runs, so a [wake] from now on reaches it (it parks with no time limit while not sending).
+        val t = Thread({ loop() }, "gp-side")
+        thread = t
+        t.start()
     }
 
     fun stop() {
@@ -142,7 +145,8 @@ internal class SideOutbox(
         Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY)
         while (running) {
             if (!sending) {
-                LockSupport.parkNanos(IDLE_PARK_NS)
+                // Nothing is built without a session: [sending] turning on and [stop] wake it.
+                LockSupport.park()
                 continue
             }
             val now = System.nanoTime()
@@ -309,7 +313,7 @@ internal class SideOutbox(
         const val CAPTURE_RESEND_NS = Wire.CAPTURE_RESEND_MS * 1_000_000L
         /** The gap between the CAPTUREs that say "off" (three, so one lost doesn't keep the PC listening for 3 s). */
         const val CAPTURE_OFF_GAP_NS = 100_000_000L
-        /** How often it looks again with nothing due (no session, or the overlay off). */
+        /** How often it looks again with nothing due (the overlay off). */
         const val IDLE_PARK_NS = 50_000_000L
         const val STOP_JOIN_MS = 500L
         val CAPTURE_ON = CaptureListen(CaptureFlags.ON)

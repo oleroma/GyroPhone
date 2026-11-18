@@ -24,6 +24,10 @@ import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.TouchpadSettings
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.KeyTiming
+import com.oleroma.gyrophone.core.model.MappingSet
+import com.oleroma.gyrophone.core.model.TouchAreaKind
+import com.oleroma.gyrophone.core.model.Trigger
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -300,6 +304,60 @@ class ButtonEventsTest {
         e.keys(); t += 50 * MS
         e.setKey(dev, KEY_A, false)
         assertEquals(setOf(B), e.keys()) // no double tap: at once
+    }
+
+    @Test
+    fun tapWaitsWhenTheDoubleTapSendsTheSameKeyAnotherWay() {
+        // Same key, another How: the tap must wait, or a double tap sends 1 + 3 presses.
+        val e = engine(tap, double.copy(target = OutputTarget.Key(B), options = MapOptions(how = How.REPEAT, repeat = 3)))
+        e.buttonDown(1, "b", 10f, 10f); e.keys(); t += 50 * MS; e.buttonUp(1)
+        assertEquals(emptySet<Int>(), e.keys())
+        t += 100 * MS
+        e.buttonDown(1, "b", 10f, 10f); e.keys(); t += 50 * MS; e.buttonUp(1)
+        assertEquals(3, e.presses(B, 600))
+    }
+
+    @Test
+    fun touchAreaWaitsOnlyForADoubleTapOfTheSetInUse() {
+        val area = { on: Trigger -> InputSource.TouchArea("b", TouchAreaKind.ZONE, on) }
+        val p = single(
+            Workspace(
+                id = "w", name = "w", touchControls = listOf(button()), sets = listOf(MappingSet(1)),
+                mappings = listOf(
+                    Mapping(area(Trigger.TAP), OutputTarget.Key(B)),
+                    Mapping(area(Trigger.DOUBLE_TAP), OutputTarget.Key(C), set = 1),
+                ),
+            ),
+        )
+        val e = MappingEngine(p) { t }.apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 10 * MS }
+        e.setTouchArea("b", TouchAreaKind.ZONE, true); e.keys(); t += 50 * MS
+        e.setTouchArea("b", TouchAreaKind.ZONE, false)
+        // Base maps no double tap there: the tap is at once.
+        assertEquals(setOf(B), e.keys())
+    }
+
+    @Test
+    fun aKeysQuickOrHeldDoubleTapUsesItsOwnTapTime() {
+        val w = Workspace(
+            id = "w", name = "w", longPressMs = 200, keyTimings = listOf(KeyTiming(KEY_A, longPressMs = 400)),
+            pads = listOf(
+                AttachedPad(
+                    id = "p",
+                    mappings = listOf(
+                        Mapping(InputSource.KeyGesture(KEY_A, ButtonGesture.DOUBLE_TAP), OutputTarget.Key(A)),
+                        Mapping(InputSource.KeyGesture(KEY_A, ButtonGesture.DOUBLE_TAP), OutputTarget.Key(C), options = MapOptions(how = How.ONCE)),
+                    ),
+                ),
+            ),
+        )
+        val e = MappingEngine(single(w)) { t }.apply { touchpadPxPerDp = 1f; touchpadMinPulseNanos = 10 * MS }
+        e.setKey(dev, KEY_A, true); e.keys(); t += 50 * MS; e.setKey(dev, KEY_A, false); e.keys()
+        t += 100 * MS
+        e.setKey(dev, KEY_A, true); e.keys()
+        // 300 ms: past the workspace's 200 ms but within the key's own 400 ms, so still a quick press.
+        repeat(60) { t += 5 * MS; assertTrue(A !in e.keys()) }
+        e.setKey(dev, KEY_A, false)
+        assertTrue(C in e.keys())
     }
 
     @Test

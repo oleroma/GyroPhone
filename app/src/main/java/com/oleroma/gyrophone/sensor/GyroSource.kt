@@ -198,16 +198,13 @@ class DirectChannelGyroSource(
                 if (ok) {
                     val missed = full && watched >= 0 && !parser.isNew(buf, watched)
                     val events = parser.parse(buf, token)
-                    if (missed && events.isNotEmpty()) {
+                    if (missed && events > 0) {
                         watchNext = false
                         Log.i(TAG, "samples not in ring order: reading the whole ring on every check")
                     }
-                    for (i in events.indices) {
-                        val ev = events[i]
-                        sink.onGyro(ev.x, ev.y, ev.z, ev.timestampNs)
-                    }
+                    for (i in 0 until events) sink.onGyro(parser.x(i), parser.y(i), parser.z(i), parser.timestampNs(i))
                     // The pass is done: how long it took goes to the performance hint.
-                    if (hint != null && events.isNotEmpty()) {
+                    if (hint != null && events > 0) {
                         val end = System.nanoTime()
                         hint.done(end - passStart, end)
                     }

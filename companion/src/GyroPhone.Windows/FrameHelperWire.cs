@@ -12,7 +12,7 @@ namespace GyroPhone.Windows;
 public static class FrameHelperWire
 {
     /// <summary>Bump when the helper or this wire changes: the companion then asks to set the helper up again.</summary>
-    public const int Version = 1;
+    public const int Version = 2;
     public const uint Magic = 0x48465047; // "GPFH"
     public const int HelloSize = 12, RecordSize = 12;
 

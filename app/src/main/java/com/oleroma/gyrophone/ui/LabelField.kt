@@ -43,7 +43,7 @@ internal fun LabelField(value: String, placeholder: String, onChange: (String) -
         Box(Modifier.widthIn(min = 48.dp, max = 160.dp)) {
             BasicTextField(
                 value = value,
-                onValueChange = { onChange(it.take(MAX_LABEL)) },
+                onValueChange = { onChange(fitLabel(it)) },
                 singleLine = true,
                 textStyle = MaterialTheme.typography.titleLarge.copy(color = colors.onSurface),
                 cursorBrush = SolidColor(colors.primary),
@@ -58,7 +58,7 @@ internal fun LabelField(value: String, placeholder: String, onChange: (String) -
             Text("☺", fontSize = 18.sp)
         }
     }
-    if (picking) SymbolPicker(onPick = { onChange((value + it).take(MAX_LABEL)) }, onClear = { onChange("") }, onDismiss = { picking = false })
+    if (picking) SymbolPicker(onPick = { onChange(fitLabel(value + it)) }, onClear = { onChange("") }, onDismiss = { picking = false })
 }
 
 /** A grid of symbols by group; each tap adds one to the label (the picker stays open for more). */
@@ -90,6 +90,12 @@ private fun SymbolPicker(onPick: (String) -> Unit, onClear: () -> Unit, onDismis
 }
 
 private const val MAX_LABEL = 24
+
+/** [s] cut to [MAX_LABEL] chars, never through the middle of a surrogate pair (most emoji). */
+private fun fitLabel(s: String): String {
+    val t = s.take(MAX_LABEL)
+    return if (t.length < s.length && t.isNotEmpty() && t.last().isHighSurrogate()) t.dropLast(1) else t
+}
 
 /** Symbols offered for labels, by group: plain Unicode, so every font and the PC overlays draw them. */
 internal val LABEL_SYMBOLS: List<Pair<String, List<String>>> = listOf(

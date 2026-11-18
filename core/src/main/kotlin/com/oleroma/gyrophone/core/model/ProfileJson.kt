@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.core.model
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -40,9 +41,12 @@ object ProfileJson {
             fun prune(e: JsonElement, key: String?): JsonElement = when (e) {
                 is JsonObject -> JsonObject(e.mapValues { (k, v) -> prune(v, k) })
                 is JsonArray -> JsonArray(
-                    if (key in MAPPING_LISTS) e.filter { m ->
-                        runCatching { json.decodeFromJsonElement(Mapping.serializer(), m) }.isSuccess.also { if (!it) dropped++ }
-                    } else e.map { prune(it, null) },
+                    when (val item = PRUNED_LISTS[key]) {
+                        null -> e.map { prune(it, null) }
+                        else -> e.filter { m ->
+                            runCatching { json.decodeFromJsonElement(item, m) }.isSuccess.also { if (!it) dropped++ }
+                        }
+                    },
                 )
                 else -> e
             }
@@ -51,8 +55,25 @@ object ProfileJson {
         }.getOrNull()
     }
 
-    /** Keys that hold a list of mappings. */
-    private val MAPPING_LISTS = setOf("mappings", "controller", "keyboard", "mouse", "touch")
+    /**
+     * Keys of lists whose items hold an action or input a newer build may add, with their items'
+     * type: an item of one this build can't read is left out. Only arrays are pruned, so a key that
+     * is also an object elsewhere (a workspace's "touchpad" settings) is read as usual there.
+     */
+    private val PRUNED_LISTS: Map<String, KSerializer<*>> = mapOf(
+        "mappings" to Mapping.serializer(),
+        "controller" to Mapping.serializer(),
+        "keyboard" to Mapping.serializer(),
+        "mouse" to Mapping.serializer(),
+        "touch" to Mapping.serializer(),
+        // A workspace's or device preset's volume keys, a pad's own, a mapping profile's touchpad.
+        "phone" to Mapping.serializer(),
+        "own" to Mapping.serializer(),
+        "touchpad" to Mapping.serializer(),
+        "sliders" to SliderOverride.serializer(),
+        "heldButtons" to HeldButton.serializer(),
+        "held" to HeldButton.serializer(),
+    )
 
     /**
      * At least one workspace, all corners present, no corner inside a workspace, unique workspace

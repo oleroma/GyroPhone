@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.core
 import com.oleroma.gyrophone.core.hid.GamepadState
 import com.oleroma.gyrophone.core.hid.HidDescriptor
 import com.oleroma.gyrophone.core.hid.HidState
+import com.oleroma.gyrophone.core.hid.HidUsage
 import com.oleroma.gyrophone.core.hid.HostReconnect
 import com.oleroma.gyrophone.core.hid.KeyboardState
 import com.oleroma.gyrophone.core.hid.MouseState
@@ -184,6 +185,30 @@ class ReportSchedulerTest {
         // Never later than the periodic tick, never earlier than one interval after a report.
         assertEquals(tickAt, ReportScheduler.inputTickAt(tickAt, 1_000L, interval))
         assertTrue(ReportScheduler.inputTickAt(tickAt, ReportScheduler.NEVER, interval) < 0)
+    }
+
+    @Test fun mediaKeysGoInTheConsumerReport() {
+        prime(HidState())
+        assertEquals(HidDescriptor.REPORT_ID_GAMEPAD, tick(HidState()))
+        // Play/Pause held with W: the keyboard report has only W, the consumer report Play/Pause.
+        val keys = listOf(0x1A, HidUsage.PLAY_PAUSE)
+        val held = HidState(keyboard = KeyboardState(keys = keys), allKeys = keys)
+        assertEquals(HidDescriptor.REPORT_ID_KEYBOARD, tick(held))
+        assertEquals(listOf(0x1A, 0, 0, 0, 0, 0), sent.last().second.drop(2).map { it.toInt() and 0xFF })
+        assertEquals(HidDescriptor.REPORT_ID_CONSUMER, tick(held))
+        assertEquals(0x01, sent.last().second[0].toInt())
+        assertNull(tick(held))
+        // Volume up alone: no keyboard change, only the consumer report.
+        val vol = HidState(keyboard = KeyboardState(keys = listOf(0x1A, HidUsage.VOLUME_UP)))
+        assertEquals(HidDescriptor.REPORT_ID_CONSUMER, tick(vol))
+        assertEquals(0x10, sent.last().second[0].toInt())
+        // Released: the release goes out, and once more after a quiet second (a dropped one heals).
+        val none = HidState(keyboard = KeyboardState(keys = listOf(0x1A)))
+        assertEquals(HidDescriptor.REPORT_ID_CONSUMER, tick(none))
+        assertEquals(0, sent.last().second[0].toInt())
+        now += ReportScheduler.REFRESH_NANOS
+        assertEquals(HidDescriptor.REPORT_ID_CONSUMER, tick(none))
+        assertEquals(0, sent.last().second[0].toInt())
     }
 }
 

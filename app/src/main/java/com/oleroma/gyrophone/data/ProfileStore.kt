@@ -175,10 +175,13 @@ class ProfileStore(context: Context) {
 
     private val libraryFile = File(context.filesDir, "button_library.json")
 
-    /** The button library (empty if none saved, or if the file cannot be read: it is then left alone). */
+    /**
+     * The button library (empty if none saved, or if the file cannot be read: it is then left alone).
+     * Items this build can't read are left out; the file keeps them, as saving over it is refused.
+     */
     @Synchronized fun buttonLibrary(): List<LibraryButton> =
         if (!libraryFile.exists()) emptyList()
-        else ButtonLibrary.decode(libraryFile.readText()).orEmpty()
+        else ButtonLibrary.decodeLenient(libraryFile.readText()).orEmpty()
 
     /** Saves the button library; refuses to replace a file that exists but cannot be read. */
     @Synchronized fun saveButtonLibrary(buttons: List<LibraryButton>) {
@@ -188,10 +191,13 @@ class ProfileStore(context: Context) {
 
     private val presetFile = File(context.filesDir, "mapping_presets.json")
 
-    /** The chip and card presets of the mapping editor (empty if none saved, or unreadable: the file is then left alone). */
+    /**
+     * The chip and card presets of the mapping editor (empty if none saved, or unreadable: the file
+     * is then left alone). Presets this build can't read are left out, as in [buttonLibrary].
+     */
     @Synchronized fun mappingPresets(): List<MappingPreset> =
         if (!presetFile.exists()) emptyList()
-        else MappingPresets.decode(presetFile.readText()).orEmpty()
+        else MappingPresets.decodeLenient(presetFile.readText()).orEmpty()
 
     /** Saves the mapping editor's presets; refuses to replace a file that exists but cannot be read. */
     @Synchronized fun saveMappingPresets(presets: List<MappingPreset>) {

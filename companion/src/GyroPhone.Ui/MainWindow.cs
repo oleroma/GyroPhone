@@ -105,7 +105,17 @@ public sealed class MainWindow : Window
             RefreshNow();
             _timer.Start();
         };
-        StateChanged += (_, _) => TellShown();
+        StateChanged += (_, _) =>
+        {
+            TellShown();
+            // Minimized, nothing shows: no refreshes (each asks the input process), and one at once when it comes back.
+            if (WindowState == WindowState.Minimized) _timer.Stop();
+            else if (IsLoaded && !_closed)
+            {
+                _timer.Start();
+                RefreshNow();
+            }
+        };
         Closed += (_, _) =>
         {
             _timer.Stop();
@@ -166,7 +176,7 @@ public sealed class MainWindow : Window
     /// <summary>Shows the settings and stats as they are now. Called by the tray app on every change, and by the timer.</summary>
     public void RefreshNow()
     {
-        if (_refreshing || !IsLoaded) return;
+        if (_refreshing || !IsLoaded || WindowState == WindowState.Minimized) return;
         _refreshing = true;
         try
         {

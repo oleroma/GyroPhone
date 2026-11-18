@@ -31,15 +31,16 @@ object PressTargets {
 
     /**
      * A phone-attached pad's [axis] pushed past half way, [positive] or not: its stick or trigger
-     * as the game pad's ([zStick]: the right stick is on Z / RZ, else RX / RY), its hat as the D-pad.
+     * as the game pad's ([zStick]: the right stick is on Z / RZ, else RX / RY with the triggers on
+     * Z / RZ), its hat as the D-pad.
      */
     fun ofPhoneAxis(axis: Int, positive: Boolean, zStick: Boolean): OutputTarget? {
         val sign = if (positive) 1f else -1f
         return when (axis) {
             AndroidAxis.X -> OutputTarget.PadAxis(GamepadAxis.LX, sign)
             AndroidAxis.Y -> OutputTarget.PadAxis(GamepadAxis.LY, sign)
-            AndroidAxis.Z -> if (zStick) OutputTarget.PadAxis(GamepadAxis.RX, sign) else null
-            AndroidAxis.RZ -> if (zStick) OutputTarget.PadAxis(GamepadAxis.RY, sign) else null
+            AndroidAxis.Z -> if (zStick) OutputTarget.PadAxis(GamepadAxis.RX, sign) else if (positive) OutputTarget.PadAxis(GamepadAxis.LT) else null
+            AndroidAxis.RZ -> if (zStick) OutputTarget.PadAxis(GamepadAxis.RY, sign) else if (positive) OutputTarget.PadAxis(GamepadAxis.RT) else null
             AndroidAxis.RX -> if (zStick) null else OutputTarget.PadAxis(GamepadAxis.RX, sign)
             AndroidAxis.RY -> if (zStick) null else OutputTarget.PadAxis(GamepadAxis.RY, sign)
             AndroidAxis.LTRIGGER, AndroidAxis.BRAKE -> if (positive) OutputTarget.PadAxis(GamepadAxis.LT) else null

@@ -93,11 +93,13 @@ internal static class Program
 
     /// <summary>
     /// The pipe, open only to this user (not even to other administrators' programs) and to the companion,
-    /// which runs at normal, not administrator, level (the medium integrity label).
+    /// which runs at normal, not administrator, level (the medium integrity label). The companion reads
+    /// this pipe, so the label stops reads too (NR): a low-integrity program of this user (a sandboxed
+    /// browser tab) cannot open it and take the one slot.
     /// </summary>
     private static SafePipeHandle CreatePipe(string name, string sid)
     {
-        string sddl = $"D:P(A;;GA;;;{sid})S:(ML;;NW;;;ME)";
+        string sddl = $"D:P(A;;GA;;;{sid})S:(ML;;NWNR;;;ME)";
         if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, out var sd, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastPInvokeError());
         try

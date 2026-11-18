@@ -185,30 +185,43 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
     }
 
     /** An axis glides, or one was on last sample (turning it off may start a glide): [route] wants every sample. */
-    val coasting: Boolean get() = math.coasting
+    val coasting: Boolean get() = !resetPending && math.coasting
 
     /**
      * One sample (angular velocity [gx], [gy], [gz] in rad/s, Android sensor frame) sent where gyro
      * mappings [routes] ([InputSource.Gyro] sources) say ([GyroMath.step]), of the gyro axes [axes]
-     * says move ([MappingEngine.gyroAxes]: a ratchet stops or starts one), measured in [space].
-     * The result is reused by the next call.
+     * says move ([MappingEngine.gyroAxes]: a ratchet stops or starts one), measured in [space],
+     * in the base orientation [yawAxis] makes ([motion]). The result is reused by the next call.
      */
     fun route(
         gx: Float, gy: Float, gz: Float, dtSeconds: Float, routes: List<Mapping>, axes: Int = MappingEngine.ALL_GYRO,
         space: GyroSpace = GyroSpace.LOCAL, up: FloatArray? = null,
     ): GyroMath.Routed {
-        val m = inSpace(motion(gx, gy, gz, resolvedOrientation()), space, up)
+        val m = inSpace(motion(gx, gy, gz), space, up)
         return route(m, dtSeconds, routes, axes)
     }
 
     /** As [route], for a sample already turned and measured in its space ([motion], [inSpace]). */
     fun route(m: Motion, dtSeconds: Float, routes: List<Mapping>, axes: Int = MappingEngine.ALL_GYRO): GyroMath.Routed {
+        if (resetPending) reset()
         val s = settings
         return math.step(m.yaw, m.pitch, m.roll, dtSeconds, config(s, routes), axes,
             tightening ?: s.tighteningThreshold, smoothing ?: s.smoothingThreshold)
     }
 
-    fun reset() = math.reset()
+    /** Starts again: no sub-count remainder, smoothing or glide left. On the sampling thread only. */
+    fun reset() {
+        resetPending = false
+        math.reset()
+    }
+
+    /** [reset] asked from another thread: the sampling thread does it before its next [route]. */
+    @Volatile private var resetPending = false
+
+    /** Asks for a [reset] from any thread; the sampling thread does it at its next [route] (or [reset]). */
+    fun requestReset() {
+        resetPending = true
+    }
 
     private enum class Resolved { LANDSCAPE_LEFT, LANDSCAPE_RIGHT, PORTRAIT, PORTRAIT_UPSIDE_DOWN }
 

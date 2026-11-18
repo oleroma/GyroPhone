@@ -52,15 +52,21 @@ public sealed class HidInputSink : IDisposable
         {
             string path = FindDevice() ?? throw new IOException("the GyroPhone input driver is not installed");
             var h = CreateFileW(path, GenericRead | GenericWrite, FileShareRead | FileShareWrite, 0, OpenExisting, 0, 0);
-            if (h.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
-            Span<byte> buf = stackalloc byte[4];
-            if (Control(h, IoctlVersion, [], buf) != 4 || BitConverter.ToUInt32(buf) != ProtocolVersion)
+            // Closed on every failure below, so a refused plug leaves no handle holding the device.
+            try
+            {
+                if (h.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                Span<byte> buf = stackalloc byte[4];
+                if (Control(h, IoctlVersion, [], buf) != 4 || BitConverter.ToUInt32(buf) != ProtocolVersion)
+                    throw new IOException("the GyroPhone input driver is a different version; run its install.cmd again");
+                BitConverter.TryWriteBytes(buf, ProtocolVersion);
+                Control(h, IoctlPlug, buf, []);
+            }
+            catch
             {
                 h.Dispose();
-                throw new IOException("the GyroPhone input driver is a different version; run its install.cmd again");
+                throw;
             }
-            BitConverter.TryWriteBytes(buf, ProtocolVersion);
-            Control(h, IoctlPlug, buf, []);
             _reports.Reset();
             _handle = h;
             return true;
@@ -226,8 +232,9 @@ public sealed class KeyMouseRouter : IKeyMouseSink, IDisposable
 
     /// <summary>
     /// Plugs the driver's mouse and keyboard when "Use input driver" is on, it's installed and they aren't plugged yet:
-    /// once this instance owns the port (an instance on its way out may still hold them), and again when the driver turns
-    /// up later. Called through <c>HostEngine.ChangeKeyMouseRoute</c>, under the engine lock.
+    /// when the switch turns on, or once this instance owns the port (an instance on its way out may still hold them).
+    /// Called through <c>HostEngine.ChangeKeyMouseRoute</c>, under the engine lock. The later retries plug off the lock and
+    /// hand the result to <see cref="Adopt"/>.
     /// </summary>
     public bool Retry()
     {
@@ -235,6 +242,23 @@ public sealed class KeyMouseRouter : IKeyMouseSink, IDisposable
         if (DriverReady) return true;
         _driver?.Dispose();
         _driver = HidInputSink.Create(_log);
+        return DriverReady;
+    }
+
+    /// <summary>
+    /// Takes the driver's mouse and keyboard that <paramref name="plugged"/> (made by <see cref="HidInputSink.Create"/>
+    /// off the engine lock) holds, when "Use input driver" is still on and no driver is ready yet; otherwise closes it.
+    /// True when the driver is ready. Called through <c>HostEngine.ChangeKeyMouseRoute</c>, under the engine lock.
+    /// </summary>
+    public bool Adopt(HidInputSink plugged)
+    {
+        if (!_useInputDriver || DriverReady)
+        {
+            plugged.Dispose();
+            return DriverReady;
+        }
+        _driver?.Dispose();
+        _driver = plugged;
         return DriverReady;
     }
 

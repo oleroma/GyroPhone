@@ -13,13 +13,13 @@ function Write-Done([string]$text) { Write-Host $text -ForegroundColor Green }
 function Write-Fail([string]$text) { Write-Host $text -ForegroundColor Red }
 function Wait-Close { Write-Host ''; Read-Host 'Press Enter to close' | Out-Null }
 
-# Runs the script again as administrator (one Windows prompt) and exits this copy.
-function Assert-Admin([string]$Script) {
+# Runs the script again as administrator (one Windows prompt), with $Arguments, and exits this copy.
+function Assert-Admin([string]$Script, [string[]]$Arguments = @()) {
     $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
     if ($me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { return }
     try {
         $p = Start-Process powershell.exe -Verb RunAs -Wait -PassThru `
-            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$Script`"")
+            -ArgumentList (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$Script`"") + $Arguments)
         exit $p.ExitCode
     } catch {
         Write-Fail 'This needs administrator rights, and Windows did not give them (the prompt was declined).'
@@ -83,7 +83,11 @@ public static class GpSetup
     [DllImport("newdev.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     static extern bool UpdateDriverForPlugAndPlayDevicesW(IntPtr hwndParent, string hardwareId, string infPath, uint flags, out bool reboot);
 
+    [DllImport("setupapi.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool SetupDiOpenDeviceInfoW(IntPtr set, string instanceId, IntPtr hwndParent, uint flags, ref SP_DEVINFO_DATA data);
+
     const uint DICD_GENERATE_ID = 1, SPDRP_HARDWAREID = 1, DIF_REGISTERDEVICE = 0x19, INSTALLFLAG_FORCE = 1;
+    const uint SPDRP_SECURITY_SDS = 0x18;
     static readonly Guid SystemClass = new Guid("4D36E97D-E325-11CE-BFC1-08002BE10318");
 
     public static void CreateRootDevice(string hardwareId)
@@ -100,6 +104,23 @@ public static class GpSetup
             if (!SetupDiSetDeviceRegistryPropertyW(set, ref data, SPDRP_HARDWAREID, ids, (uint)ids.Length))
                 throw new Win32Exception();
             if (!SetupDiCallClassInstaller(DIF_REGISTERDEVICE, set, ref data))
+                throw new Win32Exception();
+        }
+        finally { SetupDiDestroyDeviceInfoList(set); }
+    }
+
+    // Sets who may open the device (an SDDL string); it takes effect when the device next starts.
+    public static void SetSecurity(string instanceId, string sddl)
+    {
+        Guid cls = SystemClass;
+        IntPtr set = SetupDiCreateDeviceInfoList(ref cls, IntPtr.Zero);
+        if (set == new IntPtr(-1)) throw new Win32Exception();
+        try
+        {
+            var data = new SP_DEVINFO_DATA { cbSize = (uint)Marshal.SizeOf(typeof(SP_DEVINFO_DATA)) };
+            if (!SetupDiOpenDeviceInfoW(set, instanceId, IntPtr.Zero, 0, ref data)) throw new Win32Exception();
+            byte[] sd = Encoding.Unicode.GetBytes(sddl + "\0");
+            if (!SetupDiSetDeviceRegistryPropertyW(set, ref data, SPDRP_SECURITY_SDS, sd, (uint)sd.Length))
                 throw new Win32Exception();
         }
         finally { SetupDiDestroyDeviceInfoList(set); }

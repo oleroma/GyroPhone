@@ -119,17 +119,18 @@ internal static class PaintRenderer
     /// with a soft LaserSnakeGlow round it, coloured and shaded as the paint. It follows a smooth curve through the
     /// stroke points (<see cref="LaserTrace.Curve"/>), cut into steps of at most <see cref="LaserTrace.CurveStepDeg"/>
     /// with the colour, width and fade blended along each, so a fast turn stays round and no joints show. Each pixel
-    /// takes the strongest piece over it (and its glow the strongest glow), then the glow and the line go over the
-    /// picture at the colours' opacity, so overlaps don't darken. As the phone's snake.
+    /// takes the strongest piece of its kind over it (and its glow the strongest glow), then each kind's glow and line go
+    /// over the picture at that kind's colours' opacity (moving, then aiming, then firing on top), so overlaps don't
+    /// darken. As the phone's snake.
     /// </summary>
     private static void Snake(State st, int[] buf, int size, float e, LaserTrace trace, OverlaySettings s, bool front, float r,
         float[]? turned, uint[] moves)
     {
         if (!BuildPieces(st, size, e, trace, s, front, r, turned, moves)) return;
         float glow = Math.Clamp(s.LaserSnakeGlow, 0f, 1f);
-        float alpha = 0f;
-        foreach (var m in moves) alpha += (m >> 24) / 255f;
-        alpha /= 6f;
+        var pieces = st.Pieces;
+        int kinds = 0;
+        for (int i = 0; i < pieces.Count; i++) kinds |= 1 << pieces.Items[i].Kind;
         if (st.Cov.Length != size * size)
         {
             st.Cov = new float[size * size];
@@ -137,29 +138,34 @@ internal static class PaintRenderer
             st.GlowCov = new float[size * size];
             st.GlowCol = new int[size * size];
         }
-        else
-        {
-            Array.Clear(st.Cov);
-            if (glow > 0f) Array.Clear(st.GlowCov);
-        }
-        var pieces = st.Pieces;
         // Each pixel keeps its strongest cover, the oldest piece's colour where pieces tie. Drawn newest first (the
         // strongest, as the tail fades), so an older piece can skip the pixels a newer one already covers more than it
         // ever could; ties go to the later drawn, older piece: the same picture as drawing oldest first.
         // The picture's rows are shared out in bands over the cores: each band runs every piece in the same order,
         // clipped to its rows, so the picture is the same as drawn in one go (a long Snake is hundreds of pieces).
         int bands = size >= 128 ? Math.Clamp(Environment.ProcessorCount, 1, 8) : 1;
+        // One layer per kind (moving, then aiming, then firing on top), each at its own colours' opacity, as the phone's.
         void Band(int b)
         {
             int ya = size * b / bands, yb = size * (b + 1) / bands - 1;
-            for (int i = pieces.Count - 1; i >= 0; i--)
+            int from = ya * size, to = (yb + 1) * size;
+            foreach (int kind in SnakeKinds)
             {
-                ref var c = ref pieces.Items[i];
-                Capsule(st, size, c.Ax, c.Ay, c.Bx, c.By, c.Half, c.Col, c.Op, glow, ya, yb);
+                if ((kinds & 1 << kind) == 0) continue;
+                float alpha = SnakeAlpha(kind, s, moves);
+                if (alpha <= 0f) continue;
+                Array.Clear(st.Cov, from, to - from);
+                if (glow > 0f) Array.Clear(st.GlowCov, from, to - from);
+                for (int i = pieces.Count - 1; i >= 0; i--)
+                {
+                    ref var c = ref pieces.Items[i];
+                    if (c.Kind != kind) continue;
+                    Capsule(st, size, c.Ax, c.Ay, c.Bx, c.By, c.Half, c.Col, c.Op, glow, ya, yb);
+                }
+                // The glow, then the line, over what is drawn already at this kind's colours' opacity.
+                if (glow > 0f) Over(buf, st.GlowCov, st.GlowCol, alpha, from, to);
+                Over(buf, st.Cov, st.CovCol, alpha, from, to);
             }
-            // The glow, then the line, over the paint at the colours' opacity.
-            if (glow > 0f) Over(buf, st.GlowCov, st.GlowCol, alpha, ya * size, (yb + 1) * size);
-            Over(buf, st.Cov, st.CovCol, alpha, ya * size, (yb + 1) * size);
         }
         if (bands > 1) Parallel.For(0, bands, Band);
         else Band(0);
@@ -264,7 +270,7 @@ internal static class PaintRenderer
                     float tail = Math.Clamp(tailA + (tailB - tailA) * f, 0f, 1f);
                     float half = headPx * (1f - taper * (1f - tail)) * k / 2f;
                     if (pieces.Count == pieces.Items.Length) Array.Resize(ref pieces.Items, pieces.Items.Length * 2);
-                    pieces.Items[pieces.Count++] = new SnakePiece { Ax = bx0, Ay = by0, Bx = bx, By = by, Half = half, Col = col, Op = 1f - fade * (1f - tail) };
+                    pieces.Items[pieces.Count++] = new SnakePiece { Ax = bx0, Ay = by0, Bx = bx, By = by, Half = half, Col = col, Op = 1f - fade * (1f - tail), Kind = (byte)kind };
                     any = true;
                 }
                 bx0 = bx; by0 = by; prevFront = isFront;
@@ -286,7 +292,7 @@ internal static class PaintRenderer
                 bool byWay = kind == LaserPaint.PaintKind && s.SnakeColourByWay;
                 var way = byWay ? trace.Moving : default;
                 if (pieces.Count == pieces.Items.Length) Array.Resize(ref pieces.Items, pieces.Items.Length * 2);
-                pieces.Items[pieces.Count++] = new SnakePiece { Ax = bx, Ay = by, Bx = bx, By = by, Half = headPx * k / 2f, Col = ColourAt(p, v, kind, way, byWay), Op = 1f };
+                pieces.Items[pieces.Count++] = new SnakePiece { Ax = bx, Ay = by, Bx = bx, By = by, Half = headPx * k / 2f, Col = ColourAt(p, v, kind, way, byWay), Op = 1f, Kind = (byte)kind };
                 any = true;
             }
         }
@@ -307,6 +313,22 @@ internal static class PaintRenderer
             float oa = a + (o >> 24 & 0xFF) / 255f * ia;
             buf[j] = Pack(or, og, ob, oa);
         }
+    }
+
+    /// <summary>The Snake's layers, bottom to top: moving, then aiming, then firing. As the phone's.</summary>
+    internal static readonly int[] SnakeKinds = [LaserPaint.PaintKind, LaserPaint.AimKind, LaserPaint.FireKind];
+
+    /// <summary>
+    /// The opacity a Snake layer of <paramref name="kind"/> is drawn at: the average of its own colours' opacity (Fire's
+    /// two, Aim's two, or the six moving colours <paramref name="moves"/>), so each kind follows its own colours. As the phone's.
+    /// </summary>
+    internal static float SnakeAlpha(int kind, OverlaySettings s, uint[] moves)
+    {
+        if (kind == LaserPaint.FireKind) return ((uint)s.Color("fire") >> 24) / 510f + ((uint)s.Color("fire_behind") >> 24) / 510f;
+        if (kind == LaserPaint.AimKind) return ((uint)s.Color("aim") >> 24) / 510f + ((uint)s.Color("aim_behind") >> 24) / 510f;
+        float a = 0f;
+        foreach (var m in moves) a += (m >> 24) / 255f;
+        return a / 6f;
     }
 
     /// <summary>The Snake's glow: copies this many times its width, at this share of the glow's strength. As the phone's.</summary>
@@ -397,11 +419,15 @@ internal static class PaintRenderer
     }
 }
 
-/// <summary>One piece of the Snake: from (Ax, Ay) to (Bx, By), Half pixels each side, colour Col at opacity Op (picture pixels).</summary>
+/// <summary>
+/// One piece of the Snake: from (Ax, Ay) to (Bx, By), Half pixels each side, colour Col at opacity Op (picture pixels),
+/// of Kind (<see cref="LaserPaint.PaintKind"/>, AimKind or FireKind: the layer it is drawn in).
+/// </summary>
 internal struct SnakePiece
 {
     public float Ax, Ay, Bx, By, Half, Op;
     public int Col;
+    public byte Kind;
 }
 
 /// <summary>A half's Snake pieces, oldest first.</summary>

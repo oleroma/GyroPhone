@@ -50,7 +50,10 @@ class WifiPump(private val engine: MappingEngine) {
 
     /** Sends a sealed packet straight down the USB cable when it goes there ([AccessoryBridge.sendDirect]). */
     @Volatile var direct: AccessoryBridge? = null
+    /** The loop's thread; a loop whose thread this no longer is (it outlived [stop]) sends nothing more and ends. */
     @Volatile private var thread: Thread? = null
+    /** A loop [stop] gave up waiting for: [start] waits for it again before a new one runs. */
+    @Volatile private var lingering: Thread? = null
 
     @Volatile var rateHz: Int = Wire.DEFAULT_RATE_HZ
 
@@ -88,6 +91,17 @@ class WifiPump(private val engine: MappingEngine) {
     @Volatile var linkTest = false
     private var linkTestTick = 0
 
+    /**
+     * No input can be sent (the pad left with "Only while the pad is open"): keepalives slow to
+     * [SendScheduler.IDLE_KEEPALIVE_NS]. Turning it off wakes the loop, so a STATE goes out at once.
+     */
+    @Volatile var idle = false
+        set(v) {
+            if (field == v) return
+            field = v
+            LockSupport.unpark(thread)
+        }
+
     /** STATE packets handed to / refused by the socket during the last full second. */
     @Volatile var sentPerSecond = 0
         private set
@@ -113,8 +127,11 @@ class WifiPump(private val engine: MappingEngine) {
     /** When the loop asked to wake (0 = it didn't park on a time). */
     private var parkedUntil = 0L
 
-    /** Set as `engine.onChange`: wakes the loop as soon as input changes. */
-    val wake = Runnable { LockSupport.unpark(thread) }
+    /**
+     * Set as `engine.onChange`: wakes the loop as soon as input changes. Without a session nothing
+     * can go out, so input does not wake it ([setSession] does); the engine is drained every [IDLE_PARK_NS].
+     */
+    val wake = Runnable { if (target.session != null) LockSupport.unpark(thread) }
 
     // Pump-thread state.
     private val scheduler = SendScheduler()
@@ -144,12 +161,20 @@ class WifiPump(private val engine: MappingEngine) {
 
     fun start(socket: DatagramSocket) {
         if (running) return
+        lingering?.let { old ->
+            try {
+                old.join(STOP_JOIN_MS)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+        lingering = null
         this.socket = socket
         running = true
-        thread = Thread({ loop() }, "gp-wifi-pump").apply {
-            priority = Thread.MAX_PRIORITY
-            start()
-        }
+        // Set before it runs: the loop ends as soon as it is no longer [thread].
+        val t = Thread({ loop() }, "gp-wifi-pump").apply { priority = Thread.MAX_PRIORITY }
+        thread = t
+        t.start()
         side.start()
     }
 
@@ -170,6 +195,7 @@ class WifiPump(private val engine: MappingEngine) {
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
         }
+        if (t.isAlive) lingering = t
         thread = null
         socket = null
         target = Target(null, NO_BYE)
@@ -204,17 +230,33 @@ class WifiPump(private val engine: MappingEngine) {
 
     private fun loop() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
+        val me = Thread.currentThread()
+        // A loop that outlived its stop() may have left a session behind: this one starts with none.
+        cur = null
+        cipher = null
         val hint = WorkHint.forThisThread()
-        while (running) {
-            // Inside the rate limit nothing can go out: wait instead of taking a snapshot that
-            // would use up a quick tap's edge. Motion keeps accumulating in the engine meanwhile.
-            if (cur != null && target.session === cur) {
+        var idleDrainAt = 0L
+        while (running && thread === me) {
+            val c0 = cur
+            if (c0 != null && target.session === c0) {
+                // Inside the rate limit nothing can go out: wait instead of taking a snapshot that
+                // would use up a quick tap's edge. Motion keeps accumulating in the engine meanwhile.
+                // Side packets go out in that gap instead, a few at a time, looking at the clock in between.
                 val wait = scheduler.sendableAt() - System.nanoTime()
                 if (wait > 0) {
+                    if (sendSide(c0) > 0) continue
                     if (phoneStats) parkedUntil = scheduler.sendableAt()
                     LockSupport.parkNanos(wait)
                     continue
                 }
+            } else if (c0 == null && target.session == null) {
+                // No session: the engine's input is only drained, every IDLE_PARK_NS, whatever wakes the thread.
+                val now0 = System.nanoTime()
+                if (now0 < idleDrainAt) {
+                    LockSupport.parkNanos(idleDrainAt - now0)
+                    continue
+                }
+                idleDrainAt = now0 + IDLE_PARK_NS
             }
             val passStart = System.nanoTime()
             if (parkedUntil != 0L) {
@@ -248,6 +290,8 @@ class WifiPump(private val engine: MappingEngine) {
             }
             val hz = rateHz
             if (scheduler.rateHz != hz) scheduler.rateHz = hz
+            val keepalive = if (idle && !linkTest) SendScheduler.IDLE_KEEPALIVE_NS else SendScheduler.KEEPALIVE_NS
+            if (scheduler.keepaliveNs != keepalive) scheduler.keepaliveNs = keepalive
 
             if (linkTest) {
                 // The engine's input is still drained above but not sent: the PC must never see it mid-test.
@@ -284,27 +328,38 @@ class WifiPump(private val engine: MappingEngine) {
                 sendSealed(c, PacketType.MOTION, mo.encode(plain, 0))
             }
             pcGyro?.let { if (it.hostTakes) sendPadGyro(c, it, now) }
-            // The packets that aren't input, ready-made on their own thread: only sealed and sent here.
-            while (true) {
-                val p = side.take() ?: break
-                sendSealed(c, p.type, p.plain, p.len)
-                side.recycle(p)
-            }
+            // The packets that aren't input, ready-made on their own thread: only sealed and sent here,
+            // a few per pass so new input never waits behind a whole batch; more waiting comes back at once.
+            val sideMore = sendSide(c) == SIDE_PER_PASS
             var wakeAt = minOf(minOf(scheduler.nextDeadline(), nextPingNs), engine.touchpadDeadlineNanos())
             if (mo != null) wakeAt = minOf(wakeAt, nextMotionNs)
             val end = System.nanoTime()
             // The pass is done: how long it took goes to the performance hint.
             hint?.done(end - passStart, end)
-            val wait = wakeAt - end
+            val wait = if (sideMore) 0L else wakeAt - end
             if (wait > 0) {
                 if (phoneStats) parkedUntil = wakeAt
                 LockSupport.parkNanos(wait)
             }
         }
         hint?.close()
+        // Outlived its stop(): the fields may be a new loop's now; leave them alone.
+        if (thread !== me) return
         cur?.let { goodbye(it, exitByeReason) }
         cur = null
         cipher = null
+    }
+
+    /** Seals and sends up to [SIDE_PER_PASS] of the waiting side packets; returns how many. */
+    private fun sendSide(c: LiveSession): Int {
+        var n = 0
+        while (n < SIDE_PER_PASS) {
+            val p = side.take() ?: break
+            sendSealed(c, p.type, p.plain, p.len)
+            side.recycle(p)
+            n++
+        }
+        return n
     }
 
     /** PRESS_TIME for the STATE sent at phone time [stateUs], when an input edge is waiting. */
@@ -330,7 +385,7 @@ class WifiPump(private val engine: MappingEngine) {
         sendSealed(c, PacketType.PAD_GYRO, n)
         // Then the settings of each button that has its own while held (after PAD_GYRO, which says which have).
         val held = g.held
-        for (i in held.indices) sendSealed(c, PacketType.PAD_GYRO_SET, g.encodeHeld(plain, 0, i))
+        for (i in held.indices) sendSealed(c, PacketType.PAD_GYRO_SET, g.encodeHeld(plain, 0, held[i]))
         padGyroHeldSent = held
     }
 
@@ -384,6 +439,8 @@ class WifiPump(private val engine: MappingEngine) {
     private fun sendSealed(c: LiveSession, type: Int, src: ByteArray, plainLen: Int): Boolean {
         val ci = cipher ?: return false
         val s = socket ?: return false
+        // A loop that outlived its stop() never seals beside the new one (same key, same seq numbers).
+        if (thread !== Thread.currentThread()) return false
         if ((seq.toLong() and 0xFFFF_FFFFL) == 0xFFFF_FFFFL) {
             // Seq space spent and the rekey never landed: stop sealing under this key rather than
             // wrap and reuse GCM nonces. Keep cur so the loop does not re-switch to it with seq 0;
@@ -444,7 +501,10 @@ class WifiPump(private val engine: MappingEngine) {
     companion object {
         const val NO_BYE = -1
         private const val SECOND_NS = 1_000_000_000L
-        private const val IDLE_PARK_NS = Wire.KEEPALIVE_MS * 1_000_000L
+        /** Without a session: how often the engine's input is drained (thrown away). */
+        private const val IDLE_PARK_NS = 250_000_000L
+        /** Side packets sealed per pass, between looks at the input. */
+        private const val SIDE_PER_PASS = 2
         private const val BYE_COUNT = 3
         private const val BYE_SPACING_NS = 5_000_000L
         private const val STOP_JOIN_MS = 500L
