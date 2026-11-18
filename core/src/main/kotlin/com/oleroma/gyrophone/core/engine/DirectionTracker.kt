@@ -200,7 +200,8 @@ internal class DirectionTracker {
 
         // Each direction of the pies fires once its own swipe distance is travelled along it.
         var ready = 0
-        for (d in Direction.entries) {
+        for (i in 0 until 4) {
+            val d = Direction.entries[i]
             val b = 1 shl d.ordinal
             if (current and b != 0 && since[d.ordinal] >= activate(s.swipeDpOf(d))) ready = ready or b
         }
@@ -241,7 +242,8 @@ internal class DirectionTracker {
 
     /** The directions of [mask] not in [current] start counting, with the travel [x], [y] (dp) along them. */
     private fun joined(mask: Int, x: Float, y: Float) {
-        for (d in Direction.entries) {
+        for (i in 0 until 4) {
+            val d = Direction.entries[i]
             val b = 1 shl d.ordinal
             if (mask and b != 0 && current and b == 0) since[d.ordinal] = along(d, x, y)
         }
@@ -249,7 +251,7 @@ internal class DirectionTracker {
 
     /** The directions of [mask] count a step [dx], [dy] along them. */
     private fun alongStep(mask: Int, dx: Float, dy: Float) {
-        for (d in Direction.entries) if (mask and (1 shl d.ordinal) != 0) since[d.ordinal] += along(d, dx, dy)
+        for (i in 0 until 4) if (mask and (1 shl i) != 0) since[i] += along(Direction.entries[i], dx, dy)
     }
 
     /**
@@ -294,7 +296,8 @@ internal class DirectionTracker {
     private fun turnOf(mask: Int, hold: Boolean, s: TouchpadSettings): Float {
         var t = 0f
         var any = false
-        for (d in Direction.entries) {
+        for (i in 0 until 4) {
+            val d = Direction.entries[i]
             if (!s.lockOf(d, hold)) continue
             any = true
             if (mask and (1 shl d.ordinal) != 0) t = maxOf(t, s.turnDpOf(d, hold))
@@ -320,7 +323,8 @@ internal class DirectionTracker {
     /** The directions of [mask] whose [dp] the [travel] has reached. */
     private inline fun passed(mask: Int, travel: Float, dp: (Direction) -> Float): Int {
         var out = 0
-        for (d in Direction.entries) {
+        for (i in 0 until 4) {
+            val d = Direction.entries[i]
             val b = 1 shl d.ordinal
             if (mask and b != 0 && travel >= activate(dp(d))) out = out or b
         }
@@ -349,7 +353,8 @@ internal class DirectionTracker {
             offX += dx; offY += dy
         }
         if (s.dragStart) {
-            val hold = Direction.entries.maxOf { activate(s.holdDpOf(it)) }
+            var hold = 0f
+            for (i in 0 until 4) hold = maxOf(hold, activate(s.holdDpOf(Direction.entries[i])))
             val max = hold + s.releaseDp.coerceIn(0f, TouchpadSettings.MAX_RELEASE_DP)
             val d = sqrt(offX * offX + offY * offY)
             if (d > max) {
@@ -357,7 +362,8 @@ internal class DirectionTracker {
             }
         }
         var mask = 0
-        for (d in Direction.entries) {
+        for (i in 0 until 4) {
+            val d = Direction.entries[i]
             val along = when (d) {
                 Direction.UP -> -offY
                 Direction.RIGHT -> offX
@@ -377,8 +383,7 @@ internal class DirectionTracker {
         pressed = mask
         if (mask != 0) carry = 0
         held = if (carry != 0) carry and DIR_BITS else mask
-        for (d in Direction.entries) {
-            val i = d.ordinal
+        for (i in 0 until 4) {
             reach(i, at[i], s)
             zoneMask[i] = (if (carry != 0) carryZones[i] else heldZones(i, at[i], s)) or untilLift[i]
         }
@@ -400,8 +405,7 @@ internal class DirectionTracker {
         } else {
             for (i in 0 until 4) if (held and holdCurrent and (1 shl i) != 0) travel[i] += len
         }
-        for (d in Direction.entries) {
-            val i = d.ordinal
+        for (i in 0 until 4) {
             if (held and (1 shl i) == 0) {
                 at[i] = -1; zoneMask[i] = untilLift[i]; alongNow[i] = 0f; continue
             }
@@ -490,7 +494,7 @@ internal class DirectionTracker {
     val offsetY: Float get() = offY
 
     private companion object {
-        val PLAIN = HoldZone()
+        val PLAIN = HoldZone.DEFAULT
         val X_BITS = (1 shl Direction.RIGHT.ordinal) or (1 shl Direction.LEFT.ordinal)
         val Y_BITS = (1 shl Direction.UP.ordinal) or (1 shl Direction.DOWN.ordinal)
         const val DIR_BITS = 0xF
