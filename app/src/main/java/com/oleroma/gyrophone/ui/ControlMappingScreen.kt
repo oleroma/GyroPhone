@@ -2126,8 +2126,9 @@ internal fun ControlMappingScreen(
                                 val c = e.changes.firstOrNull { it.pressed }
                                 if (c == null) {
                                     // A lift drops it. A cancel (a call, palm rejection) comes as lifts
-                                    // already consumed: the drag stops and nothing changes.
-                                    if (e.changes.all { it.isConsumed }) trackCancel() else trackEnd()
+                                    // already consumed: the drag stops and nothing changes. (A finger lifted
+                                    // in the event before a cancel comes again unpressed and unconsumed.)
+                                    if (e.changes.none { it.previousPressed && !it.isConsumed }) trackCancel() else trackEnd()
                                     continue
                                 }
                                 e.changes.forEach { it.consume() }
