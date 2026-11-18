@@ -170,7 +170,17 @@ private const val MAX_UNDO = 50
  * changed its settings too; or, for a step that changed more than this button (a named sensitivity deleted),
  * the whole [workspace] as it was, which Undo puts back exactly.
  */
-private data class UndoStep(val mappings: List<Mapping>, val control: TouchControl? = null, val workspace: Workspace? = null)
+/**
+ * One Undo / Redo step: the mappings before, and the control before when a preset changed its settings too. A
+ * named sensitivity's delete is a workspace step instead: the workspace from [wsFrom] to [wsTo] (what Undo puts back,
+ * [NamedSens.rebase]), so what was done since stays.
+ */
+private data class UndoStep(
+    val mappings: List<Mapping>,
+    val control: TouchControl? = null,
+    val wsFrom: Workspace? = null,
+    val wsTo: Workspace? = null,
+)
 private const val MIN_SPLIT = 0.25f
 private const val MAX_SPLIT = 0.75f
 private const val PREF_SPLIT = "map.split"
@@ -859,11 +869,10 @@ internal fun ControlMappingScreen(
 
     /** Puts back [step] (undoing or redoing it) and returns the step that takes it back again. */
     fun apply(step: UndoStep): UndoStep {
-        // A whole-workspace step (a named sensitivity deleted): the workspace exactly as it was, its mappings included.
-        if (step.workspace != null) {
-            var now: Workspace? = null
-            editWorkspace { w -> now = w; step.workspace }
-            return UndoStep(allMappings, null, now)
+        // A workspace step (a named sensitivity deleted): exactly what it changed goes back, its mappings included.
+        if (step.wsFrom != null && step.wsTo != null) {
+            editWorkspace { w -> NamedSens.rebase(w, step.wsFrom, step.wsTo) }
+            return UndoStep(allMappings, null, step.wsTo, step.wsFrom)
         }
         val back = UndoStep(allMappings, if (step.control != null) currentControl else null)
         emit(step.mappings)
@@ -2100,9 +2109,13 @@ internal fun ControlMappingScreen(
                                 var before: Workspace? = null
                                 editWorkspace { w -> if (before == null) before = w; NamedSens.delete(w, ns.id) }
                                 if (currentMappings.any(gone)) emit(Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(currentMappings.filterNot(gone), currentSet))))
+                                // The workspace after the delete (its chips too): read with an edit that changes nothing.
+                                var after: Workspace? = null
+                                editWorkspace { w -> after = w; w }
                                 val was = before
-                                if (was != null) {
-                                    undo.add(UndoStep(prev, null, was))
+                                val now = after
+                                if (was != null && now != null) {
+                                    undo.add(UndoStep(prev, null, wsFrom = now, wsTo = was))
                                     if (undo.size > MAX_UNDO) undo.removeAt(0)
                                     redo.clear()
                                     scope.launch {

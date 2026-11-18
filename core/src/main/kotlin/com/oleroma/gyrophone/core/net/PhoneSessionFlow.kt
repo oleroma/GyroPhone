@@ -111,6 +111,11 @@ class PhoneSessionFlow(
     private var silent = false
     /** [hostAddr] came from an unauthenticated ANNOUNCE: a HELLO target, reported ([Out.HostAddress]) only once a WELCOME or sealed packet comes from it. */
     private var addrUnconfirmed = false
+    /**
+     * A [moveTo] attempt to a known address is running: the live session's packets, still coming the
+     * old way, neither move [hostAddr] off the new link nor end the attempt. Cleared by its WELCOME.
+     */
+    private var moving = false
     /** When ERROR SESSION_UNKNOWN last started an attempt (-1: never). */
     private var lastUnknownMs = -1L
     private val buf = ByteArray(Wire.MAX_DATAGRAM)
@@ -149,6 +154,7 @@ class PhoneSessionFlow(
         addrUnconfirmed = false
         val out = ArrayList<Out>()
         startAttempt(nowMs, out)
+        moving = addr != null
         tickAttempt(nowMs, out)
         return out
     }
@@ -159,6 +165,7 @@ class PhoneSessionFlow(
         val wasLive = live != null
         running = false
         attempt = null
+        moving = false
         live = null
         if (wasLive) out.add(Out.Live(null))
         setStatus(SessionStatus.IDLE, out)
@@ -211,6 +218,7 @@ class PhoneSessionFlow(
         // Unauthenticated (the hostId is public): only a HELLO target for the attempt running now, remembered
         // once the PC answers from there. Without an attempt the live session's address follows sealed packets.
         val att = attempt ?: return
+        if (moving) return
         if (from != hostAddr) {
             hostAddr = from
             addrUnconfirmed = true
@@ -229,6 +237,7 @@ class PhoneSessionFlow(
         )
         updateAddr(from, out)
         attempt = null
+        moving = false
         live = session
         lastHeardMs = nowMs
         silent = false
@@ -262,15 +271,17 @@ class PhoneSessionFlow(
         val p = l.openFromHost(data, len) ?: return
         lastHeardMs = nowMs
         if (from != l.hostAddr) l.hostAddr = from
-        updateAddr(from, out)
+        // Moving to another link: the PC is tried there, whatever still comes the old way.
+        if (!moving) updateAddr(from, out)
         if (silent) {
             silent = false
-            if (attempt != null && !l.rekeyRequested) attempt = null
+            if (attempt != null && !l.rekeyRequested && !moving) attempt = null
             setStatus(SessionStatus.LIVE, out)
         }
         if (p is HostBye) {
             live = null
             attempt = null
+            moving = false
             out.add(Out.Live(null))
             when (p.reason) {
                 HostByeReason.REPLACED -> { running = false; setStatus(SessionStatus.REPLACED, out) }
@@ -286,6 +297,7 @@ class PhoneSessionFlow(
     }
 
     private fun startAttempt(nowMs: Long, out: MutableList<Out>) {
+        moving = false
         val att = Attempt(random(Wire.NONCE_SIZE), nowMs, random(4).getI32(0))
         att.nextDiscoverMs = if (hostAddr == null) nowMs else nowMs + Wire.DISCOVERY_FALLBACK_MS
         attempt = att

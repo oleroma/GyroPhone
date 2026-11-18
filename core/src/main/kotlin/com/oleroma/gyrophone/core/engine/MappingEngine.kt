@@ -934,8 +934,16 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         private val shown = BitSet()
         private val scratch = BitSet()
 
+        /**
+         * Whole taps (press and release) of a key queued behind one already waiting to show: a mouse
+         * wheel's notches come as taps, several between two snapshots. Each shows as a press of its
+         * own once the one before has shown up again ([shownInSnapshot]); at most [MAX_QUEUED_TAPS].
+         */
+        private var queuedTaps: IntArray? = null
+        private var anyQueued = false
+
         val active: Boolean
-            get() = axisCount > 0 || !keys.isEmpty || !pressedSince.isEmpty || !shown.isEmpty ||
+            get() = axisCount > 0 || !keys.isEmpty || !pressedSince.isEmpty || !shown.isEmpty || anyQueued ||
                     (gestures.isNotEmpty() && gestures.values.any { it.anyOn })
         val hasAxes: Boolean get() = axisCount > 0
 
@@ -955,10 +963,33 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             scratch.clear(); scratch.or(keys); scratch.or(pressedSince); scratch.andNot(shown)
             shown.and(keys); shown.andNot(releasedSince); shown.or(scratch)
             pressedSince.clear(); releasedSince.clear()
+            if (anyQueued) nextQueuedTap()
+        }
+
+        /** A queued tap of a key that now shows up (and is not held) waits to show, as a fresh tap would. */
+        private fun nextQueuedTap() {
+            val q = queuedTaps ?: return
+            var left = false
+            for (code in q.indices) {
+                if (q[code] == 0) continue
+                if (!shown.get(code) && !keys.get(code)) {
+                    q[code]--
+                    pressedSince.set(code); releasedSince.set(code)
+                }
+                if (q[code] > 0) left = true
+            }
+            anyQueued = left
         }
 
         fun setKey(code: Int, pressed: Boolean) {
             if (code < 0) return
+            // A press after a whole tap that has not shown yet (pressed and let go since the last
+            // snapshot, shown up): its output is a tap of its own, queued, so it isn't merged into
+            // that one. Its level and edges (events, gestures) are as ever.
+            if (pressed && !keys.get(code) && !shown.get(code) && pressedSince.get(code) && releasedSince.get(code) && code < QUEUED_TAP_CODES) {
+                val q = queuedTaps ?: IntArray(QUEUED_TAP_CODES).also { queuedTaps = it }
+                if (q[code] < MAX_QUEUED_TAPS) { q[code]++; anyQueued = true }
+            }
             keys.set(code, pressed)
             if (pressed) pressedSince.set(code) else releasedSince.set(code)
         }
@@ -996,6 +1027,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         fun clear() {
             keys.clear(); axes.fill(0f); axisCount = 0
             pressedSince.clear(); releasedSince.clear(); shown.clear()
+            queuedTaps?.fill(0); anyQueued = false
             modeHeld.clear()
         }
     }
@@ -2525,23 +2557,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     /**
-     * Replaces the active workspace's gyro settings (the gyro corner switching its mode) without
-     * releasing what is held. A toggle press made before no longer flips the new mode.
-     */
-    fun setGyro(settings: GyroSettings) {
-        synchronized(lock) {
-            if (settings == ws.gyro) return
-            ws = ws.copy(gyro = settings)
-            current = current.updateWorkspace(workspaceIndex) { it.copy(gyro = settings) }
-            gyroToggled = false
-            toggleEpoch++
-            applyLayerSettings()
-        }
-        onChange?.run()
-    }
-
-    /** Releases everything and goes back to Base, e.g. when the profile changes or the host disconnects. */
-    /**
      * [p] differs from [profile] only in the active workspace's slider overrides ([onSetValue]):
      * they go into effect without letting anything held go. Anything else goes through [profile]
      * as an edit.
@@ -2562,6 +2577,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         onChange?.run()
     }
 
+    /** Releases everything and goes back to Base, e.g. when the profile changes or the host disconnects. */
     fun reset() {
         synchronized(lock) {
             trace?.queue(DebugTrace.Kind.STATE) { "reset: everything released" }
@@ -4106,6 +4122,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
         /** Android axis ids are 0..47 (MotionEvent.AXIS_GENERIC_16). */
         private const val AXIS_SLOTS = 64
+
+        /** Key codes whose taps queue ([Dev.setKey]): every Android key and the mouse's ([com.oleroma.gyrophone.core.model.AndroidKey.MOUSE_WHEEL_UP]...). */
+        private const val QUEUED_TAP_CODES = 1024
+
+        /** Taps of one key waiting behind the one showing: a wheel flick's notches, kept within reason. */
+        private const val MAX_QUEUED_TAPS = 8
         private val DEFAULT_STICK = StickTuning()
         private val DEFAULT_TRIGGER = TriggerTuning()
 

@@ -244,6 +244,28 @@ class PhoneSessionFlowTest {
         assertEquals(usb, next.filterIsInstance<PhoneSessionFlow.Out.Live>().single().session!!.hostAddr)
     }
 
+    @Test fun theOldLinksPacketsDuringAMoveKeepItOnTheNewLink() {
+        val f = flow()
+        val old = goLive(f)
+        val oldNp = lastNp
+        val usb = InetSocketAddress("192.168.42.129", Wire.PORT)
+        // The PC went quiet on Wi-Fi first: the silence ends with a packet that still comes that way.
+        f.onTick(3010)
+        assertEquals(SessionStatus.HOST_SILENT, f.status)
+        val moveNp = hellos(f.moveTo(usb, 3100)).single().nP
+        lastNp = oldNp
+        val got = f.deliver(hostSealed(Pong(1, 2, 3), old, 1), 3150)
+        assertTrue(got.none { it is PhoneSessionFlow.Out.HostAddress })
+        assertEquals(SessionStatus.LIVE, f.status)
+        assertEquals(usb, f.hostAddr)
+        // The attempt to the new link goes on: its HELLOs still go there, and its WELCOME is taken.
+        val retry = hellos(f.onTick(3200)).single()
+        assertTrue(retry.nP.contentEquals(moveNp))
+        lastNp = moveNp
+        val next = f.deliver(welcome(moveNp, 0x0A0B0C0D), 3350, from = usb)
+        assertEquals(usb, next.filterIsInstance<PhoneSessionFlow.Out.Live>().single().session!!.hostAddr)
+    }
+
     @Test fun movingBackWithNoAddressDiscoversAtOnce() {
         val f = flow()
         goLive(f)
