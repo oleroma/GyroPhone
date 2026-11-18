@@ -232,7 +232,7 @@ internal sealed class InputClient : IDisposable
         }
     }
 
-    /// <summary>Tray Exit or an update: the input process stops too, and this waits (up to 5 s) until it has, so the exe is free.</summary>
+    /// <summary>Tray Exit or an update: the input process stops too, and this waits (up to 5 s; longer while it is still attaching) until it has, so the exe is free.</summary>
     public void ExitInput()
     {
         PipeChannel? c;
@@ -248,9 +248,11 @@ internal sealed class InputClient : IDisposable
             TellExit(c, Hello?.Pid ?? 0);
             return;
         }
-        // Still connecting: the link thread tells the input process once it attaches; wait a little for that.
+        // Still connecting: the link thread tells the input process once it attaches, and waits for it to exit. Wait for
+        // that whole step (attach, then Exit and the process's end), or this process ends with the link thread (a background
+        // one) mid-attach and the input process, seeing the companion gone without Exit, starts it again.
         var t = _thread;
-        if (t != null && t != Thread.CurrentThread) t.Join(CallTimeoutMs);
+        if (t != null && t != Thread.CurrentThread) t.Join(ConnectWaitMs + 2 * CallTimeoutMs);
     }
 
     /// <summary>Tells the input process on <paramref name="c"/> to exit, waits (up to 5 s) until it has, and lets go of the line.</summary>
