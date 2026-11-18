@@ -1200,6 +1200,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** [LayerCache] per layer state (the set in use, then its overrides), for workspace [layerCachesOf]. */
     private val layerCaches = HashMap<List<Int>, LayerCache>()
     private var layerCachesOf: Workspace? = null
+    private val layerKey = ArrayList<Int>()
 
     /** The touch group's [LayerCache] for the mappings in use now. */
     private var touchCache = LayerCache()
@@ -1209,9 +1210,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (layerCachesOf !== ws) {
             layerCaches.clear(); layerCachesOf = ws
         }
-        val key = ArrayList<Int>(overrides.size + 1)
-        key.add(full); key.addAll(overrides)
-        return layerCaches.getOrPut(key) { LayerCache() }
+        // Looked up with a reused key: a layer switch allocates only for a state not seen before.
+        val key = layerKey
+        key.clear(); key.add(full); for (i in overrides.indices) key.add(overrides[i])
+        return layerCaches[key] ?: LayerCache().also { layerCaches[ArrayList(key)] = it }
     }
 
     /** The settings in effect in layer state [c] ([full] with [overrides]), worked out once. */
@@ -1237,6 +1239,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** Each [areaGestures] entry's held source (on [Trigger.HOLD]), by [areaKey]: its gestures follow the set in use. */
     private val areaSources = HashMap<String, InputSource.TouchArea>()
+
+    /** One [areaGestures] entry per control id (all of a control's areas share its times), for [ownLongNs] without building [areaKey]. */
+    private val areaTimes = HashMap<String, ButtonGestures>()
 
     private fun areaKey(id: String, kind: TouchAreaKind) = kind.ordinal.toString() + ":" + id
     private val tapList = ArrayList<ButtonGestures>()
@@ -1651,7 +1656,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             )
             tapStates[c.id] = st; tapList.add(st)
         }
-        areaGestures.clear(); areaSources.clear()
+        areaGestures.clear(); areaSources.clear(); areaTimes.clear()
         for (k in w.mappings.mapNotNull { (it.source as? InputSource.TouchArea)?.takeIf { a -> a.on != Trigger.HOLD }?.copy(on = Trigger.HOLD) }.distinct()) {
             val c = w.touchControls.firstOrNull { it.id == k.id }
             val double = targetsOf(w.mappings, k.copy(on = Trigger.DOUBLE_TAP))
@@ -1660,7 +1665,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 hasDouble = double.isNotEmpty(),
                 tapWaits = double.isNotEmpty() && shapesOf(w.mappings, k.copy(on = Trigger.DOUBLE_TAP)) != shapesOf(w.mappings, k.copy(on = Trigger.TAP)),
             )
-            areaGestures[areaKey(k.id, k.kind)] = st; areaSources[areaKey(k.id, k.kind)] = k; tapList.add(st)
+            areaGestures[areaKey(k.id, k.kind)] = st; areaSources[areaKey(k.id, k.kind)] = k; areaTimes[k.id] = st; tapList.add(st)
         }
         stickCfgs = w.touchControls.filter { it.kind == TouchKind.STICK }.associate { c ->
             c.id to StickCfg(c.deadzone.coerceIn(0f, TouchControl.MAX_DEADZONE), c.zones, BooleanArray(StickDiagonal.entries.size))
@@ -3428,7 +3433,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** The long-press time the gestures of [src]'s touch button, touch area or key ([dev]'s) run on; null for others. */
     private fun ownLongNs(src: InputSource, dev: Dev?): Long? = when (src) {
         is InputSource.TouchDoubleTap -> tapStates[src.id]?.longNs
-        is InputSource.TouchArea -> areaGestures[areaKey(src.id, src.kind)]?.longNs
+        is InputSource.TouchArea -> areaTimes[src.id]?.longNs
         is InputSource.KeyGesture -> {
             val d = dev ?: anyDevice
             d.gestures[src.keyCode]?.longNs

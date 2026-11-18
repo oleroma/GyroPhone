@@ -514,16 +514,20 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
      * keyboard mappings for a full keyboard that is not also a game pad. An analog trigger axis on
      * a side makes the engine ignore that side's L2 / R2 key for the game pad trigger.
      */
-    private fun padDevice(device: InputDevice) = PadDevice(
-        device.id, device.vendorId, device.productId, device.name,
-        keyboard = device.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC &&
-            device.sources and InputDevice.SOURCE_GAMEPAD != InputDevice.SOURCE_GAMEPAD,
-        analogLeftTrigger = device.getMotionRange(AndroidAxis.LTRIGGER) != null ||
-            device.getMotionRange(AndroidAxis.BRAKE) != null,
-        analogRightTrigger = device.getMotionRange(AndroidAxis.RTRIGGER) != null ||
-            device.getMotionRange(AndroidAxis.GAS) != null,
-        rightStickRx = PhysicalSticks.rightStickOnRx { device.getMotionRange(it) != null },
-    )
+    private fun padDevice(device: InputDevice): PadDevice {
+        val rx = PhysicalSticks.rightStickOnRx { device.getMotionRange(it) != null }
+        return PadDevice(
+            device.id, device.vendorId, device.productId, device.name,
+            keyboard = device.keyboardType == InputDevice.KEYBOARD_TYPE_ALPHABETIC &&
+                device.sources and InputDevice.SOURCE_GAMEPAD != InputDevice.SOURCE_GAMEPAD,
+            // On a pad with its right stick on RX / RY, Z / RZ are its analog triggers (the engine reads them as LTRIGGER / RTRIGGER).
+            analogLeftTrigger = device.getMotionRange(AndroidAxis.LTRIGGER) != null ||
+                device.getMotionRange(AndroidAxis.BRAKE) != null || rx && device.getMotionRange(AndroidAxis.Z) != null,
+            analogRightTrigger = device.getMotionRange(AndroidAxis.RTRIGGER) != null ||
+                device.getMotionRange(AndroidAxis.GAS) != null || rx && device.getMotionRange(AndroidAxis.RZ) != null,
+            rightStickRx = rx,
+        )
+    }
 
     /** The engine's view of a mouse: its own device (id apart from the same device's keys), with the mouse mappings. */
     private fun mousePad(device: InputDevice) =

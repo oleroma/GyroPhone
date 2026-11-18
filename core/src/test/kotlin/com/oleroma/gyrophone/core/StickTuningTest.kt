@@ -200,6 +200,28 @@ class StickTuningTest {
         assertEquals(0, g.ry)
     }
 
+    @Test fun rxPadsAnalogTriggerWinsOverItsEarlyL2Key() {
+        // Its Z is its analog left trigger: an L2 key set early in the pull adds nothing to LT.
+        val p = pad.copy(rightStickRx = true, analogLeftTrigger = true)
+        val e = MappingEngine(
+            single(
+                Workspace(
+                    id = "w", name = "w",
+                    pads = listOf(
+                        AttachedPad(
+                            id = "p", match = DeviceMatch(vendorId = 0x045E, productId = 0x0B13),
+                            mappings = KnownLayouts.standardControllerMappings(),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        e.setAxis(p, AndroidAxis.Z, -0.6f) // 20 % pulled
+        e.setKey(p, com.oleroma.gyrophone.core.model.AndroidKey.BUTTON_L2, true)
+        val lt = e.snapshot().gamepad.lt
+        assertTrue(lt in 1..254)
+    }
+
     @Test fun rightStickAxesFollowTheReportedAxes() {
         fun rx(vararg axes: Int) = PhysicalSticks.rightStickOnRx { it in axes }
         val a = AndroidAxis
