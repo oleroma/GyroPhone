@@ -19,9 +19,10 @@ public sealed class DualSensePadSink : IDisposable
     private const uint ProtocolVersion = 1;
     private const uint IoctlVersion = 0x222000, IoctlPlug = 0x222004, IoctlUnplug = 0x222008, IoctlSubmit = 0x22200C;
     private const uint PadDualSense = 1;
-    // Win32 errors that mean the pad or the driver's device is gone, not a passing failure.
-    private const int ErrorFileNotFound = 2, ErrorInvalidHandle = 6, ErrorBadCommand = 22, ErrorNoSuchDevice = 433,
-        ErrorDeviceNotConnected = 1167, ErrorDeviceRemoved = 1617;
+    // Win32 errors that mean the pad or the driver's device is gone, not a passing failure. Access denied on a
+    // handle that worked is a device being removed (delete pending).
+    private const int ErrorFileNotFound = 2, ErrorAccessDenied = 5, ErrorInvalidHandle = 6, ErrorBadCommand = 22,
+        ErrorDevNotExist = 55, ErrorNoSuchDevice = 433, ErrorDeviceNotConnected = 1167, ErrorDeviceRemoved = 1617;
 
     private readonly Action<string>? _log;
     private readonly byte[] _report = new byte[DualSenseReport.Size];
@@ -105,8 +106,8 @@ public sealed class DualSensePadSink : IDisposable
         }
     }
 
-    private static bool IsGone(int error) => error is ErrorFileNotFound or ErrorInvalidHandle or ErrorBadCommand
-        or ErrorNoSuchDevice or ErrorDeviceNotConnected or ErrorDeviceRemoved;
+    private static bool IsGone(int error) => error is ErrorFileNotFound or ErrorAccessDenied or ErrorInvalidHandle
+        or ErrorBadCommand or ErrorDevNotExist or ErrorNoSuchDevice or ErrorDeviceNotConnected or ErrorDeviceRemoved;
 
     public void Dispose() => Unplug();
 

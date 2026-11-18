@@ -211,7 +211,7 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
             x.SetSliderValue(Xbox360Slider.RightTrigger, f.Rt);
             x.SubmitReport();
         }
-        catch (VigemTargetNotPluggedInException)
+        catch (Exception e) when (e is VigemTargetNotPluggedInException or VigemInvalidTargetException)
         {
             Lost();
             throw;
@@ -224,23 +224,25 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
         if (d == null) return;
         try
         {
-            if (_ds4Simple)
+            if (!_ds4Simple)
             {
-                SubmitSimple(d, f);
-                return;
+                try
+                {
+                    // The full report (DS4_REPORT_EX) carries the gyro and accelerometer the simple one lacks.
+                    Ds4Report.Build(_ds4Report, f, m);
+                    d.SubmitRawReport(_ds4Report);
+                    return;
+                }
+                catch (VigemNotSupportedException)
+                {
+                    // ViGEmBus before 1.17 has no DS4_REPORT_EX: buttons, sticks and triggers still go, without motion.
+                    _ds4Simple = true;
+                    _log?.Invoke("ViGEmBus is older than 1.17: the DualShock 4 gets no gyro; update ViGEmBus for it");
+                }
             }
-            // The full report (DS4_REPORT_EX) carries the gyro and accelerometer the simple one lacks.
-            Ds4Report.Build(_ds4Report, f, m);
-            d.SubmitRawReport(_ds4Report);
-        }
-        catch (VigemNotSupportedException)
-        {
-            // ViGEmBus before 1.17 has no DS4_REPORT_EX: buttons, sticks and triggers still go, without motion.
-            _ds4Simple = true;
-            _log?.Invoke("ViGEmBus is older than 1.17: the DualShock 4 gets no gyro; update ViGEmBus for it");
             SubmitSimple(d, f);
         }
-        catch (VigemTargetNotPluggedInException)
+        catch (Exception e) when (e is VigemTargetNotPluggedInException or VigemInvalidTargetException)
         {
             Lost();
             throw;
@@ -266,7 +268,8 @@ public sealed class ViGEmPadSink : IPadSink, IDisposable
     }
 
     /// <summary>
-    /// The pad was removed underneath (disabled in Device Manager, driver reset). Plugging a new one blocks in
+    /// The pad was removed underneath (disabled in Device Manager, driver reset): the bus no longer knows the target
+    /// (not plugged in, or an invalid target when the bus refuses its reports). Plugging a new one blocks in
     /// the driver, so it is left to the engine's pad thread: Plugged goes None, and its next Plug frees the old one.
     /// </summary>
     private void Lost()

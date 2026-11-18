@@ -47,17 +47,19 @@ public class PadPlugTests
         Assert.Equal(OutputMode.None, h.Pad.Plugged);
         h.Pad.FailWith = null;
 
-        // The watchdog has the pad thread plug it again, at most once a second while that fails.
+        // The watchdog has the pad thread plug it again at once, then after 1 s, 2 s and so on while that fails.
         h.Tick(Wire.WatchdogTickMs);
         Assert.Equal(2, h.Pad.Plugs);
         h.Tick(500);
         Assert.Equal(2, h.Pad.Plugs);
         h.Tick(600);
         Assert.Equal(3, h.Pad.Plugs);
+        h.Tick(1_500);
+        Assert.Equal(3, h.Pad.Plugs);
 
         // Once the driver is back the pad is too, with the held button, and no more plugs follow.
         h.Pad.PlugFails = false;
-        h.Tick(1_100);
+        h.Tick(600);
         Assert.Equal(4, h.Pad.Plugs);
         Assert.Equal(OutputMode.Xbox360, h.Pad.Plugged);
         Assert.True(h.Engine.Snapshot().PadPlugged);
