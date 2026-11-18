@@ -111,6 +111,31 @@ public class SessionManagerTests
     }
 
     [Fact]
+    public void ForgedPacketsFromElsewhereAreLimitedButTheSessionKeepsWorkingAndCanMove()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        var attacker = new System.Net.IPEndPoint(System.Net.IPAddress.Parse("192.168.1.99"), 5000).Serialize();
+        var forged = phone.State();
+        for (uint i = 0; i < 200; i++)
+        {
+            Le.PutU32(forged, 8, 0xF000_0000u + i); // sid and seq are in clear; the tag no longer matches
+            h.Engine.OnDatagram(forged, attacker, h.Clock.NowUs);
+        }
+        Assert.Equal(200, h.Engine.Snapshot().Counters.BadAuth);
+        // The phone at its own address is never limited.
+        h.Send(phone, phone.State(f => f.SetKey(UsageW, true)));
+        Assert.Contains((ushort)0x11, h.KeyMouse.HeldKeys);
+        // A move to a new address goes through once the second is over.
+        h.Clock.AdvanceMs(1000);
+        phone.Addr = new System.Net.IPEndPoint(System.Net.IPAddress.Parse("192.168.1.51"), 40001).Serialize();
+        h.Send(phone, phone.State(f => f.SetKey(UsageW, false)));
+        Assert.True(h.KeyMouse.NothingHeld);
+        Assert.True(h.Engine.Snapshot().Connected);
+    }
+
+    [Fact]
     public void BadMacGetsNoReply()
     {
         var h = new Harness();

@@ -54,6 +54,12 @@ public sealed class HostSession : IDisposable
     }
 
     /// <summary>Follows the source of the latest authenticated packet.</summary>
+    /// <summary>
+    /// Whether a datagram came from the session's current endpoint. No lock: the endpoint changes only in
+    /// <see cref="UpdateEndpoint"/>, under the engine lock that the caller holds too.
+    /// </summary>
+    public bool IsEndpoint(SocketAddress from) => _endpoint.Equals(from);
+
     public void UpdateEndpoint(SocketAddress from)
     {
         lock (_txLock)

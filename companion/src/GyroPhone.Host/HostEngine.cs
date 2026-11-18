@@ -120,6 +120,9 @@ public sealed class HostEngine
     private readonly SessionManager _sessions;
     private readonly PairingManager _pairing;
     private readonly RateLimiter _errorLimiter = new(Wire.ErrorRatePerIp, Wire.ErrorRateGlobal);
+    // Decrypt attempts for a session from an address other than its own (a migration, or forged packets
+    // that reuse the sid seen in clear): a failed GCM open throws, so a flood must not reach it.
+    private readonly RateLimiter _foreignOpenLimiter = new(Wire.ErrorRatePerIp, Wire.ErrorRateGlobal);
     private readonly LinkStats _stats = new();
     private IPadSink _pad;
     // Plugging and unplugging the pad block in the driver, so they run on a pad thread outside the lock
@@ -638,6 +641,11 @@ public sealed class HostEngine
             // A BYE needs no answer, and the trailing copies of a just-ended session are expected.
             if (type == PacketType.Bye || RecentlyEnded(sid, nowUs)) return;
             SendError(ErrorCode.SessionUnknown, d.Length, from, nowUs);
+            return;
+        }
+        if (!s.IsEndpoint(from) && !_foreignOpenLimiter.TryAcquire(from, nowUs))
+        {
+            _badAuth++; // over the limit for packets from elsewhere: dropped before the decrypt
             return;
         }
         if (!s.TryOpen(d, _plain))
