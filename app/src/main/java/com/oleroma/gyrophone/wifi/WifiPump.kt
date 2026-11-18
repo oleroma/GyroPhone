@@ -385,7 +385,7 @@ class WifiPump(private val engine: MappingEngine) {
         sendSealed(c, PacketType.PAD_GYRO, n)
         // Then the settings of each button that has its own while held (after PAD_GYRO, which says which have).
         val held = g.held
-        for (i in held.indices) sendSealed(c, PacketType.PAD_GYRO_SET, g.encodeHeld(plain, 0, i))
+        for (i in held.indices) sendSealed(c, PacketType.PAD_GYRO_SET, g.encodeHeld(plain, 0, held[i]))
         padGyroHeldSent = held
     }
 

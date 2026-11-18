@@ -105,11 +105,13 @@ class GyroAndSensorTest {
         }
         put(0, 5, 0.5f); put(1, 2, 0.2f); put(2, 3, 0.3f); put(3, 4, 0.4f)
         val p = DirectReportParser(n)
-        assertEquals(listOf(2L, 3L, 4L, 5L), p.parse(buf.array(), 7).map { it.counter })
+        assertEquals(4, p.parse(buf.array(), 7))
+        assertEquals(listOf(2L, 3L, 4L, 5L), (0 until 4).map { p.counter(it) })
+        assertEquals(listOf(0.2f, 0.3f, 0.4f, 0.5f), (0 until 4).map { p.x(it) })
+        assertEquals(5000L, p.timestampNs(3))
         put(1, 6, 0.6f)
-        val next = p.parse(buf.array(), 7)
-        assertEquals(1, next.size)
-        assertEquals(0.6f, next[0].x)
+        assertEquals(1, p.parse(buf.array(), 7))
+        assertEquals(0.6f, p.x(0))
     }
 
     @Test fun directChannelParserKnowsTheSlotWrittenNext() {
@@ -122,17 +124,18 @@ class GyroAndSensorTest {
         }
         val p = DirectReportParser(n)
         assertEquals(-1, p.nextSlot)
-        assertTrue(p.parse(buf.array(), 7).isEmpty())
+        assertEquals(0, p.parse(buf.array(), 7))
         assertEquals(-1, p.nextSlot)
         put(0, 1); put(1, 2)
-        assertEquals(2, p.parse(buf.array(), 7).size)
+        assertEquals(2, p.parse(buf.array(), 7))
         assertEquals(2, p.nextSlot)
         assertEquals(2L, p.newestCounter)
         // Nothing new in the watched slot: the ring need not be read.
         assertFalse(p.isNew(buf.array(), p.nextSlot))
         put(2, 3)
         assertTrue(p.isNew(buf.array(), p.nextSlot))
-        assertEquals(listOf(3L), p.parse(buf.array(), 7).map { it.counter })
+        assertEquals(1, p.parse(buf.array(), 7))
+        assertEquals(3L, p.counter(0))
         // Round the ring: slot 3, then slot 0 again.
         put(3, 4)
         p.parse(buf.array(), 7)

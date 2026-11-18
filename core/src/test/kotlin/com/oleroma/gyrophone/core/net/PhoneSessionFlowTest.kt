@@ -91,7 +91,8 @@ class PhoneSessionFlowTest {
         val announcer = InetSocketAddress("10.0.0.7", Wire.PORT)
         val n = WireCodec.encodeAnnounce(Announce(1, hostId, AnnounceFlags.PAIRED_WITH_YOU, "PC"), buf)
         val reply = f.deliver(buf.copyOf(n), 30, announcer)
-        assertEquals(PhoneSessionFlow.Out.HostAddress(announcer), reply.filterIsInstance<PhoneSessionFlow.Out.HostAddress>().single())
+        // An ANNOUNCE is unauthenticated: a HELLO target, not yet an address to remember.
+        assertTrue(reply.none { it is PhoneSessionFlow.Out.HostAddress })
         assertEquals(announcer, sends(reply).single().addr)
         assertEquals(1, hellos(reply).size)
         // ANNOUNCEs of other PCs are surfaced but do not redirect HELLO.
@@ -99,6 +100,22 @@ class PhoneSessionFlowTest {
         val other = f.deliver(buf.copyOf(m), 40, InetSocketAddress("10.0.0.9", Wire.PORT))
         assertTrue(sends(other).isEmpty())
         assertEquals(announcer, f.hostAddr)
+        // The WELCOME from there confirms it.
+        val welcomed = f.deliver(welcome(hellos(reply).single().nP, 9), 50, announcer)
+        assertEquals(PhoneSessionFlow.Out.HostAddress(announcer), welcomed.filterIsInstance<PhoneSessionFlow.Out.HostAddress>().single())
+    }
+
+    @Test fun aSpoofedAnnounceIsNeverRemembered() {
+        val f = flow()
+        val live = goLive(f)
+        val fake = InetSocketAddress("192.168.1.66", Wire.PORT)
+        val n = WireCodec.encodeAnnounce(Announce(1, hostId, AnnounceFlags.PAIRED_WITH_YOU, "PC"), buf)
+        assertTrue(f.deliver(buf.copyOf(n), 10, fake).none { it is PhoneSessionFlow.Out.HostAddress })
+        // With no attempt running it is not even a HELLO target: the address stays the PC's.
+        assertEquals(pcAddr, f.hostAddr)
+        val out = f.deliver(hostSealed(Pong(1, 2, 3), live, 1), 20)
+        assertTrue(out.none { it is PhoneSessionFlow.Out.HostAddress })
+        assertEquals(pcAddr, f.hostAddr)
     }
 
     @Test fun welcomeGoesLiveWithDerivedKeys() {
@@ -132,11 +149,39 @@ class PhoneSessionFlowTest {
         assertSame(live, f.live)
         assertEquals(SessionStatus.LIVE, f.status)
 
-        // SESSION_UNKNOWN: a new HELLO with a fresh nP while the old session keeps sending.
+        // SESSION_UNKNOWN from the PC after a quiet moment: a new HELLO with a fresh nP while the old session keeps sending.
         val m = WireCodec.encodeError(ErrorPacket(ErrorCode.SESSION_UNKNOWN), buf)
-        val retry = hellos(f.deliver(buf.copyOf(m), 200)).single()
+        val retry = hellos(f.deliver(buf.copyOf(m), 600)).single()
         assertFalse(retry.nP.contentEquals(lastNp!!))
         assertSame(live, f.live)
+    }
+
+    @Test fun sessionUnknownCountsOnlyFromTheQuietPcAndRarely() {
+        val f = flow()
+        val live = goLive(f)
+        val m = WireCodec.encodeError(ErrorPacket(ErrorCode.SESSION_UNKNOWN), buf)
+        val err = buf.copyOf(m)
+        // Another address: ignored.
+        assertTrue(hellos(f.deliver(err, 600, InetSocketAddress("192.168.1.66", Wire.PORT))).isEmpty())
+        // The PC was heard just now: ignored.
+        f.deliver(hostSealed(Pong(1, 2, 3), live, 1), 700)
+        assertTrue(hellos(f.deliver(err, 900)).isEmpty())
+        // Quiet a moment: a new HELLO, whose WELCOME replaces the session.
+        val h = hellos(f.deliver(err, 1200)).single()
+        lastNp = h.nP
+        val next = f.deliver(welcome(h.nP, 0x55667788), 1210).filterIsInstance<PhoneSessionFlow.Out.Live>().single().session!!
+        // Again soon after, even from the PC after a quiet moment: ignored until HOST_SILENT_MS passed.
+        assertTrue(hellos(f.deliver(err, 2000)).isEmpty())
+        assertTrue(hellos(f.deliver(err, 1200L + Wire.HOST_SILENT_MS)).size == 1)
+        assertSame(next, f.live)
+    }
+
+    @Test fun notPairedFromAnotherAddressIsIgnoredWhileConnecting() {
+        val f = flow()
+        f.connect(0)
+        val n = WireCodec.encodeError(ErrorPacket(ErrorCode.NOT_PAIRED), buf)
+        f.deliver(buf.copyOf(n), 10, InetSocketAddress("192.168.1.66", Wire.PORT))
+        assertEquals(SessionStatus.CONNECTING, f.status)
     }
 
     @Test fun notPairedIsReportedWhileConnecting() {
