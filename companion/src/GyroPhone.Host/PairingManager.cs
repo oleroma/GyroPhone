@@ -18,6 +18,11 @@ public sealed class PairingManager
     private const long CooldownUs = Wire.PairCooldownMs * 1000L;
     private const long UserTimeoutUs = Wire.PairUserTimeoutS * 1_000_000L;
     private const long AttemptTimeoutUs = Wire.PairingWindowS * 1_000_000L;
+    // The phone reveals as soon as PAIR_HOST arrives (and resends every PAIR_RETX_MS), so an attempt still
+    // unrevealed after this is stale: a lost phone, or a LAN peer holding the slot. The next start replaces it.
+    internal const long RevealTimeoutUs = 2_000_000;
+    // Each new attempt costs a P-256 key generation under the engine lock: a few per second per address at most.
+    private readonly RateLimiter _newAttempts = new(perIp: 2, global: 8);
 
     private readonly Func<int, byte[]> _random;
     private readonly Func<P256> _newKey;
@@ -71,22 +76,36 @@ public sealed class PairingManager
 
     // ---- PAIR_START ----
 
-    public int OnStart(PairStart m, long nowUs, Span<byte> reply)
+    /// <param name="fromIp">The sender's address key (<see cref="RateLimiter.Ipv4Key"/>), for the new-attempt rate limit.</param>
+    public int OnStart(PairStart m, long nowUs, Span<byte> reply, uint fromIp = 0)
     {
+        if (_attempt is { Revealed: false } stale && nowUs >= stale.RevealByUs)
+            End(nowUs, cooldown: false);
+        bool charged = false;
+        long revealByUs = nowUs + RevealTimeoutUs;
         if (_attempt != null)
         {
             if (_attempt.SameStart(m)) return Copy(_attempt.HostReply, reply);
-            if (!_attempt.PhoneId.AsSpan().SequenceEqual(m.PhoneId)) return Ack(0, PairAckStatus.Busy, reply);
+            if (!_attempt.PhoneId.AsSpan().SequenceEqual(m.PhoneId))
+                // A fresh unrevealed attempt ends in a moment either way: stay silent so that phone
+                // resends instead of giving up on BUSY.
+                return _attempt.Revealed ? Ack(0, PairAckStatus.Busy, reply) : 0;
             if (!P256.IsValidPublic(m.PkP)) return 0;
+            if (!_newAttempts.TryAcquire(fromIp, nowUs)) return 0; // the phone resends
+            charged = true;
             // The same phone started over (cancelled, or its app restarted): the new attempt replaces its old one.
             // The phone id travels in clear, so replacing a revealed attempt counts toward the failure limit
             // (without a cooldown): a LAN peer cannot keep swapping the code on the PC.
             if (_attempt.Revealed && ++_failures >= Wire.PairMaxFails) _windowUntilUs = long.MinValue;
+            // Replacing an unrevealed attempt keeps its reveal deadline, so a LAN peer that keeps restarting
+            // with new commits cannot hold the PC past it while another phone waits.
+            else if (!_attempt.Revealed) revealByUs = _attempt.RevealByUs;
             End(nowUs, cooldown: false);
         }
         if (!IsOpen(nowUs)) return Ack(0, PairAckStatus.Closed, reply);
         if (nowUs < _cooldownUntilUs) return Ack(0, PairAckStatus.Cooldown, reply);
         if (!P256.IsValidPublic(m.PkP)) return 0;
+        if (!charged && !_newAttempts.TryAcquire(fromIp, nowUs)) return 0; // the phone resends
 
         uint id;
         do id = BitConverter.ToUInt32(_random(4)); while (id == 0 || id == _finished?.AttemptId);
@@ -104,6 +123,7 @@ public sealed class PairingManager
             PkH = key.PublicKey,
             NH = _random(Wire.NonceSize),
             StartedUs = nowUs,
+            RevealByUs = revealByUs,
         };
         a.HostReply = new byte[Wire.PairHostSize];
         WireCodec.EncodePairHost(new PairHost(id, hostId, a.PkH, a.NH, hostName), a.HostReply);
@@ -219,7 +239,7 @@ public sealed class PairingManager
             Finish(a, PairDoneStatus.Timeout, nowUs, cooldown: true);
             return true;
         }
-        if (nowUs - a.StartedUs >= AttemptTimeoutUs)
+        if (a.Revealed ? nowUs - a.StartedUs >= AttemptTimeoutUs : nowUs >= a.RevealByUs)
         {
             End(nowUs, cooldown: false);
             return true;
@@ -292,6 +312,8 @@ public sealed class PairingManager
         public byte[] NH = [];
         public byte[] HostReply = [];
         public long StartedUs;
+        /// <summary>When an attempt still unrevealed by then goes stale (<see cref="RevealTimeoutUs"/> after its phone's first start).</summary>
+        public long RevealByUs;
         public bool Revealed;
         public byte[]? NP;
         public byte[]? Th;

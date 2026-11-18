@@ -1,4 +1,5 @@
 using System.Net;
+using GyroPhone.Host.Settings;
 using GyroPhone.Protocol;
 using GyroPhone.Protocol.Mapping;
 
@@ -34,15 +35,16 @@ public class SessionManagerTests
         using var h = new Harness();
         var phone = h.NewPhone();
         h.Connect(phone);
-        // On by default. Each change goes out at once, not with the next second's status.
-        h.Sender.Clear();
-        h.Engine.SetUsbDirect(false);
-        Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out var off));
-        Assert.Equal(0, WireCodec.DecodeHostStatus(off).Flags2);
+        // Off by default. Each change goes out at once, not with the next second's status.
+        Assert.False(new HostSettings().UsbDirect);
         h.Sender.Clear();
         h.Engine.SetUsbDirect(true);
         Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out var on));
         Assert.Equal(HostStatusFlags2.UsbDirect, WireCodec.DecodeHostStatus(on).Flags2);
+        h.Sender.Clear();
+        h.Engine.SetUsbDirect(false);
+        Assert.Equal(PacketType.HostStatus, phone.TryOpen(h.Sender.Last!, out var off));
+        Assert.Equal(0, WireCodec.DecodeHostStatus(off).Flags2);
     }
 
     [Fact]
@@ -71,6 +73,90 @@ public class SessionManagerTests
         Assert.NotNull(h.Send(old, oldHello));
         h.Tick(Wire.PendingSessionMs + 50);
         h.Send(phone, phone.State());
+        Assert.True(h.Engine.Snapshot().Connected);
+    }
+
+    [Fact]
+    public void ReplayedHelloNeverReplacesTheNewerPendingSession()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        var first = phone.Hello();
+        Assert.NotNull(h.Send(phone, first));
+        h.Tick(Wire.PendingSessionMs + 50);
+
+        // The phone tries again with a new nP; an attacker keeps replaying the captured first HELLO.
+        var attacker = h.NewPhone("10.0.0.99", 1234);
+        var welcome2 = h.Send(phone, phone.Hello())!;
+        Assert.Null(h.Send(attacker, first));
+        Assert.True(phone.OnWelcome(welcome2));
+        h.Sender.Clear();
+        h.Send(phone, phone.State());
+        // The new session came up: its first STATE drew no SESSION_UNKNOWN.
+        Assert.True(h.Engine.Snapshot().Connected);
+        Assert.DoesNotContain(h.Sender.Sent, p => WireCodec.TryDecodeError(p.Data, out _));
+    }
+
+    [Fact]
+    public void SameHelloAfterThePendingSessionExpiredStillConnects()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        var hello = phone.Hello();
+        Assert.NotNull(h.Send(phone, hello)); // this WELCOME is lost
+        h.Tick(Wire.PendingSessionMs + 50);
+        var w = h.Send(phone, hello);
+        Assert.NotNull(w);
+        Assert.True(phone.OnWelcome(w!));
+        h.Send(phone, phone.State());
+        Assert.True(h.Engine.Snapshot().Connected);
+    }
+
+    [Fact]
+    public void AReplayedOlderHelloDoesNotBlockTheResentNewerOne()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        var first = phone.Hello();
+        Assert.NotNull(h.Send(phone, first));
+        h.Tick(Wire.PendingSessionMs + 50);
+        var second = phone.Hello();
+        Assert.NotNull(h.Send(phone, second)); // this WELCOME is lost
+        h.Tick(Wire.PendingSessionMs + 50);
+
+        // With nothing pending, a replay of the first HELLO gets a pending session of its own...
+        var attacker = h.NewPhone("10.0.0.99", 1234);
+        h.Send(attacker, first);
+        // ...but the phone's resent, newer HELLO still replaces it and connects.
+        var w = h.Send(phone, second);
+        Assert.NotNull(w);
+        Assert.True(phone.OnWelcome(w!));
+        h.Send(phone, phone.State());
+        Assert.True(h.Engine.Snapshot().Connected);
+    }
+
+    [Fact]
+    public void ForgedPacketsFromElsewhereAreLimitedButTheSessionKeepsWorkingAndCanMove()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        var attacker = new System.Net.IPEndPoint(System.Net.IPAddress.Parse("192.168.1.99"), 5000).Serialize();
+        var forged = phone.State();
+        for (uint i = 0; i < 200; i++)
+        {
+            Le.PutU32(forged, 8, 0xF000_0000u + i); // sid and seq are in clear; the tag no longer matches
+            h.Engine.OnDatagram(forged, attacker, h.Clock.NowUs);
+        }
+        Assert.Equal(200, h.Engine.Snapshot().Counters.BadAuth);
+        // The phone at its own address is never limited.
+        h.Send(phone, phone.State(f => f.SetKey(UsageW, true)));
+        Assert.Contains((ushort)0x11, h.KeyMouse.HeldKeys);
+        // A move to a new address goes through once the second is over.
+        h.Clock.AdvanceMs(1000);
+        phone.Addr = new System.Net.IPEndPoint(System.Net.IPAddress.Parse("192.168.1.51"), 40001).Serialize();
+        h.Send(phone, phone.State(f => f.SetKey(UsageW, false)));
+        Assert.True(h.KeyMouse.NothingHeld);
         Assert.True(h.Engine.Snapshot().Connected);
     }
 

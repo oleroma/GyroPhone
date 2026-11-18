@@ -14,8 +14,11 @@ public sealed class HostSettings
     public OutputMode OutputMode { get; set; } = OutputMode.Xbox360;
     public bool StartWithWindows { get; set; }
     public TrayClickAction TrayClick { get; set; } = TrayClickAction.OpenMainWindow;
-    /// <summary>Switch a phone on the USB cable to accessory mode and use it as a link (Windows only).</summary>
-    public bool UsbDirect { get; set; } = true;
+    /// <summary>
+    /// Switch a phone on the USB cable to accessory mode and use it as a link (Windows only). Off until the user
+    /// turns it on: it switches any Android device with USB debugging on the cable, not only a GyroPhone phone.
+    /// </summary>
+    public bool UsbDirect { get; set; }
     public List<PairedPhone> PairedPhones { get; set; } = [];
     /// <summary>The overlay windows (phone, 3D shape, attitude indicator, bubble disk), each with its own settings.</summary>
     public List<OverlaySettings> Overlays { get; set; } = [];
