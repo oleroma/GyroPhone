@@ -237,6 +237,8 @@ internal static class Watcher
         public bool HandOff()
         {
             if (UpdateInfo.BuildNumber(Application.ProductVersion) == null || !File.Exists(_newPath) || Program.IsRunning()) return false;
+            // Any program of this user can write .new: running as administrator, starting it would hand it admin rights.
+            if (ElevationProbe.IsSelfElevated) return false;
             string? version = UpdateFinisher.VersionOf(_newPath);
             if (string.Equals(version, Application.ProductVersion, StringComparison.OrdinalIgnoreCase))
             {
