@@ -169,7 +169,9 @@ internal sealed class Hotkeys : NativeWindow, IDisposable
     [DllImport("user32.dll")]
     private static extern uint MapVirtualKeyEx(uint uCode, uint uMapType, IntPtr dwhkl);
 
-    [DllImport("user32.dll")]
+    // Unicode: pwszBuff is UTF-16. Without it the char[] is marshalled as a 1-byte-per-char buffer that the
+    // function overruns (it writes cchBuff UTF-16 units), corrupting the native heap.
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern int ToUnicodeEx(uint wVirtKey, uint wScanCode, byte[] lpKeyState,
         [Out, MarshalAs(UnmanagedType.LPArray)] char[] pwszBuff, int cchBuff, uint wFlags, IntPtr dwhkl);
 
