@@ -71,6 +71,16 @@ public sealed class HeldKeysMarkerTests : IDisposable
     }
 
     [Fact]
+    public void LockedMarkerDoesNotThrow()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(PathName, "{\"Keys\":[26],\"MouseButtons\":0}");
+        // Held open by another tool (a scanner): reading fails, and the start-up goes on.
+        using var held = new FileStream(PathName, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        Assert.Equal(0, HeldKeysMarker.Recover(PathName, new FakeKeyMouse()));
+    }
+
+    [Fact]
     public void WatchdogWritesMarkerOffRxThread()
     {
         var h = new Harness();
