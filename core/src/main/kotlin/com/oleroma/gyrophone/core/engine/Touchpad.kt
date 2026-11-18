@@ -1121,7 +1121,7 @@ class Touchpad(settings: TouchpadSettings = TouchpadSettings(), map: SurfaceMap?
         val fired = dirs.step(rawX / pxPerDp, rawY / pxPerDp, settings)
         holdZones(n)
         stopMovesOnHold(n)
-        for (d in Direction.entries) if (fired and (1 shl d.ordinal) != 0) pulse(n, SWIPES[d.ordinal])
+        for (i in 0 until 4) if (fired and (1 shl i) != 0) pulse(n, SWIPES[i])
         // Any way: with each quick swipe, whichever way.
         if (fired != 0) pulse(n, SurfaceInput.SWIPE_ANY)
         val sideways = fired and (RIGHT_BIT or LEFT_BIT)

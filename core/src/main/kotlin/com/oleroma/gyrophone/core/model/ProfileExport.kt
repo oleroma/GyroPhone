@@ -106,6 +106,7 @@ object ProfileExport {
      * its own, its device preset added beside [p]'s. Where it followed the Defaults of the phone it
      * came from and [p]'s Defaults differ, it takes the old value as its own, so it works the same;
      * where they agree it keeps following them, so nothing shows as an override that changes nothing.
+     * Its global controls come in as its own ([TouchControl.global] off), so none spreads to the others.
      */
     fun addWorkspace(p: Profile, r: Read): Profile {
         val src = r.profile
@@ -138,6 +139,9 @@ object ProfileExport {
             presets = presets + dp.copy(id = id)
             w.copy(devicePreset = id)
         }
+        // Its global controls become its own: kept global, the next sync would copy them, mappings
+        // and all, into every workspace here that has no control with that id.
+        if (w.touchControls.any { it.global }) w = w.copy(touchControls = w.touchControls.map { if (it.global) it.copy(global = false) else it })
         w = w.copy(id = ProfileJson.newWorkspaceId(p.workspaces.map { it.id }), name = freeName(p, w.name))
         return p.copy(workspaces = p.workspaces + w, devicePresets = presets)
     }

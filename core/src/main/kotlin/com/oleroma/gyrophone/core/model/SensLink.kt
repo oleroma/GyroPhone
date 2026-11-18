@@ -65,7 +65,8 @@ data class SensLink(val from: String, val scale: Float = 1f) {
 /**
  * One of a workspace's named sensitivities ([Workspace.namedSens]): a gyro one (counts per degree)
  * or a touch one ([touch], a Move sensitivity). [id] never changes, so renaming breaks nothing;
- * a delete removes every use of its id first ([delete]), so a later one may take it again.
+ * a delete removes every use of its id in the workspace ([delete]), and the id is never given
+ * again ([Workspace.namedSensLastId]), so a use elsewhere never follows a later one.
  */
 @Serializable
 data class NamedSens(val id: Int, val name: String, val touch: Boolean = false) {
@@ -86,11 +87,11 @@ data class NamedSens(val id: Int, val name: String, val touch: Boolean = false) 
 
         /** [w] with a new named sensitivity ([touch] or gyro), "Sens N" with the first free N; and its id. */
         fun add(w: Workspace, touch: Boolean): Pair<Workspace, Int> {
-            val id = (w.namedSens.maxOfOrNull { it.id } ?: 0) + 1
+            val id = maxOf(w.namedSens.maxOfOrNull { it.id } ?: 0, w.namedSensLastId) + 1
             val taken = w.namedSens.mapTo(HashSet()) { it.name }
             var n = 1
             while ("Sens $n" in taken) n++
-            return w.copy(namedSens = w.namedSens + NamedSens(id, "Sens $n", touch)) to id
+            return w.copy(namedSens = w.namedSens + NamedSens(id, "Sens $n", touch), namedSensLastId = id) to id
         }
 
         /** [w] with named sensitivity [id] renamed [name] (blank: unchanged). */
