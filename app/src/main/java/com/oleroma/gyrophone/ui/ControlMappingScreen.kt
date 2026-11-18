@@ -520,6 +520,11 @@ internal fun ControlMappingScreen(
     timing: (BindableInput) -> Pair<Int, Int>? = { null },
     /** The workspace a touch control is in: presets bring only the settings that change what it does there. */
     workspace: Workspace? = null,
+    /**
+     * The level edited (a workspace, edit mode's draft or the Defaults): its gyro and touchpad settings
+     * convert and centre sensitivity chips. Null = [workspace], else the running workspace.
+     */
+    level: Workspace? = null,
     /** Changes the touch control (a preset's settings); null = presets bring mappings only. */
     onControlChange: (((TouchControl) -> TouchControl) -> Unit)? = null,
     /** Its label, edited in the title ([LabelField]); null = the title is not editable. */
@@ -531,6 +536,9 @@ internal fun ControlMappingScreen(
 ) {
     // The edited set seen as Base, so the Base-only Bindings helpers edit it.
     val view = remember(mappings, editSet) { Bindings.viewSet(mappings, editSet) }
+
+    /** The workspace whose game and sensitivities the sensitivity chips are worked out with. */
+    fun sensLevel(): Workspace = level ?: workspace ?: runtime.engine.workspace
 
     /** The How (null = Held) and Repeat count of the button or key [src] belongs to, or null when it is no button's. */
     fun buttonHowOf(src: InputSource): Pair<How?, Int>? {
@@ -891,7 +899,7 @@ internal fun ControlMappingScreen(
         addRecent(t)
         var next = Bindings.addTarget(currentMappings, input, t)
         if (t is OutputTarget.TouchSens) {
-            val base = runtime.engine.workspace.touchpad.sensitivity
+            val base = sensLevel().touchpad.sensitivity
             next = next.map { if (Bindings.belongs(it, input) && it.target == t && it.range == null) it.copy(range = AxisRange(base * 0.8f, base * 1.2f)) else it }
         }
         val newRange = when (t) {
@@ -905,7 +913,7 @@ internal fun ControlMappingScreen(
         }
         if (t is OutputTarget.GyroSens) {
             // It needs a range to do anything: around the sensitivity it would change.
-            val g = runtime.engine.workspace.gyro
+            val g = sensLevel().gyro
             val base = if (t.named > 0) g.sensitivity else g.sensitivityOf(if (t.axis == MotionAxis.NONE) MotionAxis.ROLL else t.axis)
             next = next.map { if (Bindings.belongs(it, input) && it.target == t && it.range == null) it.copy(range = AxisRange(base * 0.8f, base * 1.2f)) else it }
         }
@@ -1164,7 +1172,7 @@ internal fun ControlMappingScreen(
         return when (chip.target) {
             is OutputTarget.PadAxis -> "%.0f–%.0f %%".format(r.from * 100, r.to * 100)
             is OutputTarget.GyroSens -> {
-                val c = runtime.engine.workspace.gyro.gameCountsPer360
+                val c = sensLevel().gyro.gameCountsPer360
                 if (c > 0f) "%.2f–%.2f".format(GameSens.rws(r.from, c), GameSens.rws(r.to, c)) else "%.1f–%.1f".format(r.from, r.to)
             }
             is OutputTarget.TouchSens -> "%.2f–%.2f".format(r.from, r.to)
@@ -2484,8 +2492,8 @@ internal fun ControlMappingScreen(
             swipe = Triggers.isSwipe(input.sources.first()),
             analog = chip.target is OutputTarget.PadAxis || chip.target is OutputTarget.MouseAxis,
             options = Bindings.entry(view, ti, chip.target, chip.n)?.options,
-            range = chipRange(chip.target, Bindings.entry(view, ti, chip.target, chip.n)?.range, runtime.engine.workspace.gyro),
-            value = chipValue(chip.target, zi.sources.first(), Bindings.entry(view, ti, chip.target, chip.n), runtime.engine.workspace.gyro),
+            range = chipRange(chip.target, Bindings.entry(view, ti, chip.target, chip.n)?.range, sensLevel().gyro, sensLevel().touchpad.sensitivity),
+            value = chipValue(chip.target, zi.sources.first(), Bindings.entry(view, ti, chip.target, chip.n), sensLevel().gyro),
             position = zi.sources.first() is InputSource.Finger,
             buttonHow = ti.sources.firstOrNull()?.let { chipButtonHow(it, chip.target) },
             onApply = { tr, o, w, r, pd ->
@@ -3610,10 +3618,10 @@ private const val MAX_TOUCH_SENS_TYPED = 50f
 /**
  * The Range of a chip of [target] ([ChipRange]), null for a target that takes none: a game pad
  * axis or trigger in %, Gyro sensitivity in RWS when [g]'s game is known, else counts per
- * degree, its slider up to the Slider cap (App › Gyro).
+ * degree, its slider up to the Slider cap (App › Gyro). A new Touch sensitivity range is centred on [touchSens].
  */
 @Composable
-private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings): ChipRange? {
+private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings, touchSens: Float): ChipRange? {
     val runtime = LocalContext.current.runtime
     val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
     val capCounts by runtime.sensCapCounts.collectAsStateWithLifecycle()
@@ -3643,7 +3651,7 @@ private fun chipRange(target: OutputTarget, current: AxisRange?, g: GyroSettings
         }
 
         is OutputTarget.TouchSens -> {
-            val base = runtime.engine.workspace.touchpad.sensitivity
+            val base = touchSens
             ChipRange(
                 current, AxisRange(base * 0.8f, base * 1.2f), null, 0f..10f, 0f..MAX_TOUCH_SENS_TYPED, 0.05f, { "%.2f".format(it) },
                 "The touchpad's Move sensitivity at the input's 0 and at full; it changes evenly between them while " +

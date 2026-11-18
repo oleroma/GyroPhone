@@ -293,6 +293,7 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
             physicalTimings = preset.timings,
             inherited = held?.let { h -> Inheritance.gyroInherited(Inheritance.workspace(ws, profile.defaults), HeldButton.GYRO_ID + h.id, editSet) }.orEmpty(),
             parentName = "Workspace",
+            level = ws,
             settings = physicalSettings(runtime, preset, ws, held, editSet) { change ->
                 runtime.editActiveProfile { p ->
                     val now = p.devicePresets.firstOrNull { it.id == preset.id } ?: return@editActiveProfile p
