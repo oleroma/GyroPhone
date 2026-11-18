@@ -102,12 +102,13 @@ class PhonePairingFlow(
         return out
     }
 
-    fun onPacket(p: WirePacket, nowMs: Long): List<Out> {
+    /** [p] arrived from [from]; a refusal before PAIR_HOST (no attempt id yet) counts only from the PC being paired with. */
+    fun onPacket(p: WirePacket, nowMs: Long, from: InetSocketAddress = hostAddr): List<Out> {
         val out = ArrayList<Out>()
         when (val s = state) {
             PairState.Started -> when (p) {
                 is PairHost -> onHost(p, nowMs, out)
-                is PairAck -> refusal(p.status)?.let { fail(it, out) }
+                is PairAck -> if (from == hostAddr) refusal(p.status)?.let { fail(it, out) }
                 else -> Unit
             }
             is PairState.GotHost -> if (p is PairAck && p.attemptId == attemptId) {

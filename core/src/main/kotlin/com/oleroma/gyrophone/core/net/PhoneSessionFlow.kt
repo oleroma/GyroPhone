@@ -87,7 +87,7 @@ class PhoneSessionFlow(
         /** A new live session, or null when the session ended. */
         data class Live(val session: LiveSession?) : Out
         data class Status(val status: SessionStatus) : Out
-        /** The PC's address changed (persist it as the paired host's last address). */
+        /** The PC's address changed, confirmed by authenticated traffic (persist it as the paired host's last address). */
         data class HostAddress(val addr: InetSocketAddress) : Out
         /** An authenticated PONG / HOST_STATUS / RUMBLE, or any ANNOUNCE, for the link to use. */
         data class Received(val packet: WirePacket, val from: InetSocketAddress) : Out
@@ -109,6 +109,10 @@ class PhoneSessionFlow(
     private var attempt: Attempt? = null
     private var lastHeardMs = 0L
     private var silent = false
+    /** [hostAddr] came from an unauthenticated ANNOUNCE: a HELLO target, reported ([Out.HostAddress]) only once a WELCOME or sealed packet comes from it. */
+    private var addrUnconfirmed = false
+    /** When ERROR SESSION_UNKNOWN last started an attempt (-1: never). */
+    private var lastUnknownMs = -1L
     private val buf = ByteArray(Wire.MAX_DATAGRAM)
 
     val isRunning: Boolean get() = running
@@ -142,6 +146,7 @@ class PhoneSessionFlow(
     fun moveTo(addr: InetSocketAddress?, nowMs: Long): List<Out> {
         if (!running) return emptyList()
         hostAddr = addr
+        addrUnconfirmed = false
         val out = ArrayList<Out>()
         startAttempt(nowMs, out)
         tickAttempt(nowMs, out)
@@ -192,7 +197,7 @@ class PhoneSessionFlow(
         if (type < 0 && type != WireCodec.BAD_VERSION) return emptyList()
         val out = ArrayList<Out>()
         when {
-            type == WireCodec.BAD_VERSION || type == PacketType.ERROR -> WireCodec.decodeError(data, len)?.let { onError(it, nowMs, out) }
+            type == WireCodec.BAD_VERSION || type == PacketType.ERROR -> WireCodec.decodeError(data, len)?.let { onError(it, from, nowMs, out) }
             type == PacketType.ANNOUNCE -> (WireCodec.decodePlain(data, len) as? Announce)?.let { onAnnounce(it, from, nowMs, out) }
             type == PacketType.WELCOME -> onWelcome(data, len, from, nowMs, out)
             PacketType.isSealed(type) && !PacketType.isPhoneToHost(type) -> onSealed(data, len, from, nowMs, out)
@@ -203,7 +208,11 @@ class PhoneSessionFlow(
     private fun onAnnounce(a: Announce, from: InetSocketAddress, nowMs: Long, out: MutableList<Out>) {
         out.add(Out.Received(a, from))
         if (!a.hostId.contentEquals(host.hostId)) return
-        updateAddr(from, out)
+        // Unauthenticated (the hostId is public): a HELLO target only, remembered once the PC answers from there.
+        if (from != hostAddr) {
+            hostAddr = from
+            addrUnconfirmed = true
+        }
         val att = attempt ?: return
         sendHello(att, out) // the address may be new: try it at once, outside the retry schedule
     }
@@ -226,12 +235,23 @@ class PhoneSessionFlow(
         setStatus(SessionStatus.LIVE, out)
     }
 
-    private fun onError(e: ErrorPacket, nowMs: Long, out: MutableList<Out>) {
-        // Unauthenticated, so advisory only: it never tears a live session down.
+    private fun onError(e: ErrorPacket, from: InetSocketAddress, nowMs: Long, out: MutableList<Out>) {
+        // Unauthenticated, so advisory only: it never tears a live session down. Anyone on the network can
+        // send one, so SESSION_UNKNOWN counts only from the live PC's address, while it has been quiet a
+        // moment (a PC that knows the session sends PONG and HOST_STATUS every second), and at most once per
+        // HOST_SILENT_MS; NOT_PAIRED and VERSION only from the address being tried, when it is known.
+        val l = live
         when (e.code) {
-            ErrorCode.SESSION_UNKNOWN -> if (live != null && attempt == null) startAttempt(nowMs, out)
-            ErrorCode.NOT_PAIRED -> if (live == null) setStatus(SessionStatus.NOT_PAIRED, out)
-            ErrorCode.VERSION -> if (live == null) setStatus(SessionStatus.VERSION_MISMATCH, out)
+            ErrorCode.SESSION_UNKNOWN -> if (
+                l != null && attempt == null && from == l.hostAddr &&
+                nowMs - lastHeardMs >= UNKNOWN_QUIET_MS &&
+                (lastUnknownMs < 0 || nowMs - lastUnknownMs >= Wire.HOST_SILENT_MS)
+            ) {
+                lastUnknownMs = nowMs
+                startAttempt(nowMs, out)
+            }
+            ErrorCode.NOT_PAIRED -> if (l == null && fromTried(from)) setStatus(SessionStatus.NOT_PAIRED, out)
+            ErrorCode.VERSION -> if (l == null && fromTried(from)) setStatus(SessionStatus.VERSION_MISMATCH, out)
         }
         tickAttempt(nowMs, out)
     }
@@ -296,9 +316,13 @@ class PhoneSessionFlow(
         out.add(Out.Send(buf.copyOf(n), addr))
     }
 
+    private fun fromTried(from: InetSocketAddress): Boolean = hostAddr.let { it == null || it == from }
+
+    /** [from] sent authenticated traffic: the PC's address, reported when new (or only announced so far). */
     private fun updateAddr(from: InetSocketAddress, out: MutableList<Out>) {
-        if (from == hostAddr) return
+        if (from == hostAddr && !addrUnconfirmed) return
         hostAddr = from
+        addrUnconfirmed = false
         out.add(Out.HostAddress(from))
     }
 
@@ -309,6 +333,9 @@ class PhoneSessionFlow(
     }
 
     companion object {
+        /** ERROR SESSION_UNKNOWN is acted on only after this long without an authenticated packet from the PC. */
+        const val UNKNOWN_QUIET_MS = 500L
+
         /** Offset from the attempt start of the [k]-th HELLO: 0, 100, 200, 400, 800, 1800, 2800... */
         fun helloOffsetMs(k: Int): Long {
             val r = Wire.HELLO_RETRY_MS

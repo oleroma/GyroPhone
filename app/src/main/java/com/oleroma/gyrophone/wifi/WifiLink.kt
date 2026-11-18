@@ -712,7 +712,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             PacketType.PAIR_HOST, PacketType.PAIR_ACK, PacketType.PAIR_DONE -> {
                 val f = pairFlow ?: return
                 val p = WireCodec.decodePlain(buf, len) ?: return
-                handlePairOuts(f.onPacket(p, nowMs))
+                handlePairOuts(f.onPacket(p, nowMs, from))
                 return
             }
         }
