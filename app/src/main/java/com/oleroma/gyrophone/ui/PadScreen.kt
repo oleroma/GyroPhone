@@ -1620,6 +1620,8 @@ fun PadScreen(
                         pointer in padOwner -> {
                             padOwner.remove(pointer)
                             runtime.engine.touchpadCancel(pid)
+                            // A zone takes or gives back the finger on a move, not a touch-down or lift.
+                            fingersOnPad = padOwner.size
                             FingerJob.PAD
                         }
 
@@ -1653,6 +1655,7 @@ fun PadScreen(
                         FingerJob.PAD -> {
                             padOwner.add(pointer)
                             runtime.engine.touchpadDown(pid, p.x, p.y, at)
+                            fingersOnPad = padOwner.size
                         }
 
                         FingerJob.BUTTON -> if (origin != null) {

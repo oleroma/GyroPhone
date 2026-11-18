@@ -11,9 +11,12 @@ import com.oleroma.gyrophone.core.model.Mapping
 import com.oleroma.gyrophone.core.model.MappingSet
 import com.oleroma.gyrophone.core.model.OutputTarget
 import com.oleroma.gyrophone.core.model.SliderOverride
+import com.oleroma.gyrophone.core.model.SliderOverrides
 import com.oleroma.gyrophone.core.model.TouchControl
 import com.oleroma.gyrophone.core.model.TouchKind
 import com.oleroma.gyrophone.core.model.Workspace
+import com.oleroma.gyrophone.core.model.WorkspaceDefaults
+import com.oleroma.gyrophone.core.model.WorkspaceMappings
 import com.oleroma.gyrophone.core.model.withSets
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -93,5 +96,28 @@ class LayerRemovalAndPlayKeyTest {
         val mapped = p.updateWorkspace(0) { it.copy(mappings = listOf(Mapping(InputSource.Touch("b"), OutputTarget.Pad(GamepadButton.A)))) }
         assertNotEquals(key, mapped.playTouchKey(0))
         assertNotEquals(key, p.copy(wrapWorkspaces = true).playTouchKey(0))
+    }
+
+    @Test
+    fun aSavedSliderValueAsTheRuntimeStoresItKeepsThePlayKey() {
+        // As GamepadRuntime.saveSetValue does it: put, settle, store, resolve.
+        val chip = Mapping(InputSource.Touch("b"), OutputTarget.GyroSens())
+        val stored = single(ws("w", emptyList()).copy(mappings = listOf(chip))).copy(devicePresets = listOf(preset()))
+        val resolved = WorkspaceMappings.resolve(stored)
+        val changed = SliderOverrides.put(resolved, 0, chip, 3f)
+        assertNotEquals(resolved, changed)
+        val again = WorkspaceMappings.resolve(WorkspaceMappings.store(WorkspaceMappings.settle(resolved, changed)))
+        assertEquals(resolved.playTouchKey(0), again.playTouchKey(0))
+        // Set orientation: the gyro's axis and a display's level, marked as the workspace's own.
+        val display = TouchControl("d", TouchKind.DISPLAY, "", 0.2f, 0.2f, display = GyroDisplay(GyroDisplayKind.PHONE))
+        val withDisplay = WorkspaceMappings.resolve(stored.updateWorkspace(0) { it.copy(touchControls = it.touchControls + display) })
+        val levelled = withDisplay.updateWorkspace(0) { w ->
+            w.copy(
+                gyro = w.gyro.copy(gripPitch = 30f),
+                touchControls = w.touchControls.map { c -> c.display?.let { c.copy(display = it.copy(levelUp = listOf(0f, 1f, 0f))) } ?: c },
+            )
+        }
+        val oriented = WorkspaceMappings.resolve(WorkspaceMappings.store(WorkspaceDefaults.markOwn(withDisplay, levelled)))
+        assertEquals(withDisplay.playTouchKey(0), oriented.playTouchKey(0))
     }
 }

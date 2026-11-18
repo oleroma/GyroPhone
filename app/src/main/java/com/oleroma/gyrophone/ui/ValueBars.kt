@@ -177,6 +177,13 @@ fun rememberValueBars(engine: MappingEngine, marks: List<ValueMark>, active: () 
         val live = ArrayList<String>()
         val lastLive = arrayOfNulls<List<String>>(vb.marks.size)
         val liveUntil = LongArray(vb.marks.size)
+        // What the labels were last built from: a pass where none of it changed (a finger resting, no
+        // lingering line running out) builds nothing.
+        var builtShown: List<Mapping>? = null
+        var builtActive: Set<Mapping>? = null
+        val builtToggles = HashMap<Mapping, Boolean>()
+        var builtCounts = Float.NaN
+        var lingerEnds = Long.MAX_VALUE
         var first = true
         while (true) {
             // The first read is at once: a new overlay shows the values from its first frame.
@@ -205,6 +212,13 @@ fun rememberValueBars(engine: MappingEngine, marks: List<ValueMark>, active: () 
                 engine.togglesOn(shownMs, toggles)
             }
             val counts = engine.workspace.gyro.gameCountsPer360
+            if (!changed && now < lingerEnds && shownMs === builtShown && active == builtActive &&
+                toggles == builtToggles && counts.toBits() == builtCounts.toBits()
+            ) continue
+            builtShown = shownMs
+            builtActive = active
+            builtToggles.clear(); builtToggles.putAll(toggles)
+            builtCounts = counts
             var centered: MutableSet<String>? = null
             for ((k, mk) in vb.marks.withIndex()) {
                 val plainLines = ArrayList<OverlayLine>()
@@ -253,6 +267,8 @@ fun rememberValueBars(engine: MappingEngine, marks: List<ValueMark>, active: () 
                 }
                 if (label != null && vb.inside[k]) (centered ?: HashSet<String>().also { centered = it }).add(mk.id)
             }
+            lingerEnds = Long.MAX_VALUE
+            for (t in liveUntil) if (t > now && t < lingerEnds) lingerEnds = t
             val now2 = centered ?: emptySet()
             if (now2 != vb.centered) vb.centered = now2
             if (changed) vb.frame++
