@@ -164,6 +164,13 @@ import kotlinx.serialization.json.Json
 
 private const val MAX_RECENT = 12
 private const val MAX_UNDO = 50
+
+/**
+ * One undo (or redo) step of the mapping editor: the [mappings] to put back, and the [control] when a preset
+ * changed its settings too; or, for a step that changed more than this button (a named sensitivity deleted),
+ * the whole [workspace] as it was, which Undo puts back exactly.
+ */
+private data class UndoStep(val mappings: List<Mapping>, val control: TouchControl? = null, val workspace: Workspace? = null)
 private const val MIN_SPLIT = 0.25f
 private const val MAX_SPLIT = 0.75f
 private const val PREF_SPLIT = "map.split"
@@ -837,9 +844,9 @@ internal fun ControlMappingScreen(
     val selectedAllowed = remember(selected) { selected?.let(::allowedTargets).orEmpty() }
 
     // Each step: the mappings before, and the control before when a preset changed its settings too.
-    val undo = remember(control.id) { mutableStateListOf<Pair<List<Mapping>, TouchControl?>>() }
+    val undo = remember(control.id) { mutableStateListOf<UndoStep>() }
     // Each undone step, to redo: the mappings after it, and the control after it when the step changed it too.
-    val redo = remember(control.id) { mutableStateListOf<Pair<List<Mapping>, TouchControl?>>() }
+    val redo = remember(control.id) { mutableStateListOf<UndoStep>() }
     var recent by remember { mutableStateOf(loadRecent(runtime)) }
     // The buzz chip being set up: its input, target and which of that target's chips (n).
     var hapticDraft by remember { mutableStateOf<Triple<BindableInput, OutputTarget, Int>?>(null) }
@@ -850,22 +857,32 @@ internal fun ControlMappingScreen(
         mutableFloatStateOf(runtime.uiPref(PREF_SPLIT)?.toFloatOrNull()?.coerceIn(MIN_SPLIT, MAX_SPLIT) ?: 0.5f)
     }
 
+    /** Puts back [step] (undoing or redoing it) and returns the step that takes it back again. */
+    fun apply(step: UndoStep): UndoStep {
+        // A whole-workspace step (a named sensitivity deleted): the workspace exactly as it was, its mappings included.
+        if (step.workspace != null) {
+            var now: Workspace? = null
+            editWorkspace { w -> now = w; step.workspace }
+            return UndoStep(allMappings, null, now)
+        }
+        val back = UndoStep(allMappings, if (step.control != null) currentControl else null)
+        emit(step.mappings)
+        // Undo brings back a preset's settings, not the card order arranged since.
+        if (step.control != null) onControlChange?.invoke { step.control.copy(cardOrder = it.cardOrder, customOrder = it.customOrder) }
+        return back
+    }
+
     fun undoLast() {
-        val (prev, was) = undo.removeLastOrNull() ?: return
+        val step = undo.removeLastOrNull() ?: return
         // Its snackbar's Undo would undo the change before it.
         snackbar.currentSnackbarData?.dismiss()
-        redo.add(allMappings to (if (was != null) currentControl else null))
-        emit(prev)
-        // Undo brings back a preset's settings, not the card order arranged since.
-        if (was != null) onControlChange?.invoke { was.copy(cardOrder = it.cardOrder, customOrder = it.customOrder) }
+        redo.add(apply(step))
     }
 
     fun redoLast() {
-        val (next, was) = redo.removeLastOrNull() ?: return
+        val step = redo.removeLastOrNull() ?: return
         snackbar.currentSnackbarData?.dismiss()
-        undo.add(allMappings to (if (was != null) currentControl else null))
-        emit(next)
-        if (was != null) onControlChange?.invoke { was.copy(cardOrder = it.cardOrder, customOrder = it.customOrder) }
+        undo.add(apply(step))
     }
 
     /**
@@ -878,7 +895,7 @@ internal fun ControlMappingScreen(
         // Mapping something to a cleared action replaces the clear.
         val all = Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(next, currentSet)))
         if (all == prev && controlBefore == null) return
-        undo.add(prev to controlBefore)
+        undo.add(UndoStep(prev, controlBefore))
         if (undo.size > MAX_UNDO) undo.removeAt(0)
         redo.clear()
         emit(all)
@@ -2076,8 +2093,24 @@ internal fun ControlMappingScreen(
                                     val t = m.target
                                     (t is OutputTarget.GyroSens && !ns.touch && t.named == ns.id) || (t is OutputTarget.TouchSens && ns.touch && t.named == ns.id)
                                 }
-                                if (currentMappings.any(gone)) change(currentMappings.filterNot(gone), "Removed " + ns.name)
-                                editWorkspace { w -> NamedSens.delete(w, ns.id) }
+                                // One step that Undo takes back exactly: the whole workspace as it was before (the
+                                // sensitivity, its slider chips and value, every link to it and this button's chips).
+                                // Taken before this button's chips go, so the step holds them too.
+                                val prev = allMappings
+                                var before: Workspace? = null
+                                editWorkspace { w -> if (before == null) before = w; NamedSens.delete(w, ns.id) }
+                                if (currentMappings.any(gone)) emit(Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(currentMappings.filterNot(gone), currentSet))))
+                                val was = before
+                                if (was != null) {
+                                    undo.add(UndoStep(prev, null, was))
+                                    if (undo.size > MAX_UNDO) undo.removeAt(0)
+                                    redo.clear()
+                                    scope.launch {
+                                        snackbar.currentSnackbarData?.dismiss()
+                                        val result = snackbar.showSnackbar("Deleted " + ns.name, actionLabel = "Undo", duration = SnackbarDuration.Short)
+                                        if (result == SnackbarResult.ActionPerformed) undoLast()
+                                    }
+                                }
                             },
                         )
                     }
