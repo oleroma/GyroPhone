@@ -88,10 +88,12 @@ public sealed class DeliveryProbe : IDisposable
     {
         if (_thread != null) return;
         var ready = new ManualResetEventSlim();
+        // Current before its thread runs: when Register finds "Press a key" holding the raw mouse, the listener's
+        // RawMouseReleased must find this probe once it lets go, even while Start still waits.
+        s_current = this;
         _thread = new Thread(() => Run(ready)) { IsBackground = true, Name = "gp-delivery", Priority = ThreadPriority.Highest };
         _thread.Start();
         ready.Wait(1000);
-        s_current = this;
     }
 
     public void Dispose()
