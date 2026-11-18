@@ -98,6 +98,30 @@ public class Ds4MotionTests
     }
 
     [Fact]
+    public void FeedCountsTheTimeOfSamplesLostBeyondTheRepeats()
+    {
+        var feed = new Ds4MotionFeed();
+        var o = new Ds4Motion[MotionFrame.MaxSamples];
+        var f = VectorFrame(); // seq 5 at 2000 µs
+        feed.Take(f, o, 0);
+        uint last = o[1].Clock;
+        // 20 samples later, 1 ms apart: the packet holds only the newest 2 (seq 24, 25), 18 are lost.
+        f.NewestSeq = 25;
+        f.NewestTimeUs = 22_000;
+        f.DtUs[0] = 1000; f.DtUs[1] = 1000;
+        Assert.Equal(2, feed.Take(f, o, 20_000));
+        // Seq 24 is 19 ms after seq 5, seq 25 1 ms after that: 3 ticks per µs.
+        Assert.Equal(19_000u * 3, o[0].Clock - last);
+        Assert.Equal(20_000u * 3, o[1].Clock - last);
+
+        // Within the repeats nothing extra is added.
+        f.NewestSeq = 26;
+        f.NewestTimeUs = 23_000;
+        Assert.Equal(1, feed.Take(f, o, 21_000));
+        Assert.Equal(21_000u * 3, o[0].Clock - last);
+    }
+
+    [Fact]
     public void FeedRestsWhenStoppedOrSilent()
     {
         var feed = new Ds4MotionFeed();
