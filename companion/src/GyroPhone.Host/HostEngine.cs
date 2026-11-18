@@ -168,6 +168,8 @@ public sealed class HostEngine
     private readonly MouseCatchUp _catchUp = new();
     private uint _lastStatePhoneUs;
     private bool _hasStatePhone;
+    /// <summary>The last STATE was a Link test frame (fake totals).</summary>
+    private bool _lastStateLinkTest;
     private long _lostAtState;
 
     // injected state
@@ -885,6 +887,17 @@ public sealed class HostEngine
         // A burst can hold a press and its release: inject the older frame first so no edge is lost.
         // Frames that differ only in motion still merge into one injection.
         // Flush re-enters the engine lock OnDatagram holds.
+        // A Link test's frames carry fake mouse and wheel totals: where they start or stop, the gap to
+        // the real totals is no movement. Inject what is pending on its own side, then rebase.
+        bool linkTest = (_rxFrame.Flags & StateFlags.LinkTest) != 0;
+        if (_hasStatePhone && linkTest != _lastStateLinkTest)
+        {
+            if (_hasPending) Flush(nowUs, edge: true);
+            _mouse.Reset();
+            _catchUp.Clear();
+            _accWheel = _accHWheel = 0;
+        }
+        _lastStateLinkTest = linkTest;
         if (_hasPending && EdgesDiffer(_pending, _rxFrame)) Flush(nowUs, edge: true);
         _pending.CopyFrom(_rxFrame);
         _hasPending = true;
@@ -1255,6 +1268,9 @@ public sealed class HostEngine
         if (!PadTakesMotion || _paused || _locked || _releasedForSilence) return;
         _motionFrame.Decode(plain);
         int n = _ds4Motion.Take(_motionFrame, _motionOut, nowUs);
+        // Each reading is a driver call: inject the STATE this burst holds first, so its keys, mouse and
+        // pad frame do not wait for them, and the readings carry its buttons.
+        if (n > 0 && _hasPending) Flush(nowUs, edge: false);
         SubmitMotion(n);
     }
 
