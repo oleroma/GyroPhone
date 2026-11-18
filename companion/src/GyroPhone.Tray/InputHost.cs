@@ -237,6 +237,8 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
             using var gone = new ManualResetEventSlim();
             var channel = new PipeChannel(pipe, PipeChannel.Dispatch<IInputControl>(this), null, _log.Write, "gp-pipe");
             channel.Closed += gone.Set;
+            // A companion that died at once: its reader closed the channel before Closed had a handler.
+            if (channel.IsClosed) gone.Set();
             _out.Channel = channel;
             gone.Wait();
             if (ReferenceEquals(_out.Channel, channel)) _out.Channel = null;
