@@ -461,12 +461,16 @@ class LaserTrace {
     }
 
     /** Turns [moving] toward the way the beam went to ([x], [y], [z]), a unit direction, at [nowMs]. */
+    private val followStep = FloatArray(3)
+
     private fun follow(x: Float, y: Float, z: Float, nowMs: Long, smooth: Boolean) {
         if (beamMs == Long.MIN_VALUE) {
             beamX = x; beamY = y; beamZ = z; beamMs = nowMs
             return
         }
-        val d = floatArrayOf(x - beamX, y - beamY, z - beamZ)
+        // A scratch array: this runs for every pose and must not allocate.
+        val d = followStep
+        d[0] = x - beamX; d[1] = y - beamY; d[2] = z - beamZ
         // Barely moved (a still phone's noise): keep the last way.
         if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < MOVE_MIN * MOVE_MIN) return
         unit(d)

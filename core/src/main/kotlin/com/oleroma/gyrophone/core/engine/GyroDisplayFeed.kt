@@ -216,7 +216,22 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     fun shownFrom(pq: FloatArray, out: FloatArray) {
         val d = display
         // Following the camera it turns by Spin (or as far as the game's camera): no turn amount on top.
-        shownMatrix(pq, restIn(d), if (d.followsCamera) 1f else d.motionScale, out)
+        shownMatrix(pq, shownRest(d), if (d.followsCamera) 1f else d.motionScale, out)
+    }
+
+    /** [restIn] of a display and [realWorld], kept whole so a reader on any thread sees one set. */
+    private class ShownRest(val display: GyroDisplay, val realWorld: Boolean, val rest: FloatArray?)
+
+    @Volatile private var shownRestCache: ShownRest? = null
+
+    /** [restIn] for [shownFrom], made again only when the display or [realWorld] changed (it runs for every pose). */
+    private fun shownRest(d: GyroDisplay): FloatArray? {
+        val real = realWorld
+        val c = shownRestCache
+        if (c != null && c.display === d && c.realWorld == real) return c.rest
+        val rest = if (real) null else d.restNow
+        shownRestCache = ShownRest(d, real, rest)
+        return rest
     }
 
     /**
