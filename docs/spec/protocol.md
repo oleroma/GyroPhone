@@ -105,7 +105,7 @@ ANNOUNCE KEY_MATCH / KNOWS_YOUR_KEY tell the phone the PC holds its key, so it c
 The PC's pairing window shows `gyrophone://pair?v=1&n=<name>&k=<host public key>&t=<token>&a=<addresses>&p=<port>` (base64url values; up to four IPv4 addresses). The token is one-time, valid **300 s** (renewed while the window is open).
 
 1. The phone trusts the PC key from the QR and sends KEY_ENROLL (to each address and as broadcast): `tokenId = SHA256("GP-qr-id-v1" ‖ token)[0..8]`, its public key pkP, its name, and `mac = HMAC(token, "GP-qr-enroll-v1" ‖ packet[0..121])[0..16]`.
-2. The PC holding that token saves the phone key to `authorized_phones` and (off its input thread, answering nothing until the file is written; the phone resends every 250 ms) and answers KEY_ENROLL_ACK with `mac = HMAC(token, "GP-qr-ack-v1" ‖ packet[0..25] ‖ pkP)[0..16]`. A PC that never issued the token doesn't answer at all, so it can't spoil a real pairing. Repeats of the same key are acked again.
+2. The PC holding that token saves the phone key to `authorized_phones` (off its input thread; it answers nothing until the file is written, and the phone resends every 250 ms) and answers KEY_ENROLL_ACK with `mac = HMAC(token, "GP-qr-ack-v1" ‖ packet[0..25] ‖ pkP)[0..16]`. A PC that never issued the token doesn't answer at all, so it can't spoil a real pairing. Repeats of the same key are acked again.
 3. Retransmit every 250 ms; the phone gives up after 10 s. Then key pairing connects.
 
 ## Sessions

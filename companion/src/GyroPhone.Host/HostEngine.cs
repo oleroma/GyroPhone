@@ -172,6 +172,8 @@ public sealed class HostEngine
     private bool _hasStatePhone;
     /// <summary>The last STATE was a Link test frame (fake totals).</summary>
     private bool _lastStateLinkTest;
+    /// <summary>A MOTION injected the pending STATE mid-burst; the next STATE of the burst still gets the edge hold.</summary>
+    private bool _flushedForMotion;
     private long _lostAtState;
 
     // injected state
@@ -908,6 +910,9 @@ public sealed class HostEngine
         }
         _lastStateLinkTest = linkTest;
         if (_hasPending && EdgesDiffer(_pending, _rxFrame)) Flush(nowUs, edge: true);
+        // A MOTION already injected the frame before this one in the same burst: a pad press it dropped stays visible.
+        else if (_flushedForMotion && !_hasPending && EdgesDiffer(_pending, _rxFrame)) HoldPadEdge(nowUs);
+        _flushedForMotion = false;
         _pending.CopyFrom(_rxFrame);
         _hasPending = true;
         _heldOutputsDirty = true;
@@ -1049,7 +1054,14 @@ public sealed class HostEngine
     private volatile bool _catchingUp;
 
     /// <summary>Injects the newest STATE received since the last Flush: pad only when the mapped frame changed, SendInput only with events.</summary>
-    public void Flush(long nowUs) => Flush(nowUs, edge: false);
+    public void Flush(long nowUs)
+    {
+        using (Lock(ByInput))
+        {
+            _flushedForMotion = false; // the burst ended
+            FlushLocked(nowUs, edge: false);
+        }
+    }
 
     /// <summary><paramref name="edge"/>: a newer STATE with other keys or buttons replaces this one in the same burst.</summary>
     private void Flush(long nowUs, bool edge)
@@ -1283,7 +1295,11 @@ public sealed class HostEngine
         int n = _ds4Motion.Take(_motionFrame, _motionOut, nowUs);
         // Each reading is a driver call: inject the STATE this burst holds first, so its keys, mouse and
         // pad frame do not wait for them, and the readings carry its buttons.
-        if (n > 0 && _hasPending) Flush(nowUs, edge: false);
+        if (n > 0 && _hasPending)
+        {
+            Flush(nowUs, edge: false);
+            _flushedForMotion = true;
+        }
         SubmitMotion(n);
     }
 
@@ -1927,9 +1943,27 @@ public sealed class HostEngine
     /// The phone keys in authorized_phones (from the folder watcher). New keys are paired at once;
     /// a phone whose file is gone is dropped, live session included.
     /// </summary>
-    public void SetAuthorizedPhones(IReadOnlyList<AuthorizedPhone> phones)
+    public void SetAuthorizedPhones(IReadOnlyList<AuthorizedPhone> phones) => SetAuthorizedPhones(phones, null, null);
+
+    /// <param name="prePublicKey">A key whose secrets <paramref name="pre"/> were worked out before the lock (a QR
+    /// enrolment), so its ECDH never runs under it; taken over, or wiped when not needed.</param>
+    private void SetAuthorizedPhones(IReadOnlyList<AuthorizedPhone> phones, byte[]? prePublicKey, (byte[] PhoneId, byte[] PairKey)? pre)
     {
         using (Lock(ByUi))
+        {
+            try
+            {
+                SetAuthorizedPhonesLocked(phones, prePublicKey, ref pre);
+            }
+            finally
+            {
+                if (pre is { } unused) CryptographicOperations.ZeroMemory(unused.PairKey);
+            }
+        }
+    }
+
+    private void SetAuthorizedPhonesLocked(IReadOnlyList<AuthorizedPhone> phones, byte[]? prePublicKey, ref (byte[] PhoneId, byte[] PairKey)? pre)
+    {
         {
             if (_hostKey == null) return;
             _authorizedList = phones;
@@ -1949,7 +1983,13 @@ public sealed class HostEngine
                     next.TryAdd(Convert.ToHexString(old.PhoneId), new KeyPhone(p.File, name, old.PhoneId, old.PairKey, old.Fingerprint, old.KeyId, old.PublicKey) { LastSeenUtc = old.LastSeenUtc });
                     continue;
                 }
-                var (id, pairKey) = KeyPairing.HostSecrets(_hostKey, p.Key.PublicKey);
+                byte[] id, pairKey;
+                if (pre is { } done && prePublicKey != null && prePublicKey.AsSpan().SequenceEqual(p.Key.PublicKey))
+                {
+                    (id, pairKey) = done;
+                    pre = null; // taken over
+                }
+                else (id, pairKey) = KeyPairing.HostSecrets(_hostKey, p.Key.PublicKey);
                 var hex = Convert.ToHexString(id);
                 if (next.ContainsKey(hex))
                 {
@@ -2106,9 +2146,12 @@ public sealed class HostEngine
     {
         string? file = null;
         string? failed = null;
+        (byte[] PhoneId, byte[] PairKey)? secrets = null;
         try
         {
             file = q.Save(key);
+            // The ECDH too, before the lock (the host key, once set, never changes).
+            if (file != null && _hostKey is { } hostKey) secrets = KeyPairing.HostSecrets(hostKey, key.PublicKey);
         }
         catch (Exception ex)
         {
@@ -2119,11 +2162,16 @@ public sealed class HostEngine
         {
             q.Saving = false;
             if (failed != null) _events.Log($"could not save the key of '{key.Name}': {failed}");
-            if (file == null) return; // the phone retries; nothing was authorized
+            if (file == null || failed != null)
+            {
+                if (secrets is { } s) CryptographicOperations.ZeroMemory(s.PairKey);
+                return; // the phone retries; nothing was authorized
+            }
             q.EnrolledKey = key.PublicKey;
             q.EnrolledName = key.Name;
             _events.Log($"'{key.Name}' paired by QR code");
-            SetAuthorizedPhones([.. _authorizedList.Where(a => !a.Key.PublicKey.AsSpan().SequenceEqual(key.PublicKey)), new AuthorizedPhone(file, key)]);
+            SetAuthorizedPhones([.. _authorizedList.Where(a => !a.Key.PublicKey.AsSpan().SequenceEqual(key.PublicKey)), new AuthorizedPhone(file, key)],
+                key.PublicKey, secrets);
         }
         _events.StateChanged();
     }

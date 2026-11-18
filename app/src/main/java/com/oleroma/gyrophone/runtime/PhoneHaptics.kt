@@ -131,10 +131,12 @@ class PhoneHaptics(context: Context, private val connected: () -> Boolean) : Hap
         val level = maxOf(large, small).coerceIn(0, 255)
         worker.post {
             log?.let { l -> if (level != rumbleLevel) l("game rumble $large/$small") }
+            val was = rumbleLevel
             rumbleLevel = level
             worker.removeCallbacks(renewRumble)
             if (level == 0) {
-                if (holding == null && SystemClock.uptimeMillis() >= buzzUntil) vibrator.cancel()
+                // The PC repeats a stop a few times: only one that ends a rumble cancels (a repeat would cut a tick).
+                if (was != 0 && holding == null && SystemClock.uptimeMillis() >= buzzUntil) vibrator.cancel()
             } else {
                 issueRumble()
             }

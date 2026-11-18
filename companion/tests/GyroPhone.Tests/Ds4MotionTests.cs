@@ -170,6 +170,26 @@ public class Ds4MotionTests
     }
 
     [Fact]
+    public void APadTapSplitByAMotionInOneBurstStaysVisible()
+    {
+        var h = new Harness(mode: OutputMode.DualShock4);
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        // Press, MOTION, release in one receive burst: the MOTION injects the press first.
+        h.Send(phone, phone.State(f => f.Buttons = 1), flush: false);
+        var b = new byte[MotionFrame.Size];
+        VectorFrame().Encode(b);
+        h.Send(phone, phone.Sealed(PacketType.Motion, b), flush: false);
+        Assert.NotEqual(0, h.Pad.Ds4[^1].Buttons);
+        h.Send(phone, phone.State(f => f.Buttons = 0), flush: false);
+        h.Engine.Flush(h.Clock.NowUs);
+        // The button stays visible to a polling game for a moment, then lets go.
+        Assert.NotEqual(0, h.Pad.Ds4[^1].Buttons);
+        h.Tick(Wire.WatchdogTickMs);
+        Assert.Equal(0, h.Pad.Ds4[^1].Buttons);
+    }
+
+    [Fact]
     public void EngineIgnoresMotionForAnXboxPad()
     {
         var h = new Harness(mode: OutputMode.Xbox360);
