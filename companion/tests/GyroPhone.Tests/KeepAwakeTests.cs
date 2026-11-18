@@ -31,4 +31,40 @@ public class KeepAwakeTests
         Assert.False(HostEngine.KeepAwakeWanted(null, At("::1")));
         Assert.False(HostEngine.KeepAwakeWanted(null, At("::ffff:127.0.0.1")));
     }
+
+    [Fact]
+    public void NoPhoneMeansNoKeepAwakeAndAnIdleWatchdog()
+    {
+        var h = new Harness();
+        Assert.False(h.Engine.KeepAwake());
+        h.Tick(50);
+        Assert.True(h.Engine.WatchdogIdle);
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        // A session ends both rests at once.
+        Assert.False(h.Engine.WatchdogIdle);
+        h.Sender.Clear();
+        Assert.True(h.Engine.KeepAwake());
+        Assert.Equal(PacketType.KeepAwake, phone.TryOpen(h.Sender.Last!, out _));
+        h.Tick(50);
+        Assert.False(h.Engine.WatchdogIdle);
+    }
+
+    [Fact]
+    public void ARestingKeepAwakeWakesWhenAPhoneConnects()
+    {
+        var h = new Harness();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var rest = new Thread(h.Engine.RestKeepAwake);
+        rest.Start();
+        Thread.Sleep(50);
+        Assert.True(rest.IsAlive);
+        h.Connect(h.NewPhone());
+        Assert.True(rest.Join(HostEngine.KeepAwakeIdleWaitMs * 3));
+        Assert.True(sw.ElapsedMilliseconds < HostEngine.KeepAwakeIdleWaitMs, $"woke after {sw.ElapsedMilliseconds} ms");
+        // With the session up there is no rest.
+        sw.Restart();
+        h.Engine.RestKeepAwake();
+        Assert.True(sw.ElapsedMilliseconds < HostEngine.KeepAwakeIdleWaitMs / 2);
+    }
 }

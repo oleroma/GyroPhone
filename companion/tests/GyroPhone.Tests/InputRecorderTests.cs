@@ -1,4 +1,5 @@
 using GyroPhone.Host;
+using GyroPhone.Host.Perf;
 
 namespace GyroPhone.Tests;
 
@@ -28,6 +29,28 @@ public class InputRecorderTests
         Assert.Single(late);
         Assert.Contains("held up on the way", late[0]);
         Assert.Contains("up to 40.0 ms late", late[0]);
+    }
+
+    [Fact]
+    public void NotWritingMakesNoTextButStillCountsTheSecond()
+    {
+        var (rec, lines) = New();
+        rec.WriteLines = false;
+        lines.Clear();
+        int notes = 0, seconds = 0;
+        rec.SecondNote = () => { notes++; return " note"; };
+        rec.Timeline = new LinkTimeline { Added = _ => seconds++ };
+        rec.State(1_000, 10_000, true, true, false);
+        rec.Inject(70, 0, 10_000, 13_000, false);
+        rec.Lost(5, 42, 20_000);
+        rec.Second(new LinkStats(), 1_000_000);
+        Assert.Empty(lines);
+        Assert.Equal(1, notes);
+        Assert.Equal(1, seconds);
+        // Writing again: events get lines.
+        rec.WriteLines = true;
+        rec.Inject(70, 0, 1_010_000, 1_010_100, false);
+        Assert.Contains(lines, l => l.Contains("big move"));
     }
 
     [Fact]

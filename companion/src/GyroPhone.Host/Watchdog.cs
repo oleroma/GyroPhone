@@ -81,12 +81,22 @@ public sealed class Watchdog : IDisposable
             if (_stop) return;
             Tick();
             next += periodUs;
+            // Nothing needs the 50 ms tick (no phone connected): rest up to HostEngine.WatchdogIdleTickMs, so an
+            // idle laptop isn't woken 20 times a second; a session starting ends the rest at once.
+            if (_engine.WatchdogIdle && !_stop)
+            {
+                _engine.RestWatchdog();
+                next = (long)clock.Elapsed.TotalMicroseconds;
+            }
             long now = (long)clock.Elapsed.TotalMicroseconds;
             if (next <= now) next = now + periodUs;
         }
     }
 
-    /// <summary>KEEP_AWAKE every <see cref="Wire.KeepAwakeMs"/> (HostEngine.KeepAwake decides whether to send), on its own exact timer.</summary>
+    /// <summary>
+    /// KEEP_AWAKE every <see cref="Wire.KeepAwakeMs"/> (HostEngine.KeepAwake decides whether to send), on its own exact
+    /// timer. While none is wanted (no phone, or a wire) it rests on HostEngine.RestKeepAwake instead of waking 100 times a second.
+    /// </summary>
     private void KeepAwakeLoop()
     {
         using var sleep = _sleep();
@@ -96,7 +106,7 @@ public sealed class Watchdog : IDisposable
             if (_stop) return;
             try
             {
-                _engine.KeepAwake();
+                if (!_engine.KeepAwake() && !_stop) _engine.RestKeepAwake();
             }
             catch (Exception e)
             {
@@ -234,6 +244,7 @@ public sealed class Watchdog : IDisposable
     {
         _stop = true;
         _stopWrites.Set();
+        _engine.WakeTimers();
         if (_tickThread is { } t && t != Thread.CurrentThread) t.Join(1000);
         if (_writeThread is { } w && w != Thread.CurrentThread) w.Join(2000);
         if (_keepAwakeThread is { } k && k != Thread.CurrentThread) k.Join(1000);

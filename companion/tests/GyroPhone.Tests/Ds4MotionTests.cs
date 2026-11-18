@@ -149,6 +149,47 @@ public class Ds4MotionTests
     }
 
     [Fact]
+    public void AStateInTheSameBurstGoesOutBeforeTheMotion()
+    {
+        var h = new Harness(mode: OutputMode.DualShock4);
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        int calls = h.KeyMouse.Calls.Count;
+        // STATE then MOTION in one receive burst: no Flush between them.
+        h.Send(phone, phone.State(f => { f.Lx = 32767; f.MouseTotalX += 5; }), flush: false);
+        var b = new byte[MotionFrame.Size];
+        VectorFrame().Encode(b);
+        h.Send(phone, phone.Sealed(PacketType.Motion, b), flush: false);
+        // The mouse move went out before the motion readings, which carry the new stick.
+        Assert.Equal(calls + 1, h.KeyMouse.Calls.Count);
+        Assert.Equal(255, h.Pad.Ds4[^1].Lx);
+        Assert.Equal(255, h.Pad.Ds4[^2].Lx);
+        Assert.Equal(253, h.Pad.Ds4Motion[^1].Gz);
+        h.Engine.Flush(h.Clock.NowUs);
+        Assert.Equal(calls + 1, h.KeyMouse.Calls.Count);
+    }
+
+    [Fact]
+    public void APadTapSplitByAMotionInOneBurstStaysVisible()
+    {
+        var h = new Harness(mode: OutputMode.DualShock4);
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        // Press, MOTION, release in one receive burst: the MOTION injects the press first.
+        h.Send(phone, phone.State(f => f.Buttons = 1), flush: false);
+        var b = new byte[MotionFrame.Size];
+        VectorFrame().Encode(b);
+        h.Send(phone, phone.Sealed(PacketType.Motion, b), flush: false);
+        Assert.NotEqual(0, h.Pad.Ds4[^1].Buttons);
+        h.Send(phone, phone.State(f => f.Buttons = 0), flush: false);
+        h.Engine.Flush(h.Clock.NowUs);
+        // The button stays visible to a polling game for a moment, then lets go.
+        Assert.NotEqual(0, h.Pad.Ds4[^1].Buttons);
+        h.Tick(Wire.WatchdogTickMs);
+        Assert.Equal(0, h.Pad.Ds4[^1].Buttons);
+    }
+
+    [Fact]
     public void EngineIgnoresMotionForAnXboxPad()
     {
         var h = new Harness(mode: OutputMode.Xbox360);
