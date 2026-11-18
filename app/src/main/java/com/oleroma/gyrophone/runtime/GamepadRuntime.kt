@@ -398,11 +398,24 @@ class GamepadRuntime(context: Context) {
      */
     @Volatile private var visualsCovered = false
 
+    /** The black screen or the latency markers cover the pad ([setVisualsCovered]); main thread. */
+    private var padCovered = false
+
     /**
      * The black screen or the latency markers [covered] the pad (main thread). Uncovered, the
      * displays held to gravity settle onto it again at once ([GyroDisplayFeed.resume]).
      */
     fun setVisualsCovered(covered: Boolean) {
+        padCovered = covered
+        updateVisualsCovered()
+    }
+
+    /**
+     * The displays and the edge are unseen while the pad is covered or the app is not in front
+     * (the screen off, another app): they are not fed then, as when covered (main thread).
+     */
+    private fun updateVisualsCovered() {
+        val covered = padCovered || !foreground
         if (covered == visualsCovered) return
         visualsCovered = covered
         if (!covered) {
@@ -1137,6 +1150,8 @@ class GamepadRuntime(context: Context) {
     fun setForeground(resumed: Boolean) {
         if (resumed && !foreground) aimGyroDisplays()
         foreground = resumed
+        // Out of sight, the displays and the edge are not fed (and the sensors only they need stop).
+        updateVisualsCovered()
         // Leaving the app or locking the screen stops a measure's stream: the PC's camera stops turning.
         if (!resumed) measureStop()
         _onScreen.value = resumed
