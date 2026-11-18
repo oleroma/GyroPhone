@@ -580,9 +580,14 @@ val GyroDisplay.gimbalLocks: Int
  * A trackball's locked axes in [axes] ([GyroDisplay.trackballAxes]; bit 0 yaw, 1 pitch, 2 roll): those
  * no gyro turn drives (None), held at 0; and those saved with [TRACKBALL_LOCK] before None meant it.
  */
-fun trackballLocks(axes: Int): Int = (0..2).fold(0) { acc, i ->
-    val code = axes shr (8 * i) and 0xFF
-    if (code and 0x1F == 0 || code and TRACKBALL_LOCK != 0) acc or (1 shl i) else acc
+fun trackballLocks(axes: Int): Int {
+    // A plain loop: it runs every gyro sample and must not allocate.
+    var acc = 0
+    for (i in 0..2) {
+        val code = axes shr (8 * i) and 0xFF
+        if (code and 0x1F == 0 || code and TRACKBALL_LOCK != 0) acc = acc or (1 shl i)
+    }
+    return acc
 }
 
 /**

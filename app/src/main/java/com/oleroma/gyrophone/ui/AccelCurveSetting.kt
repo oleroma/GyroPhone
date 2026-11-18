@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -102,8 +103,10 @@ internal fun AccelCurveSetting(
             // Read only where it is drawn (the graph's line, the "Now" text), so a new speed redraws just those;
             // updated about 30 times a second, and only when it moved by a visible amount.
             val liveState = remember { mutableStateOf(FloatArray(0)) }
-            LaunchedEffect(runtime, axes) {
-                while (true) {
+            // Only while the app is in front: in the background the gyro stops for it and nothing polls.
+            val onScreen by runtime.onScreen.collectAsState()
+            LaunchedEffect(runtime, axes, onScreen) {
+                while (onScreen) {
                     delay(LIVE_MS)
                     val now = axes.mapNotNull { runtime.liveGyroSpeed(it) }.toFloatArray()
                     val was = liveState.value
