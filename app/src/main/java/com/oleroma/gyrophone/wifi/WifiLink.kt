@@ -496,6 +496,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         accessory.close()
         wifiSocket?.close()
         wifiSocket = null
+        allowCableSenders()
         socket = null
         locks.release()
         foundMap.clear()
@@ -1359,6 +1360,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         pump.useSocket(w)
         usbSocket?.close()
         usbSocket = null
+        allowCableSenders()
         usbHostId = null
         usbHostAddr = null
         // A fresh ANNOUNCE first, else where the PC was on Wi-Fi before USB, else its stored address.
@@ -1386,6 +1388,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbEthernet = false
         usbHostId = null
         usbHostAddr = null
+        // Closed ports leave the list, so another app can't bind one and send down the cable.
+        allowCableSenders()
     }
 
     private fun onNetworkChanged() {
