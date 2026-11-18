@@ -63,7 +63,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.max
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.DevicePreset
 import com.oleroma.gyrophone.core.model.DevicePresets
@@ -276,15 +275,9 @@ internal fun DevicePresetsScreen(runtime: GamepadRuntime, onBack: () -> Unit) {
             onSetsChange = { sets, removed ->
                 runtime.editActiveProfile { p ->
                     val next = p.updateWorkspace(current) { it.withSets(sets, removed) }
-                    val now = next.devicePresets.firstOrNull { it.id == preset.id }
                     // The layer's mappings in the preset go too, and the Layer actions to it, unless
                     // another workspace using the preset still has a layer with that id.
-                    if (removed == null || now == null ||
-                        next.workspaces.any { w -> w.devicePreset == now.id && w.sets.any { it.id == removed } }) next
-                    else DevicePresets.put(
-                        next,
-                        PhysicalDevice.entries.fold(now) { d, dev -> d.withMappings(dev, Bindings.dropSet(d.mappings(dev), removed)) },
-                    )
+                    if (removed == null) next else DevicePresets.dropSet(next, preset.id, removed)
                 }
             },
             physicalInputs = e.inputs,

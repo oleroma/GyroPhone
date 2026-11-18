@@ -2054,6 +2054,23 @@ data class Profile(
         return copy(workspaces = workspaces.mapIndexed { k, w -> if (k == i) change(w) else w })
     }
 
+    /**
+     * What the pad's touch handler in play reads of workspace [index]: its controls that take touches
+     * (gyro displays only draw), its mappings, the ← / → corners and where they lead. Equal keys keep
+     * the handler, and so every held stick and button: a slider's saved value, the gyro or Set
+     * orientation (a display's level) changes none of it.
+     */
+    fun playTouchKey(index: Int): List<Any?> {
+        val w = workspace(index)
+        return listOf(
+            w.touchControls.filter { it.kind != TouchKind.DISPLAY }.map { if (it.display == null) it else it.copy(display = null) },
+            w.mappings,
+            shownCorners.map { if (it.display == null) it else it.copy(display = null) },
+            wrapWorkspaces,
+            workspaces.size,
+        )
+    }
+
     /** Where ← / → from [index] lead; null at an end without wrap-around. */
     fun previousWorkspace(index: Int): Int? = when {
         index > 0 -> index - 1

@@ -467,6 +467,25 @@ object DevicePresets {
         )
     }
 
+    /**
+     * [p] with mapping set [set] gone from device preset [presetId]: its mappings on
+     * every device, the Layer actions to it and its held buttons' settings in it ([HeldButton.gyro]).
+     * Left as it is while another workspace pinning that preset still has a layer with that id.
+     */
+    fun dropSet(p: Profile, presetId: String?, set: Int): Profile {
+        val id = presetId ?: return p
+        val preset = p.devicePresets.firstOrNull { it.id == id } ?: return p
+        if (p.workspaces.any { w -> w.devicePreset == id && w.sets.any { it.id == set } }) return p
+        val next = PhysicalDevice.entries.fold(preset) { d, dev -> d.withMappings(dev, Bindings.dropSet(d.mappings(dev), set)) }
+        // A held button left with no settings and no gyro mappings of its own goes ([DevicePreset.withHeld]).
+        val held = next.held.mapNotNull { h ->
+            if (h.gyro.none { it.set == set }) h
+            else h.copy(gyro = h.gyro.filterNot { it.set == set }).takeIf { it.gyro.isNotEmpty() || next.motionMapped(it.id) }
+        }
+        val dropped = next.copy(held = held)
+        return if (dropped == preset) p else put(p, dropped)
+    }
+
     /** [set] without preset [id]; the workspaces that pinned it pin none. */
     fun remove(set: Profile, id: String): Profile = set.copy(
         devicePresets = set.devicePresets.filterNot { it.id == id },
