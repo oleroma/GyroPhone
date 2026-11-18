@@ -90,6 +90,8 @@ object CrosshairKick {
         /** When the last shot was (ms), until its kick and flash are over; −1 none. */
         var shotAt = -1L
             private set
+        /** When the last shot was (ms), kept for the auto fire beat after the kick is over. */
+        private var lastShotAt = Long.MIN_VALUE / 2
         private var from = 0f
         private var held = false
         var value = 0f
@@ -142,9 +144,9 @@ object CrosshairKick {
             }
             val now = if (shotAt < 0L) 0f else recoil.at((t - shotAt).toFloat(), from)
             if (firing && !held) shoot(t, now)
-            else if (firing && mode == AUTO && t - shotAt >= periodMs) {
+            else if (firing && mode == AUTO && t - lastShotAt >= periodMs) {
                 // Keeps the beat; a long stall (a dropped frame or two) starts it again from now.
-                val at = shotAt + periodMs
+                val at = lastShotAt + periodMs
                 shoot(if (t - at < periodMs) at else t, now)
             }
             held = firing
@@ -174,6 +176,7 @@ object CrosshairKick {
             }
             shots++
             shotAt = t
+            lastShotAt = t
         }
     }
 }

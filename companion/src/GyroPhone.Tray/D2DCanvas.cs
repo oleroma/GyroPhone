@@ -421,6 +421,7 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
     // under a tilt is otherwise built from its glyphs' outlines every frame, the dearest part of a
     // frame. Keyed by everything that changes the picture, the scale rounded to an eighth.
     private readonly Dictionary<TextKey, ID2D1Bitmap1> _texts = [];
+    private readonly Dictionary<(string Text, float Px, bool Bold), SizeF> _measures = [];
     private readonly ID2D1DeviceContext _textDc;
     private readonly ID2D1SolidColorBrush _textBrush;
     // The geometry of the last filled polygon: an outline of the same points reuses it.
@@ -786,7 +787,9 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
             _dc.DrawText(text, f, R(r), Brush(color), DrawTextOptions.Clip);
             return;
         }
-        var key = new TextKey(text, px, bold, color.ToArgb(), r.Width, r.Height, h, v, scale8);
+        // Cached opaque, its alpha drawn as the bitmap's opacity: a fading text is one bitmap, not one per step.
+        var opaque = Color.FromArgb(255, color);
+        var key = new TextKey(text, px, bold, opaque.ToArgb(), r.Width, r.Height, h, v, scale8);
         if (!_texts.TryGetValue(key, out var bitmap))
         {
             if (_texts.Count >= 256)
@@ -796,7 +799,7 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
             }
             try
             {
-                bitmap = TextBitmap(text, f, color, r, h, v, q, bw, bh);
+                bitmap = TextBitmap(text, f, opaque, r, h, v, q, bw, bh);
             }
             catch (Exception)
             {
@@ -807,7 +810,7 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
             }
             _texts[key] = bitmap;
         }
-        _dc.DrawBitmap(bitmap, new Vortice.RawRectF(r.X, r.Y, r.X + bw / q, r.Y + bh / q), 1f, Vortice.Direct2D1.InterpolationMode.Linear, null, null);
+        _dc.DrawBitmap(bitmap, new Vortice.RawRectF(r.X, r.Y, r.X + bw / q, r.Y + bh / q), color.A / 255f, Vortice.Direct2D1.InterpolationMode.Linear, null, null);
     }
 
     /// <summary>The text drawn once, at <paramref name="q"/>× its size, on a separate context (the main one is mid-frame).</summary>
@@ -838,9 +841,12 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
 
     public SizeF MeasureText(string text, float px, bool bold)
     {
+        // Measured once: the Keys and FPS overlays measure the same few texts every frame.
+        if (_measures.TryGetValue((text, px, bold), out var size)) return size;
+        if (_measures.Count >= 512) _measures.Clear();
         using var layout = _write.CreateTextLayout(text, Format(px, bold), 100_000f, 100_000f);
         var m = layout.Metrics;
-        return new SizeF(m.WidthIncludingTrailingWhitespace, m.Height);
+        return _measures[(text, px, bold)] = new SizeF(m.WidthIncludingTrailingWhitespace, m.Height);
     }
 
     public void Dispose()
