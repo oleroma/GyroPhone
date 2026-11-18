@@ -32,6 +32,9 @@ public sealed class UdpHostServer : IDatagramSender, IDisposable
     private Thread? _thread;
     private volatile bool _stopping;
     private long _rxExceptions;
+    private const long OversizedLogEveryMs = 60_000;
+    private long _rxOversized;
+    private long _oversizedLoggedMs = long.MinValue / 2;
 
     /// <param name="catchUpWait">How gp-rx waits while a catch-up runs (Windows: an exact 1 ms wake); default socket.Poll.</param>
     public UdpHostServer(HostEngine engine, IClock clock, IPEndPoint? bind = null, Action? onRxThreadStart = null,
@@ -131,14 +134,41 @@ public sealed class UdpHostServer : IDatagramSender, IDisposable
             {
                 break;
             }
+            catch (SocketException e) when (e.SocketErrorCode == SocketError.MessageSize)
+            {
+                // A datagram larger than any of ours (Windows throws for it): dropped, logged at most once a minute.
+                _rxOversized++;
+                long now = Environment.TickCount64;
+                if (now - _oversizedLoggedMs >= OversizedLogEveryMs)
+                {
+                    _oversizedLoggedMs = now;
+                    _log($"rx: dropped oversized datagrams ({_rxOversized} so far)");
+                }
+                FlushAfterError();
+            }
             catch (Exception e)
             {
                 // One bad datagram never kills the loop.
                 Interlocked.Increment(ref _rxExceptions);
                 _log($"rx error: {e.GetType().Name}");
+                FlushAfterError();
             }
         }
         (_catchUpWait as IDisposable)?.Dispose(); // its handles; made again if the server starts again
+    }
+
+    /// <summary>A throw in the drain skipped its Flush: input already taken in goes out now, not with the next datagram.</summary>
+    private void FlushAfterError()
+    {
+        try
+        {
+            _engine.Flush(_clock.NowUs);
+        }
+        catch (Exception)
+        {
+            // Never thrown out of a catch block: that would end gp-rx.
+            Interlocked.Increment(ref _rxExceptions);
+        }
     }
 
     public void Send(ReadOnlySpan<byte> datagram, SocketAddress to)

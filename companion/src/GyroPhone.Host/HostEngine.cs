@@ -368,6 +368,9 @@ public sealed class HostEngine
     /// <summary>Runs a pad plug or unplug job; null: on a new "gp-pad" thread. Tests run it at once.</summary>
     internal Action<Action>? PadWorker { get; init; }
 
+    /// <summary>Runs a QR enrolment's key save; null: on a new "gp-enroll" thread. Tests run it at once.</summary>
+    internal Action<Action>? EnrollWorker { get; init; }
+
     /// <summary>
     /// "Diagnostics": every log at once (<see cref="Debug"/>, the input log's lines, PHONE_STATS, the overlays' draw
     /// times), told to the phone (HOST_STATUS <see cref="HostStatusFlags2.PcLogging"/>, whose switch follows) and
@@ -2029,26 +2032,45 @@ public sealed class HostEngine
         }
         if (q.EnrolledKey == null)
         {
+            // Saving the file and the ECDH stay off gp-rx and the lock (a slow disk or a virus scan would
+            // freeze a playing phone's input); the phone resends KEY_ENROLL every 250 ms and gets OK once done.
+            if (q.Saving) return;
+            q.Saving = true;
             var key = new PubKeyFile(e.PkP, e.Name.Length > 0 ? e.Name : "Phone");
-            string? file;
-            try
-            {
-                file = q.Save(key);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                file = null;
-                _events.Log($"could not save the key of '{key.Name}': {ex.GetType().Name}");
-            }
-            if (file == null) return; // the phone retries; nothing was authorized
-            q.EnrolledKey = e.PkP;
-            q.EnrolledName = key.Name;
-            _events.Log($"'{key.Name}' paired by QR code");
-            SetAuthorizedPhones([.. _authorizedList.Where(a => !a.Key.PublicKey.AsSpan().SequenceEqual(e.PkP)), new AuthorizedPhone(file, key)]);
+            if (EnrollWorker != null) EnrollWorker(() => SaveEnrolled(q, key));
+            else new Thread(() => SaveEnrolled(q, key)) { IsBackground = true, Name = "gp-enroll" }.Start();
+            if (q.EnrolledKey == null) return;
         }
         byte status = q.EnrolledKey.AsSpan().SequenceEqual(e.PkP) ? EnrollStatus.Ok : EnrollStatus.Used;
         WireCodec.EncodeKeyEnrollAck(e.ReqId, e.TokenId, status, q.Token, e.PkP, ack);
         Reply(ack, from);
+    }
+
+    /// <summary>The QR enrolment's worker: saves the phone's key file, then authorizes it.</summary>
+    private void SaveEnrolled(QrSession q, PubKeyFile key)
+    {
+        string? file = null;
+        string? failed = null;
+        try
+        {
+            file = q.Save(key);
+        }
+        catch (Exception ex)
+        {
+            // Off gp-rx nothing else would catch it, and an unhandled throw on a thread ends the process.
+            failed = ex.GetType().Name;
+        }
+        using (Lock(ByUi))
+        {
+            q.Saving = false;
+            if (failed != null) _events.Log($"could not save the key of '{key.Name}': {failed}");
+            if (file == null) return; // the phone retries; nothing was authorized
+            q.EnrolledKey = key.PublicKey;
+            q.EnrolledName = key.Name;
+            _events.Log($"'{key.Name}' paired by QR code");
+            SetAuthorizedPhones([.. _authorizedList.Where(a => !a.Key.PublicKey.AsSpan().SequenceEqual(key.PublicKey)), new AuthorizedPhone(file, key)]);
+        }
+        _events.StateChanged();
     }
 
     private bool IssuedToken(ReadOnlySpan<byte> tokenId)
@@ -2501,6 +2523,8 @@ internal sealed class QrSession(byte[] token, byte[] tokenId, long expiresUs, Fu
     public long ExpiresUs { get; } = expiresUs;
     public Func<PubKeyFile, string?> Save { get; } = save;
     public byte[]? EnrolledKey { get; set; }
+    /// <summary>The key file is being saved off gp-rx.</summary>
+    public bool Saving { get; set; }
     public string? EnrolledName { get; set; }
 
     public void Clear() => System.Security.Cryptography.CryptographicOperations.ZeroMemory(Token);

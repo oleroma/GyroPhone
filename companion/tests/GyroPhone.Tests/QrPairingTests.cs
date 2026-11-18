@@ -91,6 +91,44 @@ public class QrPairingTests
     }
 
     [Fact]
+    public void KeyIsSavedOffTheInputThread()
+    {
+        using var hostKey = P256.FromPrivateScalar(K.Bytes("hostPrivD"));
+        var jobs = new List<Action>();
+        var h = new Harness(pairDefault: false, hostKey: hostKey, enrollWorker: jobs.Add);
+        var phone = FakePhone.Paired(K.Bytes("keyPhoneId"), "OnePlus 15", K.Bytes("pairKey"));
+        int saves = 0;
+        var token = h.Engine.OpenQrPairing(k => { saves++; return "/keys/" + KeyPairing.FileName(k.Name); })!;
+
+        // The save is handed off; the phone hears nothing yet, and its resends start no second save.
+        Assert.Null(h.Send(phone, Enroll(token, K.Bytes("pkP"))));
+        Assert.Null(h.Send(phone, Enroll(token, K.Bytes("pkP"))));
+        Assert.Equal(0, saves);
+        var job = Assert.Single(jobs);
+        job();
+        Assert.Equal(1, saves);
+        Assert.Equal("OnePlus 15", h.Engine.Snapshot().QrEnrolledPhone);
+        // The next resend is acked.
+        Assert.Equal(EnrollStatus.Ok, AckStatus(h.Send(phone, Enroll(token, K.Bytes("pkP")))));
+        Assert.Single(jobs);
+        h.Connect(phone);
+        Assert.True(h.Engine.Snapshot().Connected);
+    }
+
+    [Fact]
+    public void AFailedSaveIsTriedAgainOnTheNextResend()
+    {
+        using var hostKey = P256.Generate();
+        var h = new Harness(pairDefault: false, hostKey: hostKey);
+        var phone = h.NewPhone();
+        bool fail = true;
+        var token = h.Engine.OpenQrPairing(k => fail ? throw new IOException("busy") : "x.pub")!;
+        Assert.Null(h.Send(phone, Enroll(token, K.Bytes("pkP"))));
+        fail = false;
+        Assert.Equal(EnrollStatus.Ok, AckStatus(h.Send(phone, Enroll(token, K.Bytes("pkP")))));
+    }
+
+    [Fact]
     public void QrCodeExpiresAndCloses()
     {
         using var hostKey = P256.Generate();

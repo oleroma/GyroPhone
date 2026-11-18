@@ -377,13 +377,15 @@ internal sealed class Harness : IDisposable
     public readonly OverlayHost Overlays;
 
     public Harness(Func<int, byte[]>? random = null, Func<P256>? newKey = null, bool pairDefault = true,
-        OutputMode mode = OutputMode.Xbox360, P256? hostKey = null, Action<Action>? padWorker = null)
+        OutputMode mode = OutputMode.Xbox360, P256? hostKey = null, Action<Action>? padWorker = null,
+        Action<Action>? enrollWorker = null)
     {
         Settings = new HostSettings { HostId = Hex.Range(0x10, 16), HostName = "DESKTOP-OLEX", OutputMode = mode };
         if (pairDefault) AddPaired(Phone1Id, "OnePlus 15", Phone1Key);
         Engine = new HostEngine(Settings, Pad, KeyMouse, Prompt, new PlainProtector(), Clock, Events, random, newKey, hostKey)
         {
             PadWorker = padWorker ?? (job => job()),
+            EnrollWorker = enrollWorker ?? (job => job()),
         };
         Overlays = new OverlayHost(Settings, Engine.Shared, new AutoResetEvent(false), (on, c, s, k) => Engine.SetOverlay(on, c, s, k), Clock);
         Engine.OverlayWake = Overlays.Signal;
