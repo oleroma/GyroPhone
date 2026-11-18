@@ -198,6 +198,9 @@ object PhysicalSticks {
         "rs" to (AndroidAxis.Z to AndroidAxis.RZ),
     )
 
+    /** [axis] is one of a stick's ([sticks]). */
+    fun isStickAxis(axis: Int): Boolean = sticks.values.any { (x, y) -> axis == x || axis == y }
+
     /**
      * Whether a pad puts its right stick on RX / RY ([has]: it reports that axis). Pads on
      * Generic.kl do (and sometimes put triggers on Z / RZ); Z / RZ are the stick only without
@@ -269,6 +272,31 @@ object DevicePresets {
             press.sources.map { m.copy(source = it) }
         }.distinct()
         return p.copy(controller = fixed)
+    }
+
+    /**
+     * [p] with its controller's old any-direction Outer mappings ([AxisStage.OUTER] on a whole stick
+     * axis, a card no longer shown) as the same mapping in each of that stick's four directions'
+     * outer zones; [p] itself when it has none.
+     */
+    fun foldOuterAny(p: DevicePreset): DevicePreset {
+        fun any(s: InputSource) = s is InputSource.Axis && s.stage == AxisStage.OUTER && s.half == AxisHalf.FULL
+        if (p.controller.none { any(it.source) }) return p
+        val folded = p.controller.flatMap { m ->
+            val s = m.source as? InputSource.Axis
+            if (s == null || !any(s)) return@flatMap listOf(m)
+            val (x, y) = PhysicalSticks.sticks.values.firstOrNull { (a, b) -> s.axis == a || s.axis == b } ?: (s.axis to -1)
+            listOf(x to AxisHalf.NEGATIVE, x to AxisHalf.POSITIVE, y to AxisHalf.NEGATIVE, y to AxisHalf.POSITIVE)
+                .filter { it.first >= 0 }
+                .map { (a, h) -> m.copy(source = InputSource.Axis(a, h, AxisStage.OUTER)) }
+        }.distinct()
+        return p.copy(controller = folded)
+    }
+
+    /** [set] with every device preset's [foldOuterAny]; [set] itself when none has any. */
+    fun foldOuterAny(set: Profile): Profile {
+        val presets = set.devicePresets.map(::foldOuterAny)
+        return if (presets.indices.all { presets[it] === set.devicePresets[it] }) set else set.copy(devicePresets = presets)
     }
 
     /** What a device does with nothing remapped: [standard]'s mappings of that device. */
@@ -533,6 +561,10 @@ object PhysicalLayouts {
         }
     }
 
+    /**
+     * A stick's cards: its axes, its directions (each with its outer zone after a separator,
+     * [Bindings.stickOuter], no card of its own) and its Click.
+     */
     private fun stickInputs(x: Int, y: Int, click: Int) = listOf(
         BindableInput("X axis", listOf(InputSource.Axis(x)), analog = true),
         BindableInput("Y axis", listOf(InputSource.Axis(y)), analog = true),
@@ -540,11 +572,6 @@ object PhysicalLayouts {
         BindableInput("Right", listOf(InputSource.Axis(x, AxisHalf.POSITIVE))),
         BindableInput("Up", listOf(InputSource.Axis(y, AxisHalf.NEGATIVE))),
         BindableInput("Down", listOf(InputSource.Axis(y, AxisHalf.POSITIVE))),
-        BindableInput("Outer", listOf(InputSource.Axis(x, stage = AxisStage.OUTER))),
-        BindableInput("Outer left", listOf(InputSource.Axis(x, AxisHalf.NEGATIVE, AxisStage.OUTER))),
-        BindableInput("Outer right", listOf(InputSource.Axis(x, AxisHalf.POSITIVE, AxisStage.OUTER))),
-        BindableInput("Outer up", listOf(InputSource.Axis(y, AxisHalf.NEGATIVE, AxisStage.OUTER))),
-        BindableInput("Outer down", listOf(InputSource.Axis(y, AxisHalf.POSITIVE, AxisStage.OUTER))),
     ) + buttonInputs(listOf(click), "Click").let { b -> b.map { if (it.label == "Click") it else it.copy(label = "Click " + it.label.lowercase()) } }
 
     /** A D-pad direction: its key (with gestures) and the hat axis half some pads report instead. */
