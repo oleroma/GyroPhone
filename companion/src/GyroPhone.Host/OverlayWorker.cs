@@ -62,6 +62,9 @@ internal sealed class OverlayWorker
         _wake = wake;
     }
 
+    /// <summary>Called on the overlay thread after it published something new (a frame, layout or settings).</summary>
+    public Action? Published { get; set; }
+
     /// <summary>The Speed graph overlays' yaw, pitch and roll speeds (fed while one is shown).</summary>
     public SpeedTrace Speeds { get; } = new();
 
@@ -169,7 +172,11 @@ internal sealed class OverlayWorker
                     _inbox.Release();
                 }
             }
-            if (changed) Publish();
+            if (changed)
+            {
+                Publish();
+                Published?.Invoke();
+            }
         }
         finally
         {

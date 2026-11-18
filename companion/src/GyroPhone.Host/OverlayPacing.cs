@@ -12,6 +12,18 @@ public static class OverlayPacing
     /// <summary>A window faded out by "Fade when phone rests" draws at most this often (ms): a few pictures a second.</summary>
     public const int RestedFrameMs = 250;
 
+    /// <summary>With no window busy for this long (ms), the pacer ticks only every <see cref="IdleTickMs"/>.</summary>
+    public const int IdleAfterMs = 1000;
+
+    /// <summary>The pacer's tick while no window is busy (ms): 20 a second, enough for the FPS overlay's 4 pictures.</summary>
+    public const int IdleTickMs = 50;
+
+    /// <summary>
+    /// A window last busy (a new phone frame, something moving, fading or changed) at <paramref name="busyAtMs"/> still
+    /// keeps the pacer at the screen's rate at <paramref name="nowMs"/>.
+    /// </summary>
+    public static bool Busy(long nowMs, long busyAtMs) => nowMs - busyAtMs < IdleAfterMs;
+
     /// <summary>
     /// Screen refreshes per picture for frame-rate cap <paramref name="capFps"/> (0 = every refresh): the
     /// nearest whole number, at least 1, so pictures stay tied to the screen. A cap of 60 draws every

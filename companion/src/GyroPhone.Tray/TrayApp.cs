@@ -224,7 +224,8 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     private void StartOverlays()
     {
         GcWatch.NameCurrentThread("window thread");
-        _pacer = new OverlayPacer(TickOverlays, OverlayWantHz, OverlayScreenHz, _log.Write);
+        _pacer = new OverlayPacer(TickOverlays, OverlayWantHz, OverlayScreenHz, OverlaysBusy, _log.Write);
+        _overlays.Published = _pacer.Wake;
         ApplyOverlays(); // shown last time: shown again
         try
         {
@@ -1161,6 +1162,15 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             want = Math.Max(want, fps);
         }
         return want;
+    }
+
+    /// <summary>Whether an open overlay window is busy (pacer thread): else the pacer ticks slowly.</summary>
+    private bool OverlaysBusy()
+    {
+        long now = Environment.TickCount64;
+        foreach (var f in _overlayList)
+            if (OverlayPacing.Busy(now, f.BusyAt)) return true;
+        return false;
     }
 
     /// <summary>The fastest refresh rate of the screens the open overlay windows are on (pacer thread); 0 = none known yet.</summary>

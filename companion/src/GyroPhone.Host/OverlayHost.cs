@@ -57,6 +57,13 @@ public sealed class OverlayHost
     /// <summary>Does the waiting overlay work now, on the caller's thread (tests, without <see cref="Start"/>).</summary>
     public void Pump() => _worker.Pump();
 
+    /// <summary>Called on the overlay thread after something new was published for the windows (wakes an idle pacer).</summary>
+    public Action? Published
+    {
+        get => _worker.Published;
+        set => _worker.Published = value;
+    }
+
     /// <summary>A companion attaching to a running input process: drop what its ring holds and start again.</summary>
     public void StartAgain() => _worker.SkipWaiting();
 
