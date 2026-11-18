@@ -17,6 +17,9 @@ public sealed class UsbBridge : IDisposable
 {
     private readonly IUsbPipe _pipe;
     private readonly IPEndPoint _server;
+    // The server's address serialized once and the frame handler made once: no garbage per USB read (gp-usb-rx).
+    private readonly SocketAddress _serverAddr;
+    private readonly UsbDeframer.FrameHandler _onFrame;
     private readonly Action<string> _log;
     private readonly Action? _onThreadStart;
     private readonly Socket _socket;
@@ -30,6 +33,8 @@ public sealed class UsbBridge : IDisposable
         _pipe = pipe;
         _onThreadStart = onThreadStart;
         _server = new IPEndPoint(IPAddress.Loopback, serverPort);
+        _serverAddr = _server.Serialize();
+        _onFrame = ToServer;
         _log = log ?? (_ => { });
         _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         _socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
@@ -76,11 +81,7 @@ public sealed class UsbBridge : IDisposable
             while (!_stopping)
             {
                 int n = _pipe.Read(buf);
-                deframer.Feed(buf.AsSpan(0, n), d =>
-                {
-                    _socket.SendTo(d, SocketFlags.None, _server);
-                    Interlocked.Increment(ref _fromPhone);
-                });
+                deframer.Feed(buf.AsSpan(0, n), _onFrame);
             }
         }
         catch (Exception e) when (e is IOException or SocketException or ObjectDisposedException)
@@ -88,6 +89,12 @@ public sealed class UsbBridge : IDisposable
             if (!_stopping) _log($"usb: cable side closed ({e.Message})");
         }
         _dead = true;
+    }
+
+    private void ToServer(ReadOnlySpan<byte> d)
+    {
+        _socket.SendTo(d, SocketFlags.None, _serverAddr);
+        Interlocked.Increment(ref _fromPhone);
     }
 
     private void TxLoop()
