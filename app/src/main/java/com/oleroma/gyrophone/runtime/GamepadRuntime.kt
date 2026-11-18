@@ -976,19 +976,13 @@ class GamepadRuntime(context: Context) {
         }
         engine.onSetOrientation = { granular -> main.post { setOrientation(granular) } }
         engine.onClearDisplays = Runnable { main.post { clearDisplays() } }
-        // Every other mouse count turns a trackball 3D shape too, as the camera turns.
+        // Every other mouse count turns a trackball 3D shape too, as the camera turns. On the pump's
+        // thread: only counted here, turned on the gyro's thread ([drainCamera]), never before a send.
         engine.cameraSink = { dx, dy ->
-            val overlay = wifi.overlay
-            if (overlay.wanted) {
-                val deg = GyroDisplayFeed.cameraDegrees(dx, dy, engine.gyroRoutes(), engine.gyroSettings)
-                overlay.camera(deg[0], deg[1], deg[2])
-            }
-            val feeds = gyroFeeds
-            if (!visualsCovered && feeds.any { it.display.followsCamera }) {
-                val routes = engine.gyroRoutes()
-                val gs = engine.gyroSettings
-                for (f in feeds) f.camera(dx, dy, routes, gs)
-            }
+            cameraPendingX.addAndGet(dx)
+            cameraPendingY.addAndGet(dy)
+            // No gyro samples to carry them: the gyro control thread takes them (one post at a time).
+            if (gyro == null && cameraDrainPosted.compareAndSet(false, true)) gyroControl.post(cameraDrainIdle)
         }
         hid.reportProvider = { id ->
             when (id) {
@@ -1853,14 +1847,50 @@ class GamepadRuntime(context: Context) {
         private const val RAD_TO_DEG = (180.0 / Math.PI).toFloat()
     }
 
+    /** Mouse counts besides the live gyro's ([MappingEngine.cameraSink]) not yet turned into the displays and the overlay. */
+    private val cameraPendingX = java.util.concurrent.atomic.AtomicInteger()
+    private val cameraPendingY = java.util.concurrent.atomic.AtomicInteger()
+    private val cameraDrainPosted = java.util.concurrent.atomic.AtomicBoolean()
+    private val cameraDeg = FloatArray(3)
+
+    /** [drainCamera] while no gyro samples come (on the gyro control thread, which starts and stops them). */
+    private val cameraDrainIdle = Runnable {
+        cameraDrainPosted.set(false)
+        if (gyro == null) drainCamera()
+    }
+
+    /**
+     * Turns the displays that follow the camera and the PC overlay by the mouse counts sent since
+     * the last call besides the live gyro's. Only on the thread that feeds the displays (the gyro's
+     * samples, or the gyro control thread while there are none), so each display has one writer.
+     */
+    private fun drainCamera() {
+        if (cameraPendingX.get() == 0 && cameraPendingY.get() == 0) return
+        val dx = cameraPendingX.getAndSet(0)
+        val dy = cameraPendingY.getAndSet(0)
+        if (dx == 0 && dy == 0) return
+        val overlay = wifi.overlay
+        val feeds = gyroFeeds
+        var follows = false
+        if (!visualsCovered) for (f in feeds) if (f.display.followsCamera) follows = true
+        if (!overlay.wanted && !follows) return
+        val routes = engine.gyroRoutes()
+        val gs = engine.gyroSettings
+        if (overlay.wanted) {
+            val deg = GyroDisplayFeed.cameraDegrees(dx, dy, routes, gs, cameraDeg)
+            overlay.camera(deg[0], deg[1], deg[2])
+        }
+        if (follows) for (f in feeds) f.camera(dx, dy, routes, gs)
+    }
+
     /** The routes and gyro settings [cameraMapNow] was made from, and its value (gyro thread). */
     private var cameraMapRoutes: List<Mapping>? = null
     private var cameraMapGyro: GyroSettings? = null
     private var cameraMapValue = GyroDisplayFeed.DEFAULT_CAMERA_MAP
 
     /** Which gyro axes move the mouse sideways and up and down now ([GyroDisplayFeed.cameraMapOf]), made again only when they change. */
-    private fun cameraMapNow(): Int {
-        val routes = engine.gyroRoutes()
+    private fun cameraMapNow(fetched: List<Mapping>? = null): Int {
+        val routes = fetched ?: engine.gyroRoutes()
         val gs = engine.gyroSettings
         if (routes !== cameraMapRoutes || gs !== cameraMapGyro) {
             cameraMapRoutes = routes
@@ -1873,17 +1903,19 @@ class GamepadRuntime(context: Context) {
     /**
      * Feeds one bias-corrected gyro sample to the gyro displays and the parallax edge: [m] as they
      * show it ([displayMotion]) and [cam] as the gyro mouse measures the turn, for what follows the
-     * camera; [real] in World or Player space; [axes] move the mouse now.
+     * camera; [real] in World or Player space; [axes] move the mouse now; [routes] the gyro routes
+     * this sample already fetched, if any.
      */
     private fun feedVisuals(
         v: TouchVisuals, feeds: Array<GyroDisplayFeed>, m: GyroMouse.Motion, cam: GyroMouse.Motion, real: Boolean, dt: Float, axes: Int,
+        routes: List<Mapping>? = null,
     ) {
         val ratchets = if (inputAllowed) engine.ratchetsHeld else 0
         val pressed = ratchets and poseRatchets.inv() != 0
         poseRatchets = ratchets
         gyroLiveAxes = axes
         val gs = if (axes != 0) engine.gyroSettings else null
-        val map = if (axes != 0) cameraMapNow() else 0
+        val map = if (axes != 0) cameraMapNow(routes) else 0
         val out = engine.lastOutput
         for (f in feeds) {
             if (map != 0) f.cameraMap = map
@@ -2013,11 +2045,6 @@ class GamepadRuntime(context: Context) {
         }
         val bx = x - biasX; val by = y - biasY; val bz = z - biasZ
         val allowed = inputAllowed && !measuring
-        // Tilt turns with the gyro between accelerometer samples: quick, and steady when the screen is tapped.
-        if (accel != null && engine.motionMapped) {
-            tiltShake.gyro(bx, by, bz, ts)
-            if (inputAllowed) engine.setTilt(tiltShake.x, tiltShake.y)
-        }
         val axes = if (allowed) engine.gyroAxes else 0
         val active = axes != 0
         val v = vis
@@ -2043,9 +2070,64 @@ class GamepadRuntime(context: Context) {
         val visuals = !pcMode && !covered && (v.gyroEdge || feeds.isNotEmpty())
         // What follows the camera turns as the gyro mouse measures the turn (the pose before this sample).
         val cam = if (real && (visuals || (overlayOn && active && dt > 0f))) gyroMouse.inSpace(local, space, upNow) else local
+        // World and player space read the phone's pose against gravity.
+        if (poseOn) {
+            gravityPose.rotate(local.yaw, local.pitch, local.roll, dt)
+            gravityPose.up(upNow)
+            gravityPoseUsed = true
+        } else if (gravityPoseUsed) {
+            // Not followed in local space: switched back, it starts again from gravity.
+            gravityPose.reset()
+            gravityPoseUsed = false
+        }
+        // The input first: the gyro's mouse motion and pad axes, tilt and the DS4 motion reach the
+        // engine before any display or overlay work, so the sender takes this sample as soon as it can.
+        // The turn with each axis in its card's space, against the pose this sample left.
+        val spaced = if (mapReal && (pcMode || accelWatchers.get() > 0)) gyroMouse.inSpaces(local, gsNow, upNow) else local
+        var sentDx = 0; var sentDy = 0
+        var routesNow: List<Mapping>? = null
+        if (pcMode) {
+            pcGyroSample(pc, allowed, axes, spaced, dt, ts)
+        } else {
+            pcGyroRouting = false
+            // An axis a ratchet just turned off may glide on (inertia) while the others are off.
+            if (active || (allowed && gyroMouse.coasting)) {
+                // A layer in use may set gyro settings of its own.
+                val gs = engine.gyroSettings
+                if (gs !== gyroMouse.settings) gyroMouse.settings = gs
+                val routes = engine.gyroRoutes()
+                routesNow = routes
+                val r = gyroMouse.route(if (mapReal) gyroMouse.inSpaces(local, gs, upNow) else local, dt, routes, axes)
+                if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel, fromGyro = active)
+                engine.setGyroAxes(r.pad)
+                gyroPadSet = true
+                sentDx = r.dx; sentDy = r.dy
+            } else {
+                gyroMouse.reset()
+                if (gyroPadSet) clearGyroPad()
+            }
+        }
+        // Tilt turns with the gyro between accelerometer samples: quick, and steady when the screen is tapped.
+        if (accel != null && engine.motionMapped) {
+            tiltShake.gyro(bx, by, bz, ts)
+            if (inputAllowed) engine.setTilt(tiltShake.x, tiltShake.y)
+        }
+        // The PC's DualShock 4 gyro: every sample as measured (bias removed), in deg/s about the
+        // screen's right, up and toward-the-player axes, sent at once.
+        val motion = wifi.motion
+        if (motion.wanted) {
+            if (allowed) {
+                val p = padGyro
+                PadGyro.map(wsGyro, local.yaw, local.pitch, local.roll, p)
+                motion.add(p[0], p[1], p[2], ts / 1000)
+                engine.onChange?.run()
+            } else if (motion.still()) engine.onChange?.run()
+        }
+        // Then what only shows the sample, starting with the other camera moves since the last.
+        drainCamera()
         // With the PC doing the gyro math the phone's gyro displays are off: what moves is the PC's to say.
         if (pcMode) gyroLiveAxes = 0
-        else if (visuals) feedVisuals(v, feeds, shown, cam, real, dt, axes)
+        else if (visuals) feedVisuals(v, feeds, shown, cam, real, dt, axes, routesNow)
         if (!pcMode && !covered && feeds.isNotEmpty() && v.restFade.on) {
             restDetector.settings = v.restFade
             restDetector.gyro(shown.yaw, shown.pitch, shown.roll, dt, System.nanoTime())
@@ -2063,7 +2145,7 @@ class GamepadRuntime(context: Context) {
                 )
             }
             overlay.gyroActive = active
-            overlay.cameraMap = cameraMapNow()
+            overlay.cameraMap = cameraMapNow(routesNow)
             // The game's camera degrees per phone degree change only with the settings in effect.
             val gs = engine.gyroSettings
             if (gs !== overlayRwsFor) {
@@ -2074,50 +2156,8 @@ class GamepadRuntime(context: Context) {
                 )
             }
         }
-        // The PC's DualShock 4 gyro: every sample as measured (bias removed), in deg/s about the
-        // screen's right, up and toward-the-player axes, sent at once.
-        val motion = wifi.motion
-        if (motion.wanted) {
-            if (allowed) {
-                val p = padGyro
-                PadGyro.map(wsGyro, local.yaw, local.pitch, local.roll, p)
-                motion.add(p[0], p[1], p[2], ts / 1000)
-                engine.onChange?.run()
-            } else if (motion.still()) engine.onChange?.run()
-        }
-        // World and player space read the phone's pose against gravity.
-        if (poseOn) {
-            gravityPose.rotate(local.yaw, local.pitch, local.roll, dt)
-            gravityPose.up(upNow)
-            gravityPoseUsed = true
-        } else if (gravityPoseUsed) {
-            // Not followed in local space: switched back, it starts again from gravity.
-            gravityPose.reset()
-            gravityPoseUsed = false
-        }
-        // The turn with each axis in its card's space, against the pose this sample left.
-        val spaced = if (mapReal && (pcMode || accelWatchers.get() > 0)) gyroMouse.inSpaces(local, gsNow, upNow) else local
         if (accelWatchers.get() > 0) liveSpeed(spaced.yaw, spaced.pitch, spaced.roll, dt, ts)
-        if (pcMode) {
-            pcGyroSample(pc, allowed, axes, spaced, dt, ts)
-        } else {
-            pcGyroRouting = false
-            var sentDx = 0; var sentDy = 0
-            // An axis a ratchet just turned off may glide on (inertia) while the others are off.
-            if (active || (allowed && gyroMouse.coasting)) {
-                // A layer in use may set gyro settings of its own.
-                val gs = engine.gyroSettings
-                if (gs !== gyroMouse.settings) gyroMouse.settings = gs
-                val routes = engine.gyroRoutes()
-                val r = gyroMouse.route(if (mapReal) gyroMouse.inSpaces(local, gs, upNow) else local, dt, routes, axes)
-                if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel, fromGyro = active)
-                engine.setGyroAxes(r.pad)
-                gyroPadSet = true
-                sentDx = r.dx; sentDy = r.dy
-            } else {
-                gyroMouse.reset()
-                if (gyroPadSet) clearGyroPad()
-            }
+        if (!pcMode) {
             val timing = ratchetTiming
             if (timing.enabled) {
                 // The sensor's clock (boot time) into the input events' (System.nanoTime).
