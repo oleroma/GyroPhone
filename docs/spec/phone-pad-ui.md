@@ -39,7 +39,7 @@ A control's **mapping editor** and its **settings** (⚙ Settings in the editor,
 
 **The floating menu** (drag by its ⠿ dots; drag its **bottom-right corner grip** sideways to resize it and down (or up) for more (or fewer) rows: the main strip takes up to 1 row in landscape and 2 in portrait, the Add / Presets strip up to 3 and 4. Every row is compact: the main strip's buttons are pills as small as the Add list's. Every strip scrolls sideways; its items pack into its rows in order, each into the shortest row so far, and Add / Presets items still drag down onto the pad. Every row starts with ⠿ (drag any of them to move the menu), then one fixed column with ↶ and ↷ side by side in its first row (its other rows, and the list's, keep the column empty so the strips line up). The strip starts with ⚙ and the lock: side by side in one row, one above the other in two. The Add + and Add preset ★ pills always sit in the strip's last row, right over their list; the open one (**Add ▴** / **Add preset ▴**) turns into a tab in the list's blue, and the list's frame is that blue; it is as wide as the main row, so both frames end at the same edge):
 
-- ↶ **Undo** / ↷ **Redo** (100 steps; changes within 400 ms merge into one step);
+- ↶ **Undo** / ↷ **Redo** (100 steps; changes within 400 ms merge into one step; a change made after an Undo ends what Redo could bring back at once, so a quick Redo never throws it away);
 - The sliders icon (the same as the Defaults capsule's) saves the draft and opens the workspace's settings page;
 - 🔒 **Lock layout**: drags and pinches stop moving or sizing what was there when edit mode opened (new controls stay free);
 - **Done** saves (switches to the edited workspace); **Cancel** asks "Discard your changes?" if anything changed;

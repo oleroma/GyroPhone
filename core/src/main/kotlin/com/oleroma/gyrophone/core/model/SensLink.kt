@@ -99,6 +99,54 @@ data class NamedSens(val id: Int, val name: String, val touch: Boolean = false) 
             if (name.isBlank()) w else w.copy(namedSens = w.namedSens.map { if (it.id == id) it.copy(name = name.trim()) else it })
 
         /**
+         * [now] with the change from workspace [from] to [to] carried over, and nothing else: how
+         * Undo (and Redo) of [delete] puts back exactly what the delete took, leaving what was done
+         * since (another sensitivity added, a label, a setting) alone. [now] unchanged since [from]
+         * becomes [to] as it is. Otherwise, per part the delete touches: lists get back what went
+         * and lose what came; a setting, a control's or button's gyro, a layer's settings take [to]'s
+         * when they are still as [from] had them (one changed since keeps its change).
+         */
+        fun rebase(now: Workspace, from: Workspace, to: Workspace): Workspace {
+            if (now == from) return to
+            fun <T> list(n: List<T>, f: List<T>, t: List<T>): List<T> =
+                if (n == f) t else n.filterNot { it in f && it !in t } + t.filter { it !in f && it !in n }
+            fun <T> value(n: T, f: T, t: T): T = if (n == f) t else n
+            val fromControls = from.touchControls.associateBy { it.id }
+            val toControls = to.touchControls.associateBy { it.id }
+            val fromHeld = from.heldButtons.associateBy { it.id }
+            val toHeld = to.heldButtons.associateBy { it.id }
+            val fromSets = from.sets.associateBy { it.id }
+            val toSets = to.sets.associateBy { it.id }
+            return now.copy(
+                namedSens = list(now.namedSens, from.namedSens, to.namedSens).sortedBy { it.id },
+                namedSensLastId = maxOf(now.namedSensLastId, to.namedSensLastId),
+                sliders = list(now.sliders, from.sliders, to.sliders),
+                gyro = value(now.gyro, from.gyro, to.gyro),
+                touchpad = value(now.touchpad, from.touchpad, to.touchpad),
+                sets = now.sets.map { s ->
+                    val f = fromSets[s.id]; val t = toSets[s.id]
+                    if (f == null || t == null) s else s.copy(settings = value(s.settings, f.settings, t.settings))
+                },
+                touchControls = now.touchControls.map { c ->
+                    val f = fromControls[c.id]; val t = toControls[c.id]
+                    if (f == null || t == null) c else c.copy(gyro = value(c.gyro, f.gyro, t.gyro), surface = value(c.surface, f.surface, t.surface))
+                },
+                heldButtons = now.heldButtons.map { h ->
+                    val f = fromHeld[h.id]; val t = toHeld[h.id]
+                    if (f == null || t == null) h else h.copy(gyro = value(h.gyro, f.gyro, t.gyro))
+                },
+                mappings = list(now.mappings, from.mappings, to.mappings),
+                keyboard = list(now.keyboard, from.keyboard, to.keyboard),
+                mouse = list(now.mouse, from.mouse, to.mouse),
+                phone = list(now.phone, from.phone, to.phone),
+                pads = now.pads.map { p ->
+                    val f = from.pads.firstOrNull { it.id == p.id }; val t = to.pads.firstOrNull { it.id == p.id }
+                    if (f == null || t == null) p else p.copy(mappings = list(p.mappings, f.mappings, t.mappings))
+                },
+            )
+        }
+
+        /**
          * [w] without named sensitivity [id]: its slider chips and kept value go, and every
          * sensitivity that followed it keeps what it gave (its kept value times the scale as its
          * own value; never set, the shared Sensitivity at the same scale), so nothing jumps.

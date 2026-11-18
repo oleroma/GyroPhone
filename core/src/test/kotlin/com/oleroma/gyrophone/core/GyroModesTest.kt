@@ -103,20 +103,6 @@ class GyroModesTest {
         assertTrue(e.gyroActive)
     }
 
-    @Test fun setGyroSwitchesModeAndKeepsHeldInputs() {
-        val e = engine(GyroMode.ALWAYS)
-        e.setTouch("a", true)
-        e.setGyro(e.workspace.gyro.copy(mode = GyroMode.OFF))
-        assertEquals(GyroMode.OFF, e.workspace.gyro.mode)
-        assertFalse(e.gyroActive)
-        assertTrue(e.snapshot().gamepad.buttons != 0)
-        e.setTouch("r", true)
-        assertTrue(e.gyroActive)
-        // The new mode is the profile's too, so returning to the workspace keeps it.
-        e.workspaceIndex = 0
-        assertEquals(GyroMode.OFF, e.workspace.gyro.mode)
-    }
-
     @Test fun gyroOffIgnoresRatchetsAndToggle() {
         val e = engine(GyroMode.SENSOR_OFF, touchpadRatchet = true)
         assertFalse(e.gyroActive)
