@@ -259,6 +259,7 @@ public sealed class HostEngine
         Debug = new DebugTrace(() => _clock.NowUs, queue: _shared.Debug, forward: debugForward);
         Debug.SetOn(settings.Diagnostics, "on since the last run");
         SetGcWatch(settings.Diagnostics);
+        _diagApplied = settings.Diagnostics;
         _events = new TracedEvents(events ?? NullHostEvents.Instance, Debug);
         _sessions = new SessionManager(random);
         _pairing = new PairingManager(prompt, () => (_settings.HostId, _settings.HostName), OnPaired, random, newPairKey);
@@ -294,7 +295,10 @@ public sealed class HostEngine
     /// </summary>
     public Action? DebugSaveRequested { get; set; }
 
-    /// <summary>Diagnostics switched (true on); on the thread that switched it, maybe under the engine lock.</summary>
+    /// <summary>
+    /// Diagnostics switched (true on); never under the engine lock: on the thread that switched it, or on a pool thread
+    /// when a datagram switched it (gp-rx holds the lock then).
+    /// </summary>
     public Action<bool>? DiagnosticsChanged { get; set; }
 
     /// <summary>The save counter of the last LINK_INFO with the debug flag; -1 until one in this session.</summary>
@@ -380,14 +384,38 @@ public sealed class HostEngine
             _settings.Diagnostics = on;
             _settingsDirty = true;
             Debug.SetOn(on, why);
-            SetGcWatch(on);
             RecorderSwitched(was, wasWriting, on ? "diagnostics on" : "diagnostics off");
             _events.Log("diagnostics " + (on ? "on" : "off") + " (" + why + ")");
             _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
             if (_sessions.Active is { } a) SendTestMode(a);
         }
-        try { DiagnosticsChanged?.Invoke(on); }
-        catch (Exception e) { _events.Log($"diagnostics notice failed: {e.GetType().Name}"); }
+        // The GC watch and DiagnosticsChanged (the delivery probe's thread and window) start or stop threads: never
+        // under the engine lock. Switched from a datagram (the phone's switch, tools/gp-log.sh), gp-rx still holds it,
+        // so a pool thread does them and input goes on.
+        if (!Monitor.IsEntered(_lock)) ApplyDiagnostics();
+        else if (Interlocked.Exchange(ref _diagApplyQueued, 1) == 0)
+            ThreadPool.UnsafeQueueUserWorkItem(_ => ApplyDiagnostics(), null);
+    }
+
+    // What the GC watch and DiagnosticsChanged were last switched to (under _diagApplyGate), and a pending switch.
+    private readonly object _diagApplyGate = new();
+    private bool _diagApplied;
+    private int _diagApplyQueued;
+
+    /// <summary>Switches the GC watch and tells DiagnosticsChanged to Diagnostics as it is now; outside the engine lock.</summary>
+    private void ApplyDiagnostics()
+    {
+        lock (_diagApplyGate)
+        {
+            Volatile.Write(ref _diagApplyQueued, 0);
+            bool on;
+            using (Lock(ByUi)) on = _settings.Diagnostics;
+            if (on == _diagApplied) return;
+            _diagApplied = on;
+            SetGcWatch(on);
+            try { DiagnosticsChanged?.Invoke(on); }
+            catch (Exception e) { _events.Log($"diagnostics notice failed: {e.GetType().Name}"); }
+        }
     }
 
     // Diagnostics' memory cleanup lines (GcWatch): made the first time Diagnostics is on, then only switched.

@@ -438,9 +438,24 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
             StateChanged();
         }
         if (_server.State != ServerState.Running || !installed || !_keyMouse.UseInputDriver) return;
+        // Plugged here, off the engine lock; the route changes (letting go of everything held first) only once it did,
+        // so a driver that won't plug costs input nothing. The same failure is logged once, not every 5 s.
+        var sink = HidInputSink.Create(LogPlugOnce);
+        if (sink == null) return;
+        _lastPlugLine = null;
         bool ok = false;
-        _engine.ChangeKeyMouseRoute(() => ok = _keyMouse.Retry(), "input driver plugged");
+        _engine.ChangeKeyMouseRoute(() => ok = _keyMouse.Adopt(sink), "input driver plugged");
         if (ok) StateChanged();
+    }
+
+    // The last line the input driver's plug logged, so a plug that keeps failing logs once.
+    private string? _lastPlugLine;
+
+    private void LogPlugOnce(string line)
+    {
+        if (line == _lastPlugLine) return;
+        _lastPlugLine = line;
+        _log.Write(line);
     }
 
     private void RetryHostKey(DpapiKeyProtector protector, string hostName)

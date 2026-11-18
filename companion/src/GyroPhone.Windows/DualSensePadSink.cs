@@ -45,16 +45,22 @@ public sealed class DualSensePadSink : IDisposable
         {
             string path = FindDevice() ?? throw new IOException("the GyroPhone pad driver is not installed");
             var h = CreateFileW(path, GenericRead | GenericWrite, FileShareRead | FileShareWrite, 0, OpenExisting, 0, 0);
-            if (h.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
-            Span<byte> buf = stackalloc byte[8];
-            if (Control(h, IoctlVersion, [], buf) != 4 || BitConverter.ToUInt32(buf) != ProtocolVersion)
+            // Closed on every failure below, so a refused plug leaves no handle holding the device.
+            try
+            {
+                if (h.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                Span<byte> buf = stackalloc byte[8];
+                if (Control(h, IoctlVersion, [], buf) != 4 || BitConverter.ToUInt32(buf) != ProtocolVersion)
+                    throw new IOException("the GyroPhone pad driver is a different version; run its install.cmd again");
+                BitConverter.TryWriteBytes(buf, ProtocolVersion);
+                BitConverter.TryWriteBytes(buf[4..], PadDualSense);
+                Control(h, IoctlPlug, buf, []);
+            }
+            catch
             {
                 h.Dispose();
-                throw new IOException("the GyroPhone pad driver is a different version; run its install.cmd again");
+                throw;
             }
-            BitConverter.TryWriteBytes(buf, ProtocolVersion);
-            BitConverter.TryWriteBytes(buf[4..], PadDualSense);
-            Control(h, IoctlPlug, buf, []);
             _handle = h;
             return true;
         }
