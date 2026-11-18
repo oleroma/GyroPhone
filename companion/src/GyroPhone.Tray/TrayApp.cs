@@ -1601,10 +1601,12 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         bool added = FirewallHelper.AddRuleElevated(_exePath);
         bool ok = FirewallHelper.RuleExists(_exePath);
-        _log.Write($"firewall rule add {(added ? "ok" : "failed or declined")}, present {ok}");
+        bool usb = FirewallHelper.UsbRuleExists(_exePath);
+        _log.Write($"firewall rule add {(added ? "ok" : "failed or declined")}, present {ok}, USB rule present {usb}");
         Post(() =>
         {
             _firewallOk = ok;
+            _usbRuleOk = usb;
             Refresh();
             if (!ok)
                 Balloon("Firewall rule not added", "Windows did not add the rule (the prompt was declined or failed).", ToolTipIcon.Warning);

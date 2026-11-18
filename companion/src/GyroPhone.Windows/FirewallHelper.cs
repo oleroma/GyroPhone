@@ -169,16 +169,18 @@ public static class FirewallHelper
 
     /// <summary>
     /// Replaces this executable's inbound rules with ours through one elevated cmd (UAC prompt): the
-    /// delete clears any Block rule, then the add runs whatever the delete returned. Returns false when the
-    /// user declined or the add failed. Blocks until it exits, so call it off the UI thread.
+    /// delete clears any Block rule, then the add runs whatever the delete returned. The delete takes the
+    /// USB rule too, so it is added back when it was there. Returns false when the user declined or the
+    /// add failed. Blocks until it exits, so call it off the UI thread.
     /// </summary>
     public static bool AddRuleElevated(string exePath)
     {
         try
         {
-            // cmd /c strips the outer quotes and keeps the inner ones; the exit code is the add's.
+            string usb = UsbRuleExists(exePath) ? $"netsh {AddUsbRuleArguments(exePath)} & " : "";
+            // cmd /c strips the outer quotes and keeps the inner ones; the exit code is the last command's, the main add.
             var psi = new ProcessStartInfo("cmd.exe",
-                $"/c \"netsh {DeleteRulesArguments(exePath)} & netsh {AddRuleArguments(exePath)}\"")
+                $"/c \"netsh {DeleteRulesArguments(exePath)} & {usb}netsh {AddRuleArguments(exePath)}\"")
             {
                 UseShellExecute = true,
                 Verb = "runas",
