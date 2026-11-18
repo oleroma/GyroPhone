@@ -241,6 +241,9 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
         )
     }
 
+    /** Whether GP reads any pad directly now (its presses reach GP in the background too). Any thread. */
+    val holdsAny: Boolean get() = pads.isNotEmpty()
+
     /** Whether GP holds a pad of this model now (Android's copy of it is on its way out). */
     fun holds(vendorId: Int, productId: Int): Boolean = pads.any { it.usb.vendorId == vendorId && it.usb.productId == productId }
 
