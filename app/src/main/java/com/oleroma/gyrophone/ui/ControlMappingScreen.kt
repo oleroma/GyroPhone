@@ -171,8 +171,8 @@ private const val MAX_UNDO = 50
  * the whole [workspace] as it was, which Undo puts back exactly.
  */
 /**
- * One Undo / Redo step: the mappings before, and the control before when a preset changed its settings too. A
- * named sensitivity's delete is a workspace step instead: the workspace from [wsFrom] to [wsTo] (what Undo puts back,
+ * One Undo / Redo step: the mappings before, and the control before when a preset changed its settings too.
+ * Adding, renaming or deleting a named sensitivity is a workspace step instead: the workspace from [wsFrom] to [wsTo] (what Undo puts back,
  * [NamedSens.rebase]), so what was done since stays.
  */
 private data class UndoStep(
@@ -892,6 +892,31 @@ internal fun ControlMappingScreen(
         val step = redo.removeLastOrNull() ?: return
         snackbar.currentSnackbarData?.dismiss()
         undo.add(apply(step))
+    }
+
+    /**
+     * Changes the workspace with [change] (then [after], such as this button's chips) as one Undo step, which Undo
+     * takes back exactly ([NamedSens.rebase]): adding, renaming or deleting a named sensitivity.
+     */
+    fun workspaceStep(message: String, change: (Workspace) -> Workspace, after: () -> Unit = {}) {
+        val prev = allMappings
+        var before: Workspace? = null
+        editWorkspace { w -> if (before == null) before = w; change(w) }
+        after()
+        // The workspace after it (this button's chips too): read with an edit that changes nothing.
+        var now: Workspace? = null
+        editWorkspace { w -> now = w; w }
+        val was = before ?: return
+        val got = now ?: return
+        if (was == got) return
+        undo.add(UndoStep(prev, null, wsFrom = got, wsTo = was))
+        if (undo.size > MAX_UNDO) undo.removeAt(0)
+        redo.clear()
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            val result = snackbar.showSnackbar(message, actionLabel = "Undo", duration = SnackbarDuration.Short)
+            if (result == SnackbarResult.ActionPerformed) undoLast()
+        }
     }
 
     /**
@@ -2094,35 +2119,22 @@ internal fun ControlMappingScreen(
                         NamedSensManager(
                             namedSens,
                             onAdd = { touch ->
-                                editWorkspace { w -> NamedSens.add(w, touch).first }
+                                workspaceStep(if (touch) "Added touch sensitivity" else "Added gyro sensitivity", { w -> NamedSens.add(w, touch).first })
                             },
-                            onRename = { ns -> askName("Rename sensitivity", ns.name) { n -> editWorkspace { w -> NamedSens.rename(w, ns.id, n) } } },
+                            onRename = { ns ->
+                                askName("Rename sensitivity", ns.name) { n ->
+                                    if (n != ns.name) workspaceStep("Renamed " + ns.name, { w -> NamedSens.rename(w, ns.id, n) })
+                                }
+                            },
                             onDelete = { ns ->
                                 val gone: (Mapping) -> Boolean = { m ->
                                     val t = m.target
                                     (t is OutputTarget.GyroSens && !ns.touch && t.named == ns.id) || (t is OutputTarget.TouchSens && ns.touch && t.named == ns.id)
                                 }
-                                // One step that Undo takes back exactly: the whole workspace as it was before (the
-                                // sensitivity, its slider chips and value, every link to it and this button's chips).
-                                // Taken before this button's chips go, so the step holds them too.
-                                val prev = allMappings
-                                var before: Workspace? = null
-                                editWorkspace { w -> if (before == null) before = w; NamedSens.delete(w, ns.id) }
-                                if (currentMappings.any(gone)) emit(Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(currentMappings.filterNot(gone), currentSet))))
-                                // The workspace after the delete (its chips too): read with an edit that changes nothing.
-                                var after: Workspace? = null
-                                editWorkspace { w -> after = w; w }
-                                val was = before
-                                val now = after
-                                if (was != null && now != null) {
-                                    undo.add(UndoStep(prev, null, wsFrom = now, wsTo = was))
-                                    if (undo.size > MAX_UNDO) undo.removeAt(0)
-                                    redo.clear()
-                                    scope.launch {
-                                        snackbar.currentSnackbarData?.dismiss()
-                                        val result = snackbar.showSnackbar("Deleted " + ns.name, actionLabel = "Undo", duration = SnackbarDuration.Short)
-                                        if (result == SnackbarResult.ActionPerformed) undoLast()
-                                    }
+                                // One step that Undo takes back exactly: the sensitivity, its slider chips and value, every
+                                // link to it and this button's chips.
+                                workspaceStep("Deleted " + ns.name, { NamedSens.delete(it, ns.id) }) {
+                                    if (currentMappings.any(gone)) emit(Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(currentMappings.filterNot(gone), currentSet))))
                                 }
                             },
                         )
