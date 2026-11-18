@@ -997,12 +997,15 @@ class GamepadRuntime(context: Context) {
         // Every other mouse count turns a trackball 3D shape too, as the camera turns. On the pump's
         // thread: only counted here, turned on the gyro's thread ([drainCamera]), never before a send.
         engine.cameraSink = { dx, dy ->
-            cameraPendingX.addAndGet(dx)
-            cameraPendingY.addAndGet(dy)
-            // No gyro samples to carry them (the workspace's gyro off): the gyro control thread takes
-            // them about once a frame, and only for a display that follows the camera.
-            if (gyro == null && !visualsCovered && followsCameraAny() && cameraDrainPosted.compareAndSet(false, true)) {
-                gyroControl.postDelayed(cameraDrainIdle, CAMERA_IDLE_DRAIN_MS)
+            // Counted only while the PC overlay or a display that follows the camera takes them.
+            if (wifi.overlay.wanted || (!visualsCovered && followsCameraAny())) {
+                cameraPendingX.addAndGet(dx)
+                cameraPendingY.addAndGet(dy)
+                // No gyro samples to carry them (the gyro paused or off, or no gyro sensor): the gyro
+                // control thread takes them about once a frame.
+                if (gyro == null && cameraDrainPosted.compareAndSet(false, true)) {
+                    gyroControl.postDelayed(cameraDrainIdle, CAMERA_IDLE_DRAIN_MS)
+                }
             }
         }
         hid.reportProvider = { id ->
