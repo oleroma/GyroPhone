@@ -42,7 +42,9 @@ public sealed record HostSnapshot(
     // The optional GyroPhone pad driver (driver/) is installed, so the DualSense output can plug.
     bool DualSenseOk = false,
     // The phone's "Press a key" is open: this PC's keyboard, mouse and controller are read for it.
-    bool Capturing = false)
+    bool Capturing = false,
+    // The connected phone's address as the PC sees it (loopback over the direct USB cable), or null.
+    string? PhoneAddress = null)
 {
     /// <summary>The driver the chosen output needs works: ours for the DualSense, ViGEmBus for the others.</summary>
     public bool OutputDriverOk => OutputMode == OutputMode.DualSense ? DualSenseOk : DriverOk;
@@ -2116,10 +2118,12 @@ public sealed class HostEngine
         HostCounters counters;
         string? qrName;
         IPcPad pcPad;
+        System.Net.SocketAddress? endpoint;
         using (Lock(ByUi))
         {
             long now = _clock.NowUs;
             var a = _sessions.Active;
+            endpoint = a?.Endpoint; // a copy the session replaces (never changes) when the phone moves: read after the lock
             phoneName = a?.PhoneName;
             connected = a != null;
             silent = _releasedForSilence;
@@ -2148,7 +2152,28 @@ public sealed class HostEngine
             _hostKeyFingerprint, qrS, qrName,
             padGyro ? pcPad.Name ?? "" : null,
             dualSenseOk,
-            _capture.On);
+            _capture.On,
+            AddressText(endpoint));
+    }
+
+    /// <summary>The last endpoint <see cref="AddressText"/> turned into text, so a steady phone makes no new string.</summary>
+    private volatile Tuple<System.Net.SocketAddress, string?>? _addressText;
+
+    private string? AddressText(System.Net.SocketAddress? endpoint)
+    {
+        if (endpoint == null) return null;
+        if (_addressText is { } last && ReferenceEquals(last.Item1, endpoint)) return last.Item2;
+        string? text;
+        try
+        {
+            text = ((System.Net.IPEndPoint)new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0).Create(endpoint)).Address.ToString();
+        }
+        catch (Exception)
+        {
+            text = null;
+        }
+        _addressText = Tuple.Create(endpoint, text);
+        return text;
     }
 
     /// <summary>The paired phones for <see cref="Snapshot"/>; null after a change, made again on the next one.</summary>

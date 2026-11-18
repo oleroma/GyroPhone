@@ -60,7 +60,10 @@ public sealed class HeldKeysMarker
         }
     }
 
-    /// <summary>Releases whatever a previous run left held, then deletes the marker. Returns the event count.</summary>
+    /// <summary>
+    /// Releases whatever a previous run left held, then deletes the marker. Returns the event count.
+    /// Never throws for a marker it can't read or delete, so a bad file can't stop the start-up.
+    /// </summary>
     public static int Recover(string path, IKeyMouseSink sink)
     {
         if (!File.Exists(path)) return 0;
@@ -82,7 +85,16 @@ public sealed class HeldKeysMarker
         catch (JsonException)
         {
         }
-        try { File.Delete(path); } catch (IOException) { }
+        catch (IOException)
+        {
+            // Locked by a scanner or backup tool: start anyway; the next start tries again.
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+        try { File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
         return n;
     }
 }

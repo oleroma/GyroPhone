@@ -27,6 +27,9 @@ internal sealed class InputClient : IDisposable
     private volatile PipeChannel? _channel;
     private volatile InputStatus? _status;
     private volatile bool _stopping;
+    /// <summary>Set by <see cref="ExitInput"/> (with _stopping, under _gate): the input process is to exit too.</summary>
+    private bool _exitAsked;
+    private readonly object _gate = new();
     private readonly ManualResetEventSlim _stopped = new();
     private Thread? _thread;
     private readonly Queue<long> _restarts = new();
@@ -88,7 +91,20 @@ internal sealed class InputClient : IDisposable
             using var gone = new ManualResetEventSlim();
             channel.Closed += gone.Set;
             if (channel.IsClosed) gone.Set();
-            _channel = channel;
+            bool exit, stop;
+            lock (_gate)
+            {
+                exit = _exitAsked;
+                stop = _stopping;
+                if (!stop) _channel = channel;
+            }
+            if (stop)
+            {
+                // Exit came while this was connecting (ExitInput found no channel): this one is told here.
+                if (exit) TellExit(channel, Hello?.Pid ?? 0);
+                else channel.Close();
+                return;
+            }
             Connected?.Invoke();
             gone.Wait();
             _channel = null;
@@ -216,33 +232,54 @@ internal sealed class InputClient : IDisposable
         }
     }
 
-    /// <summary>Tray Exit or an update: the input process stops too, and this waits (up to 5 s) until it has, so the exe is free.</summary>
+    /// <summary>Tray Exit or an update: the input process stops too, and this waits (up to 5 s; longer while it is still attaching) until it has, so the exe is free.</summary>
     public void ExitInput()
     {
-        _stopping = true;
+        PipeChannel? c;
+        lock (_gate)
+        {
+            _exitAsked = true;
+            _stopping = true;
+            c = _channel;
+        }
         _stopped.Set();
-        var c = _channel;
-        int pid = Hello?.Pid ?? 0;
         if (c != null)
         {
-            try
-            {
-                c.CallRaw(nameof(IInputControl.Exit), [], TimeSpan.FromMilliseconds(CallTimeoutMs));
-            }
-            catch (Exception e) when (e is PipeClosedException or TimeoutException or InvalidOperationException)
-            {
-                _log($"input: exit not answered: {e.GetType().Name}");
-            }
+            TellExit(c, Hello?.Pid ?? 0);
+            return;
+        }
+        // Still connecting: the link thread tells the input process once it attaches, and waits for it to exit. Wait for
+        // that whole step (attach, then Exit and the process's end), or this process ends with the link thread (a background
+        // one) mid-attach and the input process, seeing the companion gone without Exit, starts it again.
+        var t = _thread;
+        if (t != null && t != Thread.CurrentThread) t.Join(ConnectWaitMs + 2 * CallTimeoutMs);
+    }
+
+    /// <summary>Tells the input process on <paramref name="c"/> to exit, waits (up to 5 s) until it has, and lets go of the line.</summary>
+    private void TellExit(PipeChannel c, int pid)
+    {
+        try
+        {
+            c.CallRaw(nameof(IInputControl.Exit), [], TimeSpan.FromMilliseconds(CallTimeoutMs));
+        }
+        catch (Exception e) when (e is PipeClosedException or TimeoutException or InvalidOperationException)
+        {
+            _log($"input: exit not answered: {e.GetType().Name}");
         }
         if (pid > 0) WaitForExit(pid, 5_000);
-        c?.Close();
+        c.Close();
     }
 
     /// <summary>Lets go of the line without stopping the input process (it starts this companion again only after a crash).</summary>
     public void Dispose()
     {
-        _stopping = true;
+        PipeChannel? c;
+        lock (_gate)
+        {
+            _stopping = true;
+            c = _channel;
+        }
         _stopped.Set();
-        _channel?.Close();
+        c?.Close();
     }
 }
