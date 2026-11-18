@@ -208,12 +208,13 @@ class PhoneSessionFlow(
     private fun onAnnounce(a: Announce, from: InetSocketAddress, nowMs: Long, out: MutableList<Out>) {
         out.add(Out.Received(a, from))
         if (!a.hostId.contentEquals(host.hostId)) return
-        // Unauthenticated (the hostId is public): a HELLO target only, remembered once the PC answers from there.
+        // Unauthenticated (the hostId is public): only a HELLO target for the attempt running now, remembered
+        // once the PC answers from there. Without an attempt the live session's address follows sealed packets.
+        val att = attempt ?: return
         if (from != hostAddr) {
             hostAddr = from
             addrUnconfirmed = true
         }
-        val att = attempt ?: return
         sendHello(att, out) // the address may be new: try it at once, outside the retry schedule
     }
 

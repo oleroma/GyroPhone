@@ -111,9 +111,10 @@ class PhoneSessionFlowTest {
         val fake = InetSocketAddress("192.168.1.66", Wire.PORT)
         val n = WireCodec.encodeAnnounce(Announce(1, hostId, AnnounceFlags.PAIRED_WITH_YOU, "PC"), buf)
         assertTrue(f.deliver(buf.copyOf(n), 10, fake).none { it is PhoneSessionFlow.Out.HostAddress })
-        // The real PC keeps talking from its address: that one is reported again, the fake one never.
+        // With no attempt running it is not even a HELLO target: the address stays the PC's.
+        assertEquals(pcAddr, f.hostAddr)
         val out = f.deliver(hostSealed(Pong(1, 2, 3), live, 1), 20)
-        assertEquals(PhoneSessionFlow.Out.HostAddress(pcAddr), out.filterIsInstance<PhoneSessionFlow.Out.HostAddress>().single())
+        assertTrue(out.none { it is PhoneSessionFlow.Out.HostAddress })
         assertEquals(pcAddr, f.hostAddr)
     }
 

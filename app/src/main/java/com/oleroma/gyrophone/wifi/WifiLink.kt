@@ -1161,9 +1161,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 clock.reset()
                 clockOffsetUs = 0L
                 rttMinUs = -1L
+                // Every new session (a restarted companion's too): its first HOST_STATUS with the cable switch on
+                // retries a cable left alone.
+                pcCableOn = false
                 // A replacement is the same PC: its overlay stays on until its next HOST_STATUS says otherwise.
-                // pcCableOn too, so the next session's first HOST_STATUS with the cable switch on retries the cable.
-                if (s == null) { hostStatus = null; pcCableOn = false; testMode = 0; onPcPresses?.invoke(emptyList()) }
+                if (s == null) { hostStatus = null; testMode = 0; onPcPresses?.invoke(emptyList()) }
                 // Until the first HOST_STATUS, WELCOME's output mode says whether the pad takes motion.
                 else if (hostStatus == null) motion.padTakesMotion = OutputMode.takesMotion(s.outputMode)
                 welcomeHostFlags = s?.hostFlags
