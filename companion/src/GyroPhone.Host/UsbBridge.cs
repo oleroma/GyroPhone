@@ -78,6 +78,7 @@ public sealed class UsbBridge : IDisposable
                 int n = _pipe.Read(buf);
                 deframer.Feed(buf.AsSpan(0, n), d =>
                 {
+                    if (!Forwards(d)) return;
                     _socket.SendTo(d, SocketFlags.None, _server);
                     Interlocked.Increment(ref _fromPhone);
                 });
@@ -89,6 +90,14 @@ public sealed class UsbBridge : IDisposable
         }
         _dead = true;
     }
+
+    /// <summary>
+    /// Whether a datagram from the cable goes to the server. Everything from the bridge reaches the engine from
+    /// 127.0.0.1, which it trusts as "a program on this PC" for LINK_TEST_CTL and LOG_CTL: those never come from a
+    /// phone, so they stop here (anything on the phone that holds the accessory could send them, unpaired).
+    /// </summary>
+    public static bool Forwards(ReadOnlySpan<byte> d) =>
+        d.Length < 4 || d[3] is not (PacketType.LinkTestCtl or PacketType.LogCtl);
 
     private void TxLoop()
     {
