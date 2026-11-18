@@ -24,7 +24,10 @@ public interface IInputControl
     void SetPaused(bool paused);
     /// <summary>Session lock or sleep: release-all, inputs held back until unlocked.</summary>
     void SetLocked(bool locked);
-    /// <summary>Looks for the gamepad driver again; null when found, else why not.</summary>
+    /// <summary>
+    /// Looks for the gamepad driver again; "" when found, else why not. Null only on the companion's side,
+    /// when the call wasn't done (no input process, or no answer in time).
+    /// </summary>
     string? RetryDriver();
     void SetCatchUpMs(int ms);
     /// <summary>"Use input driver": keys and mouse through the input driver when it is installed (off: SendInput).</summary>

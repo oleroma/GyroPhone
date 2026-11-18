@@ -597,7 +597,7 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
         _padError = error;
         _log.Write("gamepad driver found");
         StateChanged();
-        return null;
+        return "";
     }
 
     public void SetCatchUpMs(int ms) => _engine.SetCatchUpMs(ms);

@@ -1613,17 +1613,22 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         });
     });
 
-    public void RetryDriver()
+    /// <summary>Looks for the gamepad driver again, off the UI thread (the input process may take seconds).</summary>
+    public void RetryDriver() => Task.Run(() =>
     {
-        if (In.RetryDriver() is { } error)
+        string? result = In.RetryDriver();
+        Post(() =>
         {
-            MessageBox.Show($"{error}.\n\nInstall ViGEmBus from {ViGEmPadSink.DriverDownloadUrl}, then choose Retry driver again.",
-                Program.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
-        }
-        Balloon("Gamepad driver found", "Game pad output is on.", ToolTipIcon.Info);
-        Refresh();
-    }
+            if (result == null)
+                Balloon("Gamepad driver not checked", "The input process didn't answer. Try again in a moment.", ToolTipIcon.Warning);
+            else if (result.Length > 0)
+                MessageBox.Show($"{result}.\n\nInstall ViGEmBus from {ViGEmPadSink.DriverDownloadUrl}, then choose Retry driver again.",
+                    Program.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else
+                Balloon("Gamepad driver found", "Game pad output is on.", ToolTipIcon.Info);
+            Refresh();
+        });
+    });
 
     public void RestartAsAdmin()
     {
