@@ -145,6 +145,8 @@ data class NamedSens(val id: Int, val name: String, val touch: Boolean = false) 
             )
             return level(w).copy(
                 namedSens = w.namedSens.filterNot { it.id == id },
+                // Recorded too, for a workspace saved before the counter whose highest id this was.
+                namedSensLastId = maxOf(w.namedSensLastId, id),
                 sliders = w.sliders.filterNot { o ->
                     val t = o.target
                     (t is OutputTarget.GyroSens && !touch && t.named == id) || (t is OutputTarget.TouchSens && touch && t.named == id)

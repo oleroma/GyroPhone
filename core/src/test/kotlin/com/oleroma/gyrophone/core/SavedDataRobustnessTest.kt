@@ -75,6 +75,10 @@ class SavedDataRobustnessTest {
         assertNull(ButtonLibrary.decode(text))
         assertEquals(listOf(ok), ButtonLibrary.decodeLenient(text))
         assertNull(ButtonLibrary.decodeLenient("{}"))
+        // An everything export from a newer build keeps the library buttons this build can read.
+        val everything = ProfileExport.everything(single(Workspace("w", "W")), listOf(ok, bad), emptyList())
+            .replace("\"type\": \"gyro_sens\"", "\"type\": \"newer_target\"")
+        assertEquals(listOf(ok), ProfileExport.read(everything).library)
     }
 
     @Test fun anImportedWorkspacesGlobalControlsBecomeItsOwn() {
@@ -113,6 +117,9 @@ class SavedDataRobustnessTest {
         assertEquals(3, three)
         // A workspace saved before the counter still counts on from its highest id.
         assertEquals(2, NamedSens.add(Workspace("w", "W", namedSens = listOf(NamedSens(1, "Sens 1"))), false).second)
+        // Deleting its highest id before any add here still keeps that id from coming back.
+        val old = Workspace("w", "W", namedSens = listOf(NamedSens(1, "Sens 1"), NamedSens(2, "Sens 2")))
+        assertEquals(3, NamedSens.add(NamedSens.delete(old, 2), false).second)
     }
 
     @Test fun unsetHoldZonesShareOneDefault() {

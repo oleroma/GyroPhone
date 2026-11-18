@@ -89,7 +89,7 @@ object ProfileExport {
             ?: throw NotAnExport("This GyroPhone file is damaged.")
         fun <T> list(key: String, decode: (String) -> List<T>?): List<T> =
             (obj[key] as? JsonArray)?.let { decode(json.encodeToString(JsonElement.serializer(), it)) }.orEmpty()
-        return Read(kind, profile.profile, list("library", ButtonLibrary::decode), list("presets", MappingPresets::decode), profile.dropped)
+        return Read(kind, profile.profile, list("library", ButtonLibrary::decodeLenient), list("presets", MappingPresets::decodeLenient), profile.dropped)
     }
 
     /** [name], or "[name] 2", "[name] 3"... whichever no workspace of [p] has. */
