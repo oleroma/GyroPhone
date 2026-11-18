@@ -1604,6 +1604,7 @@ internal fun ControlMappingScreen(
 
     val trackMove by rememberUpdatedState<(Offset) -> Unit> { moveDrag(it) }
     val trackEnd by rememberUpdatedState<() -> Unit> { endDrag() }
+    val trackCancel by rememberUpdatedState<() -> Unit> { cancelDrag() }
 
     // While dragging near the top or bottom of the actions pane, scroll it; faster closer to the edge.
     // A card may be pulled past the edge (full speed); targets and chips scroll only inside the pane.
@@ -2124,7 +2125,9 @@ internal fun ControlMappingScreen(
                                 if (dragged == null) continue
                                 val c = e.changes.firstOrNull { it.pressed }
                                 if (c == null) {
-                                    trackEnd()
+                                    // A lift drops it. A cancel (a call, palm rejection) comes as lifts
+                                    // already consumed: the drag stops and nothing changes.
+                                    if (e.changes.all { it.isConsumed }) trackCancel() else trackEnd()
                                     continue
                                 }
                                 e.changes.forEach { it.consume() }
