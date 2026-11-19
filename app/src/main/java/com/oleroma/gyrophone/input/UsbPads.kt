@@ -312,6 +312,8 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
             add("usb device ${dev.deviceName} $k ${nameOf(dev)}: known ${listed != null} · mismatched ${listed != null && encodeListed(k, listed) in mismatched} · " +
                 "permission ${runCatching { usbManager?.hasPermission(dev) }.getOrNull()} · failed ${dev.deviceName in failed} · asked ${dev.deviceName in asked}")
         }
+        for ((k, v) in HashMap(knownPads)) add("usb known: ${encodeListed(k, v)}")
+        for (m in HashSet(mismatched)) add("usb left to Android: $m")
         synchronized(notes) { for (n in notes) add("usb note: $n") }
     }
 
@@ -429,7 +431,13 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
             now[k] = if (was == null) Listed(keys, axes) else Listed(was.keys + keys, was.axes + axes)
         }
         var changed = false
-        for ((k, v) in now) if (knownPads.put(k, v) != v) changed = true
+        for ((k, v) in now) {
+            val was = knownPads.put(k, v)
+            if (was != v) {
+                changed = true
+                note("learned ${encodeListed(k, v)}" + if (was == null) "" else " (was ${encodeListed(k, was)})")
+            }
+        }
         if (changed) prefs.edit().putStringSet(KEY_KNOWN, knownPads.mapTo(HashSet()) { (k, v) -> encodeListed(k, v) }).apply()
     }
 
