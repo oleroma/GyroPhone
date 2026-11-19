@@ -83,6 +83,7 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         trace = t
         runtime.engine.trace = t
         runtime.wifi.debugTrace = true
+        runtime.wifi.gyroTiming = t.gyroTiming
         runtime.ratchetTiming.enabled = true
         job = scope.launch {
             var last: String? = null
@@ -115,6 +116,7 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         worker?.interrupt(); worker = null
         runtime.engine.trace = null
         runtime.wifi.debugTrace = false
+        runtime.wifi.gyroTiming = null
         runtime.ratchetTiming.enabled = false
         trace = null
     }

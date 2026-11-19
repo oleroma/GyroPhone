@@ -47,6 +47,7 @@ internal sealed class GpuDevice
         try
         {
             Dxgi = D3D.QueryInterface<IDXGIDevice>();
+            LowerGpuPriority();
             Factory = D2D1.D2D1CreateFactory<ID2D1Factory1>(Vortice.Direct2D1.FactoryType.MultiThreaded, Vortice.Direct2D1.DebugLevel.None);
             _lock = Factory.QueryInterface<ID2D1Multithread>();
             Device = Factory.CreateDevice(Dxgi);
@@ -57,6 +58,21 @@ internal sealed class GpuDevice
         {
             DisposeAll();
             throw;
+        }
+    }
+
+    /// <summary>The overlays' drawing on the graphics chip, against other programs' (-7 to 7, 0 normal).</summary>
+    private const int GpuPriority = -4;
+
+    /// <summary>The overlays' work on the graphics chip goes after the game's when both want it. Where the driver refuses, it stays normal.</summary>
+    private void LowerGpuPriority()
+    {
+        try
+        {
+            Dxgi.GPUThreadPriority = GpuPriority;
+        }
+        catch (SharpGen.Runtime.SharpGenException)
+        {
         }
     }
 
