@@ -202,7 +202,7 @@ fn milliseconds_read_as_dotnet_writes_them() {
     assert_eq!(ms1(40_000), "40.0");
     assert_eq!(ms1(-1_250), "-1.3");
     assert_eq!(ms1(i64::MAX), "9223372036854775.8");
-    assert_eq!(ms1(i64::MIN), "-9223372036854775.9");
+    assert_eq!(ms1(i64::MIN), "-9223372036854775.8");
 }
 
 #[test]
