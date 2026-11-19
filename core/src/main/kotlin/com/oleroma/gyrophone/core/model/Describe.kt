@@ -88,6 +88,7 @@ object Describe {
         is OutputTarget.SetOrientation -> "Set orientation" + (if (t.granular) ", granular" else "") +
             " (the way you hold the phone now becomes the base for the gyro, the displays and the PC overlays)"
         OutputTarget.ClearDisplays -> "Clear displays (pointers on the pad and the PC lose their paint and trail)"
+        is OutputTarget.Calibrate -> "Calibrate gyro (counts down ${t.countdownS} s to lay the phone still, then measures its drift for ${t.measureS} s)"
         OutputTarget.NoOutput -> "Nothing (blocks the layer below)"
         is OutputTarget.Off -> "Nothing instead of the inherited " + shortTarget(t.of)
         is OutputTarget.GyroSens -> gyroSens(t)
@@ -123,11 +124,11 @@ object Describe {
     )
 
     /**
-     * The "Other" picker group: (Let go), Black screen, Set orientation, Clear displays, Previous
+     * The "Other" picker group: (Let go), Black screen, Clear displays, Previous
      * / Next workspace and Fullscreen.
      */
     val otherTargets: List<OutputTarget> = listOf(
-        OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.SetOrientation(), OutputTarget.ClearDisplays,
+        OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.ClearDisplays,
         OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen,
     )
 
@@ -224,6 +225,7 @@ object Describe {
         OutputTarget.Fullscreen -> "Fullscreen"
         is OutputTarget.SetOrientation -> if (t.granular) "Set orientation (granular)" else "Set orientation"
         OutputTarget.ClearDisplays -> "Clear displays"
+        is OutputTarget.Calibrate -> "Calibrate"
 
         OutputTarget.NoOutput -> "Nothing"
         is OutputTarget.Off -> "Nothing (" + shortTarget(t.of) + ")"
@@ -277,7 +279,7 @@ object Describe {
         },
         "Gyro" to listOf(OutputTarget.GyroPause) +
             MotionAxis.shown.map { OutputTarget.GyroPauseAxis(it) } +
-            OutputTarget.GyroToggle +
+            OutputTarget.GyroToggle + OutputTarget.Calibrate() + OutputTarget.SetOrientation() +
             OutputTarget.GyroGlide() + MotionAxis.shown.map { OutputTarget.GyroGlide(it) } +
             listOf(OutputTarget.TiltRange(), OutputTarget.TiltRange(StickAxis.X), OutputTarget.TiltRange(StickAxis.Y)),
         "Touch" to listOf(OutputTarget.TapTime),

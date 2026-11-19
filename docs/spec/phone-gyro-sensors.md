@@ -31,7 +31,7 @@ The gyro poll thread, the Wi-Fi sender (`WifiPump`) and the Bluetooth sender (`R
 
 - input is allowed (the pad is on screen in play, or **Send input only while the pad is open** is off) and the workspace's gyro is not **Gyro off**, or
 - the PC's phone overlay asks for motion (it shows the phone turning even when the gyro moves nothing), or
-- a rest calibration runs, or an acceleration graph on screen shows its live line (only while the app is in front: left open in the background it neither runs the gyro nor polls).
+- Calibrate runs, or an acceleration graph on screen shows its live line (only while the app is in front: left open in the background it neither runs the gyro nor polls).
 
 Otherwise it stops, saving CPU and battery. Ratchets, toggles and the other gyro modes never stop it, so aiming never waits for the sensor to start. Each start resets the sample clock, the rate window and any sub-count remainder. `updateGyro` only decides: the source is started, switched (`onDirectCapped`) and stopped on its own `GyroControl` thread (`syncGyro`), so opening a direct channel (shared memory and binder calls) or waiting for a stopped source's last sample never holds up the main thread, as when the pad comes back from a menu page. A rest calibration whose gyro can't start ends there.
 
@@ -40,20 +40,26 @@ Otherwise it stops, saving CPU and battery. Ratchets, toggles and the other gyro
 `GamepadRuntime.onGyroSample` takes rad/s in the Android sensor frame and the HAL timestamp:
 
 - `dt` is the time since the previous sample, clamped to 0..50 ms (the first sample after a start has 0).
-- The rest-calibration bias is subtracted.
+- With GP's drift correction, the drift it measured is subtracted (with Android's, nothing is).
 - The sample goes to the debug trace, then first to the input: either to the PC (in PC gyro mode, see [Controllers](phone-controllers.md)) or to `GyroMouse.route`, which turns it into mouse counts, wheel or stick deflection in the engine, then tilt and the PC DualShock 4's motion. Only then does it go to the gyro displays and parallax edge (with the other camera moves since the last sample, counted by the sender and applied here), the rest detector and the PC overlay feed, so display work never delays the sample's input.
 
 The measured rate is shown in App › About and the debug panel (`core/.../sensor/GyroRateWindow.kt`).
 
-## Rest calibration
+## Drift correction
 
-`core/.../engine/GyroCalibration.kt`. Calibrate (in the workspace's gyro settings) asks the person to lay the phone still for 2 seconds and averages the gyro. It fails if the phone moved: peak-to-peak noise above 0.05 rad/s (about 3 °/s), or an average above 0.03 rad/s (about 1.7 °/s, which is slow motion, not drift). The result is a fixed bias, stored app-wide (`gyro_bias_x/y/z`), subtracted from every later sample. Nothing else is filtered; the phone's own bias correction also runs.
+The workspace's Gyro tab ends with **Drift correction** (one setting for the phone, the same in every workspace; `GamepadRuntime.gpDrift`):
+
+- **Android** (default): the app reads the calibrated gyro (`TYPE_GYROSCOPE`). Android removes the drift itself and keeps adjusting it as the phone warms up. GP subtracts nothing and Calibrate is not shown.
+- **GP**: the app reads the uncalibrated gyro (`TYPE_GYROSCOPE_UNCALIBRATED`, its first three values; same direct channel or listener) and subtracts the drift GP measured, stored per phone (`gp_gyro_bias_x/y/z`). Switching restarts the gyro on the other sensor. **Calibrate** (`core/.../engine/GyroCalibration.kt`) asks the person to lay the phone still for 2 seconds and averages the gyro. It fails if the phone moved: peak-to-peak noise above 0.05 rad/s (about 3 °/s), or an average above 0.1 rad/s (about 5.7 °/s, which is slow motion, not drift). **Clear** removes it. A **Calibrate gyro** mapping does the same from the pad, with a countdown popup and its own measuring time ([Mapping system](phone-mapping.md)).
+- With GP, the switch **Re-measure when the phone rests** (off by default) measures the drift again on its own each time the phone lies perfectly still for 3 seconds: every axis within 0.015 rad/s peak to peak, which a phone in a hand never is (`core/.../engine/RestDrift.kt`, a few compares per sample on the gyro thread, no buffer). A result within 0.0005 rad/s of the stored one changes nothing.
+
+The choice is shown only on a phone that has an uncalibrated gyro; elsewhere Android's correction is used. The old Calibrate result (`gyro_bias_x/y/z`, measured on top of Android's correction) is no longer used. Nothing else is filtered.
 
 ## Accelerometer and magnetometer
 
 `sensor/AccelSource.kt` reads them on their own threads: the accelerometer at about 200 Hz (one reading every 5 ms, `ACCEL_PERIOD_US`), the magnetometer at game rate (for the gyro displays and PC overlays with a compass, and for sideways tilt's Use compass when flat). The accelerometer runs while input is allowed and something needs it: a tilt or shake mapping in the workspace (`MappingEngine.motionMapped`), the World or Player gyro space, a gyro display or the parallax edge that holds its pose to gravity, or the PC overlay. Each reading is turned into the gyro's axes (right, up, toward the player) and goes to:
 
-- `core/.../engine/GravityPose.kt`: the world's up for World and Player spaces (the gyro's turn pulled toward gravity with a short time constant; a jolt far from 1 g is skipped);
+- `core/.../engine/GravityPose.kt`: the world's up for World and Player spaces. The gyro turns it on every sample; each good accelerometer reading pulls it toward gravity by the time since the last reading (0.5 s time constant). A reading during a jolt (far from 1 g) is skipped and does not pull at all, so during a hard flick the gyro alone carries it;
 - `core/.../engine/TiltShake.kt`: **tilt** (sideways: the phone's turn about the axis through its screen, like a steering wheel, counted from upright, + clockwise; forward and back: the lean from where it was held when tilt started, + back) as −1..1 with a deadzone and a range (default 30°, 5..90°, per axis if set). While the gyro runs (any gyro mode but Gyro off) tilt follows the gyro (`TiltShake.gyro`, every gyro sample, so it is as quick as the gyro and a tap on the screen doesn't jerk it), and gravity holds it: the gyro's pose is pulled toward the accelerometer over 0.5 s (a jolt more than 15% off 1 g is skipped), and the sideways turn toward gravity's turn from upright over 50 ms with the screen upright, more slowly the flatter the phone lies (by the squared share of gravity in the screen's plane), so level is always straight. **Lying flat** (within 20° of flat; on a lap, on a table) gravity can't tell where upright is: the gyro carries the turn on alone from where it was (it starts straight if tilt starts there), drifting only as slowly as the gyro does; **Set orientation** makes the way it points straight there (tilted up more, it changes nothing: gravity already says), and the sideways tilt ⚙'s **Use compass when flat** (`GyroSettings.tiltCompass`, off by default) lets the magnetometer hold straight where the phone went flat (its level part, pulled over 1 s, firmer the flatter; magnets and metal nearby can bend it). With Gyro off, tilt is gravity alone, smoothed by time with a 35 ms time constant (`TILT_TAU_NS`; about 63% of a change within 35 ms, settled in about 0.15 s, the same at any sensor rate), and the sideways turn holds still within 10° of flat, where gravity's turn is noise. And **shake** (the reading jumping by the shake strength, default 14 m/s², 5..40, at most once per short gap). A shake is measured against a slower gravity (90 ms, the old 50 Hz filter's time) and scaled by 0.8 as that filter saw it, so a shake strength needs the same jolt it always did;
 - the gyro displays, the parallax edge and the PC overlay feed.
 

@@ -2272,6 +2272,9 @@ fun PadScreen(
 
         if (linkTest && !editing) LinkTestNote()
 
+        val calibratePopup by runtime.calibratePopup.collectAsStateWithLifecycle()
+        calibratePopup?.let { if (!editing) CalibratePopup(it) }
+
         if (black) BlackScreen { black = false }
 
         if (!editing) {

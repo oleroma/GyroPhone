@@ -1461,6 +1461,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     @Volatile
     var onSetOrientation: ((Boolean) -> Unit)? = null
 
+    /**
+     * Called with its countdown and measuring time (s) when a [OutputTarget.Calibrate] mapping fires,
+     * inside the engine lock, as [onSetOrientation].
+     */
+    @Volatile
+    var onCalibrate: ((Int, Int) -> Unit)? = null
+
     /** Called when a [OutputTarget.ClearDisplays] mapping fires, inside the engine lock, as [onSetOrientation]. */
     @Volatile
     var onClearDisplays: Runnable? = null
@@ -2672,9 +2679,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (!anyDevice.modeSeen) anyDevice.modeHeld.clear()
         anyDevice.modeSeen = false
         shakeShown = true
-        for (a in 0 until 4) if (abs(gyroPad[a]) > abs(stick[a])) stick[a] = gyroPad[a]
-        trigger[0] = max(trigger[0], abs(gyroPad[GamepadAxis.LT.ordinal]))
-        trigger[1] = max(trigger[1], abs(gyroPad[GamepadAxis.RT.ordinal]))
+        // The gyro's push adds to the sticks' and triggers' own (aim with the stick, correct with the gyro), up to full.
+        for (a in 0 until 4) stick[a] = (stick[a] + gyroPad[a]).coerceIn(-1f, 1f)
+        trigger[0] = (trigger[0] + abs(gyroPad[GamepadAxis.LT.ordinal])).coerceAtMost(1f)
+        trigger[1] = (trigger[1] + abs(gyroPad[GamepadAxis.RT.ordinal])).coerceAtMost(1f)
         holdModeKeys()
         if (kept.isNotEmpty()) {
             var other = accButtons != 0 || accMouse != 0 || accUp || accDown || accLeft || accRight
@@ -2873,7 +2881,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause, is OutputTarget.GyroPauseAxis,
                 OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.LayerBack,
                 OutputTarget.LetGo, OutputTarget.BlackScreen, is OutputTarget.SetOrientation, OutputTarget.ClearDisplays,
-                OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen,
+                is OutputTarget.Calibrate, OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen,
                 OutputTarget.NoOutput, is OutputTarget.Off -> Unit
 
                 // The gyro reads it on every sample ([refreshSens]); the touchpad when it changes.
@@ -3357,7 +3365,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** [t] fires when it is pressed ([onPress]) rather than being held. */
     private fun isEvent(t: OutputTarget) = t is OutputTarget.Wheel || t == OutputTarget.GyroToggle || t is OutputTarget.Layer ||
             t == OutputTarget.LayerBack || t == OutputTarget.LetGo || t == OutputTarget.BlackScreen ||
-            t is OutputTarget.SetOrientation || t == OutputTarget.ClearDisplays || isPadAction(t)
+            t is OutputTarget.SetOrientation || t == OutputTarget.ClearDisplays || t is OutputTarget.Calibrate || isPadAction(t)
 
     private fun isPadAction(t: OutputTarget) =
         t == OutputTarget.PreviousWorkspace || t == OutputTarget.NextWorkspace || t == OutputTarget.Fullscreen
@@ -3565,6 +3573,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen -> onPadAction?.invoke(t)
             is OutputTarget.SetOrientation -> onSetOrientation?.invoke(t.granular)
             OutputTarget.ClearDisplays -> onClearDisplays?.run()
+            is OutputTarget.Calibrate -> onCalibrate?.invoke(
+                t.countdownS.coerceIn(0, OutputTarget.Calibrate.MAX_COUNTDOWN_S),
+                t.measureS.coerceIn(OutputTarget.Calibrate.MIN_MEASURE_S, OutputTarget.Calibrate.MAX_MEASURE_S),
+            )
             else -> Unit
         }
     }

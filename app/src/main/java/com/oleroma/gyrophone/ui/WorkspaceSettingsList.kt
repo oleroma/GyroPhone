@@ -3,11 +3,15 @@ package com.oleroma.gyrophone.ui
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -422,19 +426,42 @@ internal fun WorkspaceSettings(
 }
 
 /**
- * The end of a workspace's Gyro tab: drift calibration. It only subtracts a fixed resting bias and
- * suits the phone, not a layer, so only the whole workspace shows it. The jitter cutoff and
- * smoothing are the app's (App › Gyro), the same in every workspace.
+ * The end of a workspace's Gyro tab: drift correction. It suits the phone, not a layer, so only the
+ * whole workspace shows it, and it is the same in every workspace. Android's own correction is the
+ * default; GP's own (the uncalibrated gyro, Calibrate, and optionally re-measuring at rest) is offered
+ * only on a phone with an uncalibrated gyro. The jitter cutoff and smoothing are the app's (App › Gyro).
  */
 @Composable
 private fun GyroCalibration(runtime: GamepadRuntime) {
-    SettingsGroupTitle("Calibration")
+    SettingsGroupTitle("Drift correction")
     Hint("Jitter cutoff and smoothing are in App › Gyro: one setting for every workspace.")
+    val gp by runtime.gpDrift.collectAsState()
+    if (runtime.gpDriftOffered) {
+        Searchable("Drift correction", "gyro drift calibration android uncalibrated") {
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                listOf(false to "Android", true to "GP").forEachIndexed { i, (v, label) ->
+                    SegmentedButton(
+                        selected = gp == v,
+                        onClick = { runtime.setGpDrift(v) },
+                        shape = SegmentedButtonDefaults.itemShape(index = i, count = 2),
+                        label = { Text(label) },
+                    )
+                }
+            }
+        }
+    }
+    if (!gp) {
+        Hint("Android removes the gyro's drift itself and keeps adjusting as the phone warms up. GP adds nothing." +
+            if (runtime.gpDriftOffered) " Pick GP to measure and remove the drift with Calibrate instead." else "")
+        return
+    }
+    Hint("GP reads the gyro without Android's correction and removes the drift Calibrate measured. " +
+        "Lay the phone flat and still, then press Calibrate. Press it again if the cursor creeps.")
     val cal by runtime.calibrationState.collectAsState()
     Searchable("Calibrate", "gyro drift calibration") { Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
             when (val c = cal) {
-                GamepadRuntime.CalibrationState.None -> "Not calibrated (phone's own drift correction only)"
+                GamepadRuntime.CalibrationState.None -> "Not calibrated: the gyro's drift is not removed"
                 GamepadRuntime.CalibrationState.Running -> "Calibrating: keep the phone still…"
                 GamepadRuntime.CalibrationState.Moved -> "The phone moved. Lay it flat and try again."
                 is GamepadRuntime.CalibrationState.Calibrated -> "Calibrated (removes %.2f°/s drift)".format(c.degPerSec)
@@ -451,4 +478,10 @@ private fun GyroCalibration(runtime: GamepadRuntime) {
             Text("Calibrate")
         }
     } }
+    val rest by runtime.restRemeasure.collectAsState()
+    SwitchRow(
+        "Re-measure when the phone rests", rest,
+        hint = "Each time the phone lies perfectly still for 3 seconds (on a table, not in your hand), GP measures the drift " +
+            "again on its own, so it follows the phone as it warms up.",
+    ) { runtime.setRestRemeasure(it) }
 }

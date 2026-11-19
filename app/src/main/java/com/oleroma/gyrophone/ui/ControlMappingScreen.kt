@@ -311,7 +311,7 @@ private fun allows(allowed: Set<OutputTarget>, t: OutputTarget): Boolean {
         // Layer actions, (Let go), Black screen, Set orientation, Clear displays, workspace switches,
         // Fullscreen and Nothing go where button outputs do.
         is OutputTarget.Layer, OutputTarget.LayerBack, OutputTarget.LetGo, OutputTarget.BlackScreen,
-        is OutputTarget.SetOrientation, OutputTarget.ClearDisplays, OutputTarget.NoOutput,
+        is OutputTarget.SetOrientation, OutputTarget.ClearDisplays, is OutputTarget.Calibrate, OutputTarget.NoOutput,
         OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen ->
             allowed.any { it is OutputTarget.Key }
         else -> false
@@ -2566,6 +2566,8 @@ internal fun ControlMappingScreen(
         val ti = trig(zi, chip.trigger)
         // Set orientation's Granular switch, applied with the rest.
         var granular by remember(chip) { mutableStateOf((chip.target as? OutputTarget.SetOrientation)?.granular == true) }
+        // Calibrate's countdown and measuring time, applied with the rest.
+        var calibrate by remember(chip) { mutableStateOf(chip.target as? OutputTarget.Calibrate) }
         // A button's touch card: a chip can move between its Touch, Area and Outside (Where); the Swipe
         // card's between its directions (Any, ↑ → ↓ ←), in its zone.
         val group = groupOf(input)
@@ -2595,7 +2597,7 @@ internal fun ControlMappingScreen(
             buttonHow = ti.sources.firstOrNull()?.let { chipButtonHow(it, chip.target) },
             onApply = { tr, o, w, r, pd ->
                 chipDialog = null
-                val target = (chip.target as? OutputTarget.SetOrientation)?.copy(granular = granular) ?: chip.target
+                val target = (chip.target as? OutputTarget.SetOrientation)?.copy(granular = granular) ?: calibrate ?: chip.target
                 val destInput = if (whereInputs.isEmpty()) zi else inputAt(w)
                 val dest = trig(destInput, if (tr in Bindings.triggersOf(destInput)) tr else Trigger.HOLD)
                 // Another trigger: it leaves this one's chips and joins that one's (keeping their order); one
@@ -2646,6 +2648,21 @@ internal fun ControlMappingScreen(
                         granular, overridden = false, onReset = null,
                     ) { granular = it }
                 }
+            } else if (chip.target is OutputTarget.Calibrate) {
+                { calibrate?.let { c ->
+                    OverrideSlider(
+                        "chipCalCountdown", if (c.countdownS == 0) "Countdown off" else "Countdown %.0f s", c.countdownS.toFloat(),
+                        0f..OutputTarget.Calibrate.MAX_COUNTDOWN_S.toFloat(), 1f, overridden = false, onReset = null,
+                        hint = "Time to lay the phone down still before measuring starts. The popup counts it down.",
+                    ) { v -> calibrate = c.copy(countdownS = v.toInt()) }
+                    OverrideSlider(
+                        "chipCalMeasure", "Measure %.0f s", c.measureS.toFloat(),
+                        OutputTarget.Calibrate.MIN_MEASURE_S.toFloat()..OutputTarget.Calibrate.MAX_MEASURE_S.toFloat(), 1f,
+                        overridden = false, onReset = null,
+                        hint = "How long the drift is measured. Longer averages out more noise, so it is more exact, but the phone " +
+                            "must stay still for all of it. Pressing the button again while it counts or measures cancels.",
+                    ) { v -> calibrate = c.copy(measureS = v.toInt()) }
+                } }
             } else null,
         )
     }

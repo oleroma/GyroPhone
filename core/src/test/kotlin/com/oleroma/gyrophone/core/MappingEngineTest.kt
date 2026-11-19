@@ -110,6 +110,17 @@ class MappingEngineTest {
         assertEquals(2, fired)
     }
 
+    @Test fun calibrateFiresOncePerPressWithItsTimes() {
+        val p = profileOf(listOf(Mapping(InputSource.Key(AndroidKey.BUTTON_SELECT), OutputTarget.Calibrate(countdownS = 99, measureS = 5))))
+        val e = MappingEngine(p)
+        val fired = mutableListOf<Pair<Int, Int>>()
+        e.onCalibrate = { c, m -> fired += c to m }
+        e.setKey(AndroidKey.BUTTON_SELECT, true)
+        e.setKey(AndroidKey.BUTTON_SELECT, false)
+        // The countdown is held to its range.
+        assertEquals(listOf(OutputTarget.Calibrate.MAX_COUNTDOWN_S to 5), fired)
+    }
+
     @Test fun axisSourcesFireEventTargetsOncePerPress() {
         val p = profileOf(listOf(
             Mapping(InputSource.Axis(AndroidAxis.X, AxisHalf.NEGATIVE), OutputTarget.Wheel(1)),

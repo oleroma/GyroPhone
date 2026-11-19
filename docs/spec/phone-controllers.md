@@ -54,13 +54,13 @@ A physical button's mapping editor has a **Gyro** tab: gyro axes mapped there (`
 
 Connection page › **PC controller for gyro ratchet** (Wi-Fi only, default off): a controller plugged into the **PC** ratchets the phone's gyro with no round trip to the phone.
 
-- When the PC's WELCOME says `PC_GYRO` and the switch is on, the phone stops routing the gyro itself and sends each STATE as **STATE_GYRO** (`core/.../net/PcGyroFeed.kt`): the last 8 raw samples, per-axis running totals (so a longer gap fills in one step), and the gyro config those samples are meant for (sensitivities, glide, routes, curves, tightening, smoothing).
+- When the PC's WELCOME says `PC_GYRO` and the switch is on, the phone stops routing the gyro itself and sends each STATE as **STATE_GYRO** (`core/.../net/PcGyroFeed.kt`): the last 8 samples in the phone's own axes, each with the world's up at that moment (from `GravityPose`, when any gyro space needs it), per-axis running totals (so a longer gap fills in one step), and the gyro config those samples are meant for (sensitivities, glide, routes, curves, tightening, smoothing, each axis's Space). The PC turns each sample into its spaces itself, so a held PC controller button's own Space works like its sensitivity.
 - **PAD_GYRO** tells the PC which controller buttons ratchet (all axes or one) or toggle the gyro, with a toggle epoch. They come from the pinned device preset: every controller button mapped to Ratchet, Ratchet yaw/pitch/roll or Toggle gyro (`MappingEngine.pcGyroButtons`), resent when that changes. **PAD_GYRO_SET** follows it with the own gyro settings of each such button that has them while held.
 - The companion reads the PC's controller through XInput (`XInputPcPad`, 1 kHz, skipping its own virtual pad's slot) only while the switch is on. The rest of that controller goes to the game as it is.
 - The PC runs the same gyro math (`GyroMath.cs`) and ratchets at each sample's own time (`PadHeldHistory`), so the result matches the phone exactly ([Gyro math](phone-gyro-math.md), [Virtual devices](pc-virtual-devices.md)).
 - PC controller presses are never sent back to the phone.
 
-Not available from a PC controller: gyro inertia (no glide on its ratchet) and the phone's own ratchet displays.
+A PC controller's ratchet glides like the phone's (gyro inertia). Not available from a PC controller: the phone's own ratchet displays. An older phone or companion (STATE_GYRO with 9-byte samples) can't use this mode with a newer one: update both.
 
 ## Key files
 
