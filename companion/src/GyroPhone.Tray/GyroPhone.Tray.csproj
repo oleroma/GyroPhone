@@ -29,6 +29,8 @@
     <PackageReference Include="Vortice.Direct2D1" Version="3.6.2" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.6.2" />
+    <!-- Overlay windows shown through a composition swap chain (flip model, no redirection surface). -->
+    <PackageReference Include="Vortice.DirectComposition" Version="3.6.2" />
   </ItemGroup>
   <!-- Names any DLLs that stay out of the single-file exe (ExcludeFromSingleFile; none since the video
        latency test moved to tools/latency-test) in side-files.txt in the publish folder, so the build hook
