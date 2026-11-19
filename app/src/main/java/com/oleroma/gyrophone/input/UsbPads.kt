@@ -1,5 +1,8 @@
 package com.oleroma.gyrophone.input
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -19,6 +22,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import androidx.core.content.ContextCompat
+import com.oleroma.gyrophone.R
 import com.oleroma.gyrophone.core.engine.PadDevice
 import com.oleroma.gyrophone.core.input.HidGamepad
 import com.oleroma.gyrophone.core.model.AndroidAxis
@@ -26,6 +30,8 @@ import com.oleroma.gyrophone.core.model.KnownLayouts
 import com.oleroma.gyrophone.core.model.PhysicalSticks
 import com.oleroma.gyrophone.runtime.AttachedController
 import com.oleroma.gyrophone.runtime.GamepadRuntime
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * "Read USB controllers directly" (Settings, on by default): GP takes a game pad plugged into the
@@ -209,6 +215,19 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
     private val asked = HashMap<String, Long>()
     private val failed = HashSet<String>()
 
+    private val _waiting = MutableStateFlow<String?>(null)
+
+    /**
+     * The name of a pad that would be read directly but still waits for its "allow" (the prompt is up, or was missed
+     * or dismissed), or null. Meanwhile it is read through Android. Settings › Performance shows it with an Allow button.
+     */
+    val waiting: StateFlow<String?> = _waiting
+
+    /** The Allow button: asks about the waiting pads now, whenever they were last asked about. Any thread. */
+    fun askNow() {
+        control.post { asked.clear(); sync() }
+    }
+
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, intent: Intent) {
             val dev = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
@@ -224,10 +243,13 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
                     control.postDelayed({ update() }, 600)
                     control.postDelayed({ update() }, 2000)
                 }
+                ACTION_ASK -> askNow()
                 ACTION_PERMISSION -> control.post {
                     // Answered now: the time counts from here, so coming back from the prompt doesn't ask again.
                     val now = SystemClock.elapsedRealtime()
                     for (name in asked.keys.toList()) if (dev == null || name == dev.deviceName) asked[name] = now
+                    // Not allowed (dismissed counts): an Android notification says so, and asks again when tapped. Nothing on the pad.
+                    notifyWaiting = !intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
                     update()
                 }
             }
@@ -275,6 +297,8 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
         if (!wanted()) {
             for (p in pads) close(p, failed = false)
             forgetAsked()
+            _waiting.value = null
+            showWaiting(null)
             return
         }
         if (!started) {
@@ -283,12 +307,14 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
                 addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
                 addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
                 addAction(ACTION_PERMISSION)
+                addAction(ACTION_ASK)
             }
             ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
             inputManager.registerInputDeviceListener(inputListener, control)
         }
         learnPads()
         val devices = usbManager?.deviceList?.values.orEmpty()
+        var waits: String? = null
         for (dev in devices) {
             if (pads.any { it.usb.deviceName == dev.deviceName }) continue
             if (dev.deviceName in failed) continue
@@ -302,10 +328,13 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
                     val pi = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
                     usbManager.requestPermission(dev, pi)
                 }
+                if (waits == null) waits = nameOf(dev)
                 continue
             }
             open(dev)
         }
+        _waiting.value = waits
+        showWaiting(waits)
     }
 
     /**
@@ -317,6 +346,39 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
         if (asked.isEmpty()) return
         val now = SystemClock.elapsedRealtime()
         asked.values.removeAll { now - it >= ASK_AGAIN_MS }
+    }
+
+    // A prompt came back not allowed, and its notification hasn't been posted yet.
+    private var notifyWaiting = false
+    private var waitingShown = false
+
+    /**
+     * The "Controller not read directly" notification (Android's own, in the shade and as a pop-up; nothing on the pad):
+     * posted once when a prompt comes back not allowed while the pad [name] still waits, taken away when none waits
+     * any more (allowed, unplugged, the switch off). Tapping it asks again ([askNow]).
+     */
+    private fun showWaiting(name: String?) {
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        if (name == null) {
+            notifyWaiting = false
+            if (waitingShown) { waitingShown = false; nm.cancel(WAITING_ID) }
+            return
+        }
+        if (!notifyWaiting) return
+        notifyWaiting = false
+        waitingShown = true
+        nm.createNotificationChannel(NotificationChannel(WAITING_CHANNEL, "Controllers", NotificationManager.IMPORTANCE_HIGH))
+        val ask = PendingIntent.getBroadcast(
+            context, 1, Intent(ACTION_ASK).setPackage(context.packageName), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val n = Notification.Builder(context, WAITING_CHANNEL)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Controller not read directly")
+            .setContentText("$name works through Android until you allow it. Tap to be asked again.")
+            .setContentIntent(ask)
+            .setAutoCancel(true)
+            .build()
+        runCatching { nm.notify(WAITING_ID, n) }
     }
 
     /** Remembers every game pad Android lists now, with the keys and axes Android gives it. */
@@ -451,6 +513,9 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
     companion object {
         private const val TAG = "GPUsbPad"
         private const val ACTION_PERMISSION = "com.oleroma.gyrophone.USB_PERMISSION"
+        private const val ACTION_ASK = "com.oleroma.gyrophone.USB_ASK"
+        private const val WAITING_CHANNEL = "controllers"
+        private const val WAITING_ID = 2
         /** A pad asked about less than this ago isn't asked about again when GP comes back (the prompt's own pause). */
         private const val ASK_AGAIN_MS = 5_000L
         /** "vid:pid;keys;axes" per pad (the older "usb_known_pads" had no keys and axes, and is not read). */
