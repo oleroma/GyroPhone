@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.core
 
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.hid.GamepadState
+import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.InputSource
@@ -106,5 +107,54 @@ class StickZonesTest {
     fun aDiagonalMappedOnlyInAnotherSetLeavesTheTwoHalvesInThisOne() {
         val e = wasd(StickZones.EIGHT, extra = listOf(Mapping(InputSource.TouchStickDiagonal("move", StickDiagonal.UP_RIGHT), OutputTarget.Key(Q), set = 1)))
         assertEquals(setOf(W, D), e.keysAt(diag, -diag)) // Base maps no diagonal: up-right is W + D
+    }
+
+    private val SHIFT = 0x2C // Space (a plain key: modifiers are not in keys)
+
+    private fun sprint(zones: StickZones, ring: Float = TouchControl.DEFAULT_OUTER_RING, extra: List<Mapping> = emptyList()): MappingEngine {
+        val stick = TouchControl("move", TouchKind.STICK, "", 0.5f, 0.5f, zones = zones, outerRing = ring)
+        val mappings = Bindings.applyStickPreset(emptyList(), Bindings.touchInputs(stick), Bindings.StickPreset.WASD) +
+            Mapping(InputSource.TouchStick("move", StickAxis.Y, AxisHalf.NEGATIVE, outer = true), OutputTarget.Key(SHIFT)) + extra
+        return MappingEngine(single(Workspace(id = "w", name = "w", touchControls = listOf(stick), mappings = mappings)))
+    }
+
+    @Test
+    fun outerZoneAddsToTheDirectionPastTheRing() {
+        for (z in StickZones.entries) {
+            val e = sprint(z)
+            assertEquals("$z", setOf(W), e.keysAt(0f, -0.8f))
+            assertEquals("$z", setOf(W, SHIFT), e.keysAt(0f, -0.9f))
+            assertEquals("$z", setOf(S), e.keysAt(0f, 0.95f)) // another direction: no outer
+        }
+    }
+
+    @Test
+    fun outerZoneFollowsItsDirectionOnADiagonal() {
+        val e = sprint(StickZones.OVERLAP)
+        assertEquals(setOf(W, D, SHIFT), e.keysAt(diag, -diag))
+        assertEquals(setOf(D), e.keysAt(0.95f, -0.3f)) // up not pressed: no outer up
+    }
+
+    @Test
+    fun outerRingComesFromTheStick() {
+        val e = sprint(StickZones.OVERLAP, ring = 0.6f)
+        assertEquals(setOf(W, SHIFT), e.keysAt(0f, -0.65f))
+    }
+
+    @Test
+    fun diagonalOuterZoneTakesTheDiagonal() {
+        val e = sprint(StickZones.EIGHT, extra = listOf(Mapping(InputSource.TouchStickDiagonal("move", StickDiagonal.UP_LEFT, outer = true), OutputTarget.Key(Q))))
+        assertEquals(emptySet<Int>(), e.keysAt(-0.5f, -0.5f)) // the diagonal is mapped (its outer zone): no W + A
+        assertEquals(setOf(Q), e.keysAt(-diag, -diag))
+    }
+
+    @Test
+    fun stickDirectionsHaveOuterZones() {
+        val c = TouchControl("s", TouchKind.STICK, "", 0.5f, 0.5f, zones = StickZones.EIGHT)
+        val ins = Bindings.touchInputs(c)
+        val left = ins.first { it.label == "Left" }
+        assertEquals(listOf(InputSource.TouchStick("s", StickAxis.X, AxisHalf.NEGATIVE, outer = true)), Bindings.stickOuter(left)?.sources)
+        assertEquals(null, Bindings.stickOuter(ins.first { it.label == "X axis" }))
+        assertTrue(ins.filter { it.sources.first() is InputSource.TouchStickDiagonal }.all { Bindings.stickOuter(it) != null })
     }
 }

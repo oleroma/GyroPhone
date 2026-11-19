@@ -108,6 +108,28 @@ class ControllerInput(context: Context, private val runtime: GamepadRuntime) : I
     fun unregister() {
         inputManager.unregisterInputDeviceListener(this)
         if (runtime.usbPads.ui === this) runtime.usbPads.ui = null
+        releaseAll()
+    }
+
+    /**
+     * GP lost the input focus (another app, the shade, the lock screen): Android sends the rest of
+     * this path's events, the releases too, to the window in front now, so a button or stick held
+     * as GP left would stay held on the PC until GP is back and it is pressed again. Everything the
+     * Android path fed the engine lets go: each attached device's keys and axes, the captured
+     * mouse's buttons and the volume rocker. USB pads GP reads directly ([UsbPads]) keep theirs:
+     * their releases still arrive in the background. A no-op for a device that holds nothing.
+     */
+    fun releaseAll() {
+        val engine = runtime.engine
+        for (i in 0 until sources.size()) {
+            val src = sources.valueAt(i)
+            src.pushed.fill(0)
+            engine.deviceRemoved(src.pad.id)
+        }
+        for (i in 0 until mice.size()) engine.deviceRemoved(mice.valueAt(i).id)
+        engine.deviceRemoved(PHONE_PAD.id)
+        // The PC overlay's controller shows a USB pad read directly as it still is: its buttons stay drawn held.
+        if (!runtime.usbPads.holdsAny) runtime.wifi.overlay.clearPad()
     }
 
     /** Returns true if the event was consumed. */

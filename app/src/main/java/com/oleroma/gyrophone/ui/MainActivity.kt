@@ -246,6 +246,10 @@ class MainActivity : ComponentActivity() {
             TouchStream.requestUnbuffered(window.decorView)
             // Back from a dialog, the keyboard or another app: the bars stay hidden.
             hideSystemBars(window)
+        } else {
+            // Keys and sticks now go to the window in front (the shade, a split-screen app), their
+            // releases too: let go of what attached controllers hold. onPause does it again.
+            controllerInput.releaseAll()
         }
     }
 
