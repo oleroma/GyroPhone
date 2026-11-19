@@ -196,14 +196,20 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
      * taken, and only when [HidGamepad.matchesAndroid]. Kept, as a taken pad leaves Android's list.
      */
     private val knownPads = HashMap<String, Listed>().also { m ->
-        for (e in prefs.getStringSet(KEY_KNOWN, emptySet()).orEmpty()) decodeListed(e)?.let { m[it.first] = it.second }
+        // One without any key is a pad caught while Android was dropping it (older builds saved those): not kept.
+        for (e in prefs.getStringSet(KEY_KNOWN, emptySet()).orEmpty()) decodeListed(e)?.takeIf { it.second.keys.isNotEmpty() }?.let { m[it.first] = it.second }
     }
 
     /**
      * Pads whose generic reading did not match what Android listed, as [encodeListed] gives them:
      * not asked about or opened again (no permission prompt, no blip) while Android lists them so.
      */
-    private val mismatched = HashSet<String>(prefs.getStringSet(KEY_MISMATCHED, emptySet()).orEmpty())
+    private val mismatched = HashSet<String>(
+        prefs.getStringSet(KEY_MISMATCHED, emptySet()).orEmpty().filter { e -> decodeListed(e)?.second?.keys?.isNotEmpty() == true },
+    )
+
+    /** Devices (by USB name) given back to Android by [handBack], until they are unplugged. */
+    private val handedBack = HashSet<String>()
 
     /**
      * Devices (by USB name) asked about, with when (elapsed realtime, ms): not asked again until they are replugged,
@@ -235,7 +241,7 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> control.post {
                     if (dev != null) {
                         pads.firstOrNull { it.usb.deviceName == dev.deviceName }?.let { close(it, failed = false) }
-                        asked.remove(dev.deviceName); failed.remove(dev.deviceName)
+                        asked.remove(dev.deviceName); failed.remove(dev.deviceName); handedBack.remove(dev.deviceName)
                     }
                 }
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
@@ -325,6 +331,7 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
         wanted().let { if (it != syncedWanted) { syncedWanted = it; note("sync: wanted $it") } }
         if (!wanted()) {
             for (p in pads) close(p, failed = false)
+            for (dev in usbManager?.deviceList?.values.orEmpty()) handBack(dev)
             forgetAsked()
             _waiting.value = null
             showWaiting(null)
@@ -346,10 +353,13 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
         var waits: String? = null
         for (dev in devices) {
             if (pads.any { it.usb.deviceName == dev.deviceName }) continue
-            if (dev.deviceName in failed) continue
             val k = key(dev.vendorId, dev.productId)
-            val listed = knownPads[k] ?: continue
-            if (encodeListed(k, listed) in mismatched) continue
+            val listed = knownPads[k]
+            if (dev.deviceName in failed || listed == null || encodeListed(k, listed) in mismatched) {
+                // Not GP's to read: it must not be left with nobody reading it.
+                handBack(dev)
+                continue
+            }
             if (!usbManager.hasPermission(dev)) {
                 if (dev.deviceName !in asked) {
                     asked[dev.deviceName] = SystemClock.elapsedRealtime()
@@ -361,6 +371,7 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
                 continue
             }
             open(dev)
+            if (dev.deviceName in failed) handBack(dev)
         }
         _waiting.value = waits
         showWaiting(waits)
@@ -410,8 +421,51 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
         runCatching { nm.notify(WAITING_ID, n) }
     }
 
-    /** Remembers every game pad Android lists now, with the keys and axes Android gives it. */
+    /** Whether Android itself lists a game pad with this USB id now. */
+    private fun androidHasPad(vendor: Int, product: Int): Boolean {
+        for (id in inputManager.inputDeviceIds) {
+            val d = inputManager.getInputDevice(id) ?: continue
+            if (d.isVirtual || !d.isExternal || d.vendorId != vendor || d.productId != product) continue
+            if (d.sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+                d.sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK) return true
+        }
+        return false
+    }
+
+    /**
+     * Gives a pad GP will not read back to Android when Android does not have it either: a GP that was reading it
+     * and was killed (an app update does that) never handed it back, and Linux does not take it back by itself, so
+     * nobody would read it until it is replugged. Taking and letting go of its interfaces makes Linux attach its own
+     * driver again; Android then lists the pad a moment later. Only a device GP was allowed (no prompt for this),
+     * and once per plug-in.
+     */
+    private fun handBack(dev: UsbDevice) {
+        if (dev.deviceName in handedBack) return
+        if (pads.any { it.usb.deviceName == dev.deviceName }) return
+        if (usbManager?.hasPermission(dev) != true) return
+        if (androidHasPad(dev.vendorId, dev.productId)) return
+        handedBack += dev.deviceName
+        val conn = usbManager.openDevice(dev) ?: run { note("${nameOf(dev)}: could not be opened to give it back to Android"); return }
+        var given = 0
+        for (i in 0 until dev.interfaceCount) {
+            val iface = dev.getInterface(i)
+            if (iface.interfaceClass != UsbConstants.USB_CLASS_HID || iface.interfaceSubclass == 1) continue
+            if (conn.claimInterface(iface, true) && conn.releaseInterface(iface)) given++
+        }
+        conn.close()
+        note("${nameOf(dev)}: Android did not have it, gave it back ($given interfaces)")
+        // Android lists it a moment later; then it is learned and, when it matches, taken as after a plug-in.
+        control.postDelayed({ update() }, 600)
+        control.postDelayed({ update() }, 2000)
+    }
+
+    /**
+     * Remembers every game pad Android lists now, with the keys and axes Android gives it. Not one GP holds itself
+     * (Android is dropping it then) and never a listing without keys over one with keys: a pad caught while Android
+     * drops it still shows its axes but none of its keys, and remembered so it would no longer match its own reading.
+     */
     private fun learnPads() {
+        val held = pads.mapTo(HashSet()) { key(it.usb.vendorId, it.usb.productId) }
         val now = HashMap<String, Listed>()
         for (id in inputManager.inputDeviceIds) {
             val d = inputManager.getInputDevice(id) ?: continue
@@ -427,11 +481,13 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
             for (a in HidGamepad.PROBE_AXES) if (d.getMotionRange(a, InputDevice.SOURCE_JOYSTICK) != null) axes += a
             // Several devices of one model (or one pad listed twice): all of them.
             val k = key(d.vendorId, d.productId)
+            if (k in held) continue
             val was = now[k]
             now[k] = if (was == null) Listed(keys, axes) else Listed(was.keys + keys, was.axes + axes)
         }
         var changed = false
         for ((k, v) in now) {
+            if (v.keys.isEmpty()) continue
             val was = knownPads.put(k, v)
             if (was != v) {
                 changed = true
