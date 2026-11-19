@@ -15,6 +15,16 @@ pub enum InjectKind {
     Mouse = 1,
 }
 
+impl InjectKind {
+    pub fn from_u8(v: u8) -> Option<InjectKind> {
+        match v {
+            0 => Some(InjectKind::Key),
+            1 => Some(InjectKind::Mouse),
+            _ => None,
+        }
+    }
+}
+
 pub const KEY_EXTENDED: u32 = 0x0001; // KEYEVENTF_EXTENDEDKEY
 pub const KEY_UP_FLAG: u32 = 0x0002; // KEYEVENTF_KEYUP
 pub const KEY_SCANCODE: u32 = 0x0008; // KEYEVENTF_SCANCODE

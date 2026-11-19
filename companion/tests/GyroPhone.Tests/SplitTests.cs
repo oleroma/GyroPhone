@@ -141,6 +141,58 @@ public class SplitTests
         Assert.True(held.Held(LaserFire.Lt, scratch)); // the PC controller's left trigger
     }
 
+    /// <summary>
+    /// The Rust input process (companion/input, shared.rs) writes Diagnostics' raw events byte by byte at these
+    /// places, and the whole region at these offsets: when this fails, change both sides and bump the layout version.
+    /// </summary>
+    [Fact]
+    public unsafe void TheSharedMemoryLayoutIsTheOneTheRustInputProcessWrites()
+    {
+        Assert.Equal(2, SharedRegion.LayoutVersion);
+        Assert.Equal(64, System.Runtime.CompilerServices.Unsafe.SizeOf<DebugRaw>());
+        Assert.Equal(192 + 16_384 * 64, DebugQueue.BytesNeeded);
+        Assert.Equal(264, OverlayInbox.MaxBytes);
+        Assert.Equal(192 + 256 * 320, OverlayInbox.BytesNeeded);
+        Assert.Equal(192 + 4096 * 16, MoveRing.BytesNeeded);
+        Assert.Equal(4096 + 86_016 + 1_052_672 + 69_632, SharedRegion.TotalBytes);
+
+        var raw = new DebugRaw
+        {
+            Us = 0x0102030405060708,
+            Kind = DebugRaw.Type.Ds4,
+            Inject = new GyroPhone.Protocol.Mapping.InjectEvent
+            {
+                Kind = GyroPhone.Protocol.Mapping.InjectKind.Mouse, Usage = 0x1D, Scan = 0xE01D, Vk = 0x1234,
+                Flags = 0x8000000B, Dx = -3, Dy = 70_000, MouseData = -120,
+            },
+            X360 = new GyroPhone.Protocol.Mapping.X360Frame(0x9001, -32768, 32767, 1, -1, 200, 7),
+            Ds4 = new GyroPhone.Protocol.Mapping.Ds4Frame(0x8040, 3, 8, 1, 2, 3, 4, 5, 6),
+        };
+        byte* p = (byte*)&raw;
+        Assert.Equal(0x0102030405060708, *(long*)p);
+        Assert.Equal(2, p[8]);
+        // The inject event at 12: kind, usage, scan, vk, 2 spare, flags, dx, dy, mouse data.
+        Assert.Equal(1, p[12]);
+        Assert.Equal(0x1D, p[13]);
+        Assert.Equal(0xE01D, *(ushort*)(p + 14));
+        Assert.Equal(0x1234, *(ushort*)(p + 16));
+        Assert.Equal(0x8000000Bu, *(uint*)(p + 20));
+        Assert.Equal(-3, *(int*)(p + 24));
+        Assert.Equal(70_000, *(int*)(p + 28));
+        Assert.Equal(-120, *(int*)(p + 32));
+        // The Xbox frame at 36: buttons, lx, ly, rx, ry, lt, rt.
+        Assert.Equal(0x9001, *(ushort*)(p + 36));
+        Assert.Equal(-32768, *(short*)(p + 38));
+        Assert.Equal(32767, *(short*)(p + 40));
+        Assert.Equal(1, *(short*)(p + 42));
+        Assert.Equal(-1, *(short*)(p + 44));
+        Assert.Equal(200, p[46]);
+        Assert.Equal(7, p[47]);
+        // The DualShock frame at 48: buttons, special, hat, lx, ly, rx, ry, lt, rt.
+        Assert.Equal(0x8040, *(ushort*)(p + 48));
+        for (int i = 0; i < 8; i++) Assert.Equal(new byte[] { 3, 8, 1, 2, 3, 4, 5, 6 }[i], p[50 + i]);
+    }
+
     [Fact]
     public void TheInputProcessTraceForwardsLinesAndTheCompanionMakesTheText()
     {
