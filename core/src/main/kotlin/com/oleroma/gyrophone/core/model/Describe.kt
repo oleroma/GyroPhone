@@ -124,11 +124,11 @@ object Describe {
     )
 
     /**
-     * The "Other" picker group: (Let go), Black screen, Set orientation, Clear displays, Previous
+     * The "Other" picker group: (Let go), Black screen, Clear displays, Previous
      * / Next workspace and Fullscreen.
      */
     val otherTargets: List<OutputTarget> = listOf(
-        OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.SetOrientation(), OutputTarget.ClearDisplays,
+        OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.ClearDisplays,
         OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen,
     )
 
@@ -279,7 +279,7 @@ object Describe {
         },
         "Gyro" to listOf(OutputTarget.GyroPause) +
             MotionAxis.shown.map { OutputTarget.GyroPauseAxis(it) } +
-            OutputTarget.GyroToggle + OutputTarget.Calibrate() +
+            OutputTarget.GyroToggle + OutputTarget.Calibrate() + OutputTarget.SetOrientation() +
             OutputTarget.GyroGlide() + MotionAxis.shown.map { OutputTarget.GyroGlide(it) } +
             listOf(OutputTarget.TiltRange(), OutputTarget.TiltRange(StickAxis.X), OutputTarget.TiltRange(StickAxis.Y)),
         "Touch" to listOf(OutputTarget.TapTime),
