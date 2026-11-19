@@ -1,0 +1,35 @@
+[package]
+name = "gp-input"
+version = "0.1.0"
+edition = "2021"
+description = "GyroPhone's PC input process: the phone link, the engine and the outputs."
+publish = false
+
+[lib]
+name = "gp_input"
+path = "src/lib.rs"
+
+[[bin]]
+name = "GyroPhoneInput"
+path = "src/main.rs"
+
+[dependencies]
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "zeroize"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdh", "arithmetic"] }
+sha2 = { version = "0.10", default-features = false }
+hmac = { version = "0.12", default-features = false }
+hkdf = { version = "0.12", default-features = false }
+subtle = { version = "2", default-features = false }
+zeroize = { version = "1", default-features = false }
+getrandom = "0.2"
+
+[dev-dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+overflow-checks = true
+debug = 1
