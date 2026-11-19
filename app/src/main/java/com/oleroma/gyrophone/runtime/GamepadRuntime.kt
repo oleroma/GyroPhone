@@ -2103,7 +2103,11 @@ class GamepadRuntime(context: Context) {
         syncYawAxis(wsGyro)
         val dt = if (lastGyroTs == 0L) 0f else ((ts - lastGyroTs) / 1e9f).coerceIn(0f, 0.05f)
         lastGyroTs = ts
-        debug.trace?.gyroSample()
+        debug.trace?.let { t ->
+            t.gyroSample()
+            // Diagnostics only: the sample's age by the sensor's own time (elapsed realtime on current phones).
+            t.gyroTiming.sample(android.os.SystemClock.elapsedRealtimeNanos() - ts, System.nanoTime())
+        }
         calibration?.let { cal ->
             when (val r = cal.add(x, y, z, ts)) {
                 null -> Unit

@@ -1475,6 +1475,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     /** Debugging is on: LINK_INFO asks the PC to keep its debug log too ([LinkInfoFlags.DEBUG_TRACE]). */
     @Volatile var debugTrace = false
 
+    /** Diagnostics is on: the send thread times each gyro sample's way out ([com.oleroma.gyrophone.core.debug.GyroTiming]); null: nothing is timed. */
+    var gyroTiming: com.oleroma.gyrophone.core.debug.GyroTiming?
+        get() = pump.gyroTiming
+        set(v) { pump.gyroTiming = v }
+
     /** Bumped by [requestDebugSave]; LINK_INFO carries its low bits so the PC saves when they change. */
     @Volatile private var debugSaves = 0
 

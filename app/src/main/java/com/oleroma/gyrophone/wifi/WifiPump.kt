@@ -76,6 +76,9 @@ class WifiPump(private val engine: MappingEngine) {
     /** The raw motion for the PC's DualShock 4: MOTION while [MotionFeed.wanted]. */
     @Volatile var motion: MotionFeed? = null
 
+    /** Diagnostics is on: times from a gyro sample coming to its STATE having left. Null (off): nothing is read or timed. */
+    @Volatile var gyroTiming: com.oleroma.gyrophone.core.debug.GyroTiming? = null
+
     /** Press and release input times for PRESS_TIME, sent while [pressTimes]. */
     val pressStamp = PressStamp()
 
@@ -274,6 +277,9 @@ class WifiPump(private val engine: MappingEngine) {
             }
             if (taken !== t) taken = t
             // always drain motion, even with no session; with the PC running the gyro, its samples go along
+            // Diagnostics: the oldest gyro sample not sent yet is in this snapshot.
+            val timing = gyroTiming
+            val sampleAt = timing?.take() ?: 0L
             val s = engine.snapshot()
             val g = pcGyro?.takeIf { it.active }
             if (g != null) g.encodeTail(frame.ext, 0, clockOffsetUs)
@@ -310,10 +316,14 @@ class WifiPump(private val engine: MappingEngine) {
                 if (lastStateNs != 0L && now - lastStateNs > stGapMaxNs) stGapMaxNs = now - lastStateNs
                 lastStateNs = now
                 if (sendSealed(c, WireCodec.stateType(frame), stateLen)) sentCount++ else failedCount++
+                if (sampleAt != 0L) timing?.sent(sampleAt, System.nanoTime())
                 if (discrete && pressStamp.enabled) sendPressTime(c, frame.phoneTimeUs, now)
                 lastSent.copyFrom(frame)
                 scheduler.markSent(now, kind, discrete)
                 if (linkTest) linkTestTick++
+            } else if (sampleAt != 0L && dirty) {
+                // Changed but not due yet: the sample waits on. (Nothing changed: it moved nothing and gets no packet.)
+                timing?.putBack(sampleAt)
             }
             if (now >= nextPingNs) {
                 plain.putU64(0, phoneUs())

@@ -252,6 +252,9 @@ class DebugTrace(
     @Volatile var gyroPerSecond = 0
         private set
 
+    /** How old gyro samples are when they come, and how long until their packet has left (in the link line). */
+    val gyroTiming = GyroTiming()
+
     /** One gyro sample: only counted (for the link line's gyro rate). On the gyro path: no lock, no allocation. */
     fun gyroSample() {
         gyroSamples.incrementAndGet()
@@ -263,7 +266,10 @@ class DebugTrace(
         snapshotsPerSecond = outSnapshots; outSnapshots = 0
         gyroPerSecond = gyroSamples.getAndSet(0)
         if (outDx != 0 || outDy != 0 || outWheel != 0 || outHWheel != 0) flushMotion(clock())
-        if (linkLine != null) add(Kind.LINK, linkLine + " · snapshots $snapshotsPerSecond/s · gyro $gyroPerSecond/s")
+        if (linkLine != null) {
+            val timing = gyroTiming.line(clock())
+            add(Kind.LINK, linkLine + " · snapshots $snapshotsPerSecond/s · gyro $gyroPerSecond/s" + if (timing != null) " · $timing" else "")
+        }
     }
 
     // ---- saving -----------------------------------------------------------------------------
