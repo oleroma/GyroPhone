@@ -45,7 +45,8 @@ class GyroCalibration(
     }
 
     companion object {
-        const val DEFAULT_DURATION_NS = 2_000_000_000L
+        const val DEFAULT_DURATION_S = 2
+        const val DEFAULT_DURATION_NS = DEFAULT_DURATION_S * 1_000_000_000L
         /** Peak-to-peak noise allowed while still: 0.05 rad/s, about 3 deg/s. */
         const val MAX_SPREAD = 0.05f
         /** A real bias is tiny; anything larger is slow motion, not drift (0.03 rad/s, ~1.7 deg/s). */

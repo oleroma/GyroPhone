@@ -1016,6 +1016,7 @@ class GamepadRuntime(context: Context) {
         }
         engine.onSetOrientation = { granular -> main.post { setOrientation(granular) } }
         engine.onClearDisplays = Runnable { main.post { clearDisplays() } }
+        engine.onCalibrate = { countdownS, measureS -> main.post { calibrateFromMapping(countdownS, measureS) } }
         // Every other mouse count turns a trackball 3D shape too, as the camera turns. On the pump's
         // thread: only counted here, turned on the gyro's thread ([drainCamera]), never before a send.
         engine.cameraSink = { dx, dy ->
@@ -1260,6 +1261,10 @@ class GamepadRuntime(context: Context) {
         if (calibration != null) {
             calibration = null; _calibration.value = storedCalibration()
         }
+        main.removeCallbacks(popupTick)
+        popupCountdown = 0
+        popupCounting = false
+        if (popupCalibration || _calibratePopup.value != null) { popupCalibration = false; _calibratePopup.value = null }
         _gyroInfo.value = GyroInfo()
         active.stop()
         engine.reset()
@@ -1694,9 +1699,9 @@ class GamepadRuntime(context: Context) {
      * gyro runs for it (the pad menu, where it is started, pauses the gyro).
      */
     @Synchronized
-    fun calibrateGyro() {
+    fun calibrateGyro(measureS: Int = GyroCalibration.DEFAULT_DURATION_S) {
         if (!running || !_gpDrift.value) return
-        calibration = GyroCalibration(maxBias = GyroCalibration.MAX_RAW_BIAS)
+        calibration = GyroCalibration(durationNs = measureS * 1_000_000_000L, maxBias = GyroCalibration.MAX_RAW_BIAS)
         _calibration.value = CalibrationState.Running
         // The gyro starts on its own thread: one that can't start ends the calibration there ([syncGyro]).
         updateGyro()
@@ -1707,6 +1712,95 @@ class GamepadRuntime(context: Context) {
         calibration = null
         setBias(0f, 0f, 0f)
         updateGyro()
+    }
+
+    private val _calibratePopup = MutableStateFlow<String?>(null)
+
+    /** What the pad's calibrate popup says (a Calibrate mapping fired), or null when none shows. */
+    val calibratePopup: StateFlow<String?> = _calibratePopup
+
+    // The Calibrate mapping's countdown (seconds still to show) and measuring time; main thread.
+    private var popupCountdown = 0
+    private var popupMeasureS = GyroCalibration.DEFAULT_DURATION_S
+    private var popupCounting = false
+
+    /** The running calibration came from a Calibrate mapping: its result shows in the popup. */
+    @Volatile
+    private var popupCalibration = false
+    private val popupTick = Runnable { tickCalibrate() }
+    private val popupHide = Runnable { _calibratePopup.value = null }
+
+    /**
+     * A Calibrate mapping fired (main thread): count [countdownS] down in a popup, then measure for
+     * [measureS]. Fired again while counting or measuring, it cancels. With Android's drift
+     * correction there is nothing of GP's to calibrate: the popup says where to switch.
+     */
+    @Synchronized
+    private fun calibrateFromMapping(countdownS: Int, measureS: Int) {
+        if (!running) return
+        main.removeCallbacks(popupHide)
+        if (popupCounting || popupCalibration) {
+            main.removeCallbacks(popupTick)
+            popupCountdown = 0
+            popupCounting = false
+            if (popupCalibration) {
+                popupCalibration = false
+                calibration = null; _calibration.value = storedCalibration()
+                updateGyro()
+            }
+            showPopupResult("Calibration cancelled", 1500)
+            return
+        }
+        if (!_gpDrift.value) {
+            showPopupResult(
+                if (gpDriftOffered) "Android corrects the drift now. Pick GP under Drift correction, at the end of the workspace's Gyro tab, to calibrate."
+                else "This phone has only Android's drift correction: there is nothing to calibrate.",
+                4000,
+            )
+            return
+        }
+        popupMeasureS = measureS
+        popupCountdown = countdownS
+        popupCounting = true
+        tickCalibrate()
+    }
+
+    /** Main thread: shows the next second of the countdown, or starts measuring after the last. */
+    @Synchronized
+    private fun tickCalibrate() {
+        if (!running || !popupCounting) return
+        if (popupCountdown > 0) {
+            _calibratePopup.value = "Lay the phone still\n" + popupCountdown
+            popupCountdown--
+            main.postDelayed(popupTick, 1000)
+            return
+        }
+        popupCounting = false
+        popupCalibration = true
+        _calibratePopup.value = "Calibrating: keep the phone still…"
+        calibrateGyro(popupMeasureS)
+        if (calibration == null) {
+            popupCalibration = false
+            showPopupResult("Calibration could not start", 2500)
+        }
+    }
+
+    /** Ends the mapping's calibration in the popup with [text] (any thread). */
+    private fun popupDone(text: String) {
+        if (!popupCalibration) return
+        main.post {
+            synchronized(this) {
+                if (!popupCalibration) return@post
+                popupCalibration = false
+                showPopupResult(text, 2500)
+            }
+        }
+    }
+
+    private fun showPopupResult(text: String, ms: Long) {
+        _calibratePopup.value = text
+        main.removeCallbacks(popupHide)
+        main.postDelayed(popupHide, ms)
     }
 
     /**
@@ -1808,6 +1902,7 @@ class GamepadRuntime(context: Context) {
                 if (gyro == null) synchronized(this) {
                     if (calibration != null) {
                         calibration = null; _calibration.value = storedCalibration()
+                        popupDone("The gyro could not start")
                     }
                 }
             }
@@ -2180,10 +2275,12 @@ class GamepadRuntime(context: Context) {
                 null -> Unit
                 is GyroCalibration.Result.Done -> {
                     calibration = null; setBias(r.x, r.y, r.z); main.post { updateGyro() }
+                    popupDone("Calibrated: removes %.2f°/s drift".format(Math.toDegrees(maxOf(abs(r.x), abs(r.y), abs(r.z)).toDouble())))
                 }
 
                 GyroCalibration.Result.Moved -> {
                     calibration = null; _calibration.value = CalibrationState.Moved; main.post { updateGyro() }
+                    popupDone("The phone moved. Lay it still and try again.")
                 }
             }
         }

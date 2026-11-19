@@ -503,6 +503,24 @@ sealed interface OutputTarget {
     @SerialName("level_displays")
     data class SetOrientation(val granular: Boolean = false) : OutputTarget
 
+    /**
+     * Calibrate the gyro's drift (GP's drift correction): the pad shows a popup counting down
+     * [countdownS] seconds to lay the phone still, then measures for [measureS] seconds (longer
+     * averages out more noise). Pressed again while it counts or measures, it cancels. Nothing is
+     * sent to the PC.
+     */
+    @Serializable
+    @SerialName("calibrate_gyro")
+    data class Calibrate(val countdownS: Int = DEFAULT_COUNTDOWN_S, val measureS: Int = DEFAULT_MEASURE_S) : OutputTarget {
+        companion object {
+            const val DEFAULT_COUNTDOWN_S = 3
+            const val MAX_COUNTDOWN_S = 10
+            const val DEFAULT_MEASURE_S = 2
+            const val MIN_MEASURE_S = 1
+            const val MAX_MEASURE_S = 10
+        }
+    }
+
     /** Clears every laser pointer display's paint and trail in the workspace and on the PC overlays. */
     @Serializable
     @SerialName("clear_displays")
