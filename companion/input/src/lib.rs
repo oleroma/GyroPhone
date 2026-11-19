@@ -39,6 +39,7 @@ pub mod sys;
 pub mod udp;
 pub mod usb_bridge;
 pub mod usb_framing;
+pub mod usb_link;
 pub mod watchdog;
 #[cfg(windows)]
 pub mod win;
