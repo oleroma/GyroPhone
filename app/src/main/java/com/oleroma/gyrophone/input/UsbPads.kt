@@ -112,7 +112,7 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
                 } else if (n < 0 && System.nanoTime() - start < 5_000_000L) {
                     // Not a timeout: the pad errs at once (gone, or taken back). Stop after a few.
                     if (++quickErrors >= 20) {
-                        Log.w(TAG, "$name: reads keep failing (last result $n), letting it go")
+                        note("$name: reads keep failing (last result $n), letting it go")
                         control.post { close(this, failed = true) }
                         break
                     }
@@ -291,9 +291,36 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
         control.post { forgetAsked(); sync() }
     }
 
+    // The last things that happened to USB pads, for `dumpsys` ([status]): this phone drops an app's own log lines.
+    private val notes = ArrayDeque<String>()
+
+    private fun note(text: String) {
+        Log.i(TAG, text)
+        synchronized(notes) {
+            if (notes.size >= 24) notes.removeFirst()
+            notes.addLast("${SystemClock.elapsedRealtime()} $text")
+        }
+    }
+
+    /** What direct reading is doing now and its last notes (ms since boot first), for the diagnostics dump. Any thread. */
+    fun status(): List<String> = buildList {
+        val devices = runCatching { usbManager?.deviceList?.values.orEmpty() }.getOrDefault(emptyList())
+        add("usb pads: switch ${runtime.usbDirectOn.value} · running ${runtime.isRunning} · hardware allowed ${runtime.hardwareAllowed} · held ${pads.joinToString { it.name }.ifEmpty { "none" }} · now ${SystemClock.elapsedRealtime()}")
+        for (dev in devices) {
+            val k = key(dev.vendorId, dev.productId)
+            val listed = knownPads[k]
+            add("usb device ${dev.deviceName} $k ${nameOf(dev)}: known ${listed != null} · mismatched ${listed != null && encodeListed(k, listed) in mismatched} · " +
+                "permission ${runCatching { usbManager?.hasPermission(dev) }.getOrNull()} · failed ${dev.deviceName in failed} · asked ${dev.deviceName in asked}")
+        }
+        synchronized(notes) { for (n in notes) add("usb note: $n") }
+    }
+
     private fun wanted(): Boolean = runtime.usbDirectOn.value && runtime.isRunning && runtime.hardwareAllowed
 
+    private var syncedWanted: Boolean? = null
+
     private fun sync() {
+        wanted().let { if (it != syncedWanted) { syncedWanted = it; note("sync: wanted $it") } }
         if (!wanted()) {
             for (p in pads) close(p, failed = false)
             forgetAsked()
@@ -417,7 +444,7 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
 
     private fun open(dev: UsbDevice) {
         val conn = usbManager.openDevice(dev) ?: run {
-            Log.w(TAG, "${nameOf(dev)}: could not be opened")
+            note("${nameOf(dev)}: could not be opened")
             failed += dev.deviceName; return
         }
         var taken: Pad? = null
@@ -429,13 +456,13 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
             val ep = (0 until iface.endpointCount).map { iface.getEndpoint(it) }
                 .firstOrNull { it.direction == UsbConstants.USB_DIR_IN && it.type == UsbConstants.USB_ENDPOINT_XFER_INT } ?: continue
             if (!conn.claimInterface(iface, true)) {
-                Log.w(TAG, "${nameOf(dev)}: interface ${iface.id} could not be claimed")
+                note("${nameOf(dev)}: interface ${iface.id} could not be claimed")
                 continue
             }
             val desc = reportDescriptor(conn, iface.id)
             val gp = desc?.let { HidGamepad(it) }
             if (gp == null || !gp.usable) {
-                Log.w(TAG, "${nameOf(dev)}: interface ${iface.id} " + if (desc == null) "gave no report descriptor" else "is no usable game pad (${desc.size} descriptor bytes)")
+                note("${nameOf(dev)}: interface ${iface.id} " + if (desc == null) "gave no report descriptor" else "is no usable game pad (${desc.size} descriptor bytes)")
                 conn.releaseInterface(iface)
                 continue
             }
@@ -445,7 +472,7 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
             val k = key(dev.vendorId, dev.productId)
             val listed = knownPads[k]
             if (listed == null || !gp.matchesAndroid(listed.keys, listed.axes)) {
-                Log.i(TAG, "$name: Android maps it differently, leaving it to Android")
+                note("$name: Android maps it differently, leaving it to Android")
                 if (listed != null) mismatch = encodeListed(k, listed)
                 conn.releaseInterface(iface)
                 continue
@@ -454,11 +481,11 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
             pad.thread = Thread(pad::read, "gp-usb-pad").also { it.start() }
             pads = pads + pad
             taken = pad
-            Log.i(TAG, "Reading $name directly (${gp.keys.size} keys, ${gp.axes.size} axes)")
+            note("Reading $name directly (${gp.keys.size} keys, ${gp.axes.size} axes)")
             break
         }
         if (taken == null) {
-            Log.w(TAG, "${nameOf(dev)}: not taken (${dev.interfaceCount} interfaces), left alone until it is replugged")
+            note("${nameOf(dev)}: not taken (${dev.interfaceCount} interfaces), left alone until it is replugged")
             conn.close()
             failed += dev.deviceName
             if (mismatch != null && mismatched.add(mismatch)) prefs.edit().putStringSet(KEY_MISMATCHED, HashSet(mismatched)).apply()
