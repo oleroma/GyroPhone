@@ -331,7 +331,8 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
         wanted().let { if (it != syncedWanted) { syncedWanted = it; note("sync: wanted $it") } }
         if (!wanted()) {
             for (p in pads) close(p, failed = false)
-            for (dev in usbManager?.deviceList?.values.orEmpty()) handBack(dev)
+            // Not while GP is still starting (it is about to take the pad itself): only once it runs and still doesn't want it.
+            if (runtime.isRunning) for (dev in usbManager?.deviceList?.values.orEmpty()) handBack(dev)
             forgetAsked()
             _waiting.value = null
             showWaiting(null)
