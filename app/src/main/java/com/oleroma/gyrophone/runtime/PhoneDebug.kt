@@ -150,7 +150,8 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
      * What `adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService` prints.
      * Args: `on`, `off`, `save`, `keep <minutes>`, `events <n>` (tools/gp-log.sh wraps them);
      * `workspace [name]` prints the active (or named) workspace as an export file, `everything`
-     * the whole set, as saved: only when asked, on the dumpsys binder thread, never on an input path.
+     * the whole set, as saved; `gyroprobe` measures how old each gyro sensor's samples arrive (`sensor/GyroAgeProbe.kt`,
+     * about a second per sensor, run with `dumpsys -t 30`): only when asked, on the dumpsys binder thread, never on an input path.
      */
     fun dump(args: Array<out String>): String = buildString {
         if (args.firstOrNull() == "workspace") {
@@ -163,6 +164,12 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         }
         if (args.firstOrNull() == "everything") {
             append(runtime.exportEverything())
+            return@buildString
+        }
+        if (args.firstOrNull() == "gyroprobe") {
+            // A measurement asked for over adb only: about a second per gyro sensor, on this dumpsys thread.
+            val sm = appContext.getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
+            append(com.oleroma.gyrophone.sensor.GyroAgeProbe.run(sm))
             return@buildString
         }
         if ("on" in args) setEnabled(true)
