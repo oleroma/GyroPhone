@@ -11,6 +11,7 @@
 
 pub mod codec;
 pub mod crypto;
+pub mod gyro;
 pub mod le;
 pub mod state_frame;
 pub mod wire;

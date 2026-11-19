@@ -2,6 +2,7 @@
 //! 1/120 notch and a horizontal wheel total) or 404 (STATE_GYRO: plus the phone's raw gyro samples).
 //! Pad, keys and mouse buttons are absolute; mouse and wheel are cumulative wrapping totals.
 
+use crate::gyro::PcGyroTail;
 use crate::le;
 use crate::wire;
 
@@ -10,7 +11,7 @@ pub const KEY_BITMAP_SIZE: usize = 32;
 pub const MODIFIER_BYTE: usize = 28;
 pub const HAT_CENTER: u8 = 8;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StateFrame {
     pub phone_time_us: u32,
     pub flags: u16,
@@ -31,6 +32,9 @@ pub struct StateFrame {
     pub hwheel_total: i32,
     /// Encoded / decoded as STATE_HIRES.
     pub hires: bool,
+    /// Decoded from STATE_GYRO: `tail` holds the phone's raw gyro samples and settings.
+    pub has_pc_gyro: bool,
+    pub tail: PcGyroTail,
 }
 
 impl Default for StateFrame {
@@ -53,6 +57,8 @@ impl Default for StateFrame {
             wheel_total: 0,
             hwheel_total: 0,
             hires: false,
+            has_pc_gyro: false,
+            tail: PcGyroTail::default(),
         }
     }
 }
@@ -118,7 +124,7 @@ impl StateFrame {
         wire::STATE_HIRES_PLAIN
     }
 
-    /// Reads the STATE part of a plaintext of at least `STATE_PLAIN` bytes (the caller checked the
+    /// Reads a plaintext of `STATE_PLAIN`, `STATE_HIRES_PLAIN` or `STATE_GYRO_PLAIN` bytes (the caller checked the
     /// size by the packet's type). Values are taken as sent; clamping is the mapper's job.
     pub fn decode(&mut self, b: &[u8]) {
         self.phone_time_us = le::u32(b, 0);
@@ -138,5 +144,9 @@ impl StateFrame {
         self.wheel_total = le::i32(b, 62);
         self.hires = b.len() >= wire::STATE_HIRES_PLAIN;
         self.hwheel_total = if self.hires { le::i32(b, 66) } else { 0 };
+        self.has_pc_gyro = b.len() >= wire::STATE_GYRO_PLAIN;
+        if self.has_pc_gyro {
+            self.tail.decode(&b[wire::STATE_HIRES_PLAIN..wire::STATE_GYRO_PLAIN]);
+        }
     }
 }
