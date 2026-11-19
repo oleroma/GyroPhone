@@ -10,6 +10,7 @@ pub mod pc_pad;
 pub mod probes;
 pub mod process;
 pub mod raw_input;
+pub mod run;
 pub mod usb;
 
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE};

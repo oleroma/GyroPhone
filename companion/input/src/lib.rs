@@ -48,5 +48,13 @@ pub mod wire;
 
 /// The process's entry point; returns its exit code.
 pub fn run() -> i32 {
-    0
+    #[cfg(windows)]
+    {
+        win::run::run()
+    }
+    #[cfg(not(windows))]
+    {
+        eprintln!("gp-input runs on Windows only");
+        2
+    }
 }
