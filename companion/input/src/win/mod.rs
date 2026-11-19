@@ -8,6 +8,7 @@ pub mod basics;
 pub mod drivers;
 pub mod pc_pad;
 pub mod process;
+pub mod raw_input;
 
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE};
 

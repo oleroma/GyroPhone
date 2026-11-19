@@ -12,6 +12,7 @@
 pub mod codec;
 pub mod control;
 pub mod crypto;
+pub mod delivery;
 pub mod engine;
 pub mod file_log;
 pub mod gyro;
