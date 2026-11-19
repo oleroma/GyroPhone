@@ -203,6 +203,7 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         val p = runtime.activeProfile.value
         add("workspace: " + (p.workspaces.getOrNull(runtime.workspaceIndex.value)?.name ?: "?"))
         add("controllers: " + runtime.controllers.value.joinToString { it.name }.ifEmpty { "none" })
+        addAll(runtime.usbPads.status())
         val touchFeedback = runCatching {
             android.provider.Settings.System.getInt(appContext.contentResolver, android.provider.Settings.System.HAPTIC_FEEDBACK_ENABLED, 1)
         }.getOrNull()
