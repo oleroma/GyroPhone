@@ -18,6 +18,8 @@ pub mod mapping;
 pub mod motion;
 pub mod mouse;
 pub mod pairing;
+pub mod ports;
+pub mod press;
 pub mod rate_limiter;
 pub mod reports;
 pub mod session;

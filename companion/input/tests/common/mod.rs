@@ -266,3 +266,120 @@ pub mod phone {
         }
     }
 }
+
+pub mod fakes {
+    //! Stand-ins for this PC's own inputs. Ports of the C# tests' FakeKeyListener and FakePcPad.
+
+    use gp_input::codec::PcPress;
+    use gp_input::ports::{KeyMouseListener, PcPad, PC_PAD_PLACES};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    pub struct KeyListenerState {
+        pub held: Vec<PcPress>,
+        pub once: Vec<PcPress>,
+        pub starts: u32,
+        pub stops: u32,
+        pub running: bool,
+    }
+
+    #[derive(Default)]
+    pub struct FakeKeyListener(pub Mutex<KeyListenerState>);
+
+    impl FakeKeyListener {
+        pub fn hold(&self, p: PcPress) {
+            self.0.lock().unwrap().held.push(p);
+        }
+        pub fn once(&self, p: PcPress) {
+            self.0.lock().unwrap().once.push(p);
+        }
+        pub fn running(&self) -> bool {
+            self.0.lock().unwrap().running
+        }
+    }
+
+    impl KeyMouseListener for FakeKeyListener {
+        fn start(&self) {
+            let mut s = self.0.lock().unwrap();
+            s.starts += 1;
+            s.running = true;
+        }
+        fn stop(&self) {
+            let mut s = self.0.lock().unwrap();
+            s.stops += 1;
+            s.running = false;
+        }
+        fn read(&self, into: &mut [PcPress]) -> usize {
+            let mut s = self.0.lock().unwrap();
+            let mut n = 0;
+            for p in s.held.iter().chain(s.once.iter()) {
+                into[n] = *p;
+                n += 1;
+            }
+            s.once.clear();
+            n
+        }
+    }
+
+    pub struct PcPadState {
+        pub connected: bool,
+        pub held: u32,
+        pub presses: [u32; PC_PAD_PLACES],
+        pub axes: [f32; 6],
+        pub running: bool,
+    }
+
+    pub struct FakePcPad(pub Mutex<PcPadState>);
+
+    impl Default for FakePcPad {
+        fn default() -> Self {
+            FakePcPad(Mutex::new(PcPadState {
+                connected: true,
+                held: 0,
+                presses: [0; PC_PAD_PLACES],
+                axes: [0.0; 6],
+                running: false,
+            }))
+        }
+    }
+
+    impl FakePcPad {
+        pub fn set(&self, f: impl FnOnce(&mut PcPadState)) {
+            f(&mut self.0.lock().unwrap())
+        }
+        pub fn running(&self) -> bool {
+            self.0.lock().unwrap().running
+        }
+    }
+
+    impl PcPad for FakePcPad {
+        fn start(&self, _own_slot: Arc<dyn Fn() -> i32 + Send + Sync>) {
+            self.0.lock().unwrap().running = true;
+        }
+        fn stop(&self) {
+            self.0.lock().unwrap().running = false;
+        }
+        fn read(&self, presses: &mut [u32; PC_PAD_PLACES]) -> Option<u32> {
+            let s = self.0.lock().unwrap();
+            *presses = s.presses;
+            s.connected.then_some(s.held)
+        }
+        fn read_axes(&self, axes: &mut [f32; 6]) -> bool {
+            let s = self.0.lock().unwrap();
+            *axes = s.axes;
+            s.connected
+        }
+        fn peek(&self, axes: &mut [f32; 6]) -> Option<u32> {
+            let s = self.0.lock().unwrap();
+            *axes = s.axes;
+            s.connected.then_some(s.held)
+        }
+        fn held_at(&self, _us: i64) -> u32 {
+            self.0.lock().unwrap().held
+        }
+        fn name(&self) -> Option<String> {
+            let s = self.0.lock().unwrap();
+            s.connected.then(|| "Controller 1".to_string())
+        }
+    }
+}
