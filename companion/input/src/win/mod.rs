@@ -5,6 +5,8 @@
 //! runs on the PC, behind the Performance tab's switch.
 
 pub mod basics;
+pub mod drivers;
+pub mod pc_pad;
 pub mod process;
 
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE};
