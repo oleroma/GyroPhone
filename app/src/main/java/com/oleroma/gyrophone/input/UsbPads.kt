@@ -15,6 +15,7 @@ import android.hardware.usb.UsbManager
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import androidx.core.content.ContextCompat
@@ -198,8 +199,13 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
      */
     private val mismatched = HashSet<String>(prefs.getStringSet(KEY_MISMATCHED, emptySet()).orEmpty())
 
-    /** Devices (by USB name) asked about since they were plugged in, and ones that could not be read: not tried again until replugged. */
-    private val asked = HashSet<String>()
+    /**
+     * Devices (by USB name) asked about, with when (elapsed realtime, ms): not asked again until they are replugged,
+     * or until direct reading is next wanted again after having stopped ([forgetAsked]: the switch flipped off and on,
+     * or GP left and come back to), so a prompt missed or dismissed by accident comes again without replugging.
+     * And ones that could not be read: not tried again until replugged.
+     */
+    private val asked = HashMap<String, Long>()
     private val failed = HashSet<String>()
 
     private val receiver = object : BroadcastReceiver() {
@@ -217,7 +223,12 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
                     control.postDelayed({ update() }, 600)
                     control.postDelayed({ update() }, 2000)
                 }
-                ACTION_PERMISSION -> control.post { update() }
+                ACTION_PERMISSION -> control.post {
+                    // Answered now: the time counts from here, so coming back from the prompt doesn't ask again.
+                    val now = SystemClock.elapsedRealtime()
+                    for (name in asked.keys.toList()) if (dev == null || name == dev.deviceName) asked[name] = now
+                    update()
+                }
             }
         }
     }
@@ -257,6 +268,7 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
     private fun sync() {
         if (!wanted()) {
             for (p in pads) close(p, failed = false)
+            forgetAsked()
             return
         }
         if (!started) {
@@ -278,7 +290,8 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
             val listed = knownPads[k] ?: continue
             if (encodeListed(k, listed) in mismatched) continue
             if (!usbManager.hasPermission(dev)) {
-                if (asked.add(dev.deviceName)) {
+                if (dev.deviceName !in asked) {
+                    asked[dev.deviceName] = SystemClock.elapsedRealtime()
                     val intent = Intent(ACTION_PERMISSION).setPackage(context.packageName)
                     val pi = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
                     usbManager.requestPermission(dev, pi)
@@ -287,6 +300,17 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
             }
             open(dev)
         }
+    }
+
+    /**
+     * Direct reading stopped being wanted: the pads asked about may be asked about again when it next is. Not the ones
+     * asked about, or answered, in the last [ASK_AGAIN_MS]: Android's prompt itself puts GP in the background for as long as it shows,
+     * and coming back from a prompt just answered "Cancel" must not bring it up again.
+     */
+    private fun forgetAsked() {
+        if (asked.isEmpty()) return
+        val now = SystemClock.elapsedRealtime()
+        asked.values.removeAll { now - it >= ASK_AGAIN_MS }
     }
 
     /** Remembers every game pad Android lists now, with the keys and axes Android gives it. */
@@ -421,6 +445,8 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
     companion object {
         private const val TAG = "GPUsbPad"
         private const val ACTION_PERMISSION = "com.oleroma.gyrophone.USB_PERMISSION"
+        /** A pad asked about less than this ago isn't asked about again when GP comes back (the prompt's own pause). */
+        private const val ASK_AGAIN_MS = 5_000L
         /** "vid:pid;keys;axes" per pad (the older "usb_known_pads" had no keys and axes, and is not read). */
         private const val KEY_KNOWN = "usb_pad_layouts"
         /** Pads left to Android as they don't match ([mismatched]), "vid:pid;keys;axes" as Android listed them then. */
