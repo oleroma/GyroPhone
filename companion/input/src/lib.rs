@@ -22,6 +22,7 @@ pub mod pairing;
 pub mod ports;
 pub mod press;
 pub mod rate_limiter;
+pub mod recorder;
 pub mod reports;
 pub mod session;
 pub mod settings;
