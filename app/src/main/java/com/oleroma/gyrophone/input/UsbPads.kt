@@ -201,8 +201,9 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
 
     /**
      * Devices (by USB name) asked about, with when (elapsed realtime, ms): not asked again until they are replugged,
-     * or until direct reading is next wanted again after having stopped ([forgetAsked]: the switch flipped off and on,
-     * or GP left and come back to), so a prompt missed or dismissed by accident comes again without replugging.
+     * GP next comes to the front ([cameToFront]) or direct reading is next wanted again after having stopped (the
+     * switch flipped off and on, the pad left and opened again), so a prompt missed or dismissed by accident comes
+     * again without replugging ([forgetAsked]).
      * And ones that could not be read: not tried again until replugged.
      */
     private val asked = HashMap<String, Long>()
@@ -263,6 +264,11 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
         control.post { sync() }
     }
 
+    /** GP came to the front (opened, or back from Recents or another app): pads still waiting for their "allow" are asked about again. Any thread. */
+    fun cameToFront() {
+        control.post { forgetAsked(); sync() }
+    }
+
     private fun wanted(): Boolean = runtime.usbDirectOn.value && runtime.isRunning && runtime.hardwareAllowed
 
     private fun sync() {
@@ -303,7 +309,7 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
     }
 
     /**
-     * Direct reading stopped being wanted: the pads asked about may be asked about again when it next is. Not the ones
+     * GP came to the front, or direct reading stopped being wanted: the pads asked about may be asked about again. Not the ones
      * asked about, or answered, in the last [ASK_AGAIN_MS]: Android's prompt itself puts GP in the background for as long as it shows,
      * and coming back from a prompt just answered "Cancel" must not bring it up again.
      */
