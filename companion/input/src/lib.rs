@@ -13,6 +13,7 @@ pub mod codec;
 pub mod crypto;
 pub mod engine;
 pub mod gyro;
+pub mod held_marker;
 pub mod key_files;
 pub mod le;
 pub mod link_stats;
@@ -29,7 +30,11 @@ pub mod session;
 pub mod settings;
 pub mod shared;
 pub mod state_frame;
+pub mod sys;
+pub mod udp;
+pub mod usb_bridge;
 pub mod usb_framing;
+pub mod watchdog;
 pub mod wire;
 
 /// The process's entry point; returns its exit code.

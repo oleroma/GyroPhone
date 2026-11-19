@@ -24,6 +24,7 @@ zeroize = { version = "1", default-features = false, features = ["alloc"] }
 getrandom = "0.2"
 libm = "0.2"
 serde_json = { version = "1", features = ["preserve_order"] }
+socket2 = "0.5"
 
 
 [profile.release]
@@ -33,3 +34,9 @@ codegen-units = 1
 panic = "abort"
 overflow-checks = true
 debug = 1
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.191"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_System_IO", "Win32_System_Threading"] }

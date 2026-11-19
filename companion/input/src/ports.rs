@@ -209,3 +209,24 @@ pub trait KeyProtector: Send + Sync {
 
 /// Where a datagram came from or goes to. The USB cable link uses a made-up loopback-like address of its own.
 pub type Endpoint = SocketAddr;
+
+/// Time since the clock was made, from the system's steady clock (Windows: QueryPerformanceCounter).
+pub struct MonotonicClock(std::time::Instant);
+
+impl MonotonicClock {
+    pub fn new() -> MonotonicClock {
+        MonotonicClock(std::time::Instant::now())
+    }
+}
+
+impl Default for MonotonicClock {
+    fn default() -> Self {
+        MonotonicClock::new()
+    }
+}
+
+impl Clock for MonotonicClock {
+    fn now_us(&self) -> i64 {
+        self.0.elapsed().as_micros() as i64
+    }
+}
