@@ -34,13 +34,13 @@ Sealed plaintext sizes:
 |---|---|---|---|---|
 | STATE | 0x20 | P→H | 66 | time u32 (phone ms), flags u16, buttons u16, hat u8, mouseButtons u8, lx ly rx ry i16, lt rt u16 (0..1023), keyBitmap[32]@22 (HID usages; bitmap byte 28 = the modifiers 0xE0..0xE7), mouseTotalX i32@54, mouseTotalY i32@58, wheelTotal i32@62 |
 | STATE_HIRES | 0x23 | P→H | 70 | STATE + hwheelTotal i32@66; wheels in 1/120 notch |
-| STATE_GYRO | 0x26 | P→H | 355 | STATE_HIRES + 285-byte gyro tail (below) |
+| STATE_GYRO | 0x26 | P→H | 404 | STATE_HIRES + 334-byte gyro tail (below) |
 | PING | 0x21 | P→H | 8 | t1 u64: phone send time (µs) |
 | PONG | 0x30 | H→P | 24 | t1 (echoed), t2 host receive, t3 host send, u64 each: the phone works out the clock offset and round trip |
 | LINK_INFO | 0x22 | P→H | 22 | clock offset i64, rttMin u32, rate u16, rssi i8, band, link Mbps u16, MHz u16, flags, path u8 (UNKNOWN 0 from older phones, WIFI 1 the phone's Wi-Fi client, HOTSPOT 2 the phone's own hotspot, USB_TETHER 3, USB_DIRECT 4, ETHERNET 5) |
 | HOST_STATUS | 0x31 | H→P | 23 | lastSeq, rx/s, loss ‰, latency p50, p99, jitter, output mode, flags, flags2 (USB_DIRECT 1: "Use the phone over the USB cable" is on; the PC's setup, for the phone's [Setup tips](phone-connection.md#setup-tips): PC_WIFI 2 the PC reaches the phone as a Wi-Fi client, PC_WIFI_24 4 on 2.4 GHz, PC_WIFI_WEAK 8 below −70 dBm, PC_ON_BATTERY 16, PC_POWER_SAVING 32 energy saver or "Best power efficiency". OVERLAY_SAMPLES 64: send OVERLAY_SAMPLES with each OVERLAY; PC_LOGGING 128: the PC's Diagnostics is on, the phone follows it and shows its red dot. Older phones ignore them) |
 | PAD_GYRO | 0x27 | P→H | 4 + 2 × buttons | ratchet/toggle buttons by pad place, toggle epoch |
-| PAD_GYRO_SET | 0x28 | P→H | 183 | u8 place, u8 0, a 181-byte gyro config block |
+| PAD_GYRO_SET | 0x28 | P→H | 184 | u8 place, u8 0, a 182-byte gyro config block |
 | OVERLAY | 0x24 | P→H | 152 | pose input: raw motion, ratchet, non-gyro mouse, touches, presses (`OverlayFeed`) |
 | OVERLAY_SAMPLES | 0x2C | P→H | 264 | each gyro sample's turn since the last OVERLAY, sent just before it with the same phone time while HOST_STATUS flags2 has OVERLAY_SAMPLES: u32 phone time, u8 count (≤32), 3 bytes 0, then per sample i16 yaw, pitch, roll (millidegrees) and u16 dt (10 µs). They add up to the OVERLAY's turn; the PC uses them only when they do (a pointer that paints follows every sample; the Speed graph's speeds) |
 | OVERLAY_LAYOUT | 0x25 | P→H | 200 | the workspace layout, in chunks (`OverlayFeed`) |
@@ -60,7 +60,7 @@ Sealed plaintext sizes:
 
 STATE's mouse and wheel values are **cumulative wrapping totals**, so a lost packet loses no motion; the PC injects the difference (each step capped at 16384). A lost or late stretch of mouse motion is not injected as one jump: the newest motion goes out at once, and older motion covering more than 4 ms of phone time (lost packets, found by gaps in seq, or a late burst) catches up over half the time it covers, at most the PC's **Catch-up time** (default 16 ms; `MouseCatchUp`). STATE flags: GYRO_ACTIVE 1, REPEAT 2, KEEPALIVE 4, LINK_TEST 8 (fake Link test input: counted, never injected).
 
-**Gyro tail** (STATE_GYRO): flags, count, seq u16, time u32, 8 samples × 9 bytes, 3 × i64 per-axis running totals, then the 181-byte config block: sensitivities f32 × 3, glide f32 × 3, glide bits, route count, tightening, smoothing, 12 routes × 6 bytes @34, 3 curves × 25 bytes @106. Layout in `PcGyroFeed.encodeTail` / `PcGyroTail.cs`.
+**Gyro tail** (STATE_GYRO): flags, count, seq u16, time u32, 8 samples × 15 bytes (u16 dtUs, i16 × 3 rate in 1/16 °/s, u8 axes, i16 × 3 the world's up in the phone's frame in 1/16384, all 0 when not known), 3 × i64 per-axis running totals, then the 182-byte config block: sensitivities f32 × 3, glide f32 × 3, glide bits, route count, tightening, smoothing, 12 routes × 6 bytes @34, 3 curves × 25 bytes @106, u8 spaces @181 (2 bits per axis: Local 0, World 1, Player 2; others read as Local). The samples are in the phone's own axes; the PC applies the spaces. Layout in `PcGyroFeed.encodeTail` / `PcGyroTail.cs`.
 
 **MOTION**: sent while WELCOME has MOTION and HOST_STATUS says the PC's pad is a plugged DualShock 4 or DualSense (output mode 2 or 3; before the first HOST_STATUS, WELCOME's output mode), at once for each gyro sample and every 50 ms while still. u8 flags (MAY_MOVE 1: input allowed), u8 count, u16 newest seq, u32 newest phone time (µs), then 8 samples, oldest first, × 14 bytes: u16 µs since the one before (0 after a stop), gyro i16 × 3 in 1/16 deg/s, accelerometer i16 × 3 in 1/8192 g. Already in the DualShock 4's own frame and units (x right, y out of its face, z toward the player; right-hand turns; +1 g on y lying flat), mapped from the phone's axes by the workspace's pad axes (`PadGyro`). Layout in `MotionFeed` / `MotionFrame.cs`.
 

@@ -7,7 +7,11 @@ import kotlin.math.abs
  * constant bias to subtract from every later sample. No filtering: the cursor still gets every
  * sample unchanged except for this fixed offset. Fails when the phone moved during the window.
  */
-class GyroCalibration(private val durationNs: Long = DEFAULT_DURATION_NS) {
+class GyroCalibration(
+    private val durationNs: Long = DEFAULT_DURATION_NS,
+    /** The largest average still taken as drift (rad/s); [MAX_BIAS] after Android's own correction. */
+    private val maxBias: Float = MAX_BIAS,
+) {
 
     sealed interface Result {
         /** Bias in rad/s (Android sensor frame). */
@@ -36,7 +40,7 @@ class GyroCalibration(private val durationNs: Long = DEFAULT_DURATION_NS) {
         if (timestampNs - startNs < durationNs) return null
         val spread = maxOf(maxX - minX, maxY - minY, maxZ - minZ)
         val mx = (sx / n).toFloat(); val my = (sy / n).toFloat(); val mz = (sz / n).toFloat()
-        return if (spread > MAX_SPREAD || maxOf(abs(mx), abs(my), abs(mz)) > MAX_BIAS) Result.Moved
+        return if (spread > MAX_SPREAD || maxOf(abs(mx), abs(my), abs(mz)) > maxBias) Result.Moved
         else Result.Done(mx, my, mz)
     }
 
@@ -46,5 +50,10 @@ class GyroCalibration(private val durationNs: Long = DEFAULT_DURATION_NS) {
         const val MAX_SPREAD = 0.05f
         /** A real bias is tiny; anything larger is slow motion, not drift (0.03 rad/s, ~1.7 deg/s). */
         const val MAX_BIAS = 0.03f
+        /**
+         * The uncalibrated gyro still carries the chip's whole drift, which can be larger than what
+         * Android leaves: 0.1 rad/s (~5.7 deg/s). Motion is still caught by [MAX_SPREAD].
+         */
+        const val MAX_RAW_BIAS = 0.1f
     }
 }

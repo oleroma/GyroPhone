@@ -2672,9 +2672,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (!anyDevice.modeSeen) anyDevice.modeHeld.clear()
         anyDevice.modeSeen = false
         shakeShown = true
-        for (a in 0 until 4) if (abs(gyroPad[a]) > abs(stick[a])) stick[a] = gyroPad[a]
-        trigger[0] = max(trigger[0], abs(gyroPad[GamepadAxis.LT.ordinal]))
-        trigger[1] = max(trigger[1], abs(gyroPad[GamepadAxis.RT.ordinal]))
+        // The gyro's push adds to the sticks' and triggers' own (aim with the stick, correct with the gyro), up to full.
+        for (a in 0 until 4) stick[a] = (stick[a] + gyroPad[a]).coerceIn(-1f, 1f)
+        trigger[0] = (trigger[0] + abs(gyroPad[GamepadAxis.LT.ordinal])).coerceAtMost(1f)
+        trigger[1] = (trigger[1] + abs(gyroPad[GamepadAxis.RT.ordinal])).coerceAtMost(1f)
         holdModeKeys()
         if (kept.isNotEmpty()) {
             var other = accButtons != 0 || accMouse != 0 || accUp || accDown || accLeft || accRight

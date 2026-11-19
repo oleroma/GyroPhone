@@ -315,16 +315,21 @@ public class PcGyroTests
         f.Rx = 5000;
         f.Lt = 100;
         Run(f);
-        Assert.Equal(16383, f.Rx);
-        Assert.Equal(511, f.Lt);
-        // The stick pushed further than the gyro wins.
+        Assert.Equal(5000 + 16383, f.Rx);
+        Assert.Equal(100 + 511, f.Lt);
+        // The gyro adds to the stick, and the sum stops at full.
         p.Add(45f);
         f = p.Frame();
         f.Rx = -20000;
         f.Lt = 800;
         Run(f);
-        Assert.Equal(-20000, f.Rx);
-        Assert.Equal(800, f.Lt);
+        Assert.Equal(-20000 + 16383, f.Rx);
+        Assert.Equal(1023, f.Lt);
+        p.Add(45f);
+        f = p.Frame();
+        f.Rx = 30000;
+        Run(f);
+        Assert.Equal(32767, f.Rx);
         // Ratcheted off: the gyro's part goes.
         _heldAt = _ => 1u << L1;
         p.Add(45f);

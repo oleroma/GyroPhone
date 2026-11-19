@@ -7,8 +7,9 @@ import kotlin.math.sqrt
 /**
  * The world's up in the phone's frame, for the World and Player gyro spaces
  * ([com.oleroma.gyrophone.core.model.GyroSpace]): the gyro's turn, pulled toward the
- * accelerometer's gravity over about [GRAVITY_TAU_S] (a jolt off 1 g is skipped), so it is quick
- * and never drifts.
+ * accelerometer's gravity over about [GRAVITY_TAU_S], so it is quick and never drifts. Each good
+ * accelerometer reading pulls once, by the time since the reading before it; a jolt off 1 g (a hard
+ * flick, a tap) pulls nothing, so during one the gyro alone carries the pose.
  *
  * Called from the gyro's thread; the accelerometer's ([setUp]) may come from another, so the
  * vector is guarded.
@@ -20,28 +21,32 @@ class GravityPose {
     private var uz = 0f
     private var hasUp = false
 
-    // The last accelerometer reading, unit length, and whether one came in.
-    private var ax = 0f
-    private var ay = 1f
-    private var az = 0f
-    private var accelFresh = false
+    // The time of the last accelerometer reading, good or not (ns; 0 = none yet).
+    private var lastAccelNs = 0L
 
     /** The world's up in the phone's frame (right, up, toward the player), unit length, into [out]. */
     fun up(out: FloatArray) = synchronized(this) {
         out[0] = ux; out[1] = uy; out[2] = uz
     }
 
-    /** An accelerometer reading in the phone's frame (right, up, toward the player), gravity [g] in its units. */
-    fun setUp(x: Float, y: Float, z: Float, g: Float) {
+    /**
+     * An accelerometer reading in the phone's frame (right, up, toward the player), gravity [g] in
+     * its units, taken at [timestampNs]: a good one pulls the pose toward it by the time since the
+     * last reading; one off 1 g (a jolt) is skipped, and its time is not made up later.
+     */
+    fun setUp(x: Float, y: Float, z: Float, g: Float, timestampNs: Long) = synchronized(this) {
+        val dt = if (lastAccelNs == 0L) 0f else ((timestampNs - lastAccelNs) / 1e9f).coerceIn(0f, MAX_ACCEL_DT_S)
+        lastAccelNs = timestampNs
         val n = sqrt(x * x + y * y + z * z)
-        if (n == 0f || abs(n - g) > g * G_SLACK) return
-        synchronized(this) {
-            ax = x / n; ay = y / n; az = z / n
-            accelFresh = true
-            if (!hasUp) {
-                ux = ax; uy = ay; uz = az; hasUp = true
-            }
+        if (n == 0f || abs(n - g) > g * G_SLACK) return@synchronized
+        val ax = x / n; val ay = y / n; val az = z / n
+        if (!hasUp) {
+            ux = ax; uy = ay; uz = az; hasUp = true
+            return@synchronized
         }
+        val k = 1f - exp(-dt / GRAVITY_TAU_S)
+        ux += k * (ax - ux); uy += k * (ay - uy); uz += k * (az - uz)
+        normalize()
     }
 
     /**
@@ -50,12 +55,12 @@ class GravityPose {
      */
     fun reset() = synchronized(this) {
         ux = 0f; uy = 1f; uz = 0f
-        hasUp = false; accelFresh = false
+        hasUp = false; lastAccelNs = 0L
     }
 
     /**
      * Turns the pose by the phone's rates [yaw], [pitch], [roll] (deg/s, as [GyroMouse.motion]) over
-     * [dtSeconds] and pulls it toward gravity.
+     * [dtSeconds]; gravity pulls it in [setUp].
      */
     fun rotate(yaw: Float, pitch: Float, roll: Float, dtSeconds: Float) {
         if (dtSeconds <= 0f) return
@@ -69,14 +74,14 @@ class GravityPose {
             val cy = wz * ux - wx * uz
             val cz = wx * uy - wy * ux
             ux -= cx; uy -= cy; uz -= cz
-            if (accelFresh) {
-                val k = 1f - exp(-dtSeconds / GRAVITY_TAU_S)
-                ux += k * (ax - ux); uy += k * (ay - uy); uz += k * (az - uz)
-            }
-            val n = sqrt(ux * ux + uy * uy + uz * uz)
-            if (n > 0f) {
-                ux /= n; uy /= n; uz /= n
-            }
+            normalize()
+        }
+    }
+
+    private fun normalize() {
+        val n = sqrt(ux * ux + uy * uy + uz * uz)
+        if (n > 0f) {
+            ux /= n; uy /= n; uz /= n
         }
     }
 
@@ -86,6 +91,9 @@ class GravityPose {
 
         /** Accelerometer readings further than this share off 1 g (the phone shaken) are skipped. */
         private const val G_SLACK = 0.15f
+
+        /** A gap between accelerometer readings longer than this (s) pulls no more than this much. */
+        private const val MAX_ACCEL_DT_S = 0.1f
         private const val DEG_TO_RAD = (Math.PI / 180).toFloat()
     }
 }

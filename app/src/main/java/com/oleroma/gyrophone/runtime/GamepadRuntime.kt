@@ -9,6 +9,7 @@ import android.os.Looper
 import android.os.SystemClock
 import com.oleroma.gyrophone.core.engine.CountStream
 import com.oleroma.gyrophone.core.engine.GyroCalibration
+import com.oleroma.gyrophone.core.engine.RestDrift
 import com.oleroma.gyrophone.core.engine.GravityPose
 import com.oleroma.gyrophone.core.engine.RestDetector
 import com.oleroma.gyrophone.core.engine.GyroMouse
@@ -800,15 +801,36 @@ class GamepadRuntime(context: Context) {
         data class Calibrated(val degPerSec: Float) : CalibrationState
     }
 
-    // Constant bias (rad/s) subtracted from every gyro sample; set by rest calibration, kept per phone.
-    @Volatile
-    private var biasX = prefs.getFloat(KEY_BIAS_X, 0f)
+    /** The phone has an uncalibrated gyro, so GP can correct the drift itself ([gpDrift]). */
+    val gpDriftOffered: Boolean by lazy {
+        appContext.getSystemService(SensorManager::class.java)?.getDefaultSensor(Sensor.TYPE_GYROSCOPE_UNCALIBRATED) != null
+    }
+
+    private val _gpDrift = MutableStateFlow(prefs.getBoolean(KEY_GP_DRIFT, false) && gpDriftOffered)
+
+    /**
+     * Drift correction. Off (the default): Android's own, the calibrated gyro as it comes, GP adds
+     * no offset. On: GP's own, the uncalibrated gyro minus what Calibrate (or [restRemeasure]) measured.
+     */
+    val gpDrift: StateFlow<Boolean> = _gpDrift
+
+    private val _restRemeasure = MutableStateFlow(prefs.getBoolean(KEY_REST_REMEASURE, false))
+
+    /** With [gpDrift]: measure the drift again whenever the phone lies perfectly still for 3 s. Off by default. */
+    val restRemeasure: StateFlow<Boolean> = _restRemeasure
 
     @Volatile
-    private var biasY = prefs.getFloat(KEY_BIAS_Y, 0f)
+    private var restDrift: RestDrift? = if (_gpDrift.value && _restRemeasure.value) RestDrift() else null
+
+    // Constant bias (rad/s) subtracted from every gyro sample: GP's drift correction only, kept per phone.
+    @Volatile
+    private var biasX = if (_gpDrift.value) prefs.getFloat(KEY_BIAS_X, 0f) else 0f
 
     @Volatile
-    private var biasZ = prefs.getFloat(KEY_BIAS_Z, 0f)
+    private var biasY = if (_gpDrift.value) prefs.getFloat(KEY_BIAS_Y, 0f) else 0f
+
+    @Volatile
+    private var biasZ = if (_gpDrift.value) prefs.getFloat(KEY_BIAS_Z, 0f) else 0f
 
     @Volatile
     private var calibration: GyroCalibration? = null
@@ -1344,7 +1366,7 @@ class GamepadRuntime(context: Context) {
             if (overlay) wifi.overlay.up(d.pitch, -d.yaw, -d.roll, g)
             for (f in feeds) f.up(d.pitch, -d.yaw, -d.roll, g)
             if (feeds.isNotEmpty() && vis.restFade.on) restDetector.up(d.pitch, -d.yaw, -d.roll, g, System.nanoTime(), feeds)
-            if (mapSpaced) gravityPose.setUp(m.pitch, -m.yaw, -m.roll, g)
+            if (mapSpaced) gravityPose.setUp(m.pitch, -m.yaw, -m.roll, g, ts)
         }
         if (wifi.motion.wanted) {
             // The PC's DualShock 4 accelerometer: in g, right, up and toward the player.
@@ -1673,8 +1695,8 @@ class GamepadRuntime(context: Context) {
      */
     @Synchronized
     fun calibrateGyro() {
-        if (!running) return
-        calibration = GyroCalibration()
+        if (!running || !_gpDrift.value) return
+        calibration = GyroCalibration(maxBias = GyroCalibration.MAX_RAW_BIAS)
         _calibration.value = CalibrationState.Running
         // The gyro starts on its own thread: one that can't start ends the calibration there ([syncGyro]).
         updateGyro()
@@ -1685,6 +1707,41 @@ class GamepadRuntime(context: Context) {
         calibration = null
         setBias(0f, 0f, 0f)
         updateGyro()
+    }
+
+    /**
+     * Picks Android's or GP's drift correction ([gpDrift]). The gyro restarts on the other sensor
+     * (calibrated or uncalibrated), so a sample of one never meets the other's offset.
+     */
+    @Synchronized
+    fun setGpDrift(on: Boolean) {
+        val v = on && gpDriftOffered
+        if (v == _gpDrift.value) return
+        prefs.edit().putBoolean(KEY_GP_DRIFT, v).apply()
+        _gpDrift.value = v
+        calibration = null
+        biasX = if (v) prefs.getFloat(KEY_BIAS_X, 0f) else 0f
+        biasY = if (v) prefs.getFloat(KEY_BIAS_Y, 0f) else 0f
+        biasZ = if (v) prefs.getFloat(KEY_BIAS_Z, 0f) else 0f
+        _calibration.value = storedCalibration()
+        restDrift = if (v && _restRemeasure.value) RestDrift() else null
+        gyroControl.post { stopGyro() }
+        updateGyro()
+    }
+
+    /** Sets [restRemeasure]; it only acts with [gpDrift] on. */
+    @Synchronized
+    fun setRestRemeasure(on: Boolean) {
+        prefs.edit().putBoolean(KEY_REST_REMEASURE, on).apply()
+        _restRemeasure.value = on
+        restDrift = if (on && _gpDrift.value) RestDrift() else null
+    }
+
+    /** On the gyro thread: a still stretch measured [x], [y], [z]; a change too small to matter is not stored. */
+    private fun restMeasured(x: Float, y: Float, z: Float) {
+        if (maxOf(abs(x - biasX), abs(y - biasY), abs(z - biasZ)) < REST_MIN_CHANGE) return
+        biasX = x; biasY = y; biasZ = z
+        main.post { synchronized(this) { if (_gpDrift.value && calibration == null) setBias(x, y, z) } }
     }
 
     private fun setBias(x: Float, y: Float, z: Float) {
@@ -1772,7 +1829,7 @@ class GamepadRuntime(context: Context) {
     private fun startGyro() {
         if (gyro != null) return
         val sm = appContext.getSystemService(SensorManager::class.java) ?: return
-        val candidates = GyroSource.candidates(sm, _gyroPollHz.value)
+        val candidates = GyroSource.candidates(sm, _gyroPollHz.value, uncalibrated = _gpDrift.value)
         // While the direct channel is capped the listener goes first; the direct channel stays a last resort.
         val ordered = if (avoidDirect) candidates.sortedBy { it is DirectChannelGyroSource } else candidates
         for (source in ordered) {
@@ -1900,9 +1957,15 @@ class GamepadRuntime(context: Context) {
         /** [moveCardOrders] ran. */
         private const val KEY_CARD_ORDERS_MOVED = "card_orders_moved"
         private const val TURN_TICK_MS = 4L
-        private const val KEY_BIAS_X = "gyro_bias_x"
-        private const val KEY_BIAS_Y = "gyro_bias_y"
-        private const val KEY_BIAS_Z = "gyro_bias_z"
+        // GP's own drift correction: measured on the uncalibrated gyro, so not the old keys (those were
+        // measured on top of Android's correction and are no longer used).
+        private const val KEY_BIAS_X = "gp_gyro_bias_x"
+        private const val KEY_BIAS_Y = "gp_gyro_bias_y"
+        private const val KEY_BIAS_Z = "gp_gyro_bias_z"
+        private const val KEY_GP_DRIFT = "gp_drift_correction"
+        private const val KEY_REST_REMEASURE = "gp_drift_rest_remeasure"
+        /** A rest measurement this close to the stored drift (rad/s, ~0.03 deg/s) changes nothing. */
+        private const val REST_MIN_CHANGE = 0.0005f
 
         /** Version of [MappingProfiles.migrate]'s rules; a phone that ran an older one redoes it from [BACKUP_TAG]. */
         private const val MAPPING_MIGRATION = 2
@@ -2028,7 +2091,8 @@ class GamepadRuntime(context: Context) {
 
     /**
      * "Use PC controller for gyro ratchet" with a PC that runs the gyro: one bias-corrected sample
-     * ([m], in deg/s turned for the screen and measured in the workspace's gyro space; sensor time [ts]) goes to [pc],
+     * ([m], in deg/s turned for the screen and the base orientation, about the phone's own axes;
+     * sensor time [ts]) with the world's [up] (null: not followed now) goes to [pc], which measures it in each axis's gyro space,
      * with the phone's own gyro axes [axes] and the gyro settings in effect now, while the gyro may
      * move ([allowed] and not "Gyro off"); otherwise [pc] is told it is still. The phone adds no
      * gyro motion itself: entering this, its gyro mouse motion and stick deflection are cleared once.
@@ -2036,7 +2100,7 @@ class GamepadRuntime(context: Context) {
     private var pcHeldFor: List<Pair<Int, GyroSettings>>? = null
     private var pcHeldRoutes: List<Mapping>? = null
 
-    private fun pcGyroSample(pc: PcGyroFeed, allowed: Boolean, axes: Int, m: GyroMouse.Motion, dt: Float, ts: Long) {
+    private fun pcGyroSample(pc: PcGyroFeed, allowed: Boolean, axes: Int, m: GyroMouse.Motion, up: FloatArray?, dt: Float, ts: Long) {
         if (!pcGyroRouting) {
             pcGyroRouting = true
             gyroMouse.reset()
@@ -2064,7 +2128,7 @@ class GamepadRuntime(context: Context) {
         // One lock: the next tail never has this sample with the settings before it.
         synchronized(pc.lock) {
             pc.setConfig(cfg, _gyroTightening.value, _gyroSmoothing.value)
-            pc.add(m.yaw, m.pitch, m.roll, dt, axes, sampleUs)
+            pc.add(m.yaw, m.pitch, m.roll, dt, axes, sampleUs, up)
         }
         // Nothing else changes in the engine for a sample here, so wake the sender for it: the tail
         // holds only the last few samples, and a sender waiting for the keepalive would skip most.
@@ -2123,6 +2187,7 @@ class GamepadRuntime(context: Context) {
                 }
             }
         }
+        restDrift?.let { r -> if (calibration == null && r.add(x, y, z, ts)) restMeasured(r.x, r.y, r.z) }
         val bx = x - biasX; val by = y - biasY; val bz = z - biasZ
         val allowed = inputAllowed && !measuring
         val axes = if (allowed) engine.gyroAxes else 0
@@ -2163,11 +2228,12 @@ class GamepadRuntime(context: Context) {
         // The input first: the gyro's mouse motion and pad axes, tilt and the DS4 motion reach the
         // engine before any display or overlay work, so the sender takes this sample as soon as it can.
         // The turn with each axis in its card's space, against the pose this sample left.
-        val spaced = if (mapReal && (pcMode || accelWatchers.get() > 0)) gyroMouse.inSpaces(local, gsNow, upNow) else local
+        val spaced = if (mapReal && accelWatchers.get() > 0) gyroMouse.inSpaces(local, gsNow, upNow) else local
         var sentDx = 0; var sentDy = 0
         var routesNow: List<Mapping>? = null
         if (pcMode) {
-            pcGyroSample(pc, allowed, axes, spaced, dt, ts)
+            // The PC measures each axis in its space itself (a PC controller button's own included), against this up.
+            pcGyroSample(pc, allowed, axes, local, if (poseOn) upNow else null, dt, ts)
         } else {
             pcGyroRouting = false
             // An axis a ratchet just turned off may glide on (inertia) while the others are off.

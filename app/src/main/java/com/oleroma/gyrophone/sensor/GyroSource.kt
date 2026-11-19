@@ -32,10 +32,16 @@ interface GyroSource {
          * the sensor direct channel (shared memory or a gralloc buffer written by the sensor HAL, no Binder or Looper
          * hop) at its highest rate, when supported; then a listener at SENSOR_DELAY_FASTEST on a
          * high-priority thread, used when the direct channel cannot start (or runs capped, see
-         * GamepadRuntime). Empty when the phone has no gyroscope.
+         * GamepadRuntime). Empty when the phone has no gyroscope. [uncalibrated]: the gyro without
+         * Android's drift correction (GP corrects it itself); its first three values are the same rates.
          */
-        fun candidates(sensorManager: SensorManager, pollHz: Int = DirectChannelGyroSource.DEFAULT_POLL_HZ): List<GyroSource> {
-            val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: return emptyList()
+        fun candidates(
+            sensorManager: SensorManager,
+            pollHz: Int = DirectChannelGyroSource.DEFAULT_POLL_HZ,
+            uncalibrated: Boolean = false,
+        ): List<GyroSource> {
+            val type = if (uncalibrated) Sensor.TYPE_GYROSCOPE_UNCALIBRATED else Sensor.TYPE_GYROSCOPE
+            val sensor = sensorManager.getDefaultSensor(type) ?: return emptyList()
             val direct = DirectChannelGyroSource(sensorManager, sensor).apply { this.pollHz = pollHz }
             val listener = ListenerGyroSource(sensorManager, sensor)
             return if (direct.isSupported) listOf(direct, listener) else listOf(listener)
