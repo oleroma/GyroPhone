@@ -7,6 +7,7 @@
 pub mod basics;
 pub mod drivers;
 pub mod pc_pad;
+pub mod probes;
 pub mod process;
 pub mod raw_input;
 pub mod usb;

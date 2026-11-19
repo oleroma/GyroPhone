@@ -25,6 +25,7 @@ pub mod mapping;
 pub mod motion;
 pub mod mouse;
 pub mod pairing;
+pub mod pc_setup;
 pub mod pipe;
 pub mod ports;
 pub mod press;
