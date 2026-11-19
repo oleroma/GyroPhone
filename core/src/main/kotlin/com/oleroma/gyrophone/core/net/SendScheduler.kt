@@ -4,7 +4,13 @@ package com.oleroma.gyrophone.core.net
  * Decides when the Wi-Fi pump sends a STATE. Pure: the caller passes the clock (ns), so tests
  * drive it with a fake one.
  *
- * - Never two packets within `1e9 / rateHz` ns.
+ * - At most [rateHz] packets a second, one per `1e9 / rateHz` ns ([minIntervalNs]) on a schedule of
+ *   its own: a packet that went late doesn't push the next one back. The next may go up to half an
+ *   interval sooner than a full interval after it, never sooner than a full interval after the time
+ *   the late one was due. So input that comes a little slower than the rate and a little unevenly
+ *   (gyro samples every 1.05 ms at 1000 Hz) goes out as it comes, each sample in its own packet.
+ *   Measured from the last send instead, every late packet delayed all that followed, and the
+ *   lateness only wore off by the difference between the two rates.
  * - A packet is due as soon as the state differs from the last one sent.
  * - After a packet carrying a discrete change, repeats follow at +2 ms and +6 ms (replacing any
  *   pending repeats); a repeat carries the full current state.
@@ -27,6 +33,8 @@ class SendScheduler(rateHz: Int = Wire.DEFAULT_RATE_HZ) {
 
     private var hasSent = false
     private var lastSentNs = 0L
+    // When the next packet may go (valid once hasSent).
+    private var nextAllowedNs = 0L
     private var dirtyPending = false
     private val repeatAt = LongArray(Wire.REPEAT_OFFSETS_MS.size)
     private var repeatCount = 0 // pending repeats are repeatAt[0 until repeatCount], ascending
@@ -45,7 +53,7 @@ class SendScheduler(rateHz: Int = Wire.DEFAULT_RATE_HZ) {
     fun poll(nowNs: Long, dirty: Boolean, discrete: Boolean): Int {
         dirtyPending = dirty
         if (!hasSent) return if (dirty) NORMAL else KEEPALIVE
-        if (nowNs - lastSentNs < minIntervalNs) return NONE
+        if (nowNs < nextAllowedNs) return NONE
         if (dirty) return NORMAL
         if (repeatCount > 0 && nowNs >= repeatAt[0]) return REPEAT
         if (nowNs - lastSentNs >= keepaliveNs) return KEEPALIVE
@@ -54,6 +62,9 @@ class SendScheduler(rateHz: Int = Wire.DEFAULT_RATE_HZ) {
 
     /** Records a send of [kind] at [nowNs]; [discrete] if the packet carried a discrete change. */
     fun markSent(nowNs: Long, kind: Int, discrete: Boolean) {
+        // This packet's place on the schedule: when it was due, or at most half an interval before now when it went late.
+        val due = if (hasSent) maxOf(nextAllowedNs, nowNs - minIntervalNs / 2) else nowNs
+        nextAllowedNs = due + minIntervalNs
         hasSent = true
         lastSentNs = nowNs
         dirtyPending = false
@@ -75,14 +86,14 @@ class SendScheduler(rateHz: Int = Wire.DEFAULT_RATE_HZ) {
      * Before this time (ns) nothing may be sent, so the pump should not take an engine snapshot
      * yet: one taken now would show, and use up, a quick tap that no packet then carries.
      */
-    fun sendableAt(): Long = if (hasSent) lastSentNs + minIntervalNs else Long.MIN_VALUE
+    fun sendableAt(): Long = if (hasSent) nextAllowedNs else Long.MIN_VALUE
 
     /** When [poll] may next return something other than [NONE] without a new input change. */
     fun nextDeadline(): Long {
         if (!hasSent) return Long.MIN_VALUE
         var t = lastSentNs + keepaliveNs
-        if (repeatCount > 0) t = minOf(t, maxOf(repeatAt[0], lastSentNs + minIntervalNs))
-        if (dirtyPending) t = minOf(t, lastSentNs + minIntervalNs)
+        if (repeatCount > 0) t = minOf(t, maxOf(repeatAt[0], nextAllowedNs))
+        if (dirtyPending) t = minOf(t, nextAllowedNs)
         return t
     }
 

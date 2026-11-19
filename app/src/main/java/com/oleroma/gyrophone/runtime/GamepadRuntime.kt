@@ -1156,7 +1156,8 @@ class GamepadRuntime(context: Context) {
 
     @Synchronized
     fun setForeground(resumed: Boolean) {
-        if (resumed && !foreground) aimGyroDisplays()
+        val cameToFront = resumed && !foreground
+        if (cameToFront) aimGyroDisplays()
         foreground = resumed
         // Out of sight, the displays and the edge are not fed (and the sensors only they need stop).
         updateVisualsCovered()
@@ -1170,6 +1171,8 @@ class GamepadRuntime(context: Context) {
             avoidDirect = false
             gyroControl.post { stopGyro() }
         }
+        // Back in front: a USB pad whose "allow" prompt was missed is asked about again.
+        if (cameToFront && usbPadsLazy.isInitialized()) usbPads.cameToFront()
         updateInputAllowed()
     }
 
