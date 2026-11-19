@@ -316,7 +316,8 @@ class WifiPump(private val engine: MappingEngine) {
                 if (lastStateNs != 0L && now - lastStateNs > stGapMaxNs) stGapMaxNs = now - lastStateNs
                 lastStateNs = now
                 if (sendSealed(c, WireCodec.stateType(frame), stateLen)) sentCount++ else failedCount++
-                if (sampleAt != 0L) timing?.sent(sampleAt, System.nanoTime())
+                // Only a STATE the sample changed: a keepalive carries nothing of it (a still phone's samples move nothing).
+                if (sampleAt != 0L && dirty) timing?.sent(sampleAt, System.nanoTime())
                 if (discrete && pressStamp.enabled) sendPressTime(c, frame.phoneTimeUs, now)
                 lastSent.copyFrom(frame)
                 scheduler.markSent(now, kind, discrete)
