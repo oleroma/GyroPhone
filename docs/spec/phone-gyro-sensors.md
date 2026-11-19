@@ -19,7 +19,7 @@ On the OnePlus 15 the listener delivers about 480 Hz and the gralloc direct chan
 
 ## Poll rate
 
-**Gyro poll rate** (Connection page): 1, 2 or 4 kHz, default 4 kHz. It is how often the poll thread looks at the shared memory, so polling above the HAL's rate adds at most one interval on top of it. It applies at once to a running direct channel, without restarting the sensor. It has no effect on the listener; the page says so while the listener runs.
+**Gyro poll rate** (Connection page): 1, 2 or 4 kHz, default 4 kHz. It is how often the poll thread looks at the shared memory. When that is at least twice the sensor's own rate (4 kHz, and 2 kHz on the OnePlus 15's ~950 Hz), the checks are timed around the sensor (`core/.../sensor/PollPacer.kt`): the sensor's period is learned from the samples' timestamps, the thread keeps the plain interval through the stretch after a sample where no new one can come (never a longer sleep: on the OnePlus 15 sleeping through that stretch made the thread wake late and samples arrive 2-3 ms older, build 836), then checks a quarter of the interval apart in the short window where the next is due. A sample then waits about a quarter of an interval for its reader instead of up to a whole one, for about one more wake-up a sample than fixed polling. Before the period is known, after three periods without a sample, or at a poll rate below twice the sensor's, the checks run at the plain interval. It applies at once to a running direct channel, without restarting the sensor. It has no effect on the listener; the page says so while the listener runs.
 
 ## Performance hints
 
