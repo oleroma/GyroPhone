@@ -23,6 +23,7 @@ pub mod press;
 pub mod rate_limiter;
 pub mod reports;
 pub mod session;
+pub mod settings;
 pub mod shared;
 pub mod state_frame;
 pub mod usb_framing;
