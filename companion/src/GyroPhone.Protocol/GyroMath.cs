@@ -17,7 +17,10 @@ public sealed class GyroMath
 {
     public const int PadAxes = 6;
     private const int Ly = 1, Ry = 3, Lt = 4, Rt = 5;
-    private const int SmoothingWindow = 8;
+    /// <summary>Smoothing spreads each sample's smoothed motion evenly over this time (s), whatever the sample rate.</summary>
+    public const float SmoothingWindowS = 0.008f;
+    /// <summary>The most shares being spread at once: a window's worth of samples at 4 kHz.</summary>
+    private const int SpreadMax = 32;
 
     /// <summary>The phone's GyroSettings.DEFAULT_SENSITIVITY: counts per degree.</summary>
     public const float DefaultSensitivity = 16f;
@@ -66,6 +69,8 @@ public sealed class GyroMath
         public readonly bool[] AxisSpeed = new bool[3];
         /// <summary>Per axis: its curve is a smooth bend through the points rather than straight lines.</summary>
         public readonly bool[] Smooth = new bool[3];
+        /// <summary>Per axis the gyro space it is measured in (<see cref="GyroSpaces"/>: 0 local, 1 world, 2 player).</summary>
+        public readonly int[] Space = new int[3];
 
         public void CopyFrom(Config o)
         {
@@ -79,6 +84,7 @@ public sealed class GyroMath
             o.CurvePoints.CopyTo(CurvePoints, 0);
             o.AxisSpeed.CopyTo(AxisSpeed, 0);
             o.Smooth.CopyTo(Smooth, 0);
+            o.Space.CopyTo(Space, 0);
         }
 
         /// <summary>Sets axis <paramref name="axis"/>'s curve to <paramref name="flat"/> (speeds and gains interleaved).</summary>
@@ -113,9 +119,14 @@ public sealed class GyroMath
     private readonly Routed _routed = new();
 
     private float _remX, _remY, _remWheel, _remHWheel;
-    private readonly float[] _bufX = new float[SmoothingWindow];
-    private readonly float[] _bufY = new float[SmoothingWindow];
-    private int _bufIndex;
+
+    // Smoothing: each sample's smoothed share (counts still to send) spread evenly over
+    // SmoothingWindowS from its own sample on, with its age (s). Oldest first, _spreadN in use.
+    private readonly float[] _spreadX = new float[SpreadMax];
+    private readonly float[] _spreadY = new float[SpreadMax];
+    private readonly float[] _spreadAge = new float[SpreadMax];
+    private int _spreadN;
+    private float _spreadOutX, _spreadOutY;
 
     // Inertia, per axis (yaw, pitch, roll): its recent speed (deg/s EMA), its glide speed (deg/s,
     // 0 = none), glide time (ms) and linear slowing (deg/s per ms, 0 = smooth); the axes on last sample.
@@ -146,6 +157,8 @@ public sealed class GyroMath
         Coast(c, yaw, pitch, roll, axes, dt);
         Accelerate(c, yaw, pitch, roll, axes);
         float vx = 0f, vy = 0f, w = 0f, hw = 0f;
+        // The phone's own turning (deg/s) that moves the cursor: before sensitivity and acceleration.
+        float px = 0f, py = 0f;
         var pad = _routed.Pad;
         Array.Clear(pad);
         var routes = c.Routes;
@@ -156,11 +169,12 @@ public sealed class GyroMath
             float g = on ? 0f : _glideOut[r.Axis];
             if (!on && (g == 0f || r.Target >= Route.Pad)) continue;
             float k = c.Sensitivity[r.Axis];
-            float v = (on ? r.Axis switch { 0 => yaw, 1 => pitch, _ => roll } : g) * _gain[r.Axis];
+            float raw = on ? r.Axis switch { 0 => yaw, 1 => pitch, _ => roll } : g;
+            float v = raw * _gain[r.Axis];
             switch (r.Target)
             {
-                case Route.MouseX: vx += v * k * r.Scale; break;
-                case Route.MouseY: vy += v * k * r.Scale; break;
+                case Route.MouseX: vx += v * k * r.Scale; px += raw * Sign(r.Scale); break;
+                case Route.MouseY: vy += v * k * r.Scale; py += raw * Sign(r.Scale); break;
                 case Route.Wheel: w += v * k / DefaultSensitivity * r.Scale; break;
                 case Route.HWheel: hw += v * k / DefaultSensitivity * r.Scale; break;
                 default:
@@ -176,7 +190,7 @@ public sealed class GyroMath
         {
             pad[a] = a == Lt || a == Rt ? CoerceAtMost(MathF.Abs(pad[a]), 1f) : CoerceIn(pad[a], -1f, 1f);
         }
-        Counts(vx, vy, dt, tightening, smoothing);
+        Counts(vx, vy, MathF.Sqrt(px * px + py * py), dt, tightening, smoothing);
         float fw = w * dt * WheelUnit / DegPerNotch + _remWheel;
         float fh = hw * dt * WheelUnit / DegPerNotch + _remHWheel;
         _routed.Wheel = ToInt(fw); _remWheel = fw - _routed.Wheel;
@@ -186,31 +200,31 @@ public sealed class GyroMath
 
     /// <summary>
     /// Mouse counts of cursor velocity <paramref name="vx0"/> (right +) and <paramref name="vy0"/> (up +)
-    /// in counts/s, sensitivity applied, over <paramref name="dt"/>: filtered, the remainder kept. The
-    /// filters' thresholds are in °/s at the default sensitivity.
+    /// in counts/s, sensitivity applied, over <paramref name="dt"/>: filtered by the phone's turning
+    /// speed <paramref name="speed"/> (deg/s), the remainder kept.
     /// </summary>
-    private void Counts(float vx0, float vy0, float dt, float tightening, float smoothing)
+    private void Counts(float vx0, float vy0, float speed, float dt, float tightening, float smoothing)
     {
-        float vx = vx0 / DefaultSensitivity;
-        float vy = vy0 / DefaultSensitivity;
-        float speed = MathF.Sqrt(vx * vx + vy * vy);
+        float vx = vx0;
+        float vy = vy0;
         if (tightening > 0f && speed < tightening)
         {
             float k = speed / tightening;
             vx *= k; vy *= k;
         }
-        if (smoothing > 0f)
+        float sx = 0f, sy = 0f;
+        if (smoothing > 0f || _spreadN > 0)
         {
             // Fully smoothed below threshold/2, fully direct above threshold, blended between. Only
-            // the smoothed share enters the window (see the Kotlin side).
-            float direct = CoerceIn((speed - smoothing / 2f) / (smoothing / 2f), 0f, 1f);
-            _bufX[_bufIndex] = vx * (1f - direct); _bufY[_bufIndex] = vy * (1f - direct);
-            _bufIndex = (_bufIndex + 1) % SmoothingWindow;
-            vx = vx * direct + Mean(_bufX);
-            vy = vy * direct + Mean(_bufY);
+            // the smoothed share is spread (see the Kotlin side).
+            float direct = smoothing > 0f ? CoerceIn((speed - smoothing / 2f) / (smoothing / 2f), 0f, 1f) : 1f;
+            float share = 1f - direct;
+            Spread(vx * share * dt, vy * share * dt, dt);
+            sx = _spreadOutX; sy = _spreadOutY;
+            vx *= direct; vy *= direct;
         }
-        float fx = vx * dt * DefaultSensitivity + _remX;
-        float fy = -vy * dt * DefaultSensitivity + _remY;
+        float fx = vx * dt + sx + _remX;
+        float fy = -(vy * dt + sy) + _remY;
         int dx = RoundToInt(fx);
         int dy = RoundToInt(fy);
         _remX = fx - dx;
@@ -218,7 +232,51 @@ public sealed class GyroMath
         _routed.Dx = dx; _routed.Dy = dy;
     }
 
-    /// <summary>The mean of <paramref name="b"/>, summed in double like the Kotlin side.</summary>
+    /// <summary>Adds this sample's smoothed counts to the spread and takes what every share sends over the next <paramref name="dt"/> (the Kotlin spread).</summary>
+    private void Spread(float x, float y, float dt)
+    {
+        if (x != 0f || y != 0f)
+        {
+            if (_spreadN == SpreadMax)
+            {
+                // Full (very short samples): the oldest goes out now.
+                _remX += _spreadX[0]; _remY -= _spreadY[0];
+                Drop(0);
+            }
+            _spreadX[_spreadN] = x; _spreadY[_spreadN] = y; _spreadAge[_spreadN] = 0f;
+            _spreadN++;
+        }
+        float ox = 0f, oy = 0f;
+        int i = 0;
+        while (i < _spreadN)
+        {
+            float a0 = _spreadAge[i];
+            float a1 = a0 + dt;
+            if (a1 >= SmoothingWindowS)
+            {
+                ox += _spreadX[i]; oy += _spreadY[i];
+                Drop(i);
+                continue;
+            }
+            float part = dt / (SmoothingWindowS - a0);
+            float gx = _spreadX[i] * part, gy = _spreadY[i] * part;
+            ox += gx; oy += gy;
+            _spreadX[i] -= gx; _spreadY[i] -= gy;
+            _spreadAge[i] = a1;
+            i++;
+        }
+        _spreadOutX = ox; _spreadOutY = oy;
+    }
+
+    private void Drop(int i)
+    {
+        for (int j = i; j < _spreadN - 1; j++)
+        {
+            _spreadX[j] = _spreadX[j + 1]; _spreadY[j] = _spreadY[j + 1]; _spreadAge[j] = _spreadAge[j + 1];
+        }
+        _spreadN--;
+    }
+
     /// <summary>
     /// Each axis's acceleration gain for this sample: an axis on takes its curve's gain at its own
     /// speed or the whole phone's; one off keeps its last.
@@ -279,17 +337,10 @@ public sealed class GyroMath
         return 2f * d0 * d1 / (d0 + d1);
     }
 
-    private static float Mean(float[] b)
-    {
-        double s = 0.0;
-        foreach (float v in b) s += v;
-        return (float)(s / b.Length);
-    }
-
     public void Reset()
     {
         _remX = 0f; _remY = 0f; _remWheel = 0f; _remHWheel = 0f;
-        Array.Clear(_bufX); Array.Clear(_bufY); _bufIndex = 0;
+        _spreadN = 0; _spreadOutX = 0f; _spreadOutY = 0f;
         Array.Clear(_speed); Array.Clear(_glideV); Array.Clear(_glideOut); _lastAxes = 0;
         _gain[0] = 1f; _gain[1] = 1f; _gain[2] = 1f;
     }

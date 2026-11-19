@@ -84,8 +84,13 @@ internal sealed class OverlayForm : Form
     private static int _directFailures;
     // This window makes its handle again to try the swap chain (it took the try).
     private bool _directTry;
-    // The window shows a swap chain (constant alpha + extended frame), not UpdateLayeredWindow pictures.
+    // The window shows a swap chain (constant alpha + extended frame, or a composition swap chain), not UpdateLayeredWindow pictures.
     private bool _direct;
+    // The composition swap chain (flip model, handed to the desktop compositor as is: no copy into the window's
+    // redirection surface) failed: windows show the older copy-model swap chain until this time (0 = none).
+    private static long _composedRetryAt;
+    // This window's handle was made without a redirection surface, for a composition swap chain.
+    private bool _composedHandle;
     private byte _directAlpha;
     // A swap-chain window starts fully see-through and shows once its first pictures are on screen:
     // shown at once, it flashed its empty (white) surface for a moment.
@@ -160,6 +165,11 @@ internal sealed class OverlayForm : Form
             // It stays off the taskbar anyway: ShowInTaskbar = false gives it a hidden owner window.
             cp.ExStyle |= WsExLayered | WsExNoActivate | WsExTopmost;
             cp.ExStyle &= ~WsExAppWindow;
+            // A window that will show a composition swap chain has no redirection surface: the compositor takes
+            // its pictures straight from the swap chain. Every other way to the screen needs that surface.
+            // Decided only as the handle is made: a later look at CreateParams (a style update) keeps it.
+            if (!IsHandleCreated) _composedHandle = ComposedWanted;
+            if (_composedHandle) cp.ExStyle |= WsExNoRedirectionBitmap;
             if (ClickThrough) cp.ExStyle |= WsExTransparent;
             return cp;
         }
@@ -262,22 +272,43 @@ internal sealed class OverlayForm : Form
             _directTry = false;
             if (tryDirect)
             {
+                bool composed = _composedHandle &&
+                    (GetWindowLongPtr(Handle, GwlExStyle).ToInt64() & WsExNoRedirectionBitmap) != 0;
                 try
                 {
-                    // The layered window shows the swap chain's alpha: constant window alpha, frame over it all.
+                    // The window's constant alpha starts at 0 (shown once it has drawn, ScheduleReveal).
                     _directAlpha = 0;
                     _revealed = false;
                     if (!SetLayeredWindowAttributes(Handle, 0, 0, LwaAlpha)) throw new Win32Exception();
-                    var margins = new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
-                    int hr = DwmExtendFrameIntoClientArea(Handle, ref margins);
-                    if (hr < 0) throw new Win32Exception(hr);
-                    _gpuSurface = new GpuSurface(Handle, Width, Height);
+                    if (!composed)
+                    {
+                        // The copy-model swap chain's alpha reaches the screen through the frame, extended over it all.
+                        var margins = new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
+                        int hr = DwmExtendFrameIntoClientArea(Handle, ref margins);
+                        if (hr < 0) throw new Win32Exception(hr);
+                    }
+                    _gpuSurface = new GpuSurface(Handle, Width, Height, composed);
                     _direct = true;
+                    if (composed && Interlocked.Exchange(ref _composedRetryAt, 0) != 0)
+                        _log("overlay: the composition swap chain works again");
                     _wasDirect = true;
                     _uiOnly = false; // that was UpdateLayeredWindow's, which a swap chain doesn't use
                     if (Interlocked.Exchange(ref _directRetryAt, 0) != 0)
                         _log("overlay: showing straight from the graphics card works again");
                     Volatile.Write(ref _directFailures, 0);
+                }
+                catch (Exception ex) when (composed)
+                {
+                    // A window without a redirection surface can show nothing else: made again for the copy-model
+                    // swap chain (the others too, as they are next made), the composition one tried again in 10 minutes.
+                    Interlocked.Exchange(ref _composedRetryAt, Environment.TickCount64 + 10 * 60_000);
+                    _log($"overlay: the composition swap chain failed, using the copy-model one, trying again in 10 minutes: {ex.GetType().Name}: {ex.Message}");
+                    try { _gpuSurface?.Dispose(); } catch (Exception) { }
+                    _gpuSurface = null;
+                    _directTry = true;
+                    _recreating = true;
+                    try { BeginInvoke(RecreateHandle); } catch (Exception) { _recreating = false; }
+                    return;
                 }
                 catch (Exception ex)
                 {
@@ -501,7 +532,8 @@ internal sealed class OverlayForm : Form
         if (IsDisposed || _drawStop) return;
         if (_drawThread == null)
         {
-            _drawThread = new Thread(DrawLoop) { IsBackground = true, Name = $"overlay {_id}", Priority = ThreadPriority.Normal };
+            // Below the game's and the input's threads: on a busy PC the overlays drop frames first.
+            _drawThread = new Thread(DrawLoop) { IsBackground = true, Name = $"overlay {_id}", Priority = ThreadPriority.BelowNormal };
             _drawThread.Start();
         }
         _drawWake.Set();
@@ -981,6 +1013,12 @@ internal sealed class OverlayForm : Form
     private static bool DirectBroken => Environment.TickCount64 < Volatile.Read(ref _directRetryAt);
 
     /// <summary>
+    /// The next handle is made for a composition swap chain: a swap chain would be tried (as in OnHandleCreated) and the
+    /// composition one hasn't failed lately (<see cref="_composedRetryAt"/>).
+    /// </summary>
+    private bool ComposedWanted => !GpuOff && (_directTry || !DirectBroken) && Environment.TickCount64 >= Volatile.Read(ref _composedRetryAt);
+
+    /// <summary>
     /// A copied window that has just drawn (so the graphics card works) tries the swap chain again once
     /// its time has come: it makes its handle again (UI thread). Only one window takes each try; the
     /// others follow once it worked. Called with _renderLock held.
@@ -1106,7 +1144,7 @@ internal sealed class OverlayForm : Form
             return;
         }
         double secs = (now - _statStart) / 1000.0;
-        string by = _gpuSurface == null ? "CPU" : _gpuSurface.Direct ? "GPU" : "GPU, copied";
+        string by = _gpuSurface == null ? "CPU" : _gpuSurface.Composed ? "GPU, composed" : _gpuSurface.Direct ? "GPU" : "GPU, copied";
         _stats = _statFrames == 0
             ? $"{_title} {Width}×{Height} ({by}): idle"
             : $"{_title} {Width}×{Height} ({by}): {_statSumMs / _statFrames:0.0} ms avg, {_statMaxMs:0.0} max, {_statFrames / secs:0} fps"
@@ -1220,6 +1258,7 @@ internal sealed class OverlayForm : Form
 
     private const int GwlExStyle = -20;
     private const int WsExLayered = 0x00080000;
+    private const int WsExNoRedirectionBitmap = 0x00200000;
     private const int WsExTransparent = 0x00000020;
     private const int WsExAppWindow = 0x00040000;
     private const int WsExNoActivate = 0x08000000;

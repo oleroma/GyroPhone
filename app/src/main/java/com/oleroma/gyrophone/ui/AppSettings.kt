@@ -152,6 +152,7 @@ private fun AppTab(runtime: GamepadRuntime) {
     val diagOn by runtime.debug.enabled.collectAsStateWithLifecycle()
     val diagKeep by runtime.debug.keepMinutes.collectAsStateWithLifecycle()
     val usbDirect by runtime.usbDirectOn.collectAsStateWithLifecycle()
+    val usbWaiting by runtime.usbPads.waiting.collectAsStateWithLifecycle()
     val tight by runtime.gyroTightening.collectAsStateWithLifecycle()
     val smooth by runtime.gyroSmoothing.collectAsStateWithLifecycle()
     val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
@@ -329,12 +330,14 @@ private fun AppTab(runtime: GamepadRuntime) {
             OverrideSlider(
                 "appGyroTight", if (tight < 0.05f) "Jitter cutoff off" else "Jitter cutoff %.1f°/s", tight, 0f..5f, 0.1f,
                 overridden = false, onReset = null,
-                hint = "Turns slower than this move less, which hides hand shake. Every workspace uses it.",
+                hint = "When the phone turns slower than this, the cursor moves less, which hides hand shake. It compares the phone's own " +
+                        "turning speed, so it works the same at any sensitivity. Every workspace uses it.",
             ) { v -> runtime.setGyroTightening(v) }
             OverrideSlider(
                 "appGyroSmooth", if (smooth < 0.05f) "Smoothing off" else "Smoothing below %.1f°/s", smooth, 0f..10f, 0.1f,
                 overridden = false, onReset = null,
-                hint = "Turns slower than this are averaged over a few samples, which steadies slow aim. Every workspace uses it.",
+                hint = "When the phone turns slower than this, its motion is spread over 8 ms, which steadies slow aim. Faster turns " +
+                        "go straight through. It compares the phone's own turning speed. Every workspace uses it.",
             ) { v -> runtime.setGyroSmoothing(v) }
             OverrideSlider(
                 "appSensCapRws", "Slider cap %.1f RWS", capRws,
@@ -380,6 +383,17 @@ private fun AppTab(runtime: GamepadRuntime) {
                     "(when input is sent, see Screen), other apps get nothing from it, and its buttons reach the PC from the background too."
                 else "USB gamepads go through Android like any other: only while GP is on screen.",
             ) { runtime.setUsbDirect(it) }
+            val waitingPad = usbWaiting
+            if (usbDirect && waitingPad != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Not read directly yet: $waitingPad is waiting for your \"Allow\". Until then it works through Android.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { runtime.usbPads.askNow() }) { Text("Allow") }
+                }
+            }
             Text("Debug", style = MaterialTheme.typography.titleSmall)
             SwitchRow(
                 "Diagnostics", diagOn,

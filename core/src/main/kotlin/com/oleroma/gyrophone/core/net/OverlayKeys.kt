@@ -4,6 +4,7 @@ import com.oleroma.gyrophone.core.model.AndroidAxis
 import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.AxisStage
+import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.ButtonGesture
 import com.oleroma.gyrophone.core.model.Describe
 import com.oleroma.gyrophone.core.model.GamepadAxis
@@ -147,8 +148,12 @@ data class OverlayKeys(
 
         /** [src]'s name as the controller editor shows it: the control ("A", "LT"), then the input unless it is the main one ("LS click", "A tap"). */
         fun name(src: InputSource): String {
+            // A stick direction's outer zone (after its card's separator): "LS outer left".
+            val outer = Bindings.isOuter(src)
+            val find = if (outer) Bindings.innerSource(src) else src
             for (c in controls) for (input in c.inputs) {
-                if (src !in input.sources) continue
+                if (find !in input.sources) continue
+                if (outer) return c.label + " outer " + input.label.lowercase()
                 return if (input.label == "Press" || input.label == "Pull") c.label else c.label + " " + input.label.lowercase()
             }
             return Describe.source(src).removePrefix("Controller ")

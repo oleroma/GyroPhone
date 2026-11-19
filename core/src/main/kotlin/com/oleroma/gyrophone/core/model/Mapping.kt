@@ -35,7 +35,11 @@ enum class AxisStage {
     /** The axis itself (analog). */
     NONE,
 
-    /** A stick pushed past its outer ring: with a half, only in that direction's pie; FULL = any direction. */
+    /**
+     * A stick pushed past its outer ring, only in that direction's pie: a direction card's outer zone
+     * (its chips after the separator). FULL (any direction) is no longer made: older ones become the
+     * four directions' ([DevicePresets.foldOuterAny]).
+     */
     OUTER,
 
     /** A trigger pulled past its press point. */
@@ -250,15 +254,18 @@ sealed interface InputSource {
     @SerialName("touch_double")
     data class TouchDoubleTap(val id: String) : InputSource
 
-    /** One axis of a virtual touchscreen stick. */
+    /**
+     * One axis of a virtual touchscreen stick. [outer]: a direction's outer zone, on while that
+     * direction is pressed and the stick is pushed past its [TouchControl.outerRing].
+     */
     @Serializable
     @SerialName("touch_stick")
-    data class TouchStick(val id: String, val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL) : InputSource
+    data class TouchStick(val id: String, val axis: StickAxis, val half: AxisHalf = AxisHalf.FULL, val outer: Boolean = false) : InputSource
 
-    /** A diagonal zone of a virtual touchscreen stick with 8 zones. */
+    /** A diagonal zone of a virtual touchscreen stick with 8 zones; [outer] as [TouchStick.outer]. */
     @Serializable
     @SerialName("touch_stick_diagonal")
-    data class TouchStickDiagonal(val id: String, val diagonal: StickDiagonal) : InputSource
+    data class TouchStickDiagonal(val id: String, val diagonal: StickDiagonal, val outer: Boolean = false) : InputSource
 
     /**
      * A swipe on a touch button in swipe mode ([TouchControl.swipe]). FULL: the axis, as relative
@@ -495,6 +502,24 @@ sealed interface OutputTarget {
     @Serializable
     @SerialName("level_displays")
     data class SetOrientation(val granular: Boolean = false) : OutputTarget
+
+    /**
+     * Calibrate the gyro's drift (GP's drift correction): the pad shows a popup counting down
+     * [countdownS] seconds to lay the phone still, then measures for [measureS] seconds (longer
+     * averages out more noise). Pressed again while it counts or measures, it cancels. Nothing is
+     * sent to the PC.
+     */
+    @Serializable
+    @SerialName("calibrate_gyro")
+    data class Calibrate(val countdownS: Int = DEFAULT_COUNTDOWN_S, val measureS: Int = DEFAULT_MEASURE_S) : OutputTarget {
+        companion object {
+            const val DEFAULT_COUNTDOWN_S = 3
+            const val MAX_COUNTDOWN_S = 10
+            const val DEFAULT_MEASURE_S = 2
+            const val MIN_MEASURE_S = 1
+            const val MAX_MEASURE_S = 10
+        }
+    }
 
     /** Clears every laser pointer display's paint and trail in the workspace and on the PC overlays. */
     @Serializable

@@ -119,35 +119,9 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
      */
     fun inSpace(m: Motion, space: GyroSpace, up: FloatArray?): Motion {
         if (space == GyroSpace.LOCAL || up == null) return m
-        val ux = up[0]; val uy = up[1]; val uz = up[2]
-        // The turn as a vector in the phone's frame (right, up, toward the player).
-        val wr = m.pitch; val wu = -m.yaw; val wt = -m.roll
-        return when (space) {
-            GyroSpace.WORLD -> {
-                // Shown yaw (stored as roll): the turn around gravity.
-                val turn = -(wr * ux + wu * uy + wt * uz)
-                // The right axis laid flat; straight up or down (phone on its side), the phone's own pitch and roll.
-                var rx = 1f - ux * ux; var ry = -ux * uy; var rz = -ux * uz
-                val n = sqrt(rx * rx + ry * ry + rz * rz)
-                if (n < FLAT_MIN) return Motion(m.yaw, m.pitch, turn)
-                rx /= n; ry /= n; rz /= n
-                // The flat axis along the screen: right × up. Turning about it raises the right edge
-                // (shown roll, stored as yaw); lying flat that is the phone's own.
-                val tx = ry * uz - rz * uy; val ty = rz * ux - rx * uz; val tz = rx * uy - ry * ux
-                Motion(wr * tx + wu * ty + wt * tz, wr * rx + wu * ry + wt * rz, turn)
-            }
-
-            GyroSpace.PLAYER -> {
-                // JoyShockMapper's player space: shown yaw (stored as roll) from the turns about the
-                // screen's vertical axis and through the screen, by how gravity lies in their plane,
-                // eased (×1.41) but never faster than both together. Pitch and roll stay the phone's.
-                val world = -(wu * uy + wt * uz)
-                val most = sqrt(wu * wu + wt * wt)
-                Motion(m.yaw, m.pitch, sign(world) * min(abs(world) * PLAYER_RELAX, most))
-            }
-
-            GyroSpace.LOCAL -> m
-        }
+        val o = FloatArray(3)
+        GyroSpaces.inSpace(m.yaw, m.pitch, m.roll, space.ordinal, up[0], up[1], up[2], o)
+        return Motion(o[0], o[1], o[2])
     }
 
     /**
@@ -240,12 +214,6 @@ class GyroMouse(settings: GyroSettings = GyroSettings()) {
 
         /** Turning this fast (°/s) deflects a game pad axis fully. */
         const val STICK_FULL_DEG_PER_S = GyroMath.STICK_FULL_DEG_PER_S
-
-        /** World space: the right axis this close to vertical has no flat direction to pitch about. */
-        private const val FLAT_MIN = 0.1f
-
-        /** Player space's yaw easing (JoyShockMapper's relax factor). */
-        private const val PLAYER_RELAX = 1.41f
 
         const val GLIDE_MIN_DEG_PER_S = GyroMath.GLIDE_MIN_DEG_PER_S
         const val GLIDE_STOP_DEG_PER_S = GyroMath.GLIDE_STOP_DEG_PER_S

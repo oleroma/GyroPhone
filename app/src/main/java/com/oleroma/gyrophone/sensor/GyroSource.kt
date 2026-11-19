@@ -12,6 +12,7 @@ import android.os.MemoryFile
 import android.os.Process
 import android.util.Log
 import com.oleroma.gyrophone.core.sensor.DirectReportParser
+import com.oleroma.gyrophone.core.sensor.PollPacer
 import com.oleroma.gyrophone.runtime.WorkHint
 import java.util.concurrent.locks.LockSupport
 
@@ -31,10 +32,16 @@ interface GyroSource {
          * the sensor direct channel (shared memory or a gralloc buffer written by the sensor HAL, no Binder or Looper
          * hop) at its highest rate, when supported; then a listener at SENSOR_DELAY_FASTEST on a
          * high-priority thread, used when the direct channel cannot start (or runs capped, see
-         * GamepadRuntime). Empty when the phone has no gyroscope.
+         * GamepadRuntime). Empty when the phone has no gyroscope. [uncalibrated]: the gyro without
+         * Android's drift correction (GP corrects it itself); its first three values are the same rates.
          */
-        fun candidates(sensorManager: SensorManager, pollHz: Int = DirectChannelGyroSource.DEFAULT_POLL_HZ): List<GyroSource> {
-            val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: return emptyList()
+        fun candidates(
+            sensorManager: SensorManager,
+            pollHz: Int = DirectChannelGyroSource.DEFAULT_POLL_HZ,
+            uncalibrated: Boolean = false,
+        ): List<GyroSource> {
+            val type = if (uncalibrated) Sensor.TYPE_GYROSCOPE_UNCALIBRATED else Sensor.TYPE_GYROSCOPE
+            val sensor = sensorManager.getDefaultSensor(type) ?: return emptyList()
             val direct = DirectChannelGyroSource(sensorManager, sensor).apply { this.pollHz = pollHz }
             val listener = ListenerGyroSource(sensorManager, sensor)
             return if (direct.isSupported) listOf(direct, listener) else listOf(listener)
@@ -97,7 +104,7 @@ class DirectChannelGyroSource(
             else -> "normal"
         } + " (${sensor.name}, up to ${(1_000_000f / sensor.minDelay.coerceAtLeast(1)).toInt()} Hz)"
 
-    /** How often the shared memory is checked for new samples; changes apply on the next check. */
+    /** How often the shared memory is checked for new samples while none is expected soon (see [PollPacer]); changes apply on the next check. */
     @Volatile var pollHz: Int = DEFAULT_POLL_HZ
         set(value) { field = value.coerceIn(POLL_RATES_HZ.first(), POLL_RATES_HZ.last()) }
 
@@ -185,6 +192,8 @@ class DirectChannelGyroSource(
         var watchNext = true
         var checks = 0
         val hint = WorkHint.forThisThread()
+        // Sleeps through the stretch where no sample can come and checks often where the next is due (see PollPacer).
+        val pacer = PollPacer()
         try {
             while (running) {
                 val passStart = System.nanoTime()
@@ -202,6 +211,7 @@ class DirectChannelGyroSource(
                         watchNext = false
                         Log.i(TAG, "samples not in ring order: reading the whole ring on every check")
                     }
+                    if (events > 0) pacer.onSample(passStart, parser.timestampNs(events - 1))
                     for (i in 0 until events) sink.onGyro(parser.x(i), parser.y(i), parser.z(i), parser.timestampNs(i))
                     // The pass is done: how long it took goes to the performance hint.
                     if (hint != null && events > 0) {
@@ -209,8 +219,9 @@ class DirectChannelGyroSource(
                         hint.done(end - passStart, end)
                     }
                 }
-                // Polling at pollHz (1-4 kHz, above the HAL rate) adds at most one interval on top of it.
-                LockSupport.parkNanos(1_000_000_000L / pollHz)
+                // pollHz (1-4 kHz) is the plain check rate; above the HAL rate the pacer times the checks around
+                // when the next sample is due, so a sample waits about a quarter of an interval, not up to a whole one.
+                LockSupport.parkNanos(pacer.parkNs(System.nanoTime(), 1_000_000_000L / pollHz))
             }
         } finally {
             // Freed here, never under a read still running: stop() may give up waiting for this thread.

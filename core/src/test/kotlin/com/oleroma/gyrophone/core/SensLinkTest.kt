@@ -155,6 +155,52 @@ class SensLinkTest {
         assertEquals(listOf("Aim", "Sens 1"), w3.namedSens.map { it.name })
     }
 
+    @Test fun undoingADeleteBringsBackOnlyWhatItTook() {
+        val (w0, id) = NamedSens.add(Workspace("w", "w", gyro = GyroSettings(sensitivity = 16f)), touch = false)
+        val chip = Mapping(InputSource.Gyro(MotionAxis.ROLL), OutputTarget.GyroSens(named = id))
+        val before = w0.copy(
+            gyro = w0.gyro.copy(yawLink = SensLink(SensLink.named(id), 0.5f)),
+            mappings = listOf(chip),
+            sliders = listOf(SliderOverride(OutputTarget.GyroSens(named = id), 6f)),
+        )
+        val after = NamedSens.delete(before, id)
+        // Unchanged since: exactly as before, and Redo exactly as after.
+        assertEquals(before, NamedSens.rebase(after, after, before))
+        assertEquals(after, NamedSens.rebase(before, before, after))
+        // Another sensitivity added and a mapping added since: both stay, the deleted one and its chip come back.
+        val (later, other) = NamedSens.add(after, touch = true)
+        val extra = Mapping(InputSource.Gyro(MotionAxis.YAW), OutputTarget.TouchSens(named = other))
+        val now = later.copy(mappings = later.mappings + extra)
+        val undone = NamedSens.rebase(now, after, before)
+        assertEquals(setOf(id, other), undone.namedSens.map { it.id }.toSet())
+        assertEquals(setOf(chip, extra), undone.mappings.toSet())
+        assertEquals(before.sliders, undone.sliders)
+        assertEquals(before.gyro, undone.gyro)
+        // Redo takes the deleted one away again, the later ones staying.
+        val redone = NamedSens.rebase(undone, before, after)
+        assertEquals(listOf(other), redone.namedSens.map { it.id })
+        assertEquals(listOf(extra), redone.mappings)
+    }
+
+    @Test fun undoGoesBackThroughDeleteThenAddInOrder() {
+        val (w0, id) = NamedSens.add(Workspace("w", "w"), touch = false)
+        val renamed = NamedSens.rename(w0, id, "Aim")
+        val deleted = NamedSens.delete(renamed, id)
+        val (added, other) = NamedSens.add(deleted, touch = true)
+        // Undo the add: only the added one goes.
+        val u1 = NamedSens.rebase(added, added, deleted)
+        assertEquals(deleted, u1)
+        // Undo the delete: it comes back with its new name.
+        val u2 = NamedSens.rebase(u1, deleted, renamed)
+        assertEquals(renamed, u2)
+        // Undo the rename: the old name is back.
+        assertEquals(w0, NamedSens.rebase(u2, renamed, w0))
+        // Redo all three in order lands where it was.
+        val r = NamedSens.rebase(NamedSens.rebase(NamedSens.rebase(w0, w0, renamed), renamed, deleted), deleted, added)
+        assertEquals(added, r)
+        assertEquals(listOf(other), r.namedSens.map { it.id })
+    }
+
     @Test fun deletingANamedSensitivityKeepsWhatFollowedItAndDropsItsChips() {
         val (w0, id) = NamedSens.add(Workspace("w", "w", gyro = GyroSettings(sensitivity = 16f)), touch = false)
         val chip = Mapping(InputSource.Gyro(MotionAxis.ROLL), OutputTarget.GyroSens(named = id))

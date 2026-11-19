@@ -75,6 +75,8 @@ internal class MappingSettings(
     val itemsHeader: (@Composable () -> Unit)? = null,
     /** A gyro axis card's Sensitivity line; null = none (any other card). */
     val sens: (BindableInput) -> SensRow? = { null },
+    /** A stick direction card's outer zone settings, opened by its separator; null = none. */
+    val outer: (BindableInput) -> (@Composable () -> Unit)? = { null },
 )
 
 /**
@@ -416,8 +418,26 @@ internal fun touchControlSettings(
         items = items,
         itemsHeader = header,
         sens = { input -> (input.sources.firstOrNull() as? InputSource.Gyro)?.let { s -> gyro?.let { buttonSensRow(it, s.axis) } } },
+        outer = { input ->
+            if (control.kind == TouchKind.STICK && Bindings.stickOuter(input) != null) ui { TouchStickOuterSettings(control, key, update) } else null
+        },
     )
 }
+
+/** A touch stick's outer zone: how far it is pushed for its directions' chips after the separator. */
+@Composable
+private fun TouchStickOuterSettings(control: TouchControl, key: String, update: ((TouchControl) -> TouchControl) -> Unit) {
+    val d = TouchControl.DEFAULT_OUTER_RING
+    OverrideSlider(
+        key + "ring", "Outer ring %.0f%%", control.outerRing * 100, TouchControl.MIN_OUTER_RING * 100..100f, 1f, control.outerRing != d,
+        { update { it.copy(outerRing = d) } },
+        OUTER_HINT + " Counted past the deadzone. The whole stick: every direction's outer zone uses it.",
+    ) { v -> update { it.copy(outerRing = v / 100) } }
+}
+
+private const val OUTER_HINT =
+    "Chips after a direction's separator fire while that direction is pressed and the stick is pushed past this, " +
+        "on top of the ones before it: W before it and Shift after it sprints."
 
 /**
  * The ⚙ and Settings of the workspace touchpad: its settings are the workspace's own
@@ -664,6 +684,7 @@ internal fun physicalSettings(
             shared = if (items.isEmpty()) null else ui { ReorderableSections(runtime, "physical", items) },
             items = items,
             sens = { input -> (input.sources.firstOrNull() as? InputSource.Gyro)?.let { s -> level?.let { buttonSensRow(it, s.axis) } } },
+            outer = a.outer,
         )
     }
 }
@@ -782,7 +803,47 @@ private fun physicalActionSettings(
         }
     },
     shared = null,
+    outer = { input ->
+        val axis = input.sources.firstOrNull() as? InputSource.Axis
+        val stickId = axis?.takeIf { Bindings.stickOuter(input) != null }
+            ?.let { a -> PhysicalSticks.sticks.entries.firstOrNull { a.axis == it.value.first || a.axis == it.value.second }?.key }
+        if (axis == null || stickId == null) null else {
+            val x = axis.axis == PhysicalSticks.sticks.getValue(stickId).first
+            val only = when (axis.half) {
+                AxisHalf.POSITIVE -> if (x) Direction.RIGHT else Direction.DOWN
+                else -> if (x) Direction.LEFT else Direction.UP
+            }
+            ui { StickOuterSettings(runtime, preset, stickId, only, update) }
+        }
+    },
 )
+
+/**
+ * A physical stick's outer zone in [preset] (stick [id]): the picture, [only] (the direction whose
+ * separator opened it) bright, and its Outer ring.
+ */
+@Composable
+private fun StickOuterSettings(
+    runtime: GamepadRuntime,
+    preset: DevicePreset,
+    id: String,
+    only: Direction,
+    update: ((DevicePreset) -> DevicePreset) -> Unit,
+) {
+    val t = preset.stick(id)
+    val d = StickTuning()
+    val key = preset.id + ":" + id + ":"
+    var live by remember(key) { mutableStateOf<StickTuning?>(null) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        NotSearching { StickPiePicture(live ?: t, runtime.stickWatch, right = id == "rs", only) }
+        OverrideSlider(
+            key + "ring", "Outer ring %.0f%%", t.outerRing * 100, 30f..100f, 1f, t.outerRing != d.outerRing,
+            { update { p -> p.withStick(id, p.stick(id).copy(outerRing = d.outerRing)) } },
+            "$OUTER_HINT The whole stick: every direction's outer zone uses it, kept in the preset.",
+            onLive = { v -> live = v?.let { t.copy(outerRing = it / 100) } },
+        ) { v -> update { p -> p.withStick(id, p.stick(id).copy(outerRing = v / 100)) } }
+    }
+}
 
 /**
  * A physical stick's tuning in [preset] (stick [id]): its picture ([StickPiePicture], [only]: the
@@ -840,7 +901,7 @@ private fun StickTuningSettings(
         OverrideSlider(
             key + "ring", "Outer ring %.0f%%", t.outerRing * 100, 30f..100f, 1f, t.outerRing != d.outerRing,
             { set { it.copy(outerRing = d.outerRing) } },
-            "The Outer cards fire while the stick is pushed past this, for example Shift to sprint.",
+            "Chips after a direction's separator fire while the stick is pushed past this, for example Shift to sprint.",
             onLive = liveOf { s, v -> s.copy(outerRing = v / 100) },
         ) { v -> set { it.copy(outerRing = v / 100) } }
         OverrideSlider(

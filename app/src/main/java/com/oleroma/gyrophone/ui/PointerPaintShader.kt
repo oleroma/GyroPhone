@@ -96,8 +96,8 @@ internal class PointerPaintShader {
     private var packedFailed = false
 
     /**
-     * Brings the shaders' maps up to date through [PaintBuffers]: only the rows painted since the
-     * last frame are written, every frame. False when that isn't possible here (no such buffers).
+     * Brings the shaders' maps up to date through [PaintBuffers]: only the patch (rows and columns) painted
+     * since the last frame is written, every frame. False when that isn't possible here (no such buffers).
      */
     private fun drawPacked(lp: LaserPaint, look: Look): Boolean {
         if (packedFailed) return false
@@ -120,11 +120,14 @@ internal class PointerPaintShader {
         val all = fresh || uploaded == Long.MIN_VALUE
         val j0 = if (all) 0 else lp.changedFrom.coerceAtLeast(0)
         val j1 = if (all) lp.height - 1 else lp.changedTo.coerceAtMost(lp.height - 1)
-        if (!pb.write(lp, j0, j1)) { dropPacked(); return false }
+        val i0 = if (all) 0 else lp.changedColFrom.coerceAtLeast(0)
+        val i1 = if (all) lp.width - 1 else lp.changedColTo.coerceAtMost(lp.width - 1)
+        if (!pb.write(lp, j0, j1, i0, i1)) { dropPacked(); return false }
         if (wayNow) {
-            // A way picture that missed paint (colour by way was off) takes every row again.
+            // A way picture that missed paint (colour by way was off) takes all of it again.
             val wAll = all || wayStale
-            if (!pb.writeWay(ways!!, if (wAll) 0 else j0, if (wAll) lp.height - 1 else j1)) { dropPacked(); return false }
+            val ok = if (wAll) pb.writeWay(ways!!, 0, lp.height - 1) else pb.writeWay(ways!!, j0, j1, i0, i1)
+            if (!ok) { dropPacked(); return false }
             wayStale = false
         } else wayStale = true
         lp.takeChanged()

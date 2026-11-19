@@ -1773,13 +1773,15 @@ public sealed class HostEngine
     /// <summary>
     /// Sends KEEP_AWAKE to the active session (the keep-awake thread, every <see cref="Wire.KeepAwakeMs"/>): a Wi-Fi
     /// client in power save wakes only at each beacon, so without it the phone's packets arrive in 100 ms batches while
-    /// it sends little. Skipped over USB, Ethernet and loopback, where no radio sleeps. Takes no engine lock, so it never
-    /// holds up input: a session dropped meanwhile just ignores the send.
+    /// it sends little. Skipped over USB, Ethernet and loopback, and where the PC's own adapter toward the phone is no
+    /// Wi-Fi client (a cable to the router, or the PC's Mobile hotspot): no radio of the PC sleeps there, and the phone
+    /// would only be kept awake for nothing. Takes no engine lock, so it never holds up input: a session dropped
+    /// meanwhile just ignores the send.
     /// </summary>
     public bool KeepAwake()
     {
         var a = _sessions.Active;
-        if (a == null || !a.Promoted || !KeepAwakeWanted(_stats.LastLinkInfo, a.Endpoint)) return false;
+        if (a == null || !a.Promoted || !KeepAwakeWanted(_stats.LastLinkInfo, a.Endpoint, PcWifiClientFor(a.Endpoint))) return false;
         a.SendSealed(PacketType.KeepAwake, _keepAwakePlain, _sender);
         return true;
     }
@@ -1800,7 +1802,7 @@ public sealed class HostEngine
     {
         _keepAwakeWake.Reset();
         var a = _sessions.Active;
-        if (a != null && a.Promoted && KeepAwakeWanted(_stats.LastLinkInfo, a.Endpoint)) return;
+        if (a != null && a.Promoted && KeepAwakeWanted(_stats.LastLinkInfo, a.Endpoint, PcWifiClientFor(a.Endpoint))) return;
         _keepAwakeWake.Wait(KeepAwakeIdleWaitMs);
     }
 
@@ -1826,9 +1828,43 @@ public sealed class HostEngine
         _tickWake.Set();
     }
 
-    /// <summary>False over a wire (the phone's LINK_INFO says USB or Ethernet) or loopback (USB direct); true otherwise, also before the first LINK_INFO.</summary>
-    public static bool KeepAwakeWanted(LinkInfo? link, SocketAddress to)
+    /// <summary>The PC's adapter toward the phone at an IPv4 address, as the watchdog's probe last found it.</summary>
+    private sealed record PcSide(uint Phone, bool WifiClient);
+    private volatile PcSide? _pcSide;
+
+    /// <summary>
+    /// The PC's adapter on <paramref name="phone"/>'s subnet, from the watchdog's probe (every second; null: not found).
+    /// It holds only for that address: a session from another address is "not known" again until the next probe.
+    /// </summary>
+    public void SetPcAdapter(System.Net.IPAddress? phone, Perf.PcAdapter? adapter)
     {
+        PcSide? side = null;
+        if (phone is { AddressFamily: AddressFamily.InterNetwork } && adapter != null)
+        {
+            Span<byte> b = stackalloc byte[4];
+            if (phone.TryWriteBytes(b, out _)) side = new PcSide((uint)(b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]), adapter.Station);
+        }
+        bool wake = side is not { WifiClient: false } && _pcSide is { WifiClient: false };
+        _pcSide = side;
+        if (wake) _keepAwakeWake.Set();
+    }
+
+    /// <summary>Whether the PC reaches <paramref name="to"/> as a Wi-Fi client; null while not known for that address.</summary>
+    private bool? PcWifiClientFor(SocketAddress to)
+    {
+        var p = _pcSide;
+        if (p == null || to.Family != AddressFamily.InterNetwork || to.Size < 8) return null;
+        return (uint)(to[4] << 24 | to[5] << 16 | to[6] << 8 | to[7]) == p.Phone ? p.WifiClient : null;
+    }
+
+    /// <summary>
+    /// False over a wire (the phone's LINK_INFO says USB or Ethernet), loopback (USB direct), or when the PC's own adapter
+    /// toward the phone is known to be no Wi-Fi client (<paramref name="pcWifiClient"/> false: a cable, or the PC's
+    /// hotspot); true otherwise, also before the first LINK_INFO and while the PC's adapter isn't known.
+    /// </summary>
+    public static bool KeepAwakeWanted(LinkInfo? link, SocketAddress to, bool? pcWifiClient = null)
+    {
+        if (pcWifiClient == false) return false;
         if (link is { } l && ((l.Flags & (LinkInfoFlags.Usb | LinkInfoFlags.Ethernet)) != 0 ||
             l.Path is LinkPath.UsbTether or LinkPath.UsbDirect or LinkPath.Ethernet)) return false;
         return !IsLoopback(to);

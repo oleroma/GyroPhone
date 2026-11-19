@@ -186,10 +186,13 @@ public sealed class Watchdog : IDisposable
                 try { labels = _keyLabelsProbe(); } catch (Exception) { }
                 _engine.SetKeyLabels(labels);
             }
+            var phone = _engine.PhoneAddress();
+            // For KEEP_AWAKE: only a PC that is a Wi-Fi client toward the phone needs it.
+            _engine.SetPcAdapter(phone, Perf.LinkPaths.AdapterFor(phone));
             if (_pcSetupProbe != null)
             {
                 byte setup = 0;
-                try { setup = _pcSetupProbe(_engine.PhoneAddress()); } catch (Exception) { }
+                try { setup = _pcSetupProbe(phone); } catch (Exception) { }
                 _engine.SetPcSetup(setup);
             }
         }

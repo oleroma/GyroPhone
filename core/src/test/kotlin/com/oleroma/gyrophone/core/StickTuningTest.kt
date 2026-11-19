@@ -7,7 +7,10 @@ import com.oleroma.gyrophone.core.model.AttachedPad
 import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.AxisStage
 import com.oleroma.gyrophone.core.model.DeviceMatch
+import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.DevicePreset
+import com.oleroma.gyrophone.core.model.DevicePresets
+import com.oleroma.gyrophone.core.model.PhysicalLayouts
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownLayouts
@@ -269,5 +272,32 @@ class StickTuningTest {
             listOf(Mapping(InputSource.Key(com.oleroma.gyrophone.core.model.AndroidKey.BUTTON_THUMBL), right)),
             com.oleroma.gyrophone.core.model.DevicePresets.fixStandIns(p).controller,
         )
+    }
+
+    @Test fun oldAnyDirectionOuterBecomesTheFourDirections() {
+        val shift = OutputTarget.Key(0xE1)
+        val p = DevicePreset("d", "d", controller = listOf(Mapping(InputSource.Axis(AndroidAxis.RZ, stage = AxisStage.OUTER), shift, set = 2)))
+        val folded = DevicePresets.foldOuterAny(p).controller
+        assertEquals(
+            setOf(
+                InputSource.Axis(AndroidAxis.Z, AxisHalf.NEGATIVE, AxisStage.OUTER), InputSource.Axis(AndroidAxis.Z, AxisHalf.POSITIVE, AxisStage.OUTER),
+                InputSource.Axis(AndroidAxis.RZ, AxisHalf.NEGATIVE, AxisStage.OUTER), InputSource.Axis(AndroidAxis.RZ, AxisHalf.POSITIVE, AxisStage.OUTER),
+            ),
+            folded.map { it.source }.toSet(),
+        )
+        assertTrue(folded.all { it.target == shift && it.set == 2 })
+        val plain = DevicePreset("d", "d", controller = listOf(Mapping(InputSource.Axis(x), OutputTarget.PadAxis(GamepadAxis.LX))))
+        assertTrue(DevicePresets.foldOuterAny(plain) === plain)
+    }
+
+    @Test fun stickCardsHaveNoOuterCardsButDirectionsHaveOuterZones() {
+        val ls = PhysicalLayouts.controllerFront.controls.first { it.id == "ls" }
+        assertFalse(ls.inputs.any { it.label.startsWith("Outer") })
+        val left = ls.inputs.first { it.label == "Left" }
+        assertEquals(listOf(InputSource.Axis(x, AxisHalf.NEGATIVE, AxisStage.OUTER)), Bindings.stickOuter(left)?.sources)
+        assertEquals(null, Bindings.stickOuter(ls.inputs.first { it.label == "X axis" }))
+        assertEquals("LS outer left", com.oleroma.gyrophone.core.net.OverlayKeys.name(InputSource.Axis(x, AxisHalf.NEGATIVE, AxisStage.OUTER)))
+        // A D-pad's hat axis is no stick: no outer zone.
+        assertEquals(null, Bindings.outerSource(InputSource.Axis(AndroidAxis.HAT_X, AxisHalf.NEGATIVE)))
     }
 }

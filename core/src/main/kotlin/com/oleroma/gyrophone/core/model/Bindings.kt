@@ -53,6 +53,41 @@ object Bindings {
             }
         }
 
+    /**
+     * The outer zone of stick direction [s] (a controller stick's or a touch stick's direction or
+     * diagonal): the same way, pushed past the stick's outer ring. Null for anything else.
+     */
+    fun outerSource(s: InputSource): InputSource? = when (s) {
+        is InputSource.Axis ->
+            if (s.half != AxisHalf.FULL && s.stage == AxisStage.NONE && PhysicalSticks.isStickAxis(s.axis)) s.copy(stage = AxisStage.OUTER) else null
+        is InputSource.TouchStick -> if (s.half != AxisHalf.FULL && !s.outer) s.copy(outer = true) else null
+        is InputSource.TouchStickDiagonal -> if (!s.outer) s.copy(outer = true) else null
+        else -> null
+    }
+
+    /** [s] in a stick direction's outer zone ([outerSource]). */
+    fun isOuter(s: InputSource): Boolean = when (s) {
+        is InputSource.Axis -> s.stage == AxisStage.OUTER && s.half != AxisHalf.FULL
+        is InputSource.TouchStick -> s.outer
+        is InputSource.TouchStickDiagonal -> s.outer
+        else -> false
+    }
+
+    /** [s] without its outer zone ([isOuter]): the direction itself; any other source as it is. */
+    fun innerSource(s: InputSource): InputSource = when {
+        !isOuter(s) -> s
+        s is InputSource.Axis -> s.copy(stage = AxisStage.NONE)
+        s is InputSource.TouchStick -> s.copy(outer = false)
+        s is InputSource.TouchStickDiagonal -> s.copy(outer = false)
+        else -> s
+    }
+
+    /** Stick direction card [input]'s outer zone ([outerSource]), or null when it is no stick direction. */
+    fun stickOuter(input: BindableInput): BindableInput? {
+        if (input.sources.isEmpty()) return null
+        return input.copy(sources = input.sources.map { outerSource(it) ?: return null })
+    }
+
     /** [input] (a held direction of a surface) in length zone [zone] ([InputSource.Surface.zone]). */
     fun zoneInput(input: BindableInput, zone: Int): BindableInput =
         input.copy(sources = input.sources.map { s -> if (s is InputSource.Surface) s.copy(zone = zone) else s })

@@ -57,8 +57,8 @@ When the phone's **Use PC controller for gyro ratchet** is on ([Controllers](pho
 
 1. reads the PC's controller (`XInputPcPad`: the first XInput pad that is not ours, every millisecond on its own thread, counting presses so none is lost between STATEs; empty slots checked only every few seconds);
 2. works out each sample's ratchet state from what was held **at that sample's time** (`PadHeldHistory`) and the PAD_GYRO buttons (`GyroGate`: axes each ratchet flips, toggle, own settings from PAD_GYRO_SET);
-3. runs the samples through `GyroMath.cs` (the exact port of the phone's `GyroMath.kt`), and fills a gap longer than the 8-sample ring in one step from the running totals;
-4. adds the result to STATE's non-gyro mouse, wheel and pad axes before injecting.
+3. turns each sample into each axis's gyro space (`GyroSpaces.InSpaces`, the port of the phone's `GyroSpaces.kt`) with the sample's own up and the config's Space (a held button's own from PAD_GYRO_SET), runs it through `GyroMath.cs` (the exact port of the phone's `GyroMath.kt`), and fills a gap longer than the 8-sample ring in one step from the running totals (in the newest sample's spaces);
+4. adds the result to STATE's non-gyro mouse, wheel and pad axes before injecting (pad axes added and clamped to full, as on the phone).
 
 The PC controller's own buttons still reach games directly (or through Steam Input); the companion only reads it. Its ratchets also count for the overlays' "Ease on ratchet".
 

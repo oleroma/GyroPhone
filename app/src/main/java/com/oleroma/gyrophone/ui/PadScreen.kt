@@ -604,6 +604,11 @@ fun PadScreen(
 
     fun redoEdit() {
         val d = draft ?: return
+        // A change made since the last undo (not a step yet) ends what could be redone, as it will once it settles.
+        if (undoBase[0] != null && d != undoBase[0]) {
+            redoSteps.clear()
+            return
+        }
         val next = redoSteps.removeLastOrNull() ?: return
         undoSteps.add(undoBase[0] ?: d)
         undoBase[0] = next
@@ -2267,6 +2272,9 @@ fun PadScreen(
 
         if (linkTest && !editing) LinkTestNote()
 
+        val calibratePopup by runtime.calibratePopup.collectAsStateWithLifecycle()
+        calibratePopup?.let { if (!editing) CalibratePopup(it) }
+
         if (black) BlackScreen { black = false }
 
         if (!editing) {
@@ -2610,7 +2618,7 @@ fun PadScreen(
                                 .size(if (small) 14.dp else 22.dp),
                         )
                         val canUndo = undoSteps.isNotEmpty() || (undoBase[0] != null && draft !== undoBase[0])
-                        val canRedo = redoSteps.isNotEmpty()
+                        val canRedo = redoSteps.isNotEmpty() && (undoBase[0] == null || draft == undoBase[0])
                         val mainRows = min(panelRows, mainRowsCap(portrait))
                         // Select's Sync choices for the picked controls.
                         val sync = SyncChoices(editControls(), if (selectMode) picked else emptySet())
