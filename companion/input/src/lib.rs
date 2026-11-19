@@ -13,6 +13,8 @@ pub mod codec;
 pub mod crypto;
 pub mod gyro;
 pub mod le;
+pub mod mapping;
+pub mod mouse;
 pub mod state_frame;
 pub mod wire;
 
