@@ -112,7 +112,7 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
                 } else if (n < 0 && System.nanoTime() - start < 5_000_000L) {
                     // Not a timeout: the pad errs at once (gone, or taken back). Stop after a few.
                     if (++quickErrors >= 20) {
-                        Log.w(TAG, "$name: reads keep failing, letting it go")
+                        Log.w(TAG, "$name: reads keep failing (last result $n), letting it go")
                         control.post { close(this, failed = true) }
                         break
                     }
@@ -416,7 +416,10 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
     }.getOrNull()
 
     private fun open(dev: UsbDevice) {
-        val conn = usbManager.openDevice(dev) ?: run { failed += dev.deviceName; return }
+        val conn = usbManager.openDevice(dev) ?: run {
+            Log.w(TAG, "${nameOf(dev)}: could not be opened")
+            failed += dev.deviceName; return
+        }
         var taken: Pad? = null
         var mismatch: String? = null
         for (i in 0 until dev.interfaceCount) {
@@ -425,10 +428,14 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
             if (iface.interfaceClass != UsbConstants.USB_CLASS_HID || iface.interfaceSubclass == 1) continue
             val ep = (0 until iface.endpointCount).map { iface.getEndpoint(it) }
                 .firstOrNull { it.direction == UsbConstants.USB_DIR_IN && it.type == UsbConstants.USB_ENDPOINT_XFER_INT } ?: continue
-            if (!conn.claimInterface(iface, true)) continue
+            if (!conn.claimInterface(iface, true)) {
+                Log.w(TAG, "${nameOf(dev)}: interface ${iface.id} could not be claimed")
+                continue
+            }
             val desc = reportDescriptor(conn, iface.id)
             val gp = desc?.let { HidGamepad(it) }
             if (gp == null || !gp.usable) {
+                Log.w(TAG, "${nameOf(dev)}: interface ${iface.id} " + if (desc == null) "gave no report descriptor" else "is no usable game pad (${desc.size} descriptor bytes)")
                 conn.releaseInterface(iface)
                 continue
             }
@@ -451,6 +458,7 @@ class UsbPads(private val context: Context, private val runtime: GamepadRuntime)
             break
         }
         if (taken == null) {
+            Log.w(TAG, "${nameOf(dev)}: not taken (${dev.interfaceCount} interfaces), left alone until it is replugged")
             conn.close()
             failed += dev.deviceName
             if (mismatch != null && mismatched.add(mismatch)) prefs.edit().putStringSet(KEY_MISMATCHED, HashSet(mismatched)).apply()
