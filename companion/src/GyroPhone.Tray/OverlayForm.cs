@@ -501,7 +501,8 @@ internal sealed class OverlayForm : Form
         if (IsDisposed || _drawStop) return;
         if (_drawThread == null)
         {
-            _drawThread = new Thread(DrawLoop) { IsBackground = true, Name = $"overlay {_id}", Priority = ThreadPriority.Normal };
+            // Below the game's and the input's threads: on a busy PC the overlays drop frames first.
+            _drawThread = new Thread(DrawLoop) { IsBackground = true, Name = $"overlay {_id}", Priority = ThreadPriority.BelowNormal };
             _drawThread.Start();
         }
         _drawWake.Set();
