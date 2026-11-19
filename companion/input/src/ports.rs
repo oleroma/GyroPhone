@@ -17,6 +17,14 @@ pub trait Clock: Send + Sync {
     fn tick_ms(&self) -> i64 {
         self.now_us() / 1000
     }
+    /// The clock's own count now (Windows: QueryPerformanceCounter, which the companion's Delivery test reads
+    /// too); `ticks_to_us` turns it into `now_us`'s time.
+    fn now_ticks(&self) -> i64 {
+        self.now_us()
+    }
+    fn ticks_to_us(&self, ticks: i64) -> i64 {
+        ticks
+    }
 }
 
 /// Notifications for the companion. Called under the engine lock from the rx or watchdog thread, so

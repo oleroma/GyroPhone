@@ -1030,3 +1030,189 @@ pub mod harness {
 
     pub const _USES: usize = wire::HEADER;
 }
+
+/// The companion's side of the pipe, over a loopback socket: calls with their replies, and the events as they
+/// come.
+pub mod companion {
+    use std::collections::HashMap;
+    use std::io::Read;
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::{Duration, Instant};
+
+    use gp_input::host::PipeListener;
+    use gp_input::pipe::{Duplex, KIND_CALL, KIND_EVENT, KIND_REPLY};
+    use serde_json::{json, Value};
+
+    #[derive(Default)]
+    struct Inbox {
+        replies: HashMap<i64, Value>,
+        events: Vec<(String, Value)>,
+        closed: bool,
+    }
+
+    pub struct Companion {
+        stream: TcpStream,
+        inbox: Arc<(Mutex<Inbox>, Condvar)>,
+        next_id: AtomicI32,
+    }
+
+    pub fn frame(kind: u8, body: &[u8]) -> Vec<u8> {
+        let mut f = (body.len() as i32).to_le_bytes().to_vec();
+        f.push(kind);
+        f.extend_from_slice(body);
+        f
+    }
+
+    fn read_frame(s: &mut TcpStream) -> Option<(u8, Vec<u8>)> {
+        let mut head = [0u8; 5];
+        s.read_exact(&mut head).ok()?;
+        let len = i32::from_le_bytes([head[0], head[1], head[2], head[3]]);
+        let mut body = vec![0u8; usize::try_from(len).ok()?];
+        s.read_exact(&mut body).ok()?;
+        Some((head[4], body))
+    }
+
+    impl Companion {
+        pub fn connect(port: u16) -> Companion {
+            Companion::over(TcpStream::connect(("127.0.0.1", port)).unwrap())
+        }
+
+        pub fn over(stream: TcpStream) -> Companion {
+            let inbox = Arc::new((Mutex::new(Inbox::default()), Condvar::new()));
+            let (mut rd, for_thread) = (stream.try_clone().unwrap(), inbox.clone());
+            std::thread::spawn(move || {
+                while let Some((kind, body)) = read_frame(&mut rd) {
+                    let v: Value = serde_json::from_slice(&body).expect("the input process sends JSON");
+                    let mut g = for_thread.0.lock().unwrap();
+                    match kind {
+                        KIND_REPLY => {
+                            g.replies.insert(v["id"].as_i64().unwrap(), v);
+                        }
+                        KIND_EVENT => g.events.push((v["name"].as_str().unwrap().to_string(), v["payload"].clone())),
+                        other => panic!("kind {other} from the input process"),
+                    }
+                    for_thread.1.notify_all();
+                }
+                for_thread.0.lock().unwrap().closed = true;
+                for_thread.1.notify_all();
+            });
+            Companion { stream, inbox, next_id: AtomicI32::new(0) }
+        }
+
+        pub fn send_raw(&self, bytes: &[u8]) -> bool {
+            (&self.stream).write_all(bytes).is_ok()
+        }
+
+        /// The whole reply message ({id, ok, error, result}); None when the line closed first.
+        pub fn call_raw(&self, method: &str, args: Value) -> Option<Value> {
+            let id = self.next_id.fetch_add(1, Ordering::SeqCst) as i64 + 1;
+            let body = serde_json::to_vec(&json!({ "id": id, "method": method, "args": args })).unwrap();
+            if !self.send_raw(&frame(KIND_CALL, &body)) {
+                return None;
+            }
+            let g = self.inbox.0.lock().unwrap();
+            let (mut g, _) = self
+                .inbox
+                .1
+                .wait_timeout_while(g, Duration::from_secs(10), |i| !i.replies.contains_key(&id) && !i.closed)
+                .unwrap();
+            g.replies.remove(&id)
+        }
+
+        /// The call's result; panics when it failed.
+        pub fn call(&self, method: &str, args: Value) -> Value {
+            let r = self.call_raw(method, args).unwrap_or_else(|| panic!("{method}: no reply"));
+            assert_eq!(Value::Bool(true), r["ok"], "{method} failed: {}", r["error"]);
+            r["result"].clone()
+        }
+
+        /// The call's error text; panics when it worked.
+        pub fn call_err(&self, method: &str, args: Value) -> String {
+            let r = self.call_raw(method, args).unwrap_or_else(|| panic!("{method}: no reply"));
+            assert_eq!(Value::Bool(false), r["ok"], "{method} worked");
+            assert_eq!(Value::Null, r["result"]);
+            r["error"].as_str().unwrap().to_string()
+        }
+
+        pub fn events(&self, name: &str) -> Vec<Value> {
+            self.inbox.0.lock().unwrap().events.iter().filter(|(n, _)| n == name).map(|(_, p)| p.clone()).collect()
+        }
+
+        pub fn clear_events(&self) {
+            self.inbox.0.lock().unwrap().events.clear();
+        }
+
+        /// Waits up to `ms` for an event `name` that `want` accepts (the newest such).
+        pub fn wait_event(&self, name: &str, ms: u64, want: impl Fn(&Value) -> bool) -> Option<Value> {
+            let end = Instant::now() + Duration::from_millis(ms);
+            let mut g = self.inbox.0.lock().unwrap();
+            loop {
+                if let Some((_, p)) = g.events.iter().rev().find(|(n, p)| n == name && want(p)) {
+                    return Some(p.clone());
+                }
+                let left = end.saturating_duration_since(Instant::now());
+                if left.is_zero() || g.closed {
+                    return None;
+                }
+                g = self.inbox.1.wait_timeout(g, left).unwrap().0;
+            }
+        }
+
+        pub fn wait_closed(&self, ms: u64) -> bool {
+            let g = self.inbox.0.lock().unwrap();
+            self.inbox.1.wait_timeout_while(g, Duration::from_millis(ms), |i| !i.closed).unwrap().0.closed
+        }
+
+        /// Goes away without Exit, as a crash does.
+        pub fn vanish(&self) {
+            let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
+
+    impl Drop for Companion {
+        fn drop(&mut self) {
+            self.vanish();
+        }
+    }
+
+    /// The "named pipe": a loopback listener.
+    pub struct LoopbackPipes {
+        listener: TcpListener,
+        cancelled: AtomicBool,
+        pub fail_next: AtomicBool,
+    }
+
+    impl LoopbackPipes {
+        pub fn new() -> LoopbackPipes {
+            LoopbackPipes {
+                listener: TcpListener::bind(("127.0.0.1", 0)).unwrap(),
+                cancelled: AtomicBool::new(false),
+                fail_next: AtomicBool::new(false),
+            }
+        }
+
+        pub fn port(&self) -> u16 {
+            self.listener.local_addr().unwrap().port()
+        }
+    }
+
+    impl PipeListener for LoopbackPipes {
+        fn accept(&self) -> std::io::Result<Arc<dyn Duplex>> {
+            if self.fail_next.swap(false, Ordering::SeqCst) {
+                return Err(std::io::Error::other("pipe busy"));
+            }
+            let (s, _) = self.listener.accept()?;
+            if self.cancelled.load(Ordering::SeqCst) {
+                return Err(std::io::Error::other("cancelled"));
+            }
+            Ok(Arc::new(s))
+        }
+
+        fn cancel(&self) {
+            self.cancelled.store(true, Ordering::SeqCst);
+            let _ = TcpStream::connect(("127.0.0.1", self.port()));
+        }
+    }
+}

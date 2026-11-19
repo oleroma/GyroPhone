@@ -10,10 +10,12 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 pub mod codec;
+pub mod control;
 pub mod crypto;
 pub mod engine;
 pub mod gyro;
 pub mod held_marker;
+pub mod host;
 pub mod key_files;
 pub mod le;
 pub mod link_stats;
@@ -21,6 +23,7 @@ pub mod mapping;
 pub mod motion;
 pub mod mouse;
 pub mod pairing;
+pub mod pipe;
 pub mod ports;
 pub mod press;
 pub mod rate_limiter;

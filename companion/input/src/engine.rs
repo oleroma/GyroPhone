@@ -150,9 +150,10 @@ pub trait EngineHooks: Send + Sync {
     fn diagnostics_changed(&self, _on: bool) {}
     /// A PHONE_STATS arrived while Diagnostics is on.
     fn phone_second(&self, _s: &PhoneSecond) {}
-    /// Diagnostics' delivery probe: a mouse move's hand-off started at `t0_us`. Called UNDER the engine lock on
-    /// the input path, so it must only store the numbers.
-    fn move_sent(&self, _t0_us: i64, _dx: i32, _dy: i32) {}
+    /// The delivery probe (`HostEngine::set_move_watch`): a mouse move's hand-off started at `t0_ticks` on the
+    /// clock's own count (`Clock::now_ticks`). Called UNDER the engine lock on the input path, so it must only
+    /// store the numbers.
+    fn move_sent(&self, _t0_ticks: i64, _dx: i32, _dy: i32) {}
 }
 
 /// Hooks that do nothing.
@@ -345,6 +346,8 @@ struct Free {
     /// The pad sink in use, for the PC controller reader's "which XInput slot is ours" (asked outside the lock).
     pad_now: Mutex<Arc<dyn PadSink>>,
     diag_apply_queued: AtomicBool,
+    /// Mouse moves are told to `EngineHooks::move_sent` (Diagnostics' delivery probe, or a Delivery test).
+    move_watch: AtomicBool,
 }
 
 const PC_SIDE_KNOWN: u64 = 1 << 63;
@@ -697,6 +700,7 @@ impl HostEngine {
             pc_side: AtomicU64::new(0),
             pad_now: Mutex::new(pad.clone()),
             diag_apply_queued: AtomicBool::new(false),
+            move_watch: AtomicBool::new(false),
         });
         let slot_free = free.clone();
         let slot_fn: Arc<dyn Fn() -> i32 + Send + Sync> = Arc::new(move || {
@@ -1555,6 +1559,11 @@ impl HostEngine {
         }
         let (total_us, phone_us) = g.press.median()?;
         Some(ButtonLatency { total_us, phone_us, count: g.press.count(), last_us: g.press.last_total_us() })
+    }
+
+    /// Tells each mouse move's hand-off to `EngineHooks::move_sent` (the delivery probe runs) or stops telling.
+    pub fn set_move_watch(&self, on: bool) {
+        self.free.move_watch.store(on, Ordering::Relaxed);
     }
 
     /// Release-all for external triggers (session switch, suspend, exit).
@@ -2524,14 +2533,15 @@ impl Inner {
             self.note_blocked_ups(&before, before_mouse);
         }
         if n > 0 {
-            let t0 = self.clock.now_us();
+            let t0_ticks = self.clock.now_ticks();
+            let t0 = self.clock.ticks_to_us(t0_ticks);
             let took = self.key_mouse.inject(&self.inject[..n]);
             let after = self.clock.now_us();
             self.hand_off.send_input_us = self.hand_off.send_input_us.saturating_add(after.saturating_sub(t0).max(0));
             self.hand_off.route = Some(self.key_mouse.route());
             // Diagnostics' delivery probe: when this move's hand-off started (numbers only).
-            if (mdx | mdy) != 0 && took && self.trace.enabled() {
-                self.hooks.move_sent(t0, mdx, mdy);
+            if (mdx | mdy) != 0 && took && self.free.move_watch.load(Ordering::Relaxed) {
+                self.hooks.move_sent(t0_ticks, mdx, mdy);
             }
             if !took {
                 // Windows dropped them: the ups are sent again once it takes input.
