@@ -152,6 +152,7 @@ private fun AppTab(runtime: GamepadRuntime) {
     val diagOn by runtime.debug.enabled.collectAsStateWithLifecycle()
     val diagKeep by runtime.debug.keepMinutes.collectAsStateWithLifecycle()
     val usbDirect by runtime.usbDirectOn.collectAsStateWithLifecycle()
+    val usbWaiting by runtime.usbPads.waiting.collectAsStateWithLifecycle()
     val tight by runtime.gyroTightening.collectAsStateWithLifecycle()
     val smooth by runtime.gyroSmoothing.collectAsStateWithLifecycle()
     val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
@@ -380,6 +381,17 @@ private fun AppTab(runtime: GamepadRuntime) {
                     "(when input is sent, see Screen), other apps get nothing from it, and its buttons reach the PC from the background too."
                 else "USB gamepads go through Android like any other: only while GP is on screen.",
             ) { runtime.setUsbDirect(it) }
+            val waitingPad = usbWaiting
+            if (usbDirect && waitingPad != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Not read directly yet: $waitingPad is waiting for your \"Allow\". Until then it works through Android.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { runtime.usbPads.askNow() }) { Text("Allow") }
+                }
+            }
             Text("Debug", style = MaterialTheme.typography.titleSmall)
             SwitchRow(
                 "Diagnostics", diagOn,
