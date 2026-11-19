@@ -415,6 +415,9 @@ pub mod harness {
         pub fn advance_ms(&self, ms: i64) {
             self.0.fetch_add(ms * 1000, Ordering::SeqCst);
         }
+        pub fn set(&self, us: i64) {
+            self.0.store(us, Ordering::SeqCst);
+        }
         pub fn advance_us(&self, us: i64) {
             self.0.fetch_add(us, Ordering::SeqCst);
         }
@@ -471,10 +474,49 @@ pub mod harness {
         pub handler: Option<Arc<dyn Fn(u8, u8) + Send + Sync>>,
     }
 
-    pub struct FakePad(pub Mutex<PadState>);
+    pub struct FakePad(pub Mutex<PadState>, pub Gate);
+
+    /// Closed, it holds every `plug` at its start (the driver taking its time) until it is opened.
+    #[derive(Default)]
+    pub struct Gate {
+        closed: Mutex<bool>,
+        opened: std::sync::Condvar,
+        waiting: AtomicI64,
+    }
+
+    impl Gate {
+        pub fn close(&self) {
+            *self.closed.lock().unwrap() = true;
+        }
+        pub fn open(&self) {
+            *self.closed.lock().unwrap() = false;
+            self.opened.notify_all();
+        }
+        /// How many callers are held at the gate now.
+        pub fn waiting(&self) -> i64 {
+            self.waiting.load(Ordering::SeqCst)
+        }
+        fn pass(&self) {
+            let mut closed = self.closed.lock().unwrap();
+            if !*closed {
+                return;
+            }
+            self.waiting.fetch_add(1, Ordering::SeqCst);
+            while *closed {
+                closed = self.opened.wait(closed).unwrap();
+            }
+            self.waiting.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
 
     impl Default for FakePad {
         fn default() -> Self {
+            FakePad::new()
+        }
+    }
+
+    impl FakePad {
+        pub fn new() -> FakePad {
             FakePad(Mutex::new(PadState {
                 driver_ok: true,
                 dual_sense_ok: true,
@@ -488,7 +530,7 @@ pub mod harness {
                 fail_with: None,
                 lose_on_fail: false,
                 handler: None,
-            }))
+            }), Gate::default())
         }
     }
 
@@ -544,6 +586,7 @@ pub mod harness {
             self.0.lock().unwrap().plugged
         }
         fn plug(&self, mode: u8) -> Result<bool, SinkError> {
+            self.1.pass();
             let mut s = self.0.lock().unwrap();
             s.plugs += 1;
             if s.plug_fails {
@@ -741,9 +784,11 @@ pub mod harness {
         pub recorder: Mutex<Vec<RecorderOut>>,
         pub wakes: AtomicI64,
         pub saves: AtomicI64,
-        pub diagnostics: Mutex<Vec<bool>>,
+        pub diagnostics: Mutex<Vec<(bool, std::thread::ThreadId)>>,
         pub phone_seconds: Mutex<Vec<PhoneSecond>>,
         pub moves: Mutex<Vec<(i64, i32, i32)>>,
+        /// Run in `recorder`, before its lines are kept.
+        pub on_recorder: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
     }
 
     impl RecordingHooks {
@@ -766,6 +811,9 @@ pub mod harness {
             self.lines.lock().unwrap().push((us, kind, text.to_owned()));
         }
         fn recorder(&self, out: &[RecorderOut]) {
+            if let Some(f) = &*self.on_recorder.lock().unwrap() {
+                f();
+            }
             self.recorder.lock().unwrap().extend(out.iter().cloned());
         }
         fn overlay_wake(&self) {
@@ -775,7 +823,7 @@ pub mod harness {
             self.saves.fetch_add(1, Ordering::SeqCst);
         }
         fn diagnostics_changed(&self, on: bool) {
-            self.diagnostics.lock().unwrap().push(on);
+            self.diagnostics.lock().unwrap().push((on, std::thread::current().id()));
         }
         fn phone_second(&self, s: &PhoneSecond) {
             self.phone_seconds.lock().unwrap().push(*s);
@@ -936,6 +984,15 @@ pub mod harness {
             self.send(phone, &s);
         }
 
+        /// Waits (up to 5 s) for something another thread does.
+        pub fn until(&self, what: &str, done: impl Fn() -> bool) {
+            let start = std::time::Instant::now();
+            while !done() {
+                assert!(start.elapsed().as_secs() < 5, "never happened: {what}");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+
         pub fn tick(&self, advance_ms: i64) {
             self.clock.advance_ms(advance_ms);
             self.engine.on_tick(self.now());
@@ -959,6 +1016,16 @@ pub mod harness {
             }
             out
         }
+    }
+
+    /// True when `f` ends within `ms` on a thread of its own.
+    pub fn finishes(ms: u64, f: impl FnOnce() + Send + 'static) -> bool {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            f();
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(std::time::Duration::from_millis(ms)).is_ok()
     }
 
     pub const _USES: usize = wire::HEADER;
