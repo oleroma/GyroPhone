@@ -127,4 +127,36 @@ class LaserPaintTest {
         assertEquals(0, p.changedFrom)
         assertEquals(p.height - 1, p.changedTo)
     }
+
+    @Test fun keepsTheColumnsChangedToo() {
+        val p = LaserPaint()
+        assertEquals(0, p.changedColFrom)
+        assertEquals(p.width - 1, p.changedColTo)
+        // Lines all over the front, each taken alone: every changed texel is inside the patch, and the patch is small.
+        for (up in listOf(-60f, -20f, 0f, 35f, 70f)) for (yaw in listOf(-120f, -40f, 0f, 60f, 150f)) {
+            p.takeChanged()
+            assertTrue(p.changedColFrom > p.changedColTo)
+            val before = p.amount.copyOf()
+            val beforeGlow = p.glow.copyOf()
+            line(p, yaw, yaw + 6f, up = up)
+            for (i in before.indices) if (before[i] != p.amount[i] || beforeGlow[i] != p.glow[i]) {
+                assertTrue("row", i / p.width in p.changedFrom..p.changedTo)
+                assertTrue("column at up $up yaw $yaw", i % p.width in p.changedColFrom..p.changedColTo)
+            }
+            if (up in -40f..40f) assertTrue("narrow at up $up yaw $yaw", p.changedColTo - p.changedColFrom < p.width / 6)
+        }
+        // Across the seam behind and over a pole: every column.
+        p.takeChanged()
+        line(p, 176f, 184f, up = 0f)
+        assertEquals(0, p.changedColFrom)
+        assertEquals(p.width - 1, p.changedColTo)
+        p.takeChanged()
+        line(p, 0f, 5f, up = 89f)
+        assertEquals(0, p.changedColFrom)
+        assertEquals(p.width - 1, p.changedColTo)
+        p.takeChanged()
+        p.clear()
+        assertEquals(0, p.changedColFrom)
+        assertEquals(p.width - 1, p.changedColTo)
+    }
 }
