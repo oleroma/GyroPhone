@@ -14,8 +14,11 @@ pub mod crypto;
 pub mod gyro;
 pub mod le;
 pub mod mapping;
+pub mod motion;
 pub mod mouse;
+pub mod reports;
 pub mod state_frame;
+pub mod usb_framing;
 pub mod wire;
 
 /// The process's entry point; returns its exit code.
