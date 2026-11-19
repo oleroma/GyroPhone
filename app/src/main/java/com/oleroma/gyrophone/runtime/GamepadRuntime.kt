@@ -25,6 +25,7 @@ import com.oleroma.gyrophone.core.hid.HidDescriptor
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.BuiltinProfiles
 import com.oleroma.gyrophone.core.model.ButtonActivators
+import com.oleroma.gyrophone.core.model.DevicePresets
 import com.oleroma.gyrophone.core.model.InputSource
 import com.oleroma.gyrophone.core.model.KnownController
 import com.oleroma.gyrophone.core.model.MappingProfile
@@ -1155,7 +1156,8 @@ class GamepadRuntime(context: Context) {
 
     @Synchronized
     fun setForeground(resumed: Boolean) {
-        if (resumed && !foreground) aimGyroDisplays()
+        val cameToFront = resumed && !foreground
+        if (cameToFront) aimGyroDisplays()
         foreground = resumed
         // Out of sight, the displays and the edge are not fed (and the sensors only they need stop).
         updateVisualsCovered()
@@ -1169,6 +1171,8 @@ class GamepadRuntime(context: Context) {
             avoidDirect = false
             gyroControl.post { stopGyro() }
         }
+        // Back in front: a USB pad whose "allow" prompt was missed is asked about again.
+        if (cameToFront && usbPadsLazy.isInitialized()) usbPads.cameToFront()
         updateInputAllowed()
     }
 
@@ -1257,6 +1261,13 @@ class GamepadRuntime(context: Context) {
     @Volatile private var accel: AccelSource? = null
 
     /**
+     * Held while a sensor sample sets tilt or the gyro's stick, and while a stop lets them go: a
+     * sensor's stop waits only 50 ms for its thread, so a late sample of a stopped source must see
+     * it gone ([accel], [gyro]) and set nothing after the stop's reset. Never contended in play.
+     */
+    private val sensorStopLock = Any()
+
+    /**
      * Reads the accelerometer while input is on and a tilt or shake mapping is in the workspace or a
      * gyro display holds its pose to gravity.
      */
@@ -1294,19 +1305,21 @@ class GamepadRuntime(context: Context) {
         val sm = appContext.getSystemService(SensorManager::class.java) ?: return
         val source = AccelSource(sm)
         tiltShake.reset()
-        if (source.start { x, y, z, ts -> onAccelSample(x, y, z, ts) }) accel = source
+        if (source.start { x, y, z, ts -> onAccelSample(source, x, y, z, ts) }) accel = source
     }
 
     private fun stopMotion() {
         val a = accel ?: return
         a.stop()
-        accel = null
-        tiltShake.reset()
+        synchronized(sensorStopLock) {
+            accel = null
+            tiltShake.reset()
+            engine.setTilt(0f, 0f)
+        }
         restDetector.clear()
-        engine.setTilt(0f, 0f)
     }
 
-    private fun onAccelSample(x: Float, y: Float, z: Float, ts: Long) {
+    private fun onAccelSample(source: AccelSource, x: Float, y: Float, z: Float, ts: Long) {
         // The workspace's gyro settings, read once for the whole sample.
         val wsGyro = workspaceGyro()
         syncYawAxis(wsGyro)
@@ -1344,8 +1357,12 @@ class GamepadRuntime(context: Context) {
         // A layer or a held button may have tilt and shake settings of its own.
         val gs = engine.gyroSettings
         if (gs !== tiltShake.settings) tiltShake.settings = gs
-        if (tiltShake.update(x, y, z, ts)) engine.shake()
-        engine.setTilt(tiltShake.x, tiltShake.y)
+        // A source being stopped (stopMotion) sets nothing after its reset, and nothing goes out with input off.
+        synchronized(sensorStopLock) {
+            if (accel !== source || !inputAllowed) return
+            if (tiltShake.update(x, y, z, ts)) engine.shake()
+            engine.setTilt(tiltShake.x, tiltShake.y)
+        }
     }
 
     /** Makes the resolved [profile] active, in the workspace that was last active in it. */
@@ -1631,9 +1648,13 @@ class GamepadRuntime(context: Context) {
         return upgraded
     }
 
-    /** Turns any old touch button switches into tap and long press mappings ([ButtonActivators]), saving the set if anything changed. */
+    /**
+     * Turns any old touch button switches into tap and long press mappings ([ButtonActivators]) and
+     * old any-direction stick Outer mappings into the directions' outer zones ([DevicePresets.foldOuterAny]),
+     * saving the set if anything changed.
+     */
     private fun upgradeButtons(set: Profile): Profile {
-        val (upgraded, _) = ButtonActivators.upgrade(set, emptyList())
+        val upgraded = DevicePresets.foldOuterAny(ButtonActivators.upgrade(set, emptyList()).first)
         if (upgraded === set) return set
         store.save(upgraded)
         return upgraded
@@ -1783,10 +1804,14 @@ class GamepadRuntime(context: Context) {
     /** Stops the running source, waiting briefly for its thread to deliver its last sample. */
     private fun stopGyro() {
         gyro?.stop()
-        gyro = null
         // No sample comes to bring the gyro's stick or trigger back to rest, and a last one may
-        // have set it after an engine reset. Clearing axes already at rest changes nothing.
-        clearGyroPad()
+        // have set it after an engine reset. Clearing axes already at rest changes nothing. Under
+        // [sensorStopLock]: stop() waits only 50 ms, so a sample of the stopped source still running
+        // sees it gone and sets nothing after this.
+        synchronized(sensorStopLock) {
+            gyro = null
+            clearGyroPad()
+        }
     }
 
     /** The direct channel [source] stayed below the listener's rate: switch to the listener (gyro thread). */
@@ -2081,7 +2106,11 @@ class GamepadRuntime(context: Context) {
         syncYawAxis(wsGyro)
         val dt = if (lastGyroTs == 0L) 0f else ((ts - lastGyroTs) / 1e9f).coerceIn(0f, 0.05f)
         lastGyroTs = ts
-        debug.trace?.gyroSample()
+        debug.trace?.let { t ->
+            t.gyroSample()
+            // Diagnostics only: the sample's age by the sensor's own time (elapsed realtime on current phones).
+            t.gyroTiming.sample(android.os.SystemClock.elapsedRealtimeNanos() - ts, System.nanoTime())
+        }
         calibration?.let { cal ->
             when (val r = cal.add(x, y, z, ts)) {
                 null -> Unit
@@ -2150,8 +2179,8 @@ class GamepadRuntime(context: Context) {
                 routesNow = routes
                 val r = gyroMouse.route(if (mapReal) gyroMouse.inSpaces(local, gs, upNow) else local, dt, routes, axes)
                 if (r.dx != 0 || r.dy != 0 || r.wheel != 0 || r.hwheel != 0) engine.addMouseMotion(r.dx, r.dy, r.wheel, r.hwheel, fromGyro = active)
-                engine.setGyroAxes(r.pad)
-                gyroPadSet = true
+                // A source being stopped (stopGyro) leaves the stick at rest.
+                synchronized(sensorStopLock) { if (gyro === source) { engine.setGyroAxes(r.pad); gyroPadSet = true } }
                 sentDx = r.dx; sentDy = r.dy
             } else {
                 gyroMouse.reset()
@@ -2161,7 +2190,7 @@ class GamepadRuntime(context: Context) {
         // Tilt turns with the gyro between accelerometer samples: quick, and steady when the screen is tapped.
         if (accel != null && engine.motionMapped) {
             tiltShake.gyro(bx, by, bz, ts)
-            if (inputAllowed) engine.setTilt(tiltShake.x, tiltShake.y)
+            synchronized(sensorStopLock) { if (accel != null && inputAllowed) engine.setTilt(tiltShake.x, tiltShake.y) }
         }
         // The PC's DualShock 4 gyro: every sample as measured (bias removed), in deg/s about the
         // screen's right, up and toward-the-player axes, sent at once.

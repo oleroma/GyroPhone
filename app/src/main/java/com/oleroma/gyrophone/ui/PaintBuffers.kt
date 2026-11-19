@@ -11,7 +11,7 @@ import com.oleroma.gyrophone.core.engine.LaserPaint
 /**
  * A pointer's paint map ([LaserPaint]) kept where the GPU reads it: two RGBA HardwareBuffers
  * (amount, fire, aim, glow; glow's fire and aim shares) and one for the way colours. The phone's
- * CPU and GPU share memory, so new paint is written straight into them, only the rows it changed:
+ * CPU and GPU share memory, so new paint is written straight into them, only the patch (rows and columns) it changed:
  * no full copy and no upload each time, so the paint can follow the beam on every frame.
  * [create] gives null where the phone can't make such buffers (the old upload path is used then).
  */
@@ -28,9 +28,9 @@ internal class PaintBuffers private constructor(val width: Int, val height: Int)
     var wayShader: BitmapShader? = null
         private set
 
-    /** Writes rows [j0] .. [j1] of [lp]'s maps; false if the buffers could not be written. */
-    fun write(lp: LaserPaint, j0: Int, j1: Int): Boolean {
-        if (j1 >= j0 && !nativeWritePaint(main, glows, width, j0, j1, lp.amount, lp.fire, lp.aim, lp.glow, lp.glowFire, lp.glowAim)) return false
+    /** Writes columns [i0] .. [i1] of rows [j0] .. [j1] of [lp]'s maps; false if the buffers could not be written. */
+    fun write(lp: LaserPaint, j0: Int, j1: Int, i0: Int = 0, i1: Int = width - 1): Boolean {
+        if (j1 >= j0 && i1 >= i0 && !nativeWritePaint(main, glows, width, j0, j1, i0, i1, lp.amount, lp.fire, lp.aim, lp.glow, lp.glowFire, lp.glowAim)) return false
         mainShader = shaderOf(main) ?: return false
         glowShader = shaderOf(glows) ?: return false
         return true
@@ -49,10 +49,10 @@ internal class PaintBuffers private constructor(val width: Int, val height: Int)
         way = null
     }
 
-    /** Writes rows [j0] .. [j1] of the way colours ([LaserPaint.way], ARGB); false if it could not. */
-    fun writeWay(ways: IntArray, j0: Int, j1: Int): Boolean {
+    /** Writes columns [i0] .. [i1] of rows [j0] .. [j1] of the way colours ([LaserPaint.way], ARGB); false if it could not. */
+    fun writeWay(ways: IntArray, j0: Int, j1: Int, i0: Int = 0, i1: Int = width - 1): Boolean {
         val w = way ?: buffer(width, height).also { way = it }
-        if (j1 >= j0 && !nativeWriteWay(w, width, j0, j1, ways)) return false
+        if (j1 >= j0 && i1 >= i0 && !nativeWriteWay(w, width, j0, j1, i0, i1, ways)) return false
         wayShader = shaderOf(w) ?: return false
         return true
     }
@@ -83,9 +83,9 @@ internal class PaintBuffers private constructor(val width: Int, val height: Int)
         }
 
         @JvmStatic private external fun nativeWritePaint(
-            a: HardwareBuffer, b: HardwareBuffer, width: Int, j0: Int, j1: Int,
+            a: HardwareBuffer, b: HardwareBuffer, width: Int, j0: Int, j1: Int, i0: Int, i1: Int,
             amount: ByteArray, fire: ByteArray, aim: ByteArray, glow: ByteArray, glowFire: ByteArray, glowAim: ByteArray,
         ): Boolean
-        @JvmStatic private external fun nativeWriteWay(w: HardwareBuffer, width: Int, j0: Int, j1: Int, way: IntArray): Boolean
+        @JvmStatic private external fun nativeWriteWay(w: HardwareBuffer, width: Int, j0: Int, j1: Int, i0: Int, i1: Int, way: IntArray): Boolean
     }
 }

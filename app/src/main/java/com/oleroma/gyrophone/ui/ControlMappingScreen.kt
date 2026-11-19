@@ -170,7 +170,17 @@ private const val MAX_UNDO = 50
  * changed its settings too; or, for a step that changed more than this button (a named sensitivity deleted),
  * the whole [workspace] as it was, which Undo puts back exactly.
  */
-private data class UndoStep(val mappings: List<Mapping>, val control: TouchControl? = null, val workspace: Workspace? = null)
+/**
+ * One Undo / Redo step: the mappings before, and the control before when a preset changed its settings too.
+ * Adding, renaming or deleting a named sensitivity is a workspace step instead: the workspace from [wsFrom] to [wsTo] (what Undo puts back,
+ * [NamedSens.rebase]), so what was done since stays.
+ */
+private data class UndoStep(
+    val mappings: List<Mapping>,
+    val control: TouchControl? = null,
+    val wsFrom: Workspace? = null,
+    val wsTo: Workspace? = null,
+)
 private const val MIN_SPLIT = 0.25f
 private const val MAX_SPLIT = 0.75f
 private const val PREF_SPLIT = "map.split"
@@ -230,7 +240,7 @@ private sealed interface RowItem {
 }
 
 /** A faded chip: what the level above maps a card's Where [where] to on [trigger]. */
-private data class Faded(val trigger: Trigger, val target: OutputTarget, val where: Int = 0)
+private data class Faded(val trigger: Trigger, val target: OutputTarget, val where: Int = 0, val zone: Int = 0)
 
 /**
  * A preset of the library, built in or the user's ([user]: its [MappingPreset] or [LibraryButton]).
@@ -585,8 +595,18 @@ internal fun ControlMappingScreen(
     fun trigInputs(input: BindableInput): List<Pair<Trigger, BindableInput>> =
         Bindings.triggersOf(input).map { it to trig(input, it) }
 
-    /** [input]'s zone [z] (itself for 0). */
-    fun zin(input: BindableInput, z: Int): BindableInput = if (z == 0) input else Bindings.zoneInput(input, z)
+    /** A stick's direction (or diagonal): its row has one separator, its outer zone's chips after it ([Bindings.stickOuter]). */
+    fun stickDir(input: BindableInput?): Boolean = input != null && Bindings.stickOuter(input) != null
+
+    /** [input]'s zone [z] (itself for 0): a held direction's length zone, a stick direction's outer zone. */
+    fun zin(input: BindableInput, z: Int): BindableInput =
+        if (z == 0) input else Bindings.stickOuter(input) ?: Bindings.zoneInput(input, z)
+
+    /** The zone source [s] is in: a length zone, 1 for a stick direction's outer zone, else 0. */
+    fun zoneOfSource(s: InputSource): Int = (s as? InputSource.Surface)?.zone ?: if (Bindings.isOuter(s)) 1 else 0
+
+    /** [s] in its first zone: a held direction's zone 0, a stick direction without its outer zone. */
+    fun firstZone(s: InputSource): InputSource = if (s is InputSource.Surface) s.copy(zone = 0) else Bindings.innerSource(s)
 
     /** What [input]'s chips call trigger [t] ("Quick swipe"...). */
     fun trigLabel(input: BindableInput, t: Trigger): String = Triggers.label(input.sources.first(), t)
@@ -640,7 +660,7 @@ internal fun ControlMappingScreen(
 
     /** [input]'s place among the control's inputs (its own input's, for a When of it): a physical slot ([MappingPresets.slot]). */
     fun placeOf(input: BindableInput): Int {
-        val b = Triggers.base(input.sources.first()).let { if (it is InputSource.Surface) it.copy(zone = 0) else it }
+        val b = firstZone(Triggers.base(input.sources.first()))
         return inputs.indexOfFirst { top -> top.sources.any { Bindings.sameSource(it, b) } }.coerceAtLeast(0)
     }
     /** Every input of the whole control a button preset may map (a physical button's Motion gyro too). */
@@ -805,8 +825,8 @@ internal fun ControlMappingScreen(
         return linesOf(card)
     }
 
-    /** A Where of [card] that has length zones (a swipe direction): its chips go in any zone; the others only in the first. */
-    fun zoned(wi: BindableInput?): Boolean = (wi?.sources?.first() as? InputSource.Surface)?.input?.heldSwipe == true
+    /** A Where of [card] that has zones (a swipe direction, a stick direction): its chips go in any zone; the others only in the first. */
+    fun zoned(wi: BindableInput?): Boolean = (wi?.sources?.first() as? InputSource.Surface)?.input?.heldSwipe == true || stickDir(wi)
 
     /** [card]'s Wheres in zone [z]: each as that zone's input, null where it has none. */
     fun wheresIn(card: BindableInput, z: Int): List<BindableInput?> =
@@ -819,15 +839,19 @@ internal fun ControlMappingScreen(
     }
 
     /** What the level above maps line [line] to (cleared ones left out), with their triggers. */
-    fun parentOf(line: BindableInput): List<Faded> = parentOfInput(line).map { (t, x) -> Faded(t, x) }
+    fun parentOf(line: BindableInput): List<Faded> = parentOfInput(line).map { (t, x) -> Faded(t, x) } +
+        Bindings.stickOuter(line)?.let { o -> parentOfInput(o).map { (t, x) -> Faded(t, x, zone = 1) } }.orEmpty()
+
+    /** [line] and, for a stick direction, its outer zone: the inputs whose level-above chips it shows. */
+    fun withOuter(line: BindableInput): List<BindableInput> = listOf(line) + listOfNotNull(Bindings.stickOuter(line))
 
     /** Every chip the level above maps on [card]'s lines that [over] still takes, by the input it fires on. */
     fun fadedOf(card: BindableInput, over: List<Mapping> = currentMappings): List<Pair<BindableInput, OutputTarget>> =
-        groupOf(card).flatMap { line -> parentOfInput(line, over).map { (t, x) -> trig(line, t) to x } }
+        groupOf(card).flatMap(::withOuter).flatMap { line -> parentOfInput(line, over).map { (t, x) -> trig(line, t) to x } }
 
     /** Where [from] (a mapped input, any trigger) is on [card]'s row, or null when it is not on it. */
     fun whereOn(card: BindableInput, from: InputSource): Int? {
-        val base = Triggers.base(from).let { b -> if (b is InputSource.Surface) b.copy(zone = 0) else b }
+        val base = firstZone(Triggers.base(from))
         return wheresOf(card).indexOfFirst { it?.sources?.first() == base }.takeIf { it >= 0 }
     }
     var dragged by remember { mutableStateOf<Dragged?>(null) }
@@ -859,11 +883,10 @@ internal fun ControlMappingScreen(
 
     /** Puts back [step] (undoing or redoing it) and returns the step that takes it back again. */
     fun apply(step: UndoStep): UndoStep {
-        // A whole-workspace step (a named sensitivity deleted): the workspace exactly as it was, its mappings included.
-        if (step.workspace != null) {
-            var now: Workspace? = null
-            editWorkspace { w -> now = w; step.workspace }
-            return UndoStep(allMappings, null, now)
+        // A workspace step (a named sensitivity deleted): exactly what it changed goes back, its mappings included.
+        if (step.wsFrom != null && step.wsTo != null) {
+            editWorkspace { w -> NamedSens.rebase(w, step.wsFrom, step.wsTo) }
+            return UndoStep(allMappings, null, step.wsTo, step.wsFrom)
         }
         val back = UndoStep(allMappings, if (step.control != null) currentControl else null)
         emit(step.mappings)
@@ -884,6 +907,35 @@ internal fun ControlMappingScreen(
         snackbar.currentSnackbarData?.dismiss()
         undo.add(apply(step))
     }
+
+    /**
+     * Changes the workspace with [change] (then [after], such as this button's chips) as one Undo step, which Undo
+     * takes back exactly ([NamedSens.rebase]): adding, renaming or deleting a named sensitivity, or a gyro card's
+     * Sensitivity line changed. A change outside the workspace (the Defaults) is no step.
+     */
+    fun workspaceStep(message: String, change: (Workspace) -> Workspace, after: () -> Unit = {}) {
+        val prev = allMappings
+        var before: Workspace? = null
+        editWorkspace { w -> if (before == null) before = w; change(w) }
+        after()
+        // The workspace after it (this button's chips too): read with an edit that changes nothing.
+        var now: Workspace? = null
+        editWorkspace { w -> now = w; w }
+        val was = before ?: return
+        val got = now ?: return
+        if (was == got) return
+        undo.add(UndoStep(prev, null, wsFrom = got, wsTo = was))
+        if (undo.size > MAX_UNDO) undo.removeAt(0)
+        redo.clear()
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            val result = snackbar.showSnackbar(message, actionLabel = "Undo", duration = SnackbarDuration.Short)
+            if (result == SnackbarResult.ActionPerformed) undoLast()
+        }
+    }
+
+    /** [edit] (a Sensitivity line's link, and the chips it moves) as one Undo step, like [workspaceStep]. */
+    fun settingsStep(message: String, edit: () -> Unit) = workspaceStep(message, { it }, edit)
 
     /**
      * [next] is the edited set's view; undo keeps every set as it was. [controlBefore]: the control
@@ -1013,8 +1065,9 @@ internal fun ControlMappingScreen(
             b != null && keys.contains(b.copy(zone = 0))
         }
 
-    /** How many zones [input] (a held direction, or the Swipe card's directions) has, in any set (1 for anything else). */
+    /** How many zones [input] (a held direction, or the Swipe card's directions) has, in any set (a stick direction 2, anything else 1). */
     fun zonesOf(input: BindableInput): Int {
+        if (stickDir(input)) return 2
         val keys = zoneKeys(input)
         if (keys.isEmpty()) return 1
         return 1 + (allMappings.maxOfOrNull { m ->
@@ -1215,8 +1268,7 @@ internal fun ControlMappingScreen(
     fun carried(input: BindableInput): RowItem? = when (val d = dragged) {
         is Dragged.Target -> d.from?.takeIf { !d.inherited }?.let { f ->
             val s0 = f.sources.first()
-            val s = s0 as? InputSource.Surface
-            val zone = s?.zone ?: 0
+            val zone = zoneOfSource(s0)
             val tr = Triggers.of(s0)
             whereOn(input, s0)?.let { w -> RowItem.Chip(if (w == 0 || zoned(wheresOf(input).getOrNull(w))) zone else 0, d.target, tr, w, d.n) }
         }
@@ -1482,13 +1534,15 @@ internal fun ControlMappingScreen(
                     val to = sensRow(sh)
                     val link = sensLinkOf(d.target, g.axis)
                     if (to != null && link != null) {
-                        from.set(null)
-                        to.set(link.copy(scale = own.scale))
+                        settingsStep("Moved " + Describe.shortTarget(d.target)) {
+                            from.set(null)
+                            to.set(link.copy(scale = own.scale))
+                        }
                         selectedSrc = sh.sources.first()
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     }
                 } else if (libraryBounds.contains(dragPos)) {
-                    from.set(null)
+                    settingsStep("Removed " + Describe.shortTarget(d.target)) { from.set(null) }
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 }
             }
@@ -1500,8 +1554,16 @@ internal fun ControlMappingScreen(
             val link = sensLinkOf(d.target, g.axis)
             val row = sensRow(sh)
             if (link != null && row != null) {
-                row.set(link)
-                if (d.from == null) addRecent(d.target) else if (!d.inherited) remove(d.from, d.target, d.n)
+                // One Undo step: the axis following it, and the chip leaving the card it came from.
+                val moved = d.from?.takeIf { !d.inherited }
+                settingsStep("Mapped " + Describe.shortTarget(d.target)) {
+                    row.set(link)
+                    if (moved != null) {
+                        val next = Bindings.removeEntry(currentMappings, moved, d.target, d.n)
+                        emit(Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(next, currentSet))))
+                    }
+                }
+                if (d.from == null) addRecent(d.target)
                 selectedSrc = sh.sources.first()
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             }
@@ -1771,7 +1833,7 @@ internal fun ControlMappingScreen(
                     if (sensLine == null) SideEffect { sensBounds.remove(src) }
                     val fits = (dragTarget == null || allows(allowedTargets(input), dragTarget) || sensDrag) && (dragCard == null || presetFits(dragCard, input))
                     val zoneCount = zonesOf(input)
-                    val zoneInputs = List(zoneCount) { z -> if (z == 0) input else Bindings.zoneInput(input, z) }
+                    val zoneInputs = List(zoneCount) { z -> zin(input, z) }
                     val row = liveRow(input)
                     val l = landing
                     val landsHere = l != null && l.first.sources.first() == src
@@ -1880,7 +1942,7 @@ internal fun ControlMappingScreen(
                         inherited = if (swipe) emptyList() else parent,
                         parentName = parentName,
                         onClear = if (parent.isNotEmpty()) ({ clear(input) }) else null,
-                        onFollow = if (own.isNotEmpty() && editSet == MappingSet.BASE && cardLines.any { parentOfInput(it, emptyList()).isNotEmpty() }) ({ follow(input) }) else null,
+                        onFollow = if (own.isNotEmpty() && editSet == MappingSet.BASE && cardLines.flatMap(::withOuter).any { parentOfInput(it, emptyList()).isNotEmpty() }) ({ follow(input) }) else null,
                         // Each set shows only its own chips: other sets' would clutter it.
                         others = zoneInputs.map { emptyList() },
                         optionsOf = { chip -> chipOptions(view, input, chip) },
@@ -1914,7 +1976,7 @@ internal fun ControlMappingScreen(
                         rowScroll = rowScroll,
                         onRowBounds = { b -> rowBounds[src] = b },
                         onItemBounds = { item, b -> itemBounds[src to item] = b },
-                        onDivider = { k -> if (onZoneSettings != null) zoneDialog = input to k - 1 },
+                        onDivider = { k -> if (onZoneSettings != null || stickDir(input)) zoneDialog = input to k - 1 },
                         onGear = if (lineGears) null else gearOf(input),
                         onDividerDrag = { k, at -> selectedSrc = src; startDrag(Dragged.Divider(input, k), at) },
                         // The Swipe card: a tap picks its ↑ line, where library taps then add.
@@ -1927,14 +1989,15 @@ internal fun ControlMappingScreen(
                         onChipClick = { chip -> selectedSrc = src; chipDialog = input to chip },
                         onInheritedDrag = { f, at ->
                             selectedSrc = src
-                            startDrag(Dragged.Target(f.target, trig(wheresOf(input).getOrNull(f.where) ?: input, f.trigger), inherited = true), at)
+                            startDrag(Dragged.Target(f.target, trig(zin(wheresOf(input).getOrNull(f.where) ?: input, f.zone), f.trigger), inherited = true), at)
                         },
                         onInheritedClick = { f ->
                             selectedSrc = src
-                            fadedAsk = trig(wheresOf(input).getOrNull(f.where) ?: input, f.trigger) to f.target
+                            fadedAsk = trig(zin(wheresOf(input).getOrNull(f.where) ?: input, f.zone), f.trigger) to f.target
                         },
                         onHandleDrag = { at -> startCardDrag(input, at) },
                         sens = sensLine,
+                        stickOuter = stickDir(input),
                         onSavePreset = if (own.any { it != OutputTarget.NoOutput }) ({
                             val title = actionTitle(control, input)
                             askName("Save card preset", title) { name ->
@@ -2085,31 +2148,22 @@ internal fun ControlMappingScreen(
                         NamedSensManager(
                             namedSens,
                             onAdd = { touch ->
-                                editWorkspace { w -> NamedSens.add(w, touch).first }
+                                workspaceStep(if (touch) "Added touch sensitivity" else "Added gyro sensitivity", { w -> NamedSens.add(w, touch).first })
                             },
-                            onRename = { ns -> askName("Rename sensitivity", ns.name) { n -> editWorkspace { w -> NamedSens.rename(w, ns.id, n) } } },
+                            onRename = { ns ->
+                                askName("Rename sensitivity", ns.name) { n ->
+                                    if (n != ns.name) workspaceStep("Renamed " + ns.name, { w -> NamedSens.rename(w, ns.id, n) })
+                                }
+                            },
                             onDelete = { ns ->
                                 val gone: (Mapping) -> Boolean = { m ->
                                     val t = m.target
                                     (t is OutputTarget.GyroSens && !ns.touch && t.named == ns.id) || (t is OutputTarget.TouchSens && ns.touch && t.named == ns.id)
                                 }
-                                // One step that Undo takes back exactly: the whole workspace as it was before (the
-                                // sensitivity, its slider chips and value, every link to it and this button's chips).
-                                // Taken before this button's chips go, so the step holds them too.
-                                val prev = allMappings
-                                var before: Workspace? = null
-                                editWorkspace { w -> if (before == null) before = w; NamedSens.delete(w, ns.id) }
-                                if (currentMappings.any(gone)) emit(Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(currentMappings.filterNot(gone), currentSet))))
-                                val was = before
-                                if (was != null) {
-                                    undo.add(UndoStep(prev, null, was))
-                                    if (undo.size > MAX_UNDO) undo.removeAt(0)
-                                    redo.clear()
-                                    scope.launch {
-                                        snackbar.currentSnackbarData?.dismiss()
-                                        val result = snackbar.showSnackbar("Deleted " + ns.name, actionLabel = "Undo", duration = SnackbarDuration.Short)
-                                        if (result == SnackbarResult.ActionPerformed) undoLast()
-                                    }
+                                // One step that Undo takes back exactly: the sensitivity, its slider chips and value, every
+                                // link to it and this button's chips.
+                                workspaceStep("Deleted " + ns.name, { NamedSens.delete(it, ns.id) }) {
+                                    if (currentMappings.any(gone)) emit(Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(currentMappings.filterNot(gone), currentSet))))
                                 }
                             },
                         )
@@ -2413,7 +2467,13 @@ internal fun ControlMappingScreen(
             dismissButton = { TextButton(onClick = { confirmDefault = false }) { Text("Cancel") } },
         )
     }
-    zoneDialog?.let { (input, zone) ->
+    // A stick direction's separator: its outer zone's settings.
+    zoneDialog?.takeIf { stickDir(it.first) }?.let { (input, _) ->
+        val content = settings?.outer?.invoke(input)
+        if (content != null) ContextCard(actionTitle(control, input) + " · outer", onDismiss = { zoneDialog = null }) { content() }
+        else SideEffect { zoneDialog = null }
+    }
+    zoneDialog?.takeIf { !stickDir(it.first) }?.let { (input, zone) ->
         val src = input.sources.first() as? InputSource.Surface
         // The Swipe card's zones are the shared ones every direction follows (an arrow's own are in its ⚙ settings).
         val dir = src?.input?.holdDirection
@@ -2522,7 +2582,7 @@ internal fun ControlMappingScreen(
             where = whereNow,
             whereTitle = if (!swipeCard) null else if (isAxisCard(group.first().sources.first())) "Axis" else "Direction",
             title = Describe.shortTarget(chip.target) + " · " + actionTitle(control, input) +
-                if (chip.zone > 0) " · zone " + (chip.zone + 1) else "",
+                if (chip.zone == 0) "" else if (stickDir(input)) " · outer" else " · zone " + (chip.zone + 1),
             triggers = Bindings.triggersOf(zi),
             trigger = chip.trigger,
             triggerLabel = { w, t -> trigLabel(inputAt(w), t) },
@@ -2691,11 +2751,11 @@ internal fun ControlMappingScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         sensDialog = null
-                        if (sr.link == null || v != l.scale) sr.set(l.copy(scale = v))
+                        if (sr.link == null || v != l.scale) settingsStep("Changed " + g.axis.label + " sensitivity") { sr.set(l.copy(scale = v)) }
                     }) { Text("Done") }
                 },
                 dismissButton = {
-                    if (sr.link != null) TextButton(onClick = { sensDialog = null; sr.set(null) }) { Text("Remove") }
+                    if (sr.link != null) TextButton(onClick = { sensDialog = null; settingsStep("Removed " + g.axis.label + " sensitivity") { sr.set(null) } }) { Text("Remove") }
                 },
             )
         }
@@ -2814,6 +2874,8 @@ private fun ActionCard(
     lines: List<CardLine>? = null,
     /** A gyro axis card's Sensitivity line under its chips; null = none. */
     sens: SensLine? = null,
+    /** A stick direction: its one separator starts its outer zone ([RowItem.Divider] 1). */
+    stickOuter: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
     val handleCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
@@ -2887,7 +2949,8 @@ private fun ActionCard(
                 }
                 if (landingZone >= 0) {
                     Text(
-                        "→ Zone " + (landingZone + 1) + if (landingZone >= others.size) " (new)" else "",
+                        if (stickOuter) (if (landingZone == 0) "→ Regular" else "→ Outer")
+                        else "→ Zone " + (landingZone + 1) + if (landingZone >= others.size) " (new)" else "",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.SemiBold,
                         color = colors.tertiary,
@@ -2969,6 +3032,7 @@ private fun ActionCard(
                         rowScroll = rowScroll, onBounds = {}, onRowBounds = onRowBounds, onItemBounds = onItemBounds,
                         onDivider = onDivider, onDividerDrag = onDividerDrag, onChipDrag = onChipDrag, onChipClick = onChipClick,
                         onInheritedDrag = onInheritedDrag, onInheritedClick = onInheritedClick, onClick = onClick,
+                        stickOuter = stickOuter,
                     ),
                     parentName, setOrder, setId, onOther, landingLabel,
                 )
@@ -3129,6 +3193,8 @@ private class CardLine(
     val onClick: () -> Unit,
     /** The line's own settings (a Move card's X and Y), opened by a ⚙ before its label; null = none. */
     val onGear: (() -> Unit)? = null,
+    /** A stick direction: its one separator starts its outer zone, labelled Outer. */
+    val stickOuter: Boolean = false,
 )
 
 /** [line]'s framed, sideways scrolling row of chips and zone dividers (see [ActionCard]). */
@@ -3205,8 +3271,10 @@ private fun ChipRow(
                 }
             }
         }
-        // Faded: what the level above does here.
-        for (f in line.inherited) key("p", f) {
+        // Faded: what the level above does here, in its zone (a stick direction's outer chips after its separator).
+        @Composable
+        fun fadedIn(z: Int) {
+          for (f in line.inherited) if (f.zone == z) key("p", f) {
             val (tr, t) = f
             val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
             Row(
@@ -3229,8 +3297,10 @@ private fun ChipRow(
                     modifier = Modifier.padding(start = 6.dp),
                 )
             }
+          }
         }
         var zone = 0
+        fadedIn(0)
         othersOf(0, true)
         for (item in line.row) when (item) {
             is RowItem.Chip -> key(item) {
@@ -3272,8 +3342,10 @@ private fun ChipRow(
                         Modifier
                             .onGloballyPositioned { line.onItemBounds(item, Rect(it.positionInRoot(), it.size.toSize())) }
                             .dragSource(item, coords) { dividerDrag(item.k, it) },
+                        label = if (line.stickOuter) "Outer" else k.toString(),
                     ) { line.onDivider(k) }
                 }
+                fadedIn(zone)
                 othersOf(zone, true)
             }
 
@@ -3327,6 +3399,8 @@ private fun ZoneDivider(
     addZone: Boolean,
     modifier: Modifier = Modifier,
     landing: Boolean = false,
+    /** Its text before the bar: the zone it starts (a stick direction's: Outer). */
+    label: String = k.toString(),
     onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -3341,7 +3415,7 @@ private fun ZoneDivider(
     ) {
         if (!landing) {
             Text(
-                k.toString(),
+                label,
                 style = MaterialTheme.typography.labelMedium,
                 color = c,
                 modifier = Modifier.padding(end = 4.dp),

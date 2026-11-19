@@ -47,6 +47,7 @@ internal sealed class GpuDevice
         try
         {
             Dxgi = D3D.QueryInterface<IDXGIDevice>();
+            LowerGpuPriority();
             Factory = D2D1.D2D1CreateFactory<ID2D1Factory1>(Vortice.Direct2D1.FactoryType.MultiThreaded, Vortice.Direct2D1.DebugLevel.None);
             _lock = Factory.QueryInterface<ID2D1Multithread>();
             Device = Factory.CreateDevice(Dxgi);
@@ -57,6 +58,21 @@ internal sealed class GpuDevice
         {
             DisposeAll();
             throw;
+        }
+    }
+
+    /// <summary>The overlays' drawing on the graphics chip, against other programs' (-7 to 7, 0 normal).</summary>
+    private const int GpuPriority = -4;
+
+    /// <summary>The overlays' work on the graphics chip goes after the game's when both want it. Where the driver refuses, it stays normal.</summary>
+    private void LowerGpuPriority()
+    {
+        try
+        {
+            Dxgi.GPUThreadPriority = GpuPriority;
+        }
+        catch (SharpGen.Runtime.SharpGenException)
+        {
         }
     }
 
@@ -156,9 +172,14 @@ internal sealed class GpuDevice
 /// canvas, on the shared <see cref="GpuDevice"/>.
 /// Two ways to the screen:
 /// <list type="bullet">
+/// <item>Composition swap chain (with a window handle made without a redirection surface): a flip-model
+/// swap chain handed to the desktop compositor through a DirectComposition visual. The compositor shows
+/// its buffers as they are, premultiplied alpha and all: no copy into the window's redirection surface,
+/// so a picture is on screen about one refresh sooner than with the copy-model one. The first choice.</item>
 /// <item>Swap chain (with a window handle): the picture stays on the graphics card and is presented
 /// to the window, which shows its alpha through the desktop compositor (the frame extended over the
-/// whole window). No copy through the CPU: the cheap way.</item>
+/// whole window). No copy through the CPU, but the compositor copies it into the window's redirection
+/// surface ("Composed: Copy with GPU GDI"). Used when the composition one fails.</item>
 /// <item>Copy (no window handle): a GDI-compatible texture whose DC goes to UpdateLayeredWindow,
 /// the whole picture through the CPU every frame (slowed other windows' drawing, such as the main
 /// window scrolling).</item>
@@ -177,6 +198,11 @@ internal sealed class GpuSurface : IDisposable
     private ID2D1Bitmap1? _bitmap;
     private int _width, _height;
     private readonly IDXGISwapChain1? _swap;
+    // The composition swap chain's compositor objects (null for the others), and its buffer count.
+    private readonly Vortice.DirectComposition.IDCompositionDevice? _comp;
+    private readonly Vortice.DirectComposition.IDCompositionTarget? _compTarget;
+    private readonly Vortice.DirectComposition.IDCompositionVisual? _compVisual;
+    private readonly uint _buffers = 1;
     private bool _disposed;
 
     /// <summary>Where a window's frames went, summed (ms) until <see cref="TakeTimes"/>: drawing, D2D's EndDraw, the presenting (with the wait for the shared lock).</summary>
@@ -194,8 +220,11 @@ internal sealed class GpuSurface : IDisposable
         return card.Length > 0 ? t + ", " + card : t;
     }
 
-    /// <summary>With <paramref name="hwnd"/>: presented by a swap chain to that window; without: copied (see the class).</summary>
-    public GpuSurface(IntPtr hwnd = default, int width = 1, int height = 1)
+    /// <summary>
+    /// With <paramref name="hwnd"/>: presented by a swap chain to that window, a composition one when <paramref name="composed"/>
+    /// (the window has no redirection surface); without: copied (see the class).
+    /// </summary>
+    public GpuSurface(IntPtr hwnd = default, int width = 1, int height = 1, bool composed = false)
     {
         _shared = GpuDevice.Acquire();
         try
@@ -203,6 +232,46 @@ internal sealed class GpuSurface : IDisposable
             _dc = _shared.Device.CreateDeviceContext(DeviceContextOptions.None);
             _canvas = new D2DCanvas(_shared.Factory, _shared.Device, _dc, _shared.Write) { Gpu = _shared };
             if (hwnd == IntPtr.Zero) return;
+            if (composed)
+            {
+                // Flip model, two buffers (the compositor shows one while the next is drawn), alpha premultiplied
+                // as Direct2D draws it. Stretch is the only scaling a composition swap chain takes; sizes always match.
+                var flip = new SwapChainDescription1
+                {
+                    Width = (uint)Math.Max(1, width),
+                    Height = (uint)Math.Max(1, height),
+                    Format = Format.B8G8R8A8_UNorm,
+                    BufferCount = 2,
+                    BufferUsage = Usage.RenderTargetOutput,
+                    SwapEffect = SwapEffect.FlipSequential,
+                    AlphaMode = Vortice.DXGI.AlphaMode.Premultiplied,
+                    SampleDescription = new SampleDescription(1, 0),
+                    Scaling = Scaling.Stretch,
+                };
+                _shared.Enter();
+                try
+                {
+                    using var adapter = _shared.Dxgi.GetAdapter();
+                    using var dxgiFactory = adapter.GetParent<IDXGIFactory2>();
+                    _swap = dxgiFactory.CreateSwapChainForComposition(_shared.D3D, flip);
+                    _shared.SwapChains(+1); // counted from here: Dispose lets it go
+                    _buffers = flip.BufferCount;
+                    _comp = Vortice.DirectComposition.DComp.DCompositionCreateDevice<Vortice.DirectComposition.IDCompositionDevice>(_shared.Dxgi);
+                    _comp.CreateTargetForHwnd(hwnd, true, out _compTarget).CheckError();
+                    _comp.CreateVisual(out _compVisual).CheckError();
+                    _compVisual!.SetContent(_swap).CheckError();
+                    _compTarget!.SetRoot(_compVisual).CheckError();
+                    _comp.Commit().CheckError();
+                    _width = (int)flip.Width;
+                    _height = (int)flip.Height;
+                    BindSwap();
+                }
+                finally
+                {
+                    _shared.Leave();
+                }
+                return;
+            }
             // Bit-block transfer model: the one a layered window takes. Its alpha reaches the screen
             // through the window's redirection surface (the extended frame), premultiplied.
             var desc = new SwapChainDescription1
@@ -245,6 +314,9 @@ internal sealed class GpuSurface : IDisposable
 
     /// <summary>Presented by a swap chain (no copy through the CPU).</summary>
     public bool Direct => _swap != null;
+
+    /// <summary>Presented by a composition swap chain (no copy into the window's redirection surface either).</summary>
+    public bool Composed => _comp != null;
 
     /// <summary>A swap chain whose buffers are not <paramref name="width"/>×<paramref name="height"/>: drawing at that size resizes it first.</summary>
     public bool NeedsResize(int width, int height) => _swap != null && (Math.Max(1, width) != _width || Math.Max(1, height) != _height);
@@ -307,7 +379,7 @@ internal sealed class GpuSurface : IDisposable
                 try
                 {
                     Unbind();
-                    _swap.ResizeBuffers(1, (uint)width, (uint)height, Format.B8G8R8A8_UNorm, SwapChainFlags.None).CheckError();
+                    _swap.ResizeBuffers(_buffers, (uint)width, (uint)height, Format.B8G8R8A8_UNorm, SwapChainFlags.None).CheckError();
                     _width = width;
                     _height = height;
                     BindSwap();
@@ -391,6 +463,10 @@ internal sealed class GpuSurface : IDisposable
         try
         {
             Unbind();
+            // The compositor's hold on the swap chain goes first.
+            _compVisual?.Dispose();
+            _compTarget?.Dispose();
+            _comp?.Dispose();
             if (_swap != null)
             {
                 _swap.Dispose();

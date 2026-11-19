@@ -10,7 +10,11 @@ namespace GyroPhone.Host.Perf;
 /// <param name="Hotspot">It is Windows' Mobile hotspot (the Wi-Fi Direct virtual adapter, 192.168.137.x).</param>
 /// <param name="Wireless">It is a Wi-Fi adapter (the hotspot's included).</param>
 /// <param name="Id">The adapter's id ("{GUID}", as the Wi-Fi API names its interfaces).</param>
-public sealed record PcAdapter(string Name, bool Hotspot, bool Wireless = false, string Id = "");
+/// <param name="Station">
+/// It is a Wi-Fi card itself, which joins networks as a client and may doze in power save; not the hotspot's virtual
+/// adapter. Told by the adapter's kind alone, never by its subnet, so a router that happens to use 192.168.137.x still counts.
+/// </param>
+public sealed record PcAdapter(string Name, bool Hotspot, bool Wireless = false, string Id = "", bool Station = false);
 
 /// <summary>
 /// The way the phone's packets go (docs/spec/pc-companion.md, "Performance"): the phone's side from LINK_INFO's
@@ -136,8 +140,10 @@ public static class LinkPaths
                     uint mask = u.PrefixLength == 32 ? uint.MaxValue : ~(uint.MaxValue >> u.PrefixLength);
                     uint a = Bits(u.Address);
                     if ((a & mask) != (p & mask)) continue;
-                    bool hotspot = ni.Description.Contains("Wi-Fi Direct", StringComparison.OrdinalIgnoreCase) || (a & 0xFFFFFF00) == 0xC0A88900;
-                    found = new PcAdapter(ni.Name, hotspot, ni.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 || hotspot, ni.Id);
+                    bool direct = ni.Description.Contains("Wi-Fi Direct", StringComparison.OrdinalIgnoreCase);
+                    bool hotspot = direct || (a & 0xFFFFFF00) == 0xC0A88900;
+                    bool wifi = ni.NetworkInterfaceType == NetworkInterfaceType.Wireless80211;
+                    found = new PcAdapter(ni.Name, hotspot, wifi || hotspot, ni.Id, wifi && !direct);
                     break;
                 }
                 if (found != null) break;

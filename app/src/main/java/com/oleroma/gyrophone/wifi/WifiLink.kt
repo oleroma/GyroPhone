@@ -414,12 +414,13 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     override fun start() {
         if (running) return
         // A stop just before (a quick switch back) still winding down: its state must be gone first.
-        stopThread?.let { t ->
-            try {
-                t.join()
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
+        // The start then runs when the wind-down ends, so the caller (the UI thread) never waits for it.
+        synchronized(stopGate) {
+            if (windingDown) {
+                startWhenStopped = true
+                return
             }
+            startWhenStopped = false
         }
         stopThread = null
         val s = try {
@@ -466,6 +467,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
      * [start] waits for the wind-down to finish.
      */
     fun stop(byeReason: Int) {
+        // A start waiting for an earlier stop's wind-down is called off.
+        synchronized(stopGate) { startWhenStopped = false; startPosted = false }
         if (!running) return
         running = false
         engine.onChange = null
@@ -474,8 +477,16 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         runCatching { appContext.unregisterReceiver(tetherReceiver) }
         wakeRx() // out of its receive wait now, so the join below is short
         _state.value = LinkState.Off
+        synchronized(stopGate) { windingDown = true }
         stopThread = Thread({ windDown(byeReason) }, "gp-wifi-stop").apply { start() }
     }
+
+    // A stop's wind-down is running ([windDown]), and a [start] asked meanwhile runs once it ends.
+    private val stopGate = Any()
+    private var windingDown = false
+    private var startWhenStopped = false
+    private var startPosted = false
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     /** The second half of [stop], on `gp-wifi-stop`. */
     private fun windDown(byeReason: Int) {
@@ -529,6 +540,12 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         testMode = 0
         welcomeHostFlags = null
         _state.value = LinkState.Off
+        val restart = synchronized(stopGate) {
+            windingDown = false
+            startWhenStopped.also { startWhenStopped = false; startPosted = it }
+        }
+        // Called off again by a stop() before it runs.
+        if (restart) mainHandler.post { if (synchronized(stopGate) { startPosted.also { startPosted = false } }) start() }
     }
 
     /** Runs a USB check now instead of at the next once-a-second one (the accessory was just attached or allowed). */
@@ -700,6 +717,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             }
             val s = socket ?: break
             pollUsbProbe()
+            // Moving to USB: the live session still runs on Wi-Fi until the WELCOME there, so its
+            // replies (PONG, HOST_STATUS, RUMBLE) are read too, not left queued.
+            val w = wifiSocket
+            if (usbPending && w != null && w !== s) drainWifi(w, packet, buf)
             try {
                 packet.setLength(buf.size)
                 s.receive(packet)
@@ -722,12 +743,33 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         }
     }
 
-    private fun onDatagram(buf: ByteArray, len: Int, from: InetSocketAddress, nowMs: Long) {
+    /** Reads what waits on the Wi-Fi socket [w] while the main receive is on the USB one ([usbPending]). */
+    private fun drainWifi(w: DatagramSocket, packet: DatagramPacket, buf: ByteArray) {
+        try {
+            w.soTimeout = 1
+            while (usbPending && running) {
+                packet.setLength(buf.size)
+                w.receive(packet)
+                val from = packet.socketAddress as? InetSocketAddress ?: continue
+                onDatagram(buf, packet.length, from, SystemClock.elapsedRealtime(), viaUsb = false)
+            }
+        } catch (e: SocketTimeoutException) {
+            // nothing more waits
+        } catch (e: IOException) {
+            // closed or failing: the main loop finds out on its own socket
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "bad datagram", e)
+        } finally {
+            runCatching { w.soTimeout = RX_TIMEOUT_MS }
+        }
+    }
+
+    private fun onDatagram(buf: ByteArray, len: Int, from: InetSocketAddress, nowMs: Long, viaUsb: Boolean = usbActive) {
         val type = WireCodec.classify(buf, len)
         if (type < 0 && type != WireCodec.BAD_VERSION) return // a newer host's ERROR VERSION goes to the session
         when (type) {
             // On the USB socket the sender's address is the cable's, not the PC's on Wi-Fi.
-            PacketType.ANNOUNCE -> (WireCodec.decodePlain(buf, len) as? Announce)?.let { onAnnounce(it, from, nowMs, viaUsb = usbActive) }
+            PacketType.ANNOUNCE -> (WireCodec.decodePlain(buf, len) as? Announce)?.let { onAnnounce(it, from, nowMs, viaUsb = viaUsb) }
             PacketType.KEY_ENROLL_ACK -> {
                 qrFlow?.let { handleQrOuts(it, it.onDatagram(buf, len, from)) }
                 return
@@ -1160,7 +1202,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 // The USB session is up: the pump moves to its socket now.
                 if (s != null && usbPending) {
                     usbPending = false
-                    usbSocket?.let { pump.useSocket(it) }
+                    usbSocket?.let { u ->
+                        pump.useSocket(u)
+                        runCatching { u.soTimeout = RX_TIMEOUT_MS }
+                    }
                 }
                 // The gyro's sample times go out in the phone's clock until this session's first PONG.
                 pump.clockOffsetUs = null
@@ -1360,8 +1405,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbEthernet = u.ethernet
         usbSilentSinceMs = 0L
         socket = s
-        // The live Wi-Fi session keeps sending on the Wi-Fi socket until the USB one's WELCOME.
+        // The live Wi-Fi session keeps sending on the Wi-Fi socket until the USB one's WELCOME; meanwhile
+        // the receive loop waits on USB only briefly between reads of the Wi-Fi socket ([drainWifi]).
         usbPending = live != null
+        if (usbPending) runCatching { s.soTimeout = PENDING_RX_TIMEOUT_MS }
         if (!usbPending) pump.useSocket(s)
         session?.let { f ->
             f.hostAddr?.let { wifiHostAddr = it }
@@ -1427,6 +1474,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** Debugging is on: LINK_INFO asks the PC to keep its debug log too ([LinkInfoFlags.DEBUG_TRACE]). */
     @Volatile var debugTrace = false
+
+    /** Diagnostics is on: the send thread times each gyro sample's way out ([com.oleroma.gyrophone.core.debug.GyroTiming]); null: nothing is timed. */
+    var gyroTiming: com.oleroma.gyrophone.core.debug.GyroTiming?
+        get() = pump.gyroTiming
+        set(v) { pump.gyroTiming = v }
 
     /** Bumped by [requestDebugSave]; LINK_INFO carries its low bits so the PC saves when they change. */
     @Volatile private var debugSaves = 0
@@ -1580,6 +1632,9 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         private const val TAG = "WifiLink"
         private const val RX_TIMEOUT_MS = 50
         private const val RX_JOIN_MS = 300L
+
+        /** The USB socket's receive wait while the session still runs on Wi-Fi ([usbPending]): Wi-Fi replies wait at most this. */
+        private const val PENDING_RX_TIMEOUT_MS = 5
         private const val SEND_BUFFER = 8192
         private const val REFRESH_MS = 1000L
         private const val UNKNOWN_LATENCY = -1 // 0xFFFFFFFF
