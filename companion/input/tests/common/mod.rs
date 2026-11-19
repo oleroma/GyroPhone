@@ -383,3 +383,583 @@ pub mod fakes {
         }
     }
 }
+
+pub mod harness {
+    //! The engine with every port faked: a port of the C# tests' Harness and its fakes.
+
+    use std::collections::HashSet;
+    use std::net::SocketAddr;
+    use std::sync::atomic::{AtomicI64, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use gp_input::crypto::P256;
+    use gp_input::engine::{EngineHooks, EngineOptions, HostEngine, PhoneSecond, TraceKind};
+    use gp_input::mapping::{self, Ds4Frame, InjectEvent, InjectKind, X360Frame};
+    use gp_input::pairing::KeyFn;
+    use gp_input::ports::{Clock, HostEvents, KeyMouseSink, KeyProtector, PadSink, PairPrompt, SinkError};
+    use gp_input::recorder::RecorderOut;
+    use gp_input::reports::Ds4Motion;
+    use gp_input::session::{DatagramSender, RandomFn};
+    use gp_input::settings::{HostSettings, PairedPhone, NEVER_UTC};
+    use gp_input::shared::SharedRegion;
+    use gp_input::wire::{self, output_mode, Id};
+
+    use super::phone::FakePhone;
+
+    pub struct FakeClock(pub AtomicI64);
+
+    impl FakeClock {
+        pub fn now(&self) -> i64 {
+            self.0.load(Ordering::SeqCst)
+        }
+        pub fn advance_ms(&self, ms: i64) {
+            self.0.fetch_add(ms * 1000, Ordering::SeqCst);
+        }
+        pub fn advance_us(&self, us: i64) {
+            self.0.fetch_add(us, Ordering::SeqCst);
+        }
+    }
+
+    impl Clock for FakeClock {
+        fn now_us(&self) -> i64 {
+            self.now()
+        }
+    }
+
+    #[derive(Default)]
+    pub struct FakeSender(pub Mutex<Vec<(Vec<u8>, SocketAddr)>>);
+
+    impl FakeSender {
+        pub fn sent(&self) -> Vec<(Vec<u8>, SocketAddr)> {
+            self.0.lock().unwrap().clone()
+        }
+        pub fn count(&self) -> usize {
+            self.0.lock().unwrap().len()
+        }
+        pub fn to(&self, a: SocketAddr) -> Vec<Vec<u8>> {
+            self.0.lock().unwrap().iter().filter(|s| s.1 == a).map(|s| s.0.clone()).collect()
+        }
+        pub fn last(&self) -> Option<Vec<u8>> {
+            self.0.lock().unwrap().last().map(|s| s.0.clone())
+        }
+        pub fn at(&self, i: usize) -> Vec<u8> {
+            self.0.lock().unwrap()[i].0.clone()
+        }
+        pub fn clear(&self) {
+            self.0.lock().unwrap().clear();
+        }
+    }
+
+    impl DatagramSender for FakeSender {
+        fn send(&self, datagram: &[u8], to: SocketAddr) {
+            self.0.lock().unwrap().push((datagram.to_vec(), to));
+        }
+    }
+
+    pub struct PadState {
+        pub driver_ok: bool,
+        pub dual_sense_ok: bool,
+        pub plugged: u8,
+        pub x360: Vec<X360Frame>,
+        pub ds4: Vec<Ds4Frame>,
+        pub ds4_motion: Vec<Ds4Motion>,
+        pub plugs: u32,
+        pub unplugs: u32,
+        pub plug_fails: bool,
+        pub fail_with: Option<SinkError>,
+        pub lose_on_fail: bool,
+        pub handler: Option<Arc<dyn Fn(u8, u8) + Send + Sync>>,
+    }
+
+    pub struct FakePad(pub Mutex<PadState>);
+
+    impl Default for FakePad {
+        fn default() -> Self {
+            FakePad(Mutex::new(PadState {
+                driver_ok: true,
+                dual_sense_ok: true,
+                plugged: output_mode::NONE,
+                x360: Vec::new(),
+                ds4: Vec::new(),
+                ds4_motion: Vec::new(),
+                plugs: 0,
+                unplugs: 0,
+                plug_fails: false,
+                fail_with: None,
+                lose_on_fail: false,
+                handler: None,
+            }))
+        }
+    }
+
+    impl FakePad {
+        pub fn set(&self, f: impl FnOnce(&mut PadState)) {
+            f(&mut self.0.lock().unwrap())
+        }
+        pub fn plugged_now(&self) -> u8 {
+            self.0.lock().unwrap().plugged
+        }
+        pub fn x360(&self) -> Vec<X360Frame> {
+            self.0.lock().unwrap().x360.clone()
+        }
+        pub fn ds4(&self) -> Vec<Ds4Frame> {
+            self.0.lock().unwrap().ds4.clone()
+        }
+        pub fn ds4_motion(&self) -> Vec<Ds4Motion> {
+            self.0.lock().unwrap().ds4_motion.clone()
+        }
+        pub fn plugs(&self) -> u32 {
+            self.0.lock().unwrap().plugs
+        }
+        pub fn unplugs(&self) -> u32 {
+            self.0.lock().unwrap().unplugs
+        }
+        pub fn raise_rumble(&self, large: u8, small: u8) {
+            let h = self.0.lock().unwrap().handler.clone();
+            if let Some(h) = h {
+                h(large, small);
+            }
+        }
+        fn fail(s: &mut PadState) -> Result<(), SinkError> {
+            match s.fail_with {
+                None => Ok(()),
+                Some(e) => {
+                    if s.lose_on_fail {
+                        s.plugged = output_mode::NONE;
+                    }
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    impl PadSink for FakePad {
+        fn driver_ok(&self) -> bool {
+            self.0.lock().unwrap().driver_ok
+        }
+        fn dual_sense_ok(&self) -> bool {
+            self.0.lock().unwrap().dual_sense_ok
+        }
+        fn plugged(&self) -> u8 {
+            self.0.lock().unwrap().plugged
+        }
+        fn plug(&self, mode: u8) -> Result<bool, SinkError> {
+            let mut s = self.0.lock().unwrap();
+            s.plugs += 1;
+            if s.plug_fails {
+                s.plugged = output_mode::NONE;
+                return Ok(false);
+            }
+            s.plugged = mode;
+            Ok(true)
+        }
+        fn unplug(&self) -> Result<(), SinkError> {
+            let mut s = self.0.lock().unwrap();
+            if s.plugged != output_mode::NONE {
+                s.unplugs += 1;
+            }
+            s.plugged = output_mode::NONE;
+            Ok(())
+        }
+        fn submit_x360(&self, frame: &X360Frame) -> Result<(), SinkError> {
+            let mut s = self.0.lock().unwrap();
+            Self::fail(&mut s)?;
+            s.x360.push(*frame);
+            Ok(())
+        }
+        fn submit_ds4(&self, frame: &Ds4Frame, motion: &Ds4Motion) -> Result<(), SinkError> {
+            let mut s = self.0.lock().unwrap();
+            Self::fail(&mut s)?;
+            s.ds4.push(*frame);
+            s.ds4_motion.push(*motion);
+            Ok(())
+        }
+        fn set_rumble_handler(&self, handler: Option<Arc<dyn Fn(u8, u8) + Send + Sync>>) {
+            self.0.lock().unwrap().handler = handler;
+        }
+    }
+
+    #[derive(Default)]
+    pub struct KeyMouseState {
+        pub calls: Vec<Vec<InjectEvent>>,
+        pub held_keys: HashSet<u16>,
+        pub held_buttons: HashSet<String>,
+        pub mouse_x: i64,
+        pub mouse_y: i64,
+        pub wheel: i64,
+        pub hwheel: i64,
+        pub dropping: bool,
+    }
+
+    #[derive(Default)]
+    pub struct FakeKeyMouse {
+        pub s: Mutex<KeyMouseState>,
+        pub on_inject: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    }
+
+    impl FakeKeyMouse {
+        pub fn calls(&self) -> usize {
+            self.s.lock().unwrap().calls.len()
+        }
+        pub fn all(&self) -> Vec<InjectEvent> {
+            self.s.lock().unwrap().calls.iter().flatten().copied().collect()
+        }
+        pub fn call(&self, i: usize) -> Vec<InjectEvent> {
+            self.s.lock().unwrap().calls[i].clone()
+        }
+        pub fn holds_key(&self, id: u16) -> bool {
+            self.s.lock().unwrap().held_keys.contains(&id)
+        }
+        pub fn holds_button(&self, name: &str) -> bool {
+            self.s.lock().unwrap().held_buttons.contains(name)
+        }
+        pub fn nothing_held(&self) -> bool {
+            let s = self.s.lock().unwrap();
+            s.held_keys.is_empty() && s.held_buttons.is_empty()
+        }
+        pub fn mouse_x(&self) -> i64 {
+            self.s.lock().unwrap().mouse_x
+        }
+        pub fn mouse_y(&self) -> i64 {
+            self.s.lock().unwrap().mouse_y
+        }
+        pub fn wheel(&self) -> i64 {
+            self.s.lock().unwrap().wheel
+        }
+        pub fn hwheel(&self) -> i64 {
+            self.s.lock().unwrap().hwheel
+        }
+        pub fn set_dropping(&self, on: bool) {
+            self.s.lock().unwrap().dropping = on;
+        }
+        fn button(s: &mut KeyMouseState, e: &InjectEvent, down: u32, up: u32, name: String) {
+            if e.flags & down != 0 {
+                s.held_buttons.insert(name.clone());
+            }
+            if e.flags & up != 0 {
+                s.held_buttons.remove(&name);
+            }
+        }
+    }
+
+    impl KeyMouseSink for FakeKeyMouse {
+        fn inject(&self, events: &[InjectEvent]) -> bool {
+            if let Some(f) = &*self.on_inject.lock().unwrap() {
+                f();
+            }
+            let mut s = self.s.lock().unwrap();
+            s.calls.push(events.to_vec());
+            if s.dropping {
+                return false;
+            }
+            for e in events {
+                if e.kind == InjectKind::Key {
+                    let id = if e.vk != 0 { 0x8000 | e.vk } else { e.scan | if e.flags & mapping::KEY_EXTENDED != 0 { 0x100 } else { 0 } };
+                    if e.is_key_up() {
+                        s.held_keys.remove(&id);
+                    } else {
+                        s.held_keys.insert(id);
+                    }
+                    continue;
+                }
+                if e.flags & mapping::MOUSE_MOVE != 0 {
+                    s.mouse_x += e.dx as i64;
+                    s.mouse_y += e.dy as i64;
+                }
+                if e.flags & mapping::MOUSE_WHEEL != 0 {
+                    s.wheel += e.mouse_data as i64;
+                }
+                if e.flags & mapping::MOUSE_HWHEEL != 0 {
+                    s.hwheel += e.mouse_data as i64;
+                }
+                Self::button(&mut s, e, mapping::MOUSE_LEFT_DOWN, mapping::MOUSE_LEFT_UP, "L".into());
+                Self::button(&mut s, e, mapping::MOUSE_RIGHT_DOWN, mapping::MOUSE_RIGHT_UP, "R".into());
+                Self::button(&mut s, e, mapping::MOUSE_MIDDLE_DOWN, mapping::MOUSE_MIDDLE_UP, "M".into());
+                Self::button(&mut s, e, mapping::MOUSE_X_DOWN, mapping::MOUSE_X_UP, format!("X{}", e.mouse_data));
+            }
+            true
+        }
+    }
+
+    #[derive(Default)]
+    pub struct FakePrompt {
+        pub shown: Mutex<Vec<(u32, String, String)>>,
+        pub closed: Mutex<Vec<u32>>,
+    }
+
+    impl PairPrompt for FakePrompt {
+        fn show(&self, attempt_id: u32, phone_name: &str, sas_display: &str) {
+            self.shown.lock().unwrap().push((attempt_id, phone_name.to_owned(), sas_display.to_owned()));
+        }
+        fn close(&self, attempt_id: u32) {
+            self.closed.lock().unwrap().push(attempt_id);
+        }
+    }
+
+    pub struct PlainProtector;
+
+    impl KeyProtector for PlainProtector {
+        fn protect(&self, plain: &[u8]) -> Vec<u8> {
+            plain.to_vec()
+        }
+        fn unprotect(&self, blob: &[u8]) -> Option<Vec<u8>> {
+            Some(blob.to_vec())
+        }
+    }
+
+    #[derive(Default)]
+    pub struct RecordingEvents {
+        pub logs: Mutex<Vec<String>>,
+        pub changes: AtomicI64,
+    }
+
+    impl RecordingEvents {
+        pub fn logs(&self) -> Vec<String> {
+            self.logs.lock().unwrap().clone()
+        }
+        pub fn changes(&self) -> i64 {
+            self.changes.load(Ordering::SeqCst)
+        }
+        pub fn logged(&self, starts_with: &str) -> usize {
+            self.logs.lock().unwrap().iter().filter(|l| l.starts_with(starts_with)).count()
+        }
+    }
+
+    impl HostEvents for RecordingEvents {
+        fn state_changed(&self) {
+            self.changes.fetch_add(1, Ordering::SeqCst);
+        }
+        fn log(&self, message: &str) {
+            self.logs.lock().unwrap().push(message.to_owned());
+        }
+    }
+
+    /// Keeps what the engine hands out through its hooks.
+    #[derive(Default)]
+    pub struct RecordingHooks {
+        pub lines: Mutex<Vec<(i64, TraceKind, String)>>,
+        pub recorder: Mutex<Vec<RecorderOut>>,
+        pub wakes: AtomicI64,
+        pub saves: AtomicI64,
+        pub diagnostics: Mutex<Vec<bool>>,
+        pub phone_seconds: Mutex<Vec<PhoneSecond>>,
+        pub moves: Mutex<Vec<(i64, i32, i32)>>,
+    }
+
+    impl RecordingHooks {
+        pub fn recorder_lines(&self) -> Vec<String> {
+            self.recorder.lock().unwrap().iter().filter_map(|o| if let RecorderOut::Line(l) = o { Some(l.clone()) } else { None }).collect()
+        }
+        pub fn debug_lines(&self) -> Vec<(TraceKind, String)> {
+            self.lines.lock().unwrap().iter().map(|l| (l.1, l.2.clone())).collect()
+        }
+        pub fn saves(&self) -> i64 {
+            self.saves.load(Ordering::SeqCst)
+        }
+        pub fn wakes(&self) -> i64 {
+            self.wakes.load(Ordering::SeqCst)
+        }
+    }
+
+    impl EngineHooks for RecordingHooks {
+        fn debug_line(&self, us: i64, kind: TraceKind, text: &str) {
+            self.lines.lock().unwrap().push((us, kind, text.to_owned()));
+        }
+        fn recorder(&self, out: &[RecorderOut]) {
+            self.recorder.lock().unwrap().extend(out.iter().cloned());
+        }
+        fn overlay_wake(&self) {
+            self.wakes.fetch_add(1, Ordering::SeqCst);
+        }
+        fn debug_save_requested(&self) {
+            self.saves.fetch_add(1, Ordering::SeqCst);
+        }
+        fn diagnostics_changed(&self, on: bool) {
+            self.diagnostics.lock().unwrap().push(on);
+        }
+        fn phone_second(&self, s: &PhoneSecond) {
+            self.phone_seconds.lock().unwrap().push(*s);
+        }
+        fn move_sent(&self, t0_us: i64, dx: i32, dy: i32) {
+            self.moves.lock().unwrap().push((t0_us, dx, dy));
+        }
+    }
+
+    pub const PHONE1_ID: Id = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+
+    pub fn phone1_key() -> [u8; 32] {
+        super::range_n(0x40)
+    }
+
+    pub fn paired(id: &[u8], name: &str, key: &[u8]) -> PairedPhone {
+        PairedPhone {
+            phone_id: id.to_vec(),
+            name: name.to_owned(),
+            protected_key: key.to_vec(),
+            paired_utc: NEVER_UTC.to_owned(),
+            last_seen_utc: NEVER_UTC.to_owned(),
+        }
+    }
+
+    /// What a harness is made with; `Default` is the C# Harness's defaults.
+    pub struct Setup {
+        pub pair_default: bool,
+        pub mode: u8,
+        pub host_key: Option<P256>,
+        pub session_random: Option<RandomFn>,
+        pub pairing_random: Option<RandomFn>,
+        pub new_pair_key: Option<KeyFn>,
+        pub inline_workers: bool,
+        pub settings: Option<Box<dyn FnOnce(&mut HostSettings)>>,
+        pub shared: Option<SharedRegion>,
+    }
+
+    impl Default for Setup {
+        fn default() -> Self {
+            Setup {
+                pair_default: true,
+                mode: output_mode::XBOX360,
+                host_key: None,
+                session_random: None,
+                pairing_random: None,
+                new_pair_key: None,
+                inline_workers: true,
+                settings: None,
+                shared: None,
+            }
+        }
+    }
+
+    pub struct Harness {
+        pub clock: Arc<FakeClock>,
+        pub sender: Arc<FakeSender>,
+        pub pad: Arc<FakePad>,
+        pub key_mouse: Arc<FakeKeyMouse>,
+        pub prompt: Arc<FakePrompt>,
+        pub events: Arc<RecordingEvents>,
+        pub hooks: Arc<RecordingHooks>,
+        pub engine: Arc<HostEngine>,
+    }
+
+    impl Default for Harness {
+        fn default() -> Self {
+            Harness::new()
+        }
+    }
+
+    impl Harness {
+        pub fn new() -> Harness {
+            Harness::with(Setup::default())
+        }
+
+        pub fn mode(mode: u8) -> Harness {
+            Harness::with(Setup { mode, ..Setup::default() })
+        }
+
+        pub fn with(setup: Setup) -> Harness {
+            let mut settings = HostSettings::create_default("DESKTOP-OLEX");
+            settings.host_id = super::range_n(0x10);
+            settings.output_mode = setup.mode;
+            if setup.pair_default {
+                settings.paired_phones.push(paired(&PHONE1_ID, "OnePlus 15", &phone1_key()));
+            }
+            if let Some(f) = setup.settings {
+                f(&mut settings);
+            }
+            let clock = Arc::new(FakeClock(AtomicI64::new(1_000_000_000)));
+            let sender = Arc::new(FakeSender::default());
+            let pad = Arc::new(FakePad::default());
+            let key_mouse = Arc::new(FakeKeyMouse::default());
+            let prompt = Arc::new(FakePrompt::default());
+            let events = Arc::new(RecordingEvents::default());
+            let hooks = Arc::new(RecordingHooks::default());
+            let engine = HostEngine::new(
+                settings,
+                pad.clone(),
+                key_mouse.clone(),
+                Arc::new(PlainProtector),
+                EngineOptions {
+                    clock: clock.clone(),
+                    events: events.clone(),
+                    prompt: prompt.clone(),
+                    hooks: hooks.clone(),
+                    session_random: setup.session_random,
+                    pairing_random: setup.pairing_random,
+                    new_pair_key: setup.new_pair_key,
+                    host_key: setup.host_key,
+                    shared: setup.shared,
+                    inline_workers: setup.inline_workers,
+                },
+            );
+            engine.attach_sender(sender.clone());
+            Harness { clock, sender, pad, key_mouse, prompt, events, hooks, engine }
+        }
+
+        pub fn now(&self) -> i64 {
+            self.clock.now()
+        }
+
+        pub fn new_phone(&self) -> FakePhone {
+            self.phone_at("192.168.1.50:40000")
+        }
+
+        pub fn phone_at(&self, addr: &str) -> FakePhone {
+            FakePhone::paired(PHONE1_ID, "OnePlus 15", phone1_key(), addr)
+        }
+
+        /// One datagram and the flush after it; returns the first thing sent because of it.
+        pub fn send(&self, phone: &FakePhone, d: &[u8]) -> Option<Vec<u8>> {
+            let before = self.sender.count();
+            self.engine.on_datagram(d, phone.addr, self.now());
+            self.engine.flush(self.now());
+            if self.sender.count() > before {
+                Some(self.sender.at(before))
+            } else {
+                None
+            }
+        }
+
+        /// One datagram of a burst: no flush yet.
+        pub fn burst(&self, phone: &FakePhone, d: &[u8]) {
+            self.engine.on_datagram(d, phone.addr, self.now());
+        }
+
+        pub fn flush(&self) {
+            self.engine.flush(self.now());
+        }
+
+        pub fn connect(&self, phone: &mut FakePhone) {
+            let hello = phone.hello(None);
+            let w = self.send(phone, &hello).expect("welcome");
+            assert!(phone.on_welcome(&w));
+            let s = phone.state(|_| {});
+            self.send(phone, &s);
+        }
+
+        pub fn tick(&self, advance_ms: i64) {
+            self.clock.advance_ms(advance_ms);
+            self.engine.on_tick(self.now());
+        }
+
+        /// A sealed packet from the phone, handled and flushed.
+        pub fn sealed(&self, phone: &mut FakePhone, ptype: u8, plain: &[u8]) -> Option<Vec<u8>> {
+            let d = phone.sealed(ptype, plain);
+            self.send(phone, &d)
+        }
+
+        /// The packets of one type the phone can open among everything sent, as plaintexts.
+        pub fn opened(&self, phone: &mut FakePhone, ptype: u8) -> Vec<Vec<u8>> {
+            let mut out = Vec::new();
+            for (d, _) in self.sender.sent() {
+                if let Some((t, p)) = phone.try_open(&d) {
+                    if t == ptype {
+                        out.push(p);
+                    }
+                }
+            }
+            out
+        }
+    }
+
+    pub const _USES: usize = wire::HEADER;
+}

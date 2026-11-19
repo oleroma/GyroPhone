@@ -12,6 +12,11 @@ use std::sync::Arc;
 /// Monotonic microsecond clock.
 pub trait Clock: Send + Sync {
     fn now_us(&self) -> i64;
+    /// Milliseconds on the clock the companion stamps its own events with (Windows: GetTickCount64), for the
+    /// overlay packets' receive time.
+    fn tick_ms(&self) -> i64 {
+        self.now_us() / 1000
+    }
 }
 
 /// Notifications for the companion. Called under the engine lock from the rx or watchdog thread, so
@@ -75,6 +80,9 @@ impl KeyMouseListener for NullKeyMouseListener {
     }
 }
 
+/// Why a driver call failed: a short name for the log (as the C# input logs the exception's type).
+pub type SinkError = &'static str;
+
 /// `PadSink::xinput_slot` while our pad is plugged but Windows hasn't given it a slot yet.
 pub const SLOT_UNKNOWN: i32 = -2;
 
@@ -98,13 +106,15 @@ pub trait PadSink: Send + Sync {
     }
     /// Currently plugged pad type, or `output_mode::NONE`.
     fn plugged(&self) -> u8;
-    /// Plugs a pad of the given type (unplugging any other). False when it could not.
-    fn plug(&self, mode: u8) -> bool;
-    fn unplug(&self);
-    fn submit_x360(&self, frame: &X360Frame);
+    /// Plugs a pad of the given type (unplugging any other). Ok(false) when it could not; Err when the driver
+    /// call failed.
+    fn plug(&self, mode: u8) -> Result<bool, SinkError>;
+    fn unplug(&self) -> Result<(), SinkError>;
+    /// Err: the report did not reach the driver (its handle is gone after a driver reset, say).
+    fn submit_x360(&self, frame: &X360Frame) -> Result<(), SinkError>;
     /// The DualShock 4's (or DualSense's) whole report: buttons, sticks and triggers with its gyro and
     /// accelerometer.
-    fn submit_ds4(&self, frame: &Ds4Frame, motion: &Ds4Motion);
+    fn submit_ds4(&self, frame: &Ds4Frame, motion: &Ds4Motion) -> Result<(), SinkError>;
     /// Who to tell, from the driver's thread, when the game changes rumble (large, small motor). None: nobody.
     fn set_rumble_handler(&self, handler: Option<Arc<dyn Fn(u8, u8) + Send + Sync>>);
     /// The XInput slot (0..3) our plugged Xbox 360 pad took, -1 when none is plugged, `SLOT_UNKNOWN` while it is
@@ -124,12 +134,18 @@ impl PadSink for NullPadSink {
     fn plugged(&self) -> u8 {
         output_mode::NONE
     }
-    fn plug(&self, _mode: u8) -> bool {
-        false
+    fn plug(&self, _mode: u8) -> Result<bool, SinkError> {
+        Ok(false)
     }
-    fn unplug(&self) {}
-    fn submit_x360(&self, _frame: &X360Frame) {}
-    fn submit_ds4(&self, _frame: &Ds4Frame, _motion: &Ds4Motion) {}
+    fn unplug(&self) -> Result<(), SinkError> {
+        Ok(())
+    }
+    fn submit_x360(&self, _frame: &X360Frame) -> Result<(), SinkError> {
+        Ok(())
+    }
+    fn submit_ds4(&self, _frame: &Ds4Frame, _motion: &Ds4Motion) -> Result<(), SinkError> {
+        Ok(())
+    }
     fn set_rumble_handler(&self, _handler: Option<Arc<dyn Fn(u8, u8) + Send + Sync>>) {}
 }
 

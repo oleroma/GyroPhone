@@ -11,6 +11,7 @@
 
 pub mod codec;
 pub mod crypto;
+pub mod engine;
 pub mod gyro;
 pub mod key_files;
 pub mod le;
