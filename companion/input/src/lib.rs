@@ -13,6 +13,7 @@ pub mod codec;
 pub mod control;
 pub mod crypto;
 pub mod engine;
+pub mod file_log;
 pub mod gyro;
 pub mod held_marker;
 pub mod host;
@@ -38,6 +39,8 @@ pub mod udp;
 pub mod usb_bridge;
 pub mod usb_framing;
 pub mod watchdog;
+#[cfg(windows)]
+pub mod win;
 pub mod wire;
 
 /// The process's entry point; returns its exit code.
