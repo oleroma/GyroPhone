@@ -4,9 +4,10 @@ package com.oleroma.gyrophone.core.sensor
  * Times the checks of the sensor's shared memory around when the next sample is due, instead of at a fixed rate.
  *
  * The sensor writes a sample every [periodNs] (learned from the samples' own timestamps). After one is seen, nothing
- * new can come for most of that period, so the thread sleeps through it and then checks often (a quarter of the poll
- * interval apart) in the short window where the next one is due. A sample then waits about one short check for its
- * reader instead of up to a whole poll interval, with no more wake-ups than fixed polling.
+ * new can come for most of that period, so the thread keeps its plain poll interval through it (never a longer sleep:
+ * a thread that sleeps longer wakes late) and then checks often (a quarter of the poll interval apart) in the short
+ * window where the next one is due. A sample then waits about one short check for its reader instead of up to a
+ * whole poll interval, for about one more wake-up a sample than fixed polling.
  *
  * Before the period is known, and whenever the sensor goes quiet or irregular, it checks at the plain poll interval.
  * Not thread safe: used by the poll thread alone.
@@ -41,7 +42,9 @@ class PollPacer {
         // The last sample was seen up to one short check late, and the sensor's writes wander a little: start early by that much.
         val fine = (intervalNs / FINE_DIVISOR).coerceAtLeast(MIN_FINE_NS)
         val windowStart = period - (fine * 2).coerceAtLeast(MIN_GUARD_NS)
-        return if (since < windowStart) windowStart - since else fine
+        // Never a sleep longer than the plain interval: measured on the OnePlus 15, sleeping through the whole quiet
+        // stretch (about 0.9 ms) made the thread wake late and samples arrive 2-3 ms older.
+        return if (since < windowStart) (windowStart - since).coerceAtMost(intervalNs) else fine
     }
 
     fun reset() { periodNs = 0L; lastTimestampNs = 0L; lastSeenNs = 0L }

@@ -48,8 +48,10 @@ class PollPacerTest {
         val p = PollPacer()
         p.onSample(1000 * us, 900 * us)
         p.onSample(2056 * us, 1956 * us)
-        // Right after a sample: sleep until just before the next is due.
-        assertEquals((1056 - 150) * us, p.parkNs(2056 * us, interval))
+        // Right after a sample: the plain interval, never a longer sleep.
+        assertEquals(interval, p.parkNs(2056 * us, interval))
+        // Close to the window: only up to its start.
+        assertEquals(106 * us, p.parkNs((2056 + 800) * us, interval))
         // In the window: short checks.
         assertEquals(interval / 4, p.parkNs((2056 + 950) * us, interval))
     }
@@ -71,12 +73,12 @@ class PollPacerTest {
         assertEquals(1000 * us, p.parkNs(2056 * us, 1000 * us))
     }
 
-    @Test fun aSampleWaitsLessThanWithFixedPollingForNoMoreChecks() {
+    @Test fun aSampleWaitsLessThanWithFixedPollingForFewMoreChecks() {
         val (fixedWait, fixedChecks) = run(null)
         val (pacedWait, pacedChecks) = run(PollPacer())
         println("fixed: wait ${fixedWait / 1000} us, $fixedChecks checks/sample; paced: ${pacedWait / 1000} us, $pacedChecks checks/sample")
         assertTrue("paced $pacedWait vs fixed $fixedWait", pacedWait < fixedWait * 0.5)
-        assertTrue("checks $pacedChecks vs $fixedChecks", pacedChecks <= fixedChecks * 1.1)
+        assertTrue("checks $pacedChecks vs $fixedChecks", pacedChecks <= fixedChecks * 1.4)
     }
 
     @Test fun followsASensorThatDriftsOrStepsItsRate() {
