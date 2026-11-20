@@ -114,12 +114,17 @@ data class GyroDisplay(
     /** BALL, v2: a trackball ([turnsWith] [TurnsWith.TRACKBALL] since v3). */
     val trackball: Boolean = false,
     /**
-     * [TurnsWith.CAMERA] and [TurnsWith.TRACKBALL]: with [trackballRws] as far as the game's camera
-     * once the game's turn is known ([GyroSettings.gameCountsPer360]), else as far as the phone;
-     * without, [trackballSpin] times the phone's turn.
+     * [TurnsWith.CAMERA] and [TurnsWith.TRACKBALL]: with [trackballRws] by the mouse counts actually
+     * sent, as far as the game's camera once the game's turn is known ([GyroSettings.gameCountsPer360]),
+     * else as far as the phone at the workspace's sensitivity; without, [trackballSpin] times the phone's turn.
      */
     val trackballSpin: Float = 1f,
     val trackballRws: Boolean = true,
+    /**
+     * Turning by the mouse counts ([turnsByCounts]): while the Aim display output ([laserAim]) is sent
+     * it turns [aimSens] as far, as the game turns its camera slower while aiming (0.1 .. 1).
+     */
+    val aimSens: Float = 1f,
     /**
      * [TurnsWith.TRACKBALL]: which gyro turn rolls it about each of its axes, one byte each: about
      * its up axis Y (yaw, turning left and right), its right axis X (pitch), the axis along the beam Z (roll,
@@ -316,6 +321,12 @@ data class GyroDisplay(
 ) {
     /** It turns with the game's camera ([TurnsWith.CAMERA] or [TurnsWith.TRACKBALL]): no gravity, compass or turn amount. */
     val followsCamera: Boolean get() = kind.pose && turnsWith != TurnsWith.PHONE
+
+    /**
+     * It turns by the mouse counts sent ([followsCamera] as far as the game's camera, [trackballRws]):
+     * the live gyro's too, so every sensitivity, card scale, acceleration and filter the game gets shows.
+     */
+    val turnsByCounts: Boolean get() = followsCamera && trackballRws
 
     /** [rest] as an array, only while it applies (with gravity), else null. */
     val restNow: FloatArray? get() = if (needsGravity) rest?.takeIf { it.size == 4 }?.toFloatArray() else null

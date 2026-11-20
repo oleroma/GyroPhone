@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.oleroma.gyrophone.core.engine.GyroPose
+import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
 import com.oleroma.gyrophone.core.engine.LaserFire
 import com.oleroma.gyrophone.core.engine.Guns
 import com.oleroma.gyrophone.core.engine.CrosshairKick
@@ -450,9 +451,14 @@ internal fun GyroDisplaySettingsScreen(
                 SwitchRow("As far as the game's camera", d.trackballRws) { set(d.copy(trackballRws = it)) }
                 if (d.trackballRws) {
                     Hint(
-                        if (gameKnown) "It turns exactly as far as the game's camera."
-                        else "Set the game's turn in Gyro → Game for exact turns. Until then it turns as far as the phone, and every movement matches the gyro.",
+                        if (gameKnown) "It turns exactly as far as the game's camera, by the mouse moves actually sent: each axis's sensitivity, held buttons, sliders, the gyro card's scale and acceleration all show."
+                        else "Set the game's turn in Gyro → Game for exact turns. Until then it turns by the mouse moves actually sent, as far as the phone at the shared sensitivity: an axis with a higher sensitivity turns further, as the game's camera does.",
                     )
+                    if (!laser) ButtonPicker("Aim button", d.laserAim, "While GyroPhone sends this button it turns Aim sens as far. Tap to pick another, or None.") { set(d.copy(laserAim = it)) }
+                    if (d.laserAim != LaserFire.NONE) {
+                        PercentSlider("Aim sens", d.aimSens, GyroDisplayFeed.AIM_SENS_MIN..1f) { set(d.copy(aimSens = it)) }
+                        Hint("Games turn the camera slower while you aim. Set this to the game's aim sensitivity (100% = as when not aiming) so it turns as far as the camera then." + (if (laser) " Aiming is the Aim display button in Look." else ""))
+                    }
                 } else {
                     FloatSlider("Spin × %.1f", d.trackballSpin, 0.1f..10f, 0.1f) { set(d.copy(trackballSpin = it)) }
                     Hint("Every movement turns it Spin times as far as the phone turn that sends it.")
