@@ -111,6 +111,30 @@ class GpDiagTest(unittest.TestCase):
         self.assertIn("Network arrivals: 5 datagrams; 4 of 4 PC packets paired", out)
         self.assertTrue(any("2 came 3 ms+ over the floor: 1 mostly waited in the PC, 1 mostly came late to the PC" in l for l in out), out)
 
+    def test_ab_marks_split_a_save(self):
+        f = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8")
+        t0 = 1_700_000_000_000
+        f.write("# GyroPhone diagnostics, side pc\n")
+        f.write(f"{t0}\tpc\tnote\tab: start: overlays A shown, B hidden, switching every 1 min\n")
+        n = 0
+        for phase in range(1, 5):
+            letter = "A" if phase % 2 else "B"
+            what = "overlays shown" if letter == "A" else "overlays hidden"
+            f.write(f"{t0 + n * 1000}\tpc\tnote\tab: phase {phase} {letter}: {what}\n")
+            for _ in range(60):
+                n += 1
+                slow = 9 if letter == "A" else 0
+                f.write(f"{t0 + n * 1000}\tpc\tlink\t{n:10.3f} sec           rx 1000 moving 900 lost 0 late 0 maxlate 0.4 "
+                        f"lat 1.4/2.0 inj 1000 handoff 2.4 slow {slow}\n")
+        f.write(f"{t0 + n * 1000}\tpc\tnote\tab: stopped (test) after 4 phases; overlays back to shown\n")
+        f.close()
+        try:
+            out = gpdiag.ab_lines([f.name])
+            self.assertTrue(out[0].startswith("A/B test: A = overlays shown, B = overlays hidden; 4 phases (102 s in A, 102 s in B"), out)
+            self.assertTrue(any("slow hand-offs" in l and "B lower" in l for l in out), out)
+        finally:
+            os.unlink(f.name)
+
 
 if __name__ == "__main__":
     unittest.main()

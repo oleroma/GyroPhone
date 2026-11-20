@@ -52,7 +52,9 @@ public sealed record CompanionView(
     // Which input program runs now ("Rust" or "Original"), or null while none is attached.
     string? InputProgram = null,
     // Why the Rust input program was switched off by GP itself, until the switch is used again.
-    string? RustInputNote = null);
+    string? RustInputNote = null,
+    // Diagnostics' A/B test now ("Phase 3, B: input program C#, 1:20 left"), or null when none runs.
+    string? AbTest = null);
 
 /// <summary>"Use the Rust input program" on Performance › Input program.</summary>
 public enum RustInputState
@@ -139,6 +141,13 @@ public interface ICompanion
     /// game, next to Diagnostics' background delivery probe, while it is open.
     /// </summary>
     void OpenDeliveryTest();
+    /// <summary>
+    /// Diagnostics' "A/B test": switches <paramref name="thing"/> back and forth every <paramref name="minutes"/> and marks
+    /// each phase in the log, for tools/diag/gpdiag.py ab. Only while Diagnostics is on.
+    /// </summary>
+    void StartAbTest(GyroPhone.Host.Perf.AbTest.Thing thing, int minutes);
+    /// <summary>Stops the A/B test and puts the switched thing back as it was.</summary>
+    void StopAbTest();
 
     // Performance
     /// <summary>The Performance page's frame watcher, link seconds and test records.</summary>

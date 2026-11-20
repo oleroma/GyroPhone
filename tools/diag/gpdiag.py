@@ -3,6 +3,7 @@
 
     python tools/diag/gpdiag.py summary <pc-save.txt> [more saves...]
     python tools/diag/gpdiag.py compare <A.txt> [A2.txt ...] -- <B.txt> [B2.txt ...]
+    python tools/diag/gpdiag.py ab <pc-save.txt> [more saves...]
     python tools/diag/gpdiag.py flight <pc-...-flight.bin> [phone-...-flight.bin] [pc-...-net.bin]
 
 Reads PC Diagnostics saves (Documents\\GyroPhone\\Debug\\pc-*.txt, from either input program: both write the same
@@ -17,6 +18,8 @@ How it counts (docs/spec/pc-companion.md, "Diagnostics", "Comparing runs"):
   minutes (a bootstrap over minute blocks), not single events. Two runs whose ranges overlap show "no clear
   difference": one short run never confirms a cause.
 - The setup lines of both runs are compared and their differences printed first.
+- ab: a save made during the Performance page's A/B test is split by its "ab: phase" marks into A and B seconds
+  (the first 10 s after each switch left out: the switch itself may hiccup) and compared like two runs.
 Python 3.8+, standard library only.
 """
 import random
@@ -25,6 +28,9 @@ import struct
 import sys
 from collections import OrderedDict
 
+AB_PHASE = re.compile(r"^ab: phase (\d+) ([AB]): (.*)$")
+AB_START = re.compile(r"^ab: start: (.*)$")
+AB_SETTLE_MS = 10_000
 SEC = re.compile(r"^\s*(-?[\d.]+)\s+sec\s+(.*)$")
 NUM = r"(-?[\d.]+)"
 FIELDS = {
@@ -75,6 +81,7 @@ def read_save(path):
     """(setup dict, seconds) from a PC Diagnostics save: each second has "t" (seconds into the session) and its numbers."""
     setup = OrderedDict()
     secs = []
+    ab = None  # (letter, phase, since wall ms, what)
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.rstrip("\n")
@@ -85,6 +92,16 @@ def read_save(path):
                 continue
             parts = line.split("\t")
             text = parts[3] if len(parts) >= 4 else line
+            wall = int(parts[0]) if len(parts) >= 4 and parts[0].lstrip("-").isdigit() else None
+            if text.startswith("ab: "):
+                mp = AB_PHASE.match(text)
+                if mp:
+                    ab = (mp.group(2), int(mp.group(1)), wall, mp.group(3))
+                elif text.startswith("ab: stopped"):
+                    ab = None
+                elif AB_START.match(text):
+                    setup["ab"] = AB_START.match(text).group(1)
+                continue
             m = SEC.match(text)
             if not m:
                 # Setup lines Diagnostics wrote during the run: the newest wins for the run's setup.
@@ -93,8 +110,11 @@ def read_save(path):
                 continue
             d = parse_sec(m.group(2))
             d["t"] = float(m.group(1))
-            if len(parts) >= 4 and parts[0].lstrip("-").isdigit():
-                d["wall_ms"] = int(parts[0])
+            if wall is not None:
+                d["wall_ms"] = wall
+            if ab is not None:
+                d["ab"], d["ab_phase"], d["ab_what"] = ab[0], ab[1], ab[3]
+                d["ab_settling"] = wall is not None and ab[2] is not None and wall - ab[2] < AB_SETTLE_MS
             secs.append(d)
     return setup, secs
 
@@ -241,12 +261,34 @@ def summary_lines(name, secs):
 def compare_lines(a_paths, b_paths):
     sa, a = load(a_paths)
     sb, b = load(b_paths)
+    return compare_secs(sa, a, sb, b)
+
+
+def ab_lines(paths):
+    setup, secs = load(paths)
+    a = [x for x in secs if x.get("ab") == "A" and not x.get("ab_settling")]
+    b = [x for x in secs if x.get("ab") == "B" and not x.get("ab_settling")]
+    if not a or not b:
+        return ["No A/B test in these saves (no \"ab: phase\" marks with seconds in both A and B)."]
+    phases = sorted({x["ab_phase"] for x in a + b})
+    what_a = next(x["ab_what"] for x in a)
+    what_b = next(x["ab_what"] for x in b)
+    out = [f"A/B test: A = {what_a}, B = {what_b}; {len(phases)} phases ({len(a)} s in A, {len(b)} s in B, "
+           f"the first {AB_SETTLE_MS // 1000} s after each switch left out)"]
+    if len(phases) < 4:
+        out.append("  (fewer than 4 phases: A and B may differ only by what happened in the game at the time)")
+    return out + compare_secs(OrderedDict(), a, OrderedDict(), b, same_session=True)
+
+
+def compare_secs(sa, a, sb, b, same_session=False):
     out = []
-    diff = setup_diff(sa, sb)
+    diff = [] if same_session else setup_diff(sa, sb)
     if diff:
         out.append("Setup differs:")
         for k, va, vb in diff:
             out.append(f"  {k}: A {va}  |  B {vb}")
+    elif same_session:
+        pass
     elif sa or sb:
         out.append("Setup: the same (apart from battery, temperature and Wi-Fi signal)")
     else:
@@ -387,7 +429,7 @@ def flight_lines(paths):
 
 
 def main(argv):
-    if len(argv) < 2 or argv[0] not in ("summary", "compare", "flight"):
+    if len(argv) < 2 or argv[0] not in ("summary", "compare", "ab", "flight"):
         print(__doc__)
         return 2
     cmd, rest = argv[0], argv[1:]
@@ -402,6 +444,8 @@ def main(argv):
             return 2
         i = rest.index("--")
         print("\n".join(compare_lines(rest[:i], rest[i + 1:])))
+    elif cmd == "ab":
+        print("\n".join(ab_lines(rest)))
     else:
         print("\n".join(flight_lines(rest)))
     return 0

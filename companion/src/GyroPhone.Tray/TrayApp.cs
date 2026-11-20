@@ -47,6 +47,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     /// <summary>The Performance page's frame watcher and test records (logs\perf).</summary>
     private readonly PerfMonitor _perf;
     private readonly NetArrivalWatch _net;
+    private readonly AbTest _ab;
 
     private readonly TrayIcons _icons = new();
     private readonly NotifyIcon _tray;
@@ -120,6 +121,11 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             _log.Write($"key names: {e.GetType().Name}");
         }
         _net = new NetArrivalWatch(_log.Write);
+        _ab = new AbTest(AbGet, AbSet, line =>
+        {
+            _log.Write(line);
+            if (_debug.Enabled) _debug.Add(DebugTrace.Kind.Note, line);
+        });
         _perf = new PerfMonitor(new FpsHelperSource(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
             Path.Combine(_log.Directory, "perf"), _log.Write);
         _perf.ShowsLinkChanged += () => In.SetLinkWatch(_perf.ShowsLink);
@@ -343,6 +349,8 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         if (Volatile.Read(ref _exited) != 0) return;
         SaveUiSettings();
         ApplyDiagnostics();
+        if (!Set.Diagnostics) _ab.Stop(Environment.TickCount64, "Diagnostics off");
+        else _ab.Tick(Environment.TickCount64);
         var st = St;
         var s = Snap;
         bool serverOk = st?.Server == nameof(ServerState.Running);
@@ -546,7 +554,50 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             st?.InputDriverReady == true ? InputDriverState.Ready : st?.InputDriverInstalled == true ? InputDriverState.NotPlugged : InputDriverState.NotInstalled,
             !RustInput.InThisBuild ? RustInputState.NotInBuild : _overlays.Ui.RustInput ? RustInputState.On : RustInputState.Off,
             !_input.Attached || _input.Hello is not { } hello ? null : hello.Version.EndsWith(RustInput.VersionSuffix, StringComparison.Ordinal) ? "Rust" : "Original",
-            _rustInputNote);
+            _rustInputNote,
+            AbText());
+    }
+
+    private string? AbText()
+    {
+        if (_ab.Running is not { } t) return null;
+        int left = _ab.SecondsLeft(Environment.TickCount64);
+        return $"Phase {_ab.Phase}, {(_ab.InB ? "B" : "A")}: {AbTest.Name(t)} {_ab.Label(_ab.InB)} · next switch in {left / 60}:{left % 60:00} " +
+            $"(A {_ab.Label(false)}, B {_ab.Label(true)}, every {_ab.Minutes} min)";
+    }
+
+    private bool AbGet(AbTest.Thing t) => t == AbTest.Thing.InputProgram ? _overlays.Ui.RustInput : !_overlays.Ui.OverlaysHidden;
+
+    /// <summary>The A/B test's switch: like the Performance page's switches, without refreshing (it runs inside Refresh).</summary>
+    private void AbSet(AbTest.Thing t, bool on)
+    {
+        if (t == AbTest.Thing.InputProgram)
+        {
+            if (!RustInput.InThisBuild) return;
+            _overlays.Change(s => s.RustInput = on);
+            _rustInputNote = null;
+            _log.Write($"input program: {(on ? "Rust" : "original")} chosen by the A/B test");
+            _input.SetRust(on);
+        }
+        else
+        {
+            _overlays.SetOverlaysHidden(!on);
+            ApplyOverlays();
+        }
+    }
+
+    public void StartAbTest(AbTest.Thing thing, int minutes)
+    {
+        if (!Set.Diagnostics) return;
+        if (thing == AbTest.Thing.InputProgram && !RustInput.InThisBuild) return;
+        _ab.Start(thing, minutes, Environment.TickCount64);
+        Refresh();
+    }
+
+    public void StopAbTest()
+    {
+        _ab.Stop(Environment.TickCount64, "stopped on the Performance page");
+        Refresh();
     }
 
 

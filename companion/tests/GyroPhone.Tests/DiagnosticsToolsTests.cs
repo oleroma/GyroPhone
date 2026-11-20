@@ -127,3 +127,30 @@ public class FlightRecorderTests
         Assert.Equal(12, BitConverter.ToInt64(ms.ToArray(), 40));
     }
 }
+
+/// <summary>Diagnostics' A/B test: switches every phase, marks each, and puts the thing back when stopped.</summary>
+public class AbTestTests
+{
+    [Fact]
+    public void SwitchesEachPhaseAndPutsItBack()
+    {
+        bool rust = true;
+        var marks = new List<string>();
+        var ab = new AbTest(_ => rust, (_, on) => rust = on, marks.Add);
+        ab.Start(AbTest.Thing.InputProgram, 2, 0);
+        Assert.Equal((1, false, "Rust", "C#"), (ab.Phase, ab.InB, ab.Label(false), ab.Label(true)));
+        ab.Tick(119_000);
+        Assert.True(rust);
+        ab.Tick(120_000);
+        Assert.Equal((2, true, false), (ab.Phase, ab.InB, rust));
+        Assert.Equal("ab: phase 2 B: input program C#", marks[^1]);
+        ab.Tick(240_000);
+        Assert.Equal((3, true), (ab.Phase, rust));
+        ab.Tick(360_000);
+        Assert.False(rust);
+        ab.Stop(400_000, "test");
+        Assert.True(rust);
+        Assert.Null(ab.Running);
+        Assert.StartsWith("ab: stopped (test) after 4 phases; input program back to Rust", marks[^1]);
+    }
+}

@@ -36,7 +36,10 @@ internal sealed class PerformancePage : Page
     private readonly TextBlock _routeSub;
     private readonly TextBlock _logPath;
     private readonly TextBlock _buttonsSub;
-    private readonly TextBlock _busyLine, _diagSub;
+    private readonly TextBlock _busyLine, _diagSub, _abSub;
+    private readonly Button _abInput, _abOverlays, _abStop;
+    private readonly SliderRow _abMinutes;
+    private int _abEvery = GyroPhone.Host.Perf.AbTest.DefaultMinutes;
     private int _savedShown;
     private readonly StackPanel _results = new();
     private string _resultsKey = "\0";
@@ -126,6 +129,27 @@ internal sealed class PerformancePage : Page
         _diagSub = Parts.Text("", "Sub");
         _diagSub.Margin = new Thickness(0, 6, 0, 0);
         gb.Children.Add(_diagSub);
+
+        // A/B test: one thing switched back and forth in the same session, each phase marked in the log
+        var abTitle = Parts.Text("A/B test", "Caps");
+        abTitle.Margin = new Thickness(0, 14, 0, 0);
+        gb.Children.Add(abTitle);
+        gb.Children.Add(Parts.Text("Switches one thing back and forth every few minutes while you play, and marks each switch in the log, " +
+            "so both are measured on the same day, Wi-Fi and game. Play for at least 4 phases, then Save; tools/diag/gpdiag.py ab " +
+            "compares A with B. Stop puts it back as it was. Switching the input program restarts it: anything held is let go for a moment.", "Sub"));
+        _abMinutes = new SliderRow("Switch every", GyroPhone.Host.Perf.AbTest.MinMinutes, GyroPhone.Host.Perf.AbTest.MaxMinutes, 1,
+            v => $"{v:0} min", v => _abEvery = (int)v);
+        _abMinutes.Set(_abEvery);
+        gb.Children.Add(_abMinutes.View);
+        _abInput = Parts.Button("A/B input program", () => app.StartAbTest(GyroPhone.Host.Perf.AbTest.Thing.InputProgram, _abEvery));
+        _abOverlays = Parts.Button("A/B overlays", () => app.StartAbTest(GyroPhone.Host.Perf.AbTest.Thing.Overlays, _abEvery));
+        _abStop = Parts.Button("Stop A/B", app.StopAbTest);
+        var abRow = Parts.Row(_abInput, _abOverlays, _abStop);
+        abRow.Margin = new Thickness(0, 6, 0, 0);
+        gb.Children.Add(abRow);
+        _abSub = Parts.Text("", "Sub");
+        _abSub.Margin = new Thickness(0, 6, 0, 0);
+        gb.Children.Add(_abSub);
         _root.Children.Add(diag);
 
         // Results
@@ -313,6 +337,11 @@ internal sealed class PerformancePage : Page
         else if (r != null && !_diagSub.Text.StartsWith("Saved", StringComparison.Ordinal))
             _diagSub.Text = $"On for {Clock(r.Elapsed)}, keeping the last {v.DiagnosticsMinutes} min.";
         _savedShown = v.DiagnosticsSaved;
+        bool abOn = v.AbTest != null;
+        _abInput.IsEnabled = v.Diagnostics && !abOn && v.RustInput != RustInputState.NotInBuild;
+        _abOverlays.IsEnabled = v.Diagnostics && !abOn;
+        _abStop.IsEnabled = abOn;
+        _abSub.Text = v.AbTest ?? (v.Diagnostics ? "Not running." : "Turn Diagnostics on to run one.");
         // Other programs busy (a build, a scan, an update) spoil what's measured: say so.
         var busy = v.Diagnostics ? p.Busy : null;
         Parts.Show(_busyLine, busy != null);
