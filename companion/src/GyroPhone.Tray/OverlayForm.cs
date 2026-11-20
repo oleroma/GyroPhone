@@ -139,7 +139,8 @@ internal sealed class OverlayForm : Form
         _drawPicture = DrawPicture;
         _presentPicture = PresentPicture;
         var s = Settings ?? new OverlaySettings();
-        Text = WindowTitle(s.Kind, "");
+        _kind = s.Kind;
+        Text = WindowTitle(_kind, "");
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         TopMost = true;
@@ -229,10 +230,12 @@ internal sealed class OverlayForm : Form
     {
         set
         {
-            var t = WindowTitle(Settings?.Kind ?? OverlayKind.Pointer, value);
+            var t = WindowTitle(_kind, value);
             if (Text != t) Text = t;
         }
     }
+
+    private readonly OverlayKind _kind;
 
     private static string WindowTitle(OverlayKind kind, string part)
     {
