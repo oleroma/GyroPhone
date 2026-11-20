@@ -15,6 +15,7 @@ import com.oleroma.gyrophone.core.net.MouseTotals
 import com.oleroma.gyrophone.core.net.OverlayFeed
 import com.oleroma.gyrophone.core.net.PacketType
 import com.oleroma.gyrophone.core.net.PcGyroFeed
+import com.oleroma.gyrophone.core.net.PhoneSetup
 import com.oleroma.gyrophone.core.net.PhoneStats
 import com.oleroma.gyrophone.core.net.PressStamp
 import com.oleroma.gyrophone.core.net.PressTime
