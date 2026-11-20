@@ -53,12 +53,6 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
      */
     @Volatile var cameraMap: Int = DEFAULT_CAMERA_MAP
 
-    /**
-     * The game's camera degrees per mouse count ([degPerCount]), for what turns by the mouse counts
-     * ([GyroDisplay.turnsByCounts]). Set by the runtime when the settings in effect change.
-     */
-    @Volatile var degPerCount: Float = 1f / GyroSettings.DEFAULT_SENSITIVITY
-
     /** Seconds since the phone stopped turning, or since the ratchet press while easing on it. */
     private var calm = 0f
 
@@ -298,7 +292,7 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         if (!d.followsCamera) return
         if (d.turnsByCounts) {
             // As far as the game's camera turns for these counts: slower while aiming, as the game does.
-            val g = degPerCount * (if (aiming) d.aimSens.coerceIn(AIM_SENS_MIN, 1f) else 1f)
+            val g = degPerCount(gyro) * (if (aiming) d.aimSens.coerceIn(AIM_SENS_MIN, 1f) else 1f)
             if (d.turnsWith == TurnsWith.CAMERA) {
                 // Sideways counts turn it right, up and down ones up (the counts' Y is down +); no roll.
                 pose.cameraTurn(dx * g, -dy * g)

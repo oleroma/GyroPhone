@@ -2114,17 +2114,8 @@ class GamepadRuntime(context: Context) {
             val deg = GyroDisplayFeed.cameraDegrees(dx, dy, routes, gs, cameraDeg)
             overlay.camera(deg[0], deg[1], deg[2])
         }
-        if (follows) {
-            val perCount = displayDegPerCount()
-            for (f in feeds) {
-                f.degPerCount = perCount
-                f.camera(dx, dy, routes, gs)
-            }
-        }
+        if (follows) for (f in feeds) f.camera(dx, dy, routes, gs)
     }
-
-    /** Game camera degrees per mouse count for the displays ([GyroDisplayFeed.degPerCount]): one division, no allocation. */
-    private fun displayDegPerCount(): Float = GyroDisplayFeed.degPerCount(engine.gyroSettings)
 
     /** The routes and gyro settings [cameraMapNow] was made from, and its value (gyro thread). */
     private var cameraMapRoutes: List<Mapping>? = null
@@ -2161,12 +2152,10 @@ class GamepadRuntime(context: Context) {
         val gs = if (axes != 0) engine.gyroSettings else null
         val map = if (axes != 0) cameraMapNow(routes) else 0
         val out = engine.lastOutput
-        val perCount = displayDegPerCount()
         val counts = axes != 0 && (sentDx != 0 || sentDy != 0)
         for (f in feeds) {
             if (map != 0) f.cameraMap = map
             val d = f.display
-            f.degPerCount = perCount
             f.firing = d.kind == com.oleroma.gyrophone.core.model.GyroDisplayKind.LASER &&
                 inputAllowed && com.oleroma.gyrophone.core.engine.LaserFire.held(d.laserFire, out)
             // Every display turning by the counts slows while aiming (Aim sens); the pointer also changes its look.
