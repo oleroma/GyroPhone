@@ -139,7 +139,8 @@ internal sealed class OverlayForm : Form
         _drawPicture = DrawPicture;
         _presentPicture = PresentPicture;
         var s = Settings ?? new OverlaySettings();
-        Text = $"{Program.AppName} {OverlaySettings.KindName(s.Kind).ToLowerInvariant()} overlay";
+        _kind = s.Kind;
+        Text = WindowTitle(_kind, "");
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         TopMost = true;
@@ -171,6 +172,8 @@ internal sealed class OverlayForm : Form
             if (!IsHandleCreated) _composedHandle = ComposedWanted;
             if (_composedHandle) cp.ExStyle |= WsExNoRedirectionBitmap;
             if (ClickThrough) cp.ExStyle |= WsExTransparent;
+            // Behind the other windows: not topmost (SettingsChanged also sends it to the bottom).
+            if (!OnTop) cp.ExStyle &= ~WsExTopmost;
             return cp;
         }
     }
@@ -196,6 +199,27 @@ internal sealed class OverlayForm : Form
 
     private bool ClickThrough => !(_engine?.Ui.OverlayEdit ?? false);
 
+    /// <summary>Above every window; false while "Behind other windows" is on, except in Edit, where it comes up to be placed.</summary>
+    private bool OnTop => !(Settings?.BehindWindows ?? false) || !ClickThrough;
+
+    // The z-order last put on the window (null: not yet, for this handle).
+    private bool? _onTopApplied;
+
+    /// <summary>On top of everything, or at the bottom of the z-order behind every window; only when it changes.</summary>
+    private void ApplyZOrder()
+    {
+        if (!IsHandleCreated) return;
+        bool top = OnTop;
+        if (_onTopApplied == top) return;
+        _onTopApplied = top;
+        if (top) SetWindowPos(Handle, HwndTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+        else
+        {
+            SetWindowPos(Handle, HwndNoTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+            SetWindowPos(Handle, HwndBottom, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+        }
+    }
+
     /// <summary>The picked window in Edit (also picked in the main window's list): drawn with a solid frame.</summary>
     public bool Selected
     {
@@ -220,10 +244,32 @@ internal sealed class OverlayForm : Form
         }
     }
 
+    /// <summary>
+    /// The window's title, which OBS Window Capture finds it by: the kind, then its own part
+    /// (its label, or a number when there are several of its kind; "" for a lone unlabelled one,
+    /// so the title stays as it was before labels were in it). Set by the tray only when it changes.
+    /// </summary>
+    public string WindowTitlePart
+    {
+        set
+        {
+            var t = WindowTitle(_kind, value);
+            if (Text != t) Text = t;
+        }
+    }
+
+    private readonly OverlayKind _kind;
+
+    private static string WindowTitle(OverlayKind kind, string part)
+    {
+        var t = $"{Program.AppName} {OverlaySettings.KindName(kind).ToLowerInvariant()} overlay";
+        return part.Length == 0 ? t : $"{t}: {part}";
+    }
+
     /// <summary>On top of the other overlay windows, without taking focus.</summary>
     public void BringUp()
     {
-        if (IsHandleCreated) SetWindowPos(Handle, HwndTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+        if (IsHandleCreated && OnTop) SetWindowPos(Handle, HwndTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
     }
 
     /// <summary>
@@ -242,6 +288,7 @@ internal sealed class OverlayForm : Form
         long ex = GetWindowLongPtr(Handle, GwlExStyle).ToInt64();
         long want = ClickThrough ? ex | WsExTransparent : ex & ~WsExTransparent;
         if (want != ex) SetWindowLongPtr(Handle, GwlExStyle, new IntPtr(want));
+        ApplyZOrder();
         _dirty = true;
     }
 
@@ -262,6 +309,8 @@ internal sealed class OverlayForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        _onTopApplied = null;
+        ApplyZOrder();
         lock (_renderLock)
         {
             _hwnd = Handle;
@@ -342,6 +391,9 @@ internal sealed class OverlayForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        // Showing can lift it within its band: back to the bottom when it's kept behind.
+        _onTopApplied = null;
+        ApplyZOrder();
         ScheduleReveal();
     }
 
@@ -1270,7 +1322,7 @@ internal sealed class OverlayForm : Form
     private const int MaNoActivate = 3;
     private const int HtClient = 1, HtLeft = 10, HtRight = 11, HtTop = 12, HtTopLeft = 13, HtTopRight = 14;
     private const int HtBottom = 15, HtBottomLeft = 16, HtBottomRight = 17;
-    private static readonly IntPtr HwndTopmost = new(-1);
+    private static readonly IntPtr HwndTopmost = new(-1), HwndNoTopmost = new(-2), HwndBottom = new(1);
     private const uint SwpNoSize = 0x1, SwpNoMove = 0x2, SwpNoActivate = 0x10;
     private const byte AcSrcOver = 0, AcSrcAlpha = 1;
     private const int UlwAlpha = 2;

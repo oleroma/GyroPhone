@@ -19,7 +19,7 @@ internal sealed class OverlaysPage : Page
     private bool _refreshing;
 
     // Top
-    private readonly CheckBox _edit, _hideAll;
+    private readonly CheckBox _edit, _hideAll, _behindAll;
     private readonly Button _levelAll;
 
     // Left
@@ -52,6 +52,7 @@ internal sealed class OverlaysPage : Page
 
     // Window
     private readonly CheckBox _shown;
+    private readonly CheckBox _behind;
     private readonly Seg<OverlayBackground> _background;
     private readonly SliderRow _opacity;
     private readonly Seg<OverlayQuality> _quality;
@@ -169,10 +170,14 @@ internal sealed class OverlaysPage : Page
         _hideAll = Parts.Toggle("Hide all", () => _app.SetOverlaysHidden(!_app.OverlaysHidden));
         _hideAll.ToolTip = "Closes every overlay window; each keeps its own Show for when this is off.";
         _hideAll.Margin = new Thickness(0, 0, 24, 0);
+        _behindAll = Parts.Toggle("All behind", SwitchAllBehind);
+        _behindAll.ToolTip = "Turns Behind other windows on for every overlay (off for all when every one has it): the game covers them, OBS Window Capture still records them.";
+        _behindAll.Margin = new Thickness(0, 0, 24, 0);
         _levelAll = Parts.Button("Level all", app.LevelAll, glyph: "");
         _levelAll.ToolTip = "Held the way it is now, every overlay shows the phone face-on.";
         global.Children.Add(_edit);
         global.Children.Add(_hideAll);
+        global.Children.Add(_behindAll);
         global.Children.Add(_levelAll);
         DockPanel.SetDock(global, Dock.Right);
         top.Children.Insert(0, global);
@@ -287,6 +292,9 @@ internal sealed class OverlaysPage : Page
         var (show, sb) = Parts.Card();
         _shown = Parts.Toggle("Show this overlay", () => { if (Picked is { } id) _app.SetOverlayShown(id, !(_app.OverlayOf(id)?.Shown ?? false)); });
         sb.Children.Add(_shown);
+        _behind = Parts.Toggle("Behind other windows", () => Change(o => o.BehindWindows = !o.BehindWindows),
+            "For recording: the game covers it, so you don't see it while playing, but OBS Window Capture still records it (capture method \"Windows 10 (1903 and up)\"). Edit brings it to the front to place it.");
+        sb.Children.Add(_behind);
         _windowTab.Children.Add(show);
         var (bg, bb) = Parts.Card("Background");
         _background = new Seg<OverlayBackground>(b => Change(o => o.Background = b), false,
@@ -912,6 +920,18 @@ internal sealed class OverlaysPage : Page
         _app.RemoveOverlay(id);
     }
 
+    /// <summary>Every overlay is kept behind the other windows (and there is at least one).</summary>
+    private bool AllBehind() => _app.Overlays.Count > 0 && _app.Overlays.All(o => o.BehindWindows);
+
+    /// <summary>"All behind": every overlay behind the other windows, or, when they all already are, none.</summary>
+    private void SwitchAllBehind()
+    {
+        if (_refreshing) return;
+        bool behind = !AllBehind();
+        foreach (var o in _app.Overlays.ToList())
+            if (o.BehindWindows != behind) _app.ChangeOverlay(o.Id, x => x.BehindWindows = behind);
+    }
+
     private void Change(Action<OverlaySettings> change)
     {
         if (_refreshing || Picked is not { } id) return;
@@ -939,6 +959,7 @@ internal sealed class OverlaysPage : Page
             }
             Parts.SetChecked(_edit, _app.OverlayEdit);
             Parts.SetChecked(_hideAll, _app.OverlaysHidden);
+            Parts.SetChecked(_behindAll, AllBehind());
             var rf = _app.RestFade;
             Parts.SetChecked(_restOn, rf.On);
             Parts.Show(_restOptions, rf.On);
@@ -1029,6 +1050,7 @@ internal sealed class OverlaysPage : Page
         _labelHint.Text = o.Label.Length == 0 ? _app.OverlayName(o) : "";
         Parts.Show(_labelHint, _label.Text.Length == 0);
         Parts.SetChecked(_shown, o.Shown);
+        Parts.SetChecked(_behind, o.BehindWindows);
         _background.Set(o.Background);
         _opacity.Set(MathF.Round(o.Opacity * 100f));
         _quality.Set(o.Quality);

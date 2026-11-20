@@ -716,6 +716,20 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         return same.Count > 1 ? $"{name} {same.IndexOf(o) + 1}" : name;
     }
 
+    /// <summary>
+    /// What tells an overlay's window apart from the others of its kind in its title, for OBS Window Capture:
+    /// its label; else its number among its kind ("" when it's the only one); a label two of a kind share
+    /// gets its place among those as well. Taken from the saved list order, so it stays the same after a restart.
+    /// </summary>
+    public string WindowTitlePart(OverlaySettings o)
+    {
+        var same = _overlays.Ui.Overlays.Where(x => x.Kind == o.Kind).ToList();
+        var label = o.Label.Trim();
+        if (label.Length == 0) return same.Count > 1 ? $"{same.IndexOf(o) + 1}" : "";
+        var twins = same.Where(x => string.Equals(x.Label.Trim(), label, StringComparison.CurrentCultureIgnoreCase)).ToList();
+        return twins.Count > 1 ? $"{label} ({twins.IndexOf(o) + 1})" : label;
+    }
+
     public void SetTrayClick(TrayClickAction action)
     {
         _overlays.Change(s => s.TrayClick = action);
@@ -1257,6 +1271,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         foreach (var f in _overlayForms.Values)
         {
             f.Title = OverlayOf(f.Id) is { } o ? OverlayName(o) : "";
+            if (OverlayOf(f.Id) is { } w) f.WindowTitlePart = WindowTitlePart(w);
             f.Selected = f.Id == _selectedOverlay;
         }
     }
