@@ -382,6 +382,29 @@ pub fn push_payload(b: &mut Vec<u8>, p: &Payload) {
             field_f32(b, "latP50Ms", s.lat_p50_ms);
             field_f32(b, "latP99Ms", s.lat_p99_ms);
             field_f32(b, "jitterMs", s.jitter_ms);
+            field_f32(b, "floorMs", s.floor_ms);
+            field_f32(b, "rttTypMs", s.rtt_typ_ms);
+            field_f32(b, "overP50Ms", s.over_p50_ms);
+            field_f32(b, "overP99Ms", s.over_p99_ms);
+            field_i64(b, "late3", s.late3 as i64);
+            field_f32(b, "handOffMaxMs", s.hand_off_max_ms);
+            field_i64(b, "slowHandOffs", s.slow_hand_offs as i64);
+            field_f32(b, "lockWaitMs", s.lock_wait_ms);
+            field_f32(b, "stallMaxMs", s.stall_max_ms);
+            field_i64(b, "stalls", s.stalls as i64);
+            field_i64(b, "negLat", s.neg_lat as i64);
+            field_i64(b, "air", s.air as i64);
+            field_i64(b, "pc", s.pc as i64);
+            field_i64(b, "phone", s.phone as i64);
+            field_i64(b, "moving", s.moving as i64);
+            b.extend_from_slice(b"\"over\":[");
+            for (i, c) in s.over.iter().enumerate() {
+                if i > 0 {
+                    b.push(b',');
+                }
+                b.extend_from_slice(c.to_string().as_bytes());
+            }
+            b.extend_from_slice(b"],");
             let trouble = s.lost > 0 || s.late > 0 || s.gaps > 0 || s.releases > 0;
             b.extend_from_slice(if trouble { b"\"trouble\":true," } else { b"\"trouble\":false," });
             end(b);
@@ -397,6 +420,17 @@ pub fn push_payload(b: &mut Vec<u8>, p: &Payload) {
             field_f32(b, "wakeLateMs", s.wake_late_ms);
             field_f32(b, "gapMaxMs", s.gap_max_ms);
             field_i64(b, "phoneTx", s.phone_tx);
+            field_f32(b, "rttMinMs", s.rtt_min_ms);
+            field_f32(b, "rttTypMs", s.rtt_typ_ms);
+            field_f32(b, "driftPpm", s.drift_ppm);
+            field_i64(b, "pings", s.pings as i64);
+            field_i64(b, "battery", s.battery as i64);
+            field_i64(b, "setupFlags", s.setup_flags as i64);
+            field_i64(b, "tempDeciC", s.temp_deci_c as i64);
+            field_i64(b, "thermal", s.thermal as i64);
+            field_i64(b, "usbVendor", s.usb_vendor as i64);
+            field_i64(b, "usbProduct", s.usb_product as i64);
+            field_i64(b, "wifiStandard", s.wifi_standard as i64);
             end(b);
         }
         Payload::PairShow { attempt_id, phone_name, sas } => {

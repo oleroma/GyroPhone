@@ -8,7 +8,8 @@
 # 1. Asks the companion (over loopback UDP) to run a Link test: the phone sends fake moving input
 #    at its full rate, which the companion's input log counts but never injects.
 # 2. Meanwhile, when the phone is on adb, records its Wi-Fi side: logcat (all buffers), the Wi-Fi
-#    status every 2 s, and dumpsys wifi / wifiscanner before and after.
+#    status every 2 s, and dumpsys wifi / wifiscanner before and after. The log and the status are written
+#    to files on the phone and pulled after the test, so nothing streams over the link being tested.
 # 3. Copies the companion's input.log and companion.log, then runs tools/link-test-analyze.py
 #    (when Python is there) to line each dropout up with what the phone's Wi-Fi was doing.
 #
@@ -69,33 +70,43 @@ else
   log "phone NOT on adb: only the PC side is recorded (turn on wireless debugging and adb connect to add the phone's Wi-Fi side)"
 fi
 
-# Clocks: PC epoch and local time, and the phone's epoch read over adb (good to ~20 ms).
+# Clocks: PC epoch and local time, and the phone's epoch read over adb. Read 7 times, before and after the
+# test: the analyser uses the reading with the shortest adb round trip (its error is at most half of it, and it
+# says how much that is). Its log windows are 1.5 s wide, so a few ms don't matter.
+phone_clock() {
+  local i a p b
+  for i in 1 2 3 4 5 6 7; do
+    a=$(date +%s.%N); p=$(adb shell date +%s.%N | tr -d '\r'); b=$(date +%s.%N)
+    echo "phone_epoch $p between_pc $a $b"
+  done
+}
 {
   echo "pc_epoch $(date +%s.%N)"
   echo "pc_local $(date '+%Y-%m-%d %H:%M:%S.%N')"
   echo "pc_utc_offset $(date +%z)"
-  if [ "$phone" = 1 ]; then
-    a=$(date +%s.%N); p=$(adb shell date +%s.%N | tr -d '\r'); b=$(date +%s.%N)
-    echo "phone_epoch $p between_pc $a $b"
-  fi
+  [ "$phone" = 1 ] && phone_clock
 } >"$out/clock.txt"
 
-pids=()
+# On the phone, in the shell's own folder: the log and the Wi-Fi status every 2 s, pulled after the test.
+# Each run has its own folder there (nothing on the phone is deleted: clear /data/local/tmp/gp-link-test by hand).
+ptmp=/data/local/tmp/gp-link-test/$(basename "$out")
+phone_jobs=""
 if [ "$phone" = 1 ]; then
-  adb logcat -b all -v epoch -T 1 >"$out/logcat.txt" 2>&1 &
-  pids+=($!)
-  ( while :; do
-      echo "== $(date +%s.%N)"
-      adb shell 'cmd wifi status 2>/dev/null; cat /proc/net/wireless 2>/dev/null' | tr -d '\r'
-      sleep 2
-    done ) >"$out/wifi-status.txt" 2>&1 &
-  pids+=($!)
+  adb shell "mkdir -p $ptmp" >/dev/null 2>&1
+  phone_jobs=$(adb shell "cd $ptmp && { nohup logcat -b all -v epoch -T 1 -f $ptmp/logcat.txt >/dev/null 2>&1 & echo \$!; } && \
+    { nohup sh -c 'while :; do echo \"== \$(date +%s.%N)\"; cmd wifi status 2>/dev/null; cat /proc/net/wireless 2>/dev/null; sleep 2; done' \
+      >$ptmp/wifi-status.txt 2>&1 & echo \$!; }" | tr -d '\r' | tr '\n' ' ')
+  log "phone recording to $ptmp (jobs $phone_jobs)"
 fi
 
 stop() {
   send_ctl 0 && log "asked the companion to stop the Link test"
-  for p in "${pids[@]}"; do kill "$p" 2>/dev/null; done
-  wait 2>/dev/null
+  if [ -n "$phone_jobs" ]; then
+    adb shell "kill $phone_jobs" >/dev/null 2>&1
+    adb pull "$ptmp/logcat.txt" "$out/logcat.txt" >/dev/null 2>&1 || log "could not pull the phone's log"
+    adb pull "$ptmp/wifi-status.txt" "$out/wifi-status.txt" >/dev/null 2>&1 || log "could not pull the phone's Wi-Fi status"
+    phone_jobs=""
+  fi
 }
 trap 'stop; exit 130' INT TERM
 
@@ -117,6 +128,7 @@ stop
 trap - INT TERM
 
 if [ "$phone" = 1 ]; then
+  phone_clock >>"$out/clock.txt"
   adb shell dumpsys wifi >"$out/wifi-after.txt" 2>&1
   adb shell dumpsys wifiscanner >"$out/wifiscanner-after.txt" 2>&1
 fi

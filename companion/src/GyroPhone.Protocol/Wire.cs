@@ -72,8 +72,13 @@ public static class Wire
     public const int MotionPlain = MotionFrame.Size;
     /// <summary>PRESS_TIME: u32 STATE time, u32 input event time (low 32 bits of the phone's µs clock).</summary>
     public const int PressTimePlain = 8;
-    /// <summary>PHONE_STATS: u32 time, u16 states, packets, failed, slow sends, u32 send total µs, send max µs, wake late max µs, STATE gap max µs, phone tx packets (<see cref="PhoneStats"/>).</summary>
-    public const int PhoneStatsPlain = 32;
+    /// <summary>
+    /// PHONE_STATS: u32 time, u16 states, packets, failed, slow sends, u32 send total µs, send max µs, wake late max µs, STATE gap
+    /// max µs, phone tx packets; then i32 best round trip µs, typical round trip µs, clock drift ppb, u16 pings; the setup: u8
+    /// battery %, flags, i16 battery temperature (0.1 °C), u8 thermal status, Wi-Fi standard, u16 USB network adapter vendor,
+    /// product, Wi-Fi channel width MHz; 6 reserved (<see cref="PhoneStats"/>).
+    /// </summary>
+    public const int PhoneStatsPlain = 64;
     /// <summary>TEST_MODE: u8 <see cref="TestModeFlags"/>, 3 reserved bytes.</summary>
     public const int TestModePlain = 4;
     /// <summary>CAPTURE: u8 <see cref="CaptureFlags"/>, 3 reserved bytes.</summary>

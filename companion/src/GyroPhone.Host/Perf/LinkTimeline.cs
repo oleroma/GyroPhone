@@ -14,6 +14,33 @@ namespace GyroPhone.Host.Perf;
 public readonly record struct LinkSecond(long AtUs, int Rx, int Lost, int Late, float MaxLateMs, int Gaps, int Releases,
     float LatP50Ms = -1, float LatP99Ms = -1, float JitterMs = 0)
 {
+    /// <summary>Half the best round trip, ms: the fastest the link went (−1 unknown).</summary>
+    public float FloorMs { get; init; } = -1;
+    /// <summary>The phone's typical (middle) round trip, ms (−1 unknown).</summary>
+    public float RttTypMs { get; init; } = -1;
+    /// <summary>How much slower than the fastest packets this second's were: middle and slowest 1%, ms (−1 none). Needs no clock sync.</summary>
+    public float OverP50Ms { get; init; } = -1;
+    public float OverP99Ms { get; init; } = -1;
+    /// <summary>Packets 3 to 15 ms slower than the fastest (below a hold-up, still felt in a flick).</summary>
+    public int Late3 { get; init; }
+    /// <summary>The slowest hand-off to Windows, ms; hand-offs over 2 ms; gp-rx's longest wait for the engine lock, ms.</summary>
+    public float HandOffMaxMs { get; init; }
+    public int SlowHandOffs { get; init; }
+    public float LockWaitMs { get; init; }
+    /// <summary>The PC stall watch: its latest wake, ms (−1 not running), and wakes 2 ms or more late.</summary>
+    public float StallMaxMs { get; init; } = -1;
+    public int Stalls { get; init; }
+    /// <summary>Latencies that came out below zero (a wrong clock offset).</summary>
+    public int NegLat { get; init; }
+    /// <summary>Late packets by where they waited: on the way (Wi-Fi, router, cable), inside the PC, or the phone paused.</summary>
+    public int Air { get; init; }
+    public int Pc { get; init; }
+    public int Phone { get; init; }
+    /// <summary>Packets that moved the mouse or a stick.</summary>
+    public int Moving { get; init; }
+    /// <summary>This second's packets by how much later than the fastest they came (<see cref="OverFloor.EdgesUs"/>), or null (an older input program).</summary>
+    public int[]? Over { get; init; }
+
     /// <summary>Something went wrong on the link this second.</summary>
     public bool Trouble => Lost > 0 || Late > 0 || Gaps > 0 || Releases > 0;
 }

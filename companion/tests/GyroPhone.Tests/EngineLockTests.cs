@@ -108,6 +108,7 @@ public class EngineLockTests
         h.Engine.Flush(h.Clock.NowUs);
         await ui;
         await release;
+        h.Engine.Recorder!.WritePending();
         var slow = Assert.Single(lines, l => l.Contains("slow hand-off"));
         Assert.Contains("5.0 ms from receive to SendInput: engine lock", slow);
         Assert.Contains("(ui had it)", slow);
@@ -128,6 +129,9 @@ public class EngineLockTests
             h.Clock.AdvanceMs(5);
         };
         h.Send(phone, phone.State(f => f.MouseTotalX += 20));
+        // gp-rx leaves the text to the next other lock holder (the watchdog's tick at the latest).
+        Assert.DoesNotContain(lines, l => l.Contains("slow hand-off"));
+        h.Engine.Recorder!.WritePending();
         var slow = Assert.Single(lines, l => l.Contains("slow hand-off"));
         Assert.Contains("SendInput", slow);
         Assert.DoesNotContain("engine lock", slow);

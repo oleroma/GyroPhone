@@ -70,6 +70,12 @@ pull_newest_phone() {
     exit 1
   fi
   adb exec-out cat "$phone_dir/$name" >"$out/$name"
+  # Its per-packet flight record, when Diagnostics made one (tools/diag/gpdiag.py flight reads it).
+  local flight="${name%.txt}-flight.bin"
+  if adb exec-out ls -1 "$phone_dir" 2>/dev/null | tr -d '\r' | grep -qx "$flight"; then
+    adb exec-out cat "$phone_dir/$flight" >"$out/$flight"
+    echo "phone flight record: $out/$flight" >&2
+  fi
   echo "$out/$name"
 }
 
@@ -114,6 +120,17 @@ if [ -z "$pc" ]; then
   exit 0
 fi
 echo "pc:    $pc"
+records=""
+phone_flight="$out/$(basename "$phone" .txt)-flight.bin"
+[ -f "$phone_flight" ] && records="$phone_flight"
+for extra in flight net; do
+  f="${pc%.txt}-$extra.bin"
+  if [ -f "$f" ]; then
+    cp "$f" "$out/" && echo "pc $extra record: $out/$(basename "$f")"
+    records="$records $out/$(basename "$f")"
+  fi
+done
+[ -n "$records" ] && echo "per packet: python tools/diag/gpdiag.py flight$records"
 dest="$out/merged-$(basename "$phone" .txt | sed 's/^phone-//').txt"
 merge "$phone" "$pc" "$dest"
 echo "merged: $dest"

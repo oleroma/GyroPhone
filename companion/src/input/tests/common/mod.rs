@@ -793,7 +793,7 @@ pub mod harness {
 
     impl RecordingHooks {
         pub fn recorder_lines(&self) -> Vec<String> {
-            self.recorder.lock().unwrap().iter().filter_map(|o| if let RecorderOut::Line(l) = o { Some(l.clone()) } else { None }).collect()
+            self.recorder.lock().unwrap().iter().filter_map(|o| if let RecorderOut::Line(l) = o { Some(l.text()) } else { None }).collect()
         }
         pub fn debug_lines(&self) -> Vec<(TraceKind, String)> {
             self.lines.lock().unwrap().iter().map(|l| (l.1, l.2.clone())).collect()

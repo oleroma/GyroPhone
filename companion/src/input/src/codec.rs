@@ -577,6 +577,28 @@ pub struct PhoneStats {
     pub wake_late_max_us: u32,
     pub state_gap_max_us: u32,
     pub phone_tx_packets: u32,
+    /// The phone's clock sync: best round trip of its last 8 pings, the middle of its last 16 (µs, -1 unknown).
+    pub rtt_min_us: i32,
+    pub rtt_typ_us: i32,
+    /// How fast the PC's clock gains on the phone's (parts per billion).
+    pub drift_ppb: i32,
+    pub pings: u16,
+    pub setup: PhoneSetup,
+}
+
+/// The phone's side of the setup in PHONE_STATS (Protocol.PhoneSetup): battery % and thermal status 255 unknown,
+/// temperature in 0.1 °C (i16::MIN unknown), the USB network adapter on the phone (0 none). Flags: 1 charging,
+/// 2 battery saver, 4 USB network adapter, 8 Doze.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct PhoneSetup {
+    pub battery_pct: u8,
+    pub flags: u8,
+    pub temp_deci_c: i16,
+    pub thermal: u8,
+    pub wifi_standard: u8,
+    pub usb_vendor: u16,
+    pub usb_product: u16,
+    pub wifi_width_mhz: u16,
 }
 
 pub fn encode_phone_stats(p: &PhoneStats, b: &mut [u8]) -> usize {
@@ -590,6 +612,20 @@ pub fn encode_phone_stats(p: &PhoneStats, b: &mut [u8]) -> usize {
     le::put_u32(b, 20, p.wake_late_max_us);
     le::put_u32(b, 24, p.state_gap_max_us);
     le::put_u32(b, 28, p.phone_tx_packets);
+    le::put_u32(b, 32, p.rtt_min_us as u32);
+    le::put_u32(b, 36, p.rtt_typ_us as u32);
+    le::put_u32(b, 40, p.drift_ppb as u32);
+    le::put_u16(b, 44, p.pings);
+    let st = &p.setup;
+    b[46] = st.battery_pct;
+    b[47] = st.flags;
+    le::put_u16(b, 48, st.temp_deci_c as u16);
+    b[50] = st.thermal;
+    b[51] = st.wifi_standard;
+    le::put_u16(b, 52, st.usb_vendor);
+    le::put_u16(b, 54, st.usb_product);
+    le::put_u16(b, 56, st.wifi_width_mhz);
+    b[58..wire::PHONE_STATS_PLAIN].fill(0);
     wire::PHONE_STATS_PLAIN
 }
 
@@ -605,6 +641,20 @@ pub fn decode_phone_stats(b: &[u8]) -> PhoneStats {
         wake_late_max_us: le::u32(b, 20),
         state_gap_max_us: le::u32(b, 24),
         phone_tx_packets: le::u32(b, 28),
+        rtt_min_us: le::u32(b, 32) as i32,
+        rtt_typ_us: le::u32(b, 36) as i32,
+        drift_ppb: le::u32(b, 40) as i32,
+        pings: le::u16(b, 44),
+        setup: PhoneSetup {
+            battery_pct: b[46],
+            flags: b[47],
+            temp_deci_c: le::u16(b, 48) as i16,
+            thermal: b[50],
+            wifi_standard: b[51],
+            usb_vendor: le::u16(b, 52),
+            usb_product: le::u16(b, 54),
+            wifi_width_mhz: le::u16(b, 56),
+        },
     }
 }
 

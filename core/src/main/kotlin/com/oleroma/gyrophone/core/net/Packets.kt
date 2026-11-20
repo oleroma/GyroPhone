@@ -132,7 +132,42 @@ data class PhoneStats(
     val wakeLateMaxUs: Int,
     val stateGapMaxUs: Int,
     val phoneTxPackets: Int,
+    /** The clock sync's best round trip of its last 8 pings (µs), -1 unknown. */
+    val rttMinUs: Int = -1,
+    /** Its middle round trip of the last 16 pings (µs), -1 unknown. */
+    val rttTypUs: Int = -1,
+    /** How fast the PC's clock gains on the phone's (parts per billion; 0 until known). */
+    val driftPpb: Int = 0,
+    /** Pings answered this second. */
+    val pings: Int = 0,
+    /** The phone's setup that can change results (battery, charger, USB adapter). */
+    val setup: PhoneSetup = PhoneSetup.UNKNOWN,
 ) : WirePacket
+
+/**
+ * The phone's side of the setup, in PHONE_STATS: what can shift link results without anyone noticing.
+ * [batteryPct] and [thermal] 255 = unknown; [tempDeciC] Short.MIN_VALUE = unknown; [usbVendor]/[usbProduct] the USB
+ * network adapter (Ethernet or other) plugged into the phone, 0 = none; [wifiWidthMhz] 0 = unknown or not on Wi-Fi.
+ */
+data class PhoneSetup(
+    val batteryPct: Int = 255,
+    val flags: Int = 0,
+    val tempDeciC: Int = Short.MIN_VALUE.toInt(),
+    val thermal: Int = 255,
+    val usbVendor: Int = 0,
+    val usbProduct: Int = 0,
+    val wifiWidthMhz: Int = 0,
+    val wifiStandard: Int = 0,
+) {
+    companion object {
+        val UNKNOWN = PhoneSetup()
+        const val CHARGING = 1
+        const val BATTERY_SAVER = 2
+        const val USB_NET = 4
+        /** Android's power-save "idle" (Doze) is on. */
+        const val DOZE = 8
+    }
+}
 
 /** The PC's latency tests the phone takes part in ([TestModeFlags]). */
 data class TestMode(val flags: Int) : WirePacket

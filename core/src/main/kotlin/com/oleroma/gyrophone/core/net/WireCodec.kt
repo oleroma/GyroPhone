@@ -312,6 +312,14 @@ object WireCodec {
                 out.putU32(off + 12, p.sendTotalUs); out.putU32(off + 16, p.sendMaxUs)
                 out.putU32(off + 20, p.wakeLateMaxUs); out.putU32(off + 24, p.stateGapMaxUs)
                 out.putU32(off + 28, p.phoneTxPackets)
+                out.putI32(off + 32, p.rttMinUs); out.putI32(off + 36, p.rttTypUs)
+                out.putI32(off + 40, p.driftPpb); out.putU16(off + 44, p.pings)
+                val st = p.setup
+                out.putU8(off + 46, st.batteryPct); out.putU8(off + 47, st.flags)
+                out.putI16(off + 48, st.tempDeciC); out.putU8(off + 50, st.thermal); out.putU8(off + 51, st.wifiStandard)
+                out.putU16(off + 52, st.usbVendor); out.putU16(off + 54, st.usbProduct)
+                out.putU16(off + 56, st.wifiWidthMhz)
+                for (i in 58 until Wire.PHONE_STATS_PLAIN) out[off + i] = 0
             }
             is TestMode -> out.putU8(off, p.flags)
             is CaptureListen -> out.putU8(off, p.flags)
@@ -367,6 +375,11 @@ object WireCodec {
             PacketType.PHONE_STATS -> PhoneStats(
                 buf.getI32(off), buf.getU16(off + 4), buf.getU16(off + 6), buf.getU16(off + 8), buf.getU16(off + 10),
                 buf.getI32(off + 12), buf.getI32(off + 16), buf.getI32(off + 20), buf.getI32(off + 24), buf.getI32(off + 28),
+                buf.getI32(off + 32), buf.getI32(off + 36), buf.getI32(off + 40), buf.getU16(off + 44),
+                PhoneSetup(
+                    buf.getU8(off + 46), buf.getU8(off + 47), buf.getI16(off + 48), buf.getU8(off + 50),
+                    buf.getU16(off + 52), buf.getU16(off + 54), buf.getU16(off + 56), buf.getU8(off + 51),
+                ),
             )
             PacketType.TEST_MODE -> TestMode(buf.getU8(off))
             PacketType.CAPTURE -> CaptureListen(buf.getU8(off))

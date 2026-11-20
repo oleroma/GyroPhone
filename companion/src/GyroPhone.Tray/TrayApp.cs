@@ -46,6 +46,8 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     private readonly Pairing _pairing;
     /// <summary>The Performance page's frame watcher and test records (logs\perf).</summary>
     private readonly PerfMonitor _perf;
+    private readonly NetArrivalWatch _net;
+    private readonly AbTest _ab;
 
     private readonly TrayIcons _icons = new();
     private readonly NotifyIcon _tray;
@@ -118,10 +120,21 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         {
             _log.Write($"key names: {e.GetType().Name}");
         }
+        _net = new NetArrivalWatch(_log.Write);
+        _ab = new AbTest(AbGet, AbSet, line =>
+        {
+            _log.Write(line);
+            if (_debug.Enabled) _debug.Add(DebugTrace.Kind.Note, line);
+        });
         _perf = new PerfMonitor(new FpsHelperSource(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
             Path.Combine(_log.Directory, "perf"), _log.Write);
         _perf.ShowsLinkChanged += () => In.SetLinkWatch(_perf.ShowsLink);
         _perf.PathNow = () => LinkPath()?.Text;
+        _perf.SetupNow = SetupNow;
+        _perf.Note = line =>
+        {
+            if (_debug.Enabled) _debug.Add(DebugTrace.Kind.Note, line);
+        };
         OverlayForm.FpsSource = () => (_perf.View(), _perf.GameName, _perf.State, _perf.Recording);
         OverlayForm.FpsLinkSource = () =>
         {
@@ -336,6 +349,8 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         if (Volatile.Read(ref _exited) != 0) return;
         SaveUiSettings();
         ApplyDiagnostics();
+        if (!Set.Diagnostics) _ab.Stop(Environment.TickCount64, "Diagnostics off");
+        else _ab.Tick(Environment.TickCount64);
         var st = St;
         var s = Snap;
         bool serverOk = st?.Server == nameof(ServerState.Running);
@@ -435,6 +450,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             _debug.SetOn(on, "switched");
         }
         _perf.SetDiagnostics(on, Set.DiagnosticsMinutes);
+        _net.SetOn(on, Set.DiagnosticsMinutes);
         OverlayTiming.On = on;
     }
 
@@ -538,7 +554,50 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             st?.InputDriverReady == true ? InputDriverState.Ready : st?.InputDriverInstalled == true ? InputDriverState.NotPlugged : InputDriverState.NotInstalled,
             !RustInput.InThisBuild ? RustInputState.NotInBuild : _overlays.Ui.RustInput ? RustInputState.On : RustInputState.Off,
             !_input.Attached || _input.Hello is not { } hello ? null : hello.Version.EndsWith(RustInput.VersionSuffix, StringComparison.Ordinal) ? "Rust" : "Original",
-            _rustInputNote);
+            _rustInputNote,
+            AbText());
+    }
+
+    private string? AbText()
+    {
+        if (_ab.Running is not { } t) return null;
+        int left = _ab.SecondsLeft(Environment.TickCount64);
+        return $"Phase {_ab.Phase}, {(_ab.InB ? "B" : "A")}: {AbTest.Name(t)} {_ab.Label(_ab.InB)} · next switch in {left / 60}:{left % 60:00} " +
+            $"(A {_ab.Label(false)}, B {_ab.Label(true)}, every {_ab.Minutes} min)";
+    }
+
+    private bool AbGet(AbTest.Thing t) => t == AbTest.Thing.InputProgram ? _overlays.Ui.RustInput : !_overlays.Ui.OverlaysHidden;
+
+    /// <summary>The A/B test's switch: like the Performance page's switches, without refreshing (it runs inside Refresh).</summary>
+    private void AbSet(AbTest.Thing t, bool on)
+    {
+        if (t == AbTest.Thing.InputProgram)
+        {
+            if (!RustInput.InThisBuild) return;
+            _overlays.Change(s => s.RustInput = on);
+            _rustInputNote = null;
+            _log.Write($"input program: {(on ? "Rust" : "original")} chosen by the A/B test");
+            _input.SetRust(on);
+        }
+        else
+        {
+            _overlays.SetOverlaysHidden(!on);
+            ApplyOverlays();
+        }
+    }
+
+    public void StartAbTest(AbTest.Thing thing, int minutes)
+    {
+        if (!Set.Diagnostics) return;
+        if (thing == AbTest.Thing.InputProgram && !RustInput.InThisBuild) return;
+        _ab.Start(thing, minutes, Environment.TickCount64);
+        Refresh();
+    }
+
+    public void StopAbTest()
+    {
+        _ab.Stop(Environment.TickCount64, "stopped on the Performance page");
+        Refresh();
     }
 
 
@@ -644,6 +703,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         In.SetDiagnosticsMinutes(minutes);
         _perf.SetDiagnostics(Set.Diagnostics, minutes);
+        _net.SetOn(Set.Diagnostics, minutes);
         Refresh();
     }
 
@@ -1341,8 +1401,72 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         {
             _log.Write($"diagnostics record not saved: {e.GetType().Name}: {e.Message}");
         }
-        if (path != null) Interlocked.Increment(ref _diagSaved);
+        if (path != null)
+        {
+            Interlocked.Increment(ref _diagSaved);
+            SaveNetArrivals(path, minutes);
+            CopyFlight(path);
+        }
         Post(Refresh);
+    }
+
+    /// <summary>Diagnostics' network arrival watch: pc-&lt;time&gt;-net.bin next to <paramref name="saved"/> (the newest 5 stay).</summary>
+    private void SaveNetArrivals(string saved, int minutes)
+    {
+        try
+        {
+            string dest = Path.ChangeExtension(saved, null) + "-net.bin";
+            long from = (long)(System.Diagnostics.Stopwatch.GetTimestamp() * (1_000_000.0 / System.Diagnostics.Stopwatch.Frequency)) - minutes * 60_000_000L;
+            if (_net.Save(dest, from) == null)
+            {
+                _log.Write($"network arrivals: none ({_net.State})");
+                return;
+            }
+            _log.Write($"network arrivals saved: {Path.GetFileName(dest)} ({_net.State})");
+            foreach (var old in Directory.GetFiles(DebugDirectory, "pc-*-net.bin").OrderByDescending(f => f).Skip(5)) File.Delete(old);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _log.Write($"network arrivals not saved: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// The input process writes its per-packet record (flight-*.bin) into the logs folder at the same Save: copied here next
+    /// to <paramref name="saved"/> as pc-&lt;time&gt;-flight.bin once it is there (it takes a moment to write).
+    /// </summary>
+    private void CopyFlight(string saved)
+    {
+        var since = DateTime.Now.AddSeconds(-15);
+        for (int i = 0; i < 25; i++)
+        {
+            try
+            {
+                var newest = new DirectoryInfo(_log.Directory).GetFiles("flight-*.bin")
+                    .Where(f => f.LastWriteTime >= since).OrderByDescending(f => f.LastWriteTime).FirstOrDefault();
+                // Written and closed: its size stopped changing.
+                if (newest != null && newest.Length > 0)
+                {
+                    long size = newest.Length;
+                    Thread.Sleep(300);
+                    newest.Refresh();
+                    if (newest.Length == size)
+                    {
+                        string dest = Path.ChangeExtension(saved, null) + "-flight.bin";
+                        File.Copy(newest.FullName, dest, overwrite: true);
+                        _log.Write($"flight record copied: {Path.GetFileName(dest)}");
+                        // Each is up to tens of MB: the newest 5 stay.
+                        foreach (var old in Directory.GetFiles(DebugDirectory, "pc-*-flight.bin").OrderByDescending(f => f).Skip(5)) File.Delete(old);
+                        return;
+                    }
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+            }
+            Thread.Sleep(200);
+        }
+        _log.Write("flight record: none from the input process (an older input program, or Diagnostics just came on)");
     }
 
     /// <summary>Writes the last <paramref name="minutes"/> of the event log to the debug folder; returns the path, or null.</summary>
@@ -1394,10 +1518,35 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         sb.Append($"\r\nkeys (the phone's newest state): {(held.Count == 0 ? "none" : string.Join("+", held))}");
         sb.Append($"\r\nlogging: {(_debug.Enabled ? "on" : "off")} · raw events dropped {_debug.Dropped} · counters: {s.Counters}");
         if (Hello() is { } h) sb.Append($"\r\ninput process: pid {h.Pid}, {h.Version}");
+        if (_perf.SetupLine is { } setup) sb.Append("\r\nsetup: ").Append(setup);
         return sb.ToString();
     }
 
     private InputHello? Hello() => _input.Hello;
+
+    /// <summary>The PC's side of Diagnostics' setup and GyroPhone's own (on the Performance monitor's timer, every few seconds).</summary>
+    private List<SetupItem> SetupNow()
+    {
+        var s = Snap;
+        var list = PcSetupReader.Read(IPAddress.TryParse(s.PhoneAddress, out var a) ? a : null);
+        list.Add(new("gp", Application.ProductVersion));
+        list.Add(new("input program", _input.Hello is not { } h ? "-" : h.Version.EndsWith(RustInput.VersionSuffix, StringComparison.Ordinal) ? "Rust" : "C#"));
+        list.Add(new("keys via", St?.InputDriverReady == true ? "input driver" : "SendInput"));
+        string overlays;
+        try
+        {
+            var ui = _overlays.Ui;
+            var shown = ui.OverlaysHidden ? [] : ui.Overlays.Where(o => o.Shown).Select(o => o.Kind.ToString()).ToList();
+            overlays = shown.Count == 0 ? "none" : string.Join(", ", shown);
+        }
+        catch (InvalidOperationException)
+        {
+            overlays = "-"; // changed on the UI thread meanwhile
+        }
+        list.Add(new("overlays", overlays));
+        list.Add(new("fps watch", _perf.State == FrameWatchState.On ? "on" : "off"));
+        return list;
+    }
 
     public void OpenDebugFolder()
     {
@@ -1831,6 +1980,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             _refreshSoon?.Stop();
             _updater.Dispose();
             _perf.Dispose();
+            _net.Dispose();
             if (_overlays.TakeDirty() is { } json) _uiStore.WriteAtomic(json);
             _debug.SetOn(false, "exit");
             _input.Dispose();

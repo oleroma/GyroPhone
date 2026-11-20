@@ -1,8 +1,9 @@
 //! The input log: how the phone's input reached Windows, for finding stutter in real play
 //! (docs/spec/pc-companion.md, "Input log"). Port of InputRecorder.cs; the lines read the same.
 //!
-//! Called by the engine under its lock; the lines and seconds only queue there, and the engine hands them on
-//! (`take`) once it let go of the lock. Per second it makes one summary line while a session is up, and at once
+//! Called by the engine under its lock; the events and seconds only queue there, as numbers, and the engine hands
+//! them on (`take`) once it let go of the lock, never on the rx thread: their text is made then (`Event::text`), off
+//! the input path. Per second it makes one summary line while a session is up, and at once
 //! one line per event: lost packets, packets held up on the way, the phone going quiet, a catch-up, a big single
 //! move, a slow hand-off to Windows, Windows refusing input, a release after silence. It never says which keys or
 //! buttons, only how many.
@@ -11,9 +12,12 @@
 //! the last 5-10 s), so it needs no clock sync and is the delay a packet added on top of the best the link did
 //! just before.
 
+use crate::flight::{self, FlightRecorder};
 use crate::link_stats::LinkStats;
+use crate::stall_watch::{self, StallWatch};
 use crate::wire;
 use std::fmt::Write;
+use std::sync::Arc;
 
 /// `us / 1000.0` as .NET's "0.0" writes it: tenths of a millisecond, halves away from zero.
 pub fn ms1(us: i64) -> String {
@@ -68,7 +72,7 @@ impl HandOffCauses {
 }
 
 /// One second of the phone link, from the input log's second line.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct LinkSecond {
     /// When the second ended, on the engine's clock.
     pub at_us: i64,
@@ -85,12 +89,130 @@ pub struct LinkSecond {
     pub lat_p50_ms: f32,
     pub lat_p99_ms: f32,
     pub jitter_ms: f32,
+    /// Half the best round trip, ms: the fastest the link went (-1 unknown).
+    pub floor_ms: f32,
+    /// The phone's typical (middle) round trip, ms (-1 unknown).
+    pub rtt_typ_ms: f32,
+    /// How much slower than the fastest packets this second's were: middle and slowest 1%, ms (-1 none). Needs no
+    /// clock sync.
+    pub over_p50_ms: f32,
+    pub over_p99_ms: f32,
+    /// Packets 3 to 15 ms slower than the fastest (below a hold-up, still felt in a flick).
+    pub late3: i32,
+    /// The slowest hand-off to Windows, ms; hand-offs over 2 ms; gp-rx's longest wait for the engine lock, ms.
+    pub hand_off_max_ms: f32,
+    pub slow_hand_offs: i32,
+    pub lock_wait_ms: f32,
+    /// The PC stall watch: its latest wake, ms (-1 not running), and wakes 2 ms or more late.
+    pub stall_max_ms: f32,
+    pub stalls: i32,
+    /// Latencies that came out below zero (a wrong clock offset).
+    pub neg_lat: i32,
+    /// Late packets by where they waited: on the way (Wi-Fi, router, cable), inside the PC, or the phone paused.
+    pub air: i32,
+    pub pc: i32,
+    pub phone: i32,
+    /// Packets that moved the mouse or a stick.
+    pub moving: i32,
+    /// This second's packets by how much later than the fastest they came (`OVER_EDGES_US`).
+    pub over: [i32; OVER_BUCKETS],
+}
+
+/// The records' over-the-floor bucket upper edges, µs; the last bucket holds the rest. Same as OverFloor.EdgesUs.
+pub const OVER_EDGES_US: [i64; 17] =
+    [100, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000, 7500, 10000, 15000, 20000, 30000, 50000];
+pub const OVER_BUCKETS: usize = OVER_EDGES_US.len() + 1;
+
+/// The bucket of `OVER_EDGES_US` an extra delay falls in.
+pub fn over_bucket(us: i64) -> usize {
+    OVER_EDGES_US.iter().take_while(|&&e| us >= e).count()
+}
+
+/// What held up a hold-up: where its packets waited.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// On the way (Wi-Fi, router, cable): sent on time, the PC ran on time.
+    Air,
+    /// Inside the PC: the stall watch was late then.
+    Pc,
+    /// The phone paused.
+    Phone,
+}
+
+/// One input-log event, kept as numbers until its text is made.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Ev {
+    Text { what: String, detail: String },
+    Lost { count: i64, seq: u32 },
+    PhoneGap { span_us: i64, while_active: bool },
+    /// `stall_us`: the stall watch's worst wake then (-1: it wasn't running).
+    Late { count: i32, max_us: i64, over_us: i64, stall_us: i64, verdict: Verdict },
+    BigMove { dx: i32, dy: i32 },
+    SlowHandOff { took_us: i64, causes: HandOffCauses },
+    Refused,
+    CatchUp { px: i32, backlog_us: i64, spread_us: i64 },
+    Release { held: u32 },
+}
+
+/// An event and when it happened, µs into the session.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Event {
+    pub at_us: i64,
+    pub ev: Ev,
+}
+
+impl Event {
+    /// The line: seconds into the session (10 wide, 3 decimals), what (13 wide), detail.
+    pub fn text(&self) -> String {
+        let (what, detail): (&str, String) = match &self.ev {
+            Ev::Text { what, detail } => (what, detail.clone()),
+            Ev::Lost { count, seq } => ("lost", format!("{count} packets before seq {seq}")),
+            Ev::PhoneGap { span_us, while_active } => (
+                "phone gap",
+                format!(
+                    "phone sent nothing for {} ms{}",
+                    ms1(*span_us),
+                    if *while_active { " while input was moving or held" } else { "" }
+                ),
+            ),
+            Ev::Late { count, max_us, over_us, stall_us, verdict } => {
+                let tail = match verdict {
+                    Verdict::Phone => " (the phone also paused: phone)".to_string(),
+                    Verdict::Pc => format!(" (sent on time, the PC stalled {} ms then: PC)", ms1(*stall_us)),
+                    Verdict::Air if *stall_us < 0 => " (sent on time: held up on the way)".to_string(),
+                    Verdict::Air => " (sent on time, the PC ran on time: air)".to_string(),
+                };
+                ("late", format!("{count} packets up to {} ms late over {} ms{tail}", ms1(*max_us), ms1(*over_us)))
+            }
+            Ev::BigMove { dx, dy } => ("big move", format!("{dx},{dy} px in one step")),
+            Ev::SlowHandOff { took_us, causes } => ("slow hand-off", InputRecorder::slow_text(*took_us, causes)),
+            Ev::Refused => (
+                "refused",
+                "Windows took fewer events than given (an admin window or the lock screen in front)".to_string(),
+            ),
+            Ev::CatchUp { px, backlog_us, spread_us } => (
+                "catch-up",
+                format!(
+                    "{px} px from {} ms of late or lost motion spread over {} ms",
+                    ms1(*backlog_us),
+                    ms1(*spread_us)
+                ),
+            ),
+            Ev::Release { held } => {
+                ("release", format!("phone silent {} ms: let go of {held} held keys or buttons", wire::RELEASE_TIMEOUT_MS))
+            }
+        };
+        let us = self.at_us;
+        let ms = (us.unsigned_abs() + 500) / 1000;
+        let secs = format!("{}{}.{:03}", if us < 0 { "-" } else { "" }, ms / 1000, ms % 1000);
+        format!("{secs:>10} {what:<13} {detail}")
+    }
 }
 
 /// What the recorder hands on once the engine lock is free.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RecorderOut {
-    Line(String),
+    Line(Event),
     Second(LinkSecond),
 }
 
@@ -101,6 +223,11 @@ pub struct InputRecorder {
     /// More for each second's line (the delivery probe's numbers), or None; called under the engine lock, every
     /// second either way.
     pub second_note: Option<Box<dyn FnMut() -> Option<String> + Send>>,
+    /// The PC stall watch while Diagnostics runs (None otherwise): tells a hold-up that waited inside the PC from one
+    /// held up on the way.
+    pub stall: Option<Arc<StallWatch>>,
+    /// Diagnostics' per-packet record (None while it is off): one entry per STATE and its hand-off.
+    pub flight: Option<Arc<FlightRecorder>>,
 
     // Session.
     active: bool,
@@ -129,6 +256,11 @@ pub struct InputRecorder {
     s_moving: i32,
     s_lost: i32,
     s_late: i32,
+    s_late3: i32,
+    s_air: i32,
+    s_pc: i32,
+    s_phone: i32,
+    s_pad_hand_offs: i32,
     s_gaps: i32,
     s_releases: i32,
     s_injects: i32,
@@ -141,10 +273,18 @@ pub struct InputRecorder {
     s_px: i64,
     s_max_late_us: i64,
     s_max_inject_us: i64,
+    // This second's extra delay over the floor (0.1 ms buckets), for "over p50/p99".
+    s_extra: [i32; SECOND_BUCKETS],
+    s_extra_n: i32,
+    s_over: [i32; OVER_BUCKETS],
     // Whole session.
     t_states: i64,
     t_lost: i64,
     t_late: i64,
+    t_late3: i64,
+    t_air: i64,
+    t_pc: i64,
+    t_phone: i64,
     t_holdups: i64,
     t_gaps: i64,
     t_catch_ups: i64,
@@ -152,8 +292,11 @@ pub struct InputRecorder {
     t_slow: i64,
     t_releases: i64,
     t_refused: i64,
-    late_hist: [i64; 64], // 1 ms buckets of extra delay, last = 63+ ms
+    t_extra: Box<[i64; SESSION_BUCKETS]>, // 0.1 ms buckets of extra delay, last = 100+ ms
 }
+
+const SECOND_BUCKETS: usize = 301;
+const SESSION_BUCKETS: usize = 1001;
 
 impl Default for InputRecorder {
     fn default() -> Self {
@@ -171,6 +314,12 @@ impl InputRecorder {
     pub const JUMP_PX: i32 = 64;
     /// Receive to SendInput slower than this is logged.
     pub const SLOW_INJECT_US: i64 = 2_000;
+    /// A packet this much later than the fastest ones (and up to `LATE_US`) counts as "late3": felt in a flick,
+    /// below a hold-up.
+    pub const LATE3_US: i64 = 3_000;
+    /// Extra delay buckets: 0.1 ms steps, per second up to 30 ms and per session up to 100 ms (the last bucket holds
+    /// the rest).
+    pub const EXTRA_STEP_US: i64 = 100;
     /// At most this many event lines a second; the rest are only counted in the second's line.
     pub const MAX_EVENTS_PER_SECOND: i32 = 10;
     const BASE_WINDOW_US: i64 = 5_000_000;
@@ -182,6 +331,8 @@ impl InputRecorder {
             out: Vec::with_capacity(64),
             write_lines: true,
             second_note: None,
+            stall: None,
+            flight: None,
             active: false,
             session_start_us: 0,
             have_ref: false,
@@ -204,6 +355,11 @@ impl InputRecorder {
             s_moving: 0,
             s_lost: 0,
             s_late: 0,
+            s_late3: 0,
+            s_air: 0,
+            s_pc: 0,
+            s_phone: 0,
+            s_pad_hand_offs: 0,
             s_gaps: 0,
             s_releases: 0,
             s_injects: 0,
@@ -216,9 +372,16 @@ impl InputRecorder {
             s_px: 0,
             s_max_late_us: 0,
             s_max_inject_us: 0,
+            s_extra: [0; SECOND_BUCKETS],
+            s_extra_n: 0,
+            s_over: [0; OVER_BUCKETS],
             t_states: 0,
             t_lost: 0,
             t_late: 0,
+            t_late3: 0,
+            t_air: 0,
+            t_pc: 0,
+            t_phone: 0,
             t_holdups: 0,
             t_gaps: 0,
             t_catch_ups: 0,
@@ -226,7 +389,7 @@ impl InputRecorder {
             t_slow: 0,
             t_releases: 0,
             t_refused: 0,
-            late_hist: [0; 64],
+            t_extra: Box::new([0; SESSION_BUCKETS]),
         }
     }
 
@@ -264,6 +427,10 @@ impl InputRecorder {
         self.t_states = 0;
         self.t_lost = 0;
         self.t_late = 0;
+        self.t_late3 = 0;
+        self.t_air = 0;
+        self.t_pc = 0;
+        self.t_phone = 0;
         self.t_holdups = 0;
         self.t_gaps = 0;
         self.t_catch_ups = 0;
@@ -271,7 +438,7 @@ impl InputRecorder {
         self.t_slow = 0;
         self.t_releases = 0;
         self.t_refused = 0;
-        self.late_hist = [0; 64];
+        self.t_extra.fill(0);
         if self.write_lines {
             self.line(now_us, "session start", &format!("phone '{phone}'"));
         }
@@ -288,12 +455,16 @@ impl InputRecorder {
         }
         let secs = (now_us.saturating_sub(self.session_start_us).max(0).saturating_add(500_000)) / 1_000_000;
         let detail = format!(
-            "{why} after {secs} s: states {} lost {} late {} holdups {} phone-gaps {} catch-ups {} jumps {} slow {} \
-             releases {} refused {}; extra delay ms p50 {} p99 {} p99.9 {}",
+            "{why} after {secs} s: states {} lost {} late {} late3 {} holdups {} (air {} pc {} phone {}) phone-gaps {} \
+             catch-ups {} jumps {} slow {} releases {} refused {}; over the floor ms p50 {} p99 {} p99.9 {}",
             self.t_states,
             self.t_lost,
             self.t_late,
+            self.t_late3,
             self.t_holdups,
+            self.t_air,
+            self.t_pc,
+            self.t_phone,
             self.t_gaps,
             self.t_catch_ups,
             self.t_jumps,
@@ -322,7 +493,7 @@ impl InputRecorder {
         self.s_lost = self.s_lost.saturating_add(count.min(1_000_000) as i32);
         self.t_lost = self.t_lost.saturating_add(count);
         if count >= 3 && self.event_allowed() {
-            self.line(now_us, "lost", &format!("{count} packets before seq {seq}"));
+            self.event(now_us, Ev::Lost { count, seq });
         }
     }
 
@@ -344,8 +515,8 @@ impl InputRecorder {
                 self.t_gaps += 1;
                 self.s_gaps = self.s_gaps.saturating_add(1);
                 if self.event_allowed() {
-                    let tail = if self.prev_active { " while input was moving or held" } else { "" };
-                    self.line(recv_us, "phone gap", &format!("phone sent nothing for {} ms{tail}", ms1(span)));
+                    let while_active = self.prev_active;
+                    self.event(recv_us, Ev::PhoneGap { span_us: span, while_active });
                 }
             }
             if self.in_holdup {
@@ -371,9 +542,23 @@ impl InputRecorder {
             self.min_cur = rel;
         }
         let extra = rel.saturating_sub(self.min_cur.min(self.min_prev));
-        self.late_hist[(extra / 1000).clamp(0, 63) as usize] += 1;
+        let bucket = (extra / Self::EXTRA_STEP_US).max(0);
+        self.s_extra[bucket.min(SECOND_BUCKETS as i64 - 1) as usize] += 1;
+        self.s_extra_n = self.s_extra_n.saturating_add(1);
+        self.s_over[over_bucket(extra)] += 1;
+        self.t_extra[bucket.min(SESSION_BUCKETS as i64 - 1) as usize] += 1;
         if extra > self.s_max_late_us {
             self.s_max_late_us = extra;
+        }
+        if let Some(f) = &self.flight {
+            let flags = if moving { flight::MOVING } else { 0 }
+                | if active { flight::ACTIVE } else { 0 }
+                | if lost { flight::LOST_BEFORE } else { 0 };
+            f.state(phone_us, recv_us, extra, flags);
+        }
+        if extra > Self::LATE3_US && extra <= Self::LATE_US {
+            self.s_late3 = self.s_late3.saturating_add(1);
+            self.t_late3 += 1;
         }
         if extra > Self::LATE_US {
             self.s_late = self.s_late.saturating_add(1);
@@ -399,20 +584,34 @@ impl InputRecorder {
         }
         self.in_holdup = false;
         self.t_holdups += 1;
-        // Packets that left the phone on time but arrived late together: held up on the way (Wi-Fi or router).
+        // Where it waited: the phone paused; else the PC couldn't run a thread then (the stall watch); else on the
+        // way (Wi-Fi, router, cable). The packets left the phone up to their extra delay before they came.
+        let stall_us = match &self.stall {
+            Some(w) => w.worst_between(self.hold_start_us.saturating_sub(self.hold_max_us), self.hold_last_us),
+            None => -1,
+        };
+        let verdict = if self.hold_phone_span_max_us > Self::PHONE_GAP_US {
+            self.s_phone = self.s_phone.saturating_add(self.hold_count);
+            self.t_phone += 1;
+            Verdict::Phone
+        } else if stall_us >= stall_watch::STALL_US {
+            self.s_pc = self.s_pc.saturating_add(self.hold_count);
+            self.t_pc += 1;
+            Verdict::Pc
+        } else {
+            self.s_air = self.s_air.saturating_add(self.hold_count);
+            self.t_air += 1;
+            Verdict::Air
+        };
         if self.event_allowed() {
-            let tail = if self.hold_phone_span_max_us > Self::PHONE_GAP_US {
-                " (the phone also paused)"
-            } else {
-                " (sent on time: held up on the way)"
+            let ev = Ev::Late {
+                count: self.hold_count,
+                max_us: self.hold_max_us,
+                over_us: self.hold_last_us.saturating_sub(self.hold_start_us),
+                stall_us,
+                verdict,
             };
-            let detail = format!(
-                "{} packets up to {} ms late over {} ms{tail}",
-                self.hold_count,
-                ms1(self.hold_max_us),
-                ms1(self.hold_last_us.saturating_sub(self.hold_start_us))
-            );
-            self.line(self.hold_start_us, "late", &detail);
+            self.event(self.hold_start_us, ev);
         }
     }
 
@@ -433,35 +632,52 @@ impl InputRecorder {
             self.t_jumps += 1;
             self.s_jumps = self.s_jumps.saturating_add(1);
             if self.event_allowed() {
-                self.line(now_us, "big move", &format!("{dx},{dy} px in one step"));
+                self.event(now_us, Ev::BigMove { dx, dy });
             }
         }
         if let Some(recv_us) = recv_us {
             let took = now_us.saturating_sub(recv_us);
-            if took > self.s_max_inject_us {
-                self.s_max_inject_us = took;
-            }
-            if causes.lock_wait_us > self.s_max_lock_wait_us {
-                self.s_max_lock_wait_us = causes.lock_wait_us;
-                self.s_lock_holder = causes.lock_holder;
-            }
-            if took > Self::SLOW_INJECT_US {
-                self.s_slow = self.s_slow.saturating_add(1);
-                self.t_slow += 1;
-                if self.event_allowed() {
-                    let text = Self::slow_text(took, causes);
-                    self.line(now_us, "slow hand-off", &text);
-                }
+            self.hand_off_took(took, now_us, causes);
+            if let Some(f) = &self.flight {
+                let driver = causes.pad_us.saturating_add(causes.send_input_us);
+                f.hand_off(took, causes.lock_wait_us, driver, if refused { flight::REFUSED } else { 0 });
             }
         }
         if refused {
             self.t_refused += 1;
             if self.event_allowed() {
-                self.line(
-                    now_us,
-                    "refused",
-                    "Windows took fewer events than given (an admin window or the lock screen in front)",
-                );
+                self.event(now_us, Ev::Refused);
+            }
+        }
+    }
+
+    /// A hand-off with only the virtual controller in it (no keys or mouse for SendInput): timed like any other, so
+    /// slow hand-offs show in controller-only play too.
+    pub fn pad_hand_off(&mut self, recv_us: i64, now_us: i64, causes: &HandOffCauses) {
+        if !self.active {
+            return;
+        }
+        self.s_pad_hand_offs = self.s_pad_hand_offs.saturating_add(1);
+        let took = now_us.saturating_sub(recv_us);
+        self.hand_off_took(took, now_us, causes);
+        if let Some(f) = &self.flight {
+            f.hand_off(took, causes.lock_wait_us, causes.pad_us, flight::PAD_ONLY);
+        }
+    }
+
+    fn hand_off_took(&mut self, took: i64, now_us: i64, causes: &HandOffCauses) {
+        if took > self.s_max_inject_us {
+            self.s_max_inject_us = took;
+        }
+        if causes.lock_wait_us > self.s_max_lock_wait_us {
+            self.s_max_lock_wait_us = causes.lock_wait_us;
+            self.s_lock_holder = causes.lock_holder;
+        }
+        if took > Self::SLOW_INJECT_US {
+            self.s_slow = self.s_slow.saturating_add(1);
+            self.t_slow += 1;
+            if self.event_allowed() {
+                self.event(now_us, Ev::SlowHandOff { took_us: took, causes: *causes });
             }
         }
     }
@@ -504,12 +720,7 @@ impl InputRecorder {
         self.s_catch_ups = self.s_catch_ups.saturating_add(1);
         self.t_catch_ups += 1;
         if self.event_allowed() {
-            let detail = format!(
-                "{px} px from {} ms of late or lost motion spread over {} ms",
-                ms1(backlog_us),
-                ms1(spread_us)
-            );
-            self.line(now_us, "catch-up", &detail);
+            self.event(now_us, Ev::CatchUp { px, backlog_us, spread_us });
         }
     }
 
@@ -521,9 +732,7 @@ impl InputRecorder {
         self.t_releases += 1;
         self.s_releases = self.s_releases.saturating_add(1);
         if self.event_allowed() {
-            let detail =
-                format!("phone silent {} ms: let go of {held} held keys or buttons", wire::RELEASE_TIMEOUT_MS);
-            self.line(now_us, "release", &detail);
+            self.event(now_us, Ev::Release { held });
         }
     }
 
@@ -534,10 +743,14 @@ impl InputRecorder {
         }
         // Asked every second either way: it also rolls the delivery probe's second.
         let note = self.second_note.as_mut().and_then(|f| f());
+        let (stall_max, stalls, _) = self.stall.as_ref().map_or((-1, 0, 0), |w| w.take_second());
+        let over_p50 = self.pct_ms(0.5);
+        let over_p99 = self.pct_ms(0.99);
         if self.write_lines {
-            self.second_line(stats, note.as_deref(), now_us);
+            self.second_line(stats, note.as_deref(), now_us, (over_p50, over_p99), (stall_max, stalls));
         }
         let lat = stats.lat_p50_us != wire::STATUS_UNKNOWN;
+        let rtt_min = stats.last_link_info.as_ref().map_or(0, |l| l.rtt_min_us);
         let second = LinkSecond {
             at_us: now_us,
             rx: stats.rx_per_sec as i32,
@@ -553,13 +766,36 @@ impl InputRecorder {
                 -1.0
             },
             jitter_ms: stats.jitter_us as f32 / 1000.0,
+            floor_ms: if rtt_min > 0 { rtt_min as f32 / 2000.0 } else { -1.0 },
+            rtt_typ_ms: if stats.phone_rtt_typ_us > 0 { stats.phone_rtt_typ_us as f32 / 1000.0 } else { -1.0 },
+            over_p50_ms: over_p50,
+            over_p99_ms: over_p99,
+            late3: self.s_late3,
+            hand_off_max_ms: self.s_max_inject_us as f32 / 1000.0,
+            slow_hand_offs: self.s_slow,
+            lock_wait_ms: self.s_max_lock_wait_us as f32 / 1000.0,
+            stall_max_ms: if stall_max < 0 { -1.0 } else { stall_max as f32 / 1000.0 },
+            stalls: stalls.min(i32::MAX as i64) as i32,
+            neg_lat: stats.negative_per_sec,
+            air: self.s_air,
+            pc: self.s_pc,
+            phone: self.s_phone,
+            moving: self.s_moving,
+            over: self.s_over,
         };
         self.push(RecorderOut::Second(second));
         self.clear_second();
     }
 
     /// The "sec" line; made only when it is written.
-    fn second_line(&mut self, stats: &LinkStats, note: Option<&str>, now_us: i64) {
+    fn second_line(
+        &mut self,
+        stats: &LinkStats,
+        note: Option<&str>,
+        now_us: i64,
+        (over_p50, over_p99): (f32, f32),
+        (stall_max, stalls): (i64, i64),
+    ) {
         let mut s = String::with_capacity(160);
         let _ = write!(
             s,
@@ -573,6 +809,24 @@ impl InputRecorder {
         if stats.lat_p50_us != wire::STATUS_UNKNOWN {
             let _ = write!(s, " lat {}/{}", ms1(stats.lat_p50_us as i64), ms1(stats.lat_p99_us as i64));
         }
+        // The link split in two: the floor (half the best round trip, the fastest the link went) and how much slower
+        // than the fastest packets this second's were (needs no clock sync).
+        let rtt_min = stats.last_link_info.as_ref().map_or(0, |l| l.rtt_min_us) as i64;
+        if rtt_min > 0 {
+            let _ = write!(s, " floor {}", ms2(rtt_min * 5));
+        }
+        if stats.phone_rtt_typ_us > 0 {
+            let _ = write!(s, " rtt {}/{}", ms2(rtt_min * 10), ms2(stats.phone_rtt_typ_us as i64 * 10));
+        }
+        if self.s_extra_n > 0 {
+            let _ = write!(s, " over {over_p50:.1}/{over_p99:.1}");
+        }
+        if self.s_late3 > 0 {
+            let _ = write!(s, " late3 {}", self.s_late3);
+        }
+        if stats.negative_per_sec > 0 {
+            let _ = write!(s, " neglat {}", stats.negative_per_sec);
+        }
         let _ = write!(
             s,
             " jitter {} inj {} px {} maxstep {} handoff {}",
@@ -582,6 +836,9 @@ impl InputRecorder {
             self.s_max_step,
             ms1(self.s_max_inject_us)
         );
+        if self.s_pad_hand_offs > 0 {
+            let _ = write!(s, " padonly {}", self.s_pad_hand_offs);
+        }
         if self.s_catch_ups > 0 {
             let _ = write!(s, " catch-ups {}", self.s_catch_ups);
         }
@@ -598,6 +855,12 @@ impl InputRecorder {
                 let _ = write!(s, " ({holder})");
             }
         }
+        if stall_max >= 0 {
+            let _ = write!(s, " stall {}/{stalls}", ms1(stall_max));
+        }
+        if self.s_air + self.s_pc + self.s_phone > 0 {
+            let _ = write!(s, " heldup air {} pc {} phone {}", self.s_air, self.s_pc, self.s_phone);
+        }
         if let Some(note) = note {
             s.push_str(note);
         }
@@ -612,6 +875,14 @@ impl InputRecorder {
         self.s_moving = 0;
         self.s_lost = 0;
         self.s_late = 0;
+        self.s_late3 = 0;
+        self.s_air = 0;
+        self.s_pc = 0;
+        self.s_phone = 0;
+        self.s_pad_hand_offs = 0;
+        self.s_extra = [0; SECOND_BUCKETS];
+        self.s_extra_n = 0;
+        self.s_over = [0; OVER_BUCKETS];
         self.s_gaps = 0;
         self.s_releases = 0;
         self.s_injects = 0;
@@ -628,20 +899,43 @@ impl InputRecorder {
         self.s_lock_holder = None;
     }
 
+    /// A percentile of the session's 0.1 ms histogram, as "<0.3" (ms), "-" when empty.
     fn pct(&self, p: f64) -> String {
-        let n: i64 = self.late_hist.iter().sum();
+        let n: i64 = self.t_extra.iter().sum();
         if n == 0 {
             return "-".to_string();
         }
         let rank = (p * n as f64).ceil() as i64;
         let mut acc = 0;
-        for (i, c) in self.late_hist.iter().enumerate() {
+        let last = self.t_extra.len() - 1;
+        for (i, c) in self.t_extra.iter().enumerate() {
             acc += c;
             if acc >= rank {
-                return if i == self.late_hist.len() - 1 { format!("{i}+") } else { format!("<{}", i + 1) };
+                return if i == last {
+                    format!("{}+", ms1(i as i64 * Self::EXTRA_STEP_US))
+                } else {
+                    format!("<{}", ms1((i as i64 + 1) * Self::EXTRA_STEP_US))
+                };
             }
         }
         "-".to_string()
+    }
+
+    /// A percentile of this second's 0.1 ms histogram, ms (the bucket's middle), -1 when empty.
+    fn pct_ms(&self, p: f64) -> f32 {
+        let n = self.s_extra_n;
+        if n == 0 {
+            return -1.0;
+        }
+        let rank = (p * n as f64).ceil() as i64;
+        let mut acc = 0i64;
+        for (i, c) in self.s_extra.iter().enumerate() {
+            acc += *c as i64;
+            if acc >= rank {
+                return (i as i64 * Self::EXTRA_STEP_US + Self::EXTRA_STEP_US / 2) as f32 / 1000.0;
+            }
+        }
+        (SECOND_BUCKETS as i64 * Self::EXTRA_STEP_US) as f32 / 1000.0
     }
 
     /// Room for one more event line this second (at most `MAX_EVENTS_PER_SECOND`: a flick at high sensitivity can
@@ -659,14 +953,25 @@ impl InputRecorder {
         true
     }
 
-    /// `    12.345 what          detail`: seconds into the session (10 wide, 3 decimals), what (13 wide), detail.
+    /// A free-form line (session start and end, the second's line, a note); not on the input path.
     fn line(&mut self, at_us: i64, what: &str, detail: &str) {
         if !self.write_lines {
             return;
         }
-        let us = at_us.saturating_sub(self.session_start_us);
-        let ms = (us.unsigned_abs() + 500) / 1000;
-        let secs = format!("{}{}.{:03}", if us < 0 { "-" } else { "" }, ms / 1000, ms % 1000);
-        self.push(RecorderOut::Line(format!("{secs:>10} {what:<13} {detail}")));
+        let ev = Ev::Text { what: what.to_string(), detail: detail.to_string() };
+        self.event(at_us, ev);
     }
+
+    /// An event as numbers: its text is made later (`Event::text`), off the input path.
+    fn event(&mut self, at_us: i64, ev: Ev) {
+        let at_us = at_us.saturating_sub(self.session_start_us);
+        self.push(RecorderOut::Line(Event { at_us, ev }));
+    }
+}
+
+/// `x / 10000.0` as .NET's "0.00" writes it, where `tenths_us` is µs × 10: hundredths of a millisecond, halves away
+/// from zero.
+fn ms2(tenths_us: i64) -> String {
+    let hundredths = tenths_us.unsigned_abs().saturating_add(50) / 100;
+    format!("{}{}.{:02}", if tenths_us < 0 { "-" } else { "" }, hundredths / 100, hundredths % 100)
 }

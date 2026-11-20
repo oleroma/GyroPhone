@@ -413,16 +413,29 @@ fn event_payloads_have_the_companions_names() {
         payload_json(&Payload::PairShow { attempt_id: 4_000_000_000, phone_name: "OnePlus 15".into(), sas: "123 456".into() })
     );
     // LinkSecond(AtUs, Rx, Lost, Late, MaxLateMs, Gaps, Releases, LatP50Ms, LatP99Ms, JitterMs) and its Trouble.
-    let s = LinkSecond { at_us: 7, rx: 1000, lost: 0, late: 2, max_late_ms: 3.5, gaps: 0, releases: 0, lat_p50_ms: 1.25, lat_p99_ms: -1.0, jitter_ms: 0.5 };
+    let s = LinkSecond {
+        at_us: 7, rx: 1000, lost: 0, late: 2, max_late_ms: 3.5, gaps: 0, releases: 0, lat_p50_ms: 1.25, lat_p99_ms: -1.0, jitter_ms: 0.5,
+        floor_ms: 0.75, rtt_typ_ms: 2.0, over_p50_ms: 0.25, over_p99_ms: 4.5, late3: 3, hand_off_max_ms: 0.5, slow_hand_offs: 1, lock_wait_ms: 0.125,
+        stall_max_ms: -1.0, stalls: 4, neg_lat: 5, air: 6, pc: 7, phone: 8, moving: 900,
+        over: [1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9],
+    };
     assert_eq!(
-        json!({ "atUs": 7, "rx": 1000, "lost": 0, "late": 2, "maxLateMs": 3.5, "gaps": 0, "releases": 0, "latP50Ms": 1.25, "latP99Ms": -1.0, "jitterMs": 0.5, "trouble": true }),
+        json!({ "atUs": 7, "rx": 1000, "lost": 0, "late": 2, "maxLateMs": 3.5, "gaps": 0, "releases": 0, "latP50Ms": 1.25, "latP99Ms": -1.0, "jitterMs": 0.5,
+            "floorMs": 0.75, "rttTypMs": 2.0, "overP50Ms": 0.25, "overP99Ms": 4.5, "late3": 3, "handOffMaxMs": 0.5, "slowHandOffs": 1, "lockWaitMs": 0.125,
+            "stallMaxMs": -1.0, "stalls": 4, "negLat": 5, "air": 6, "pc": 7, "phone": 8, "moving": 900,
+            "over": [1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9], "trouble": true }),
         payload_json(&Payload::LinkSecond(s))
     );
     assert_eq!(json!(false), payload_json(&Payload::LinkSecond(LinkSecond { late: 0, ..s }))["trouble"]);
     // PhoneSecond(AtUs, States, Packets, Failed, SlowSends, SendMaxMs, WakeLateMs, GapMaxMs, PhoneTx).
-    let p = PhoneSecond { at_us: -3, states: 1, packets: 2, failed: 3, slow_sends: 4, send_max_ms: 0.25, wake_late_ms: 8.0, gap_max_ms: 16.5, phone_tx: 1 << 40 };
+    let p = PhoneSecond {
+        at_us: -3, states: 1, packets: 2, failed: 3, slow_sends: 4, send_max_ms: 0.25, wake_late_ms: 8.0, gap_max_ms: 16.5, phone_tx: 1 << 40,
+        rtt_min_ms: 1.5, rtt_typ_ms: 2.25, drift_ppm: -40.5, pings: 5, battery: 80, setup_flags: 5, temp_deci_c: 315, thermal: 1, usb_vendor: 3034, usb_product: 33107, wifi_standard: 6,
+    };
     assert_eq!(
-        json!({ "atUs": -3, "states": 1, "packets": 2, "failed": 3, "slowSends": 4, "sendMaxMs": 0.25, "wakeLateMs": 8.0, "gapMaxMs": 16.5, "phoneTx": 1u64 << 40 }),
+        json!({ "atUs": -3, "states": 1, "packets": 2, "failed": 3, "slowSends": 4, "sendMaxMs": 0.25, "wakeLateMs": 8.0, "gapMaxMs": 16.5, "phoneTx": 1u64 << 40,
+            "rttMinMs": 1.5, "rttTypMs": 2.25, "driftPpm": -40.5, "pings": 5, "battery": 80, "setupFlags": 5, "tempDeciC": 315, "thermal": 1,
+            "usbVendor": 3034, "usbProduct": 33107, "wifiStandard": 6 }),
         payload_json(&Payload::PhoneSecond(p))
     );
 }
@@ -431,7 +444,7 @@ fn event_payloads_have_the_companions_names() {
 /// bare NaN would end the companion's reader.
 #[test]
 fn floats_that_are_not_numbers_go_as_their_names() {
-    let p = PhoneSecond { at_us: 0, states: 0, packets: 0, failed: 0, slow_sends: 0, send_max_ms: f32::NAN, wake_late_ms: f32::INFINITY, gap_max_ms: f32::NEG_INFINITY, phone_tx: 0 };
+    let p = PhoneSecond { at_us: 0, states: 0, packets: 0, failed: 0, slow_sends: 0, send_max_ms: f32::NAN, wake_late_ms: f32::INFINITY, gap_max_ms: f32::NEG_INFINITY, phone_tx: 0, ..Default::default() };
     let v = payload_json(&Payload::PhoneSecond(p));
     assert_eq!((json!("NaN"), json!("Infinity"), json!("-Infinity")), (v["sendMaxMs"].clone(), v["wakeLateMs"].clone(), v["gapMaxMs"].clone()));
     let n = DeliveryNumbers { n: 0, p50: f64::NAN, p99: 1.5, max: f64::INFINITY, slow: 0, unmatched: 0, merged: 0, stray: 0 };

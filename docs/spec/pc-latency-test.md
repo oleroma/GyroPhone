@@ -28,6 +28,12 @@ Not part of the app: the phone and the companion have nothing of it, and no buil
 
 What the number includes: the phone's gyro and app, the link, the companion, Windows' desktop compositor drawing the test window, and the monitor. Rolling shutter can still leave about a millisecond or two when the camera reads the picture across its width.
 
+**Known limits (metrics reviews of 2026-11-20; noted, nothing changed yet).**
+- The test window is a WPF window. Between Windows delivering the move and light leaving the monitor come WPF's own drawing, the desktop compositor and the monitor: typically one to three screen refreshes, none of it GP's, and not what a fullscreen game has. So the absolute number is mostly the display chain.
+- The printed margin covers only the scatter between swings, not fixed errors (rolling shutter, the camera's frame timing).
+- It is a good **build-to-build** check on the same monitor and setup. It can't resolve link differences of 0.5–1 ms, and it doesn't measure absolute latency or compare connection modes; Diagnostics does those.
+- Each result doesn't record the link mode, the phone or the build reliably (link and phone show as —), which makes its history hard to compare. Recommendations 4–7 of the 2026-11-07 review are still open.
+
 ## Key files
 
 `core/.../net/PressStamp.kt`, `app/.../wifi/WifiPump.kt` (PRESS_TIME), `app/.../wifi/WifiLink.kt` (TEST_MODE); `GyroPhone.Host/PressLatency.cs`, `HostEngine.cs` (`SetMeasureButtons`), `PerformancePage.cs`. The tool: `tools/latency-test/` (`latency-test.bat`, `markers.png`, `App/` (`Program.cs`, `TestWindow.cs`, `OwnMouse.cs`), `Analysis/` (`LatencyMath.cs`, `VideoTracker.cs`, `LatencyResults.cs`, `LatencyReport.cs`), `Tests/` (`dotnet test tools/latency-test/Tests`, run by hand: no build runs them)).

@@ -423,11 +423,27 @@ public static class WireCodec
         Le.PutU32(b, 20, p.WakeLateMaxUs);
         Le.PutU32(b, 24, p.StateGapMaxUs);
         Le.PutU32(b, 28, p.PhoneTxPackets);
+        Le.PutU32(b, 32, unchecked((uint)p.RttMinUs));
+        Le.PutU32(b, 36, unchecked((uint)p.RttTypUs));
+        Le.PutU32(b, 40, unchecked((uint)p.DriftPpb));
+        Le.PutU16(b, 44, p.Pings);
+        var st = p.Setup;
+        b[46] = st.BatteryPct;
+        b[47] = st.Flags;
+        Le.PutU16(b, 48, unchecked((ushort)st.TempDeciC));
+        b[50] = st.Thermal;
+        b[51] = st.WifiStandard;
+        Le.PutU16(b, 52, st.UsbVendor);
+        Le.PutU16(b, 54, st.UsbProduct);
+        Le.PutU16(b, 56, st.WifiWidthMhz);
+        b[58..Wire.PhoneStatsPlain].Clear();
         return Wire.PhoneStatsPlain;
     }
 
     public static PhoneStats DecodePhoneStats(ReadOnlySpan<byte> b) => new(Le.U32(b, 0), Le.U16(b, 4), Le.U16(b, 6), Le.U16(b, 8),
-        Le.U16(b, 10), Le.U32(b, 12), Le.U32(b, 16), Le.U32(b, 20), Le.U32(b, 24), Le.U32(b, 28));
+        Le.U16(b, 10), Le.U32(b, 12), Le.U32(b, 16), Le.U32(b, 20), Le.U32(b, 24), Le.U32(b, 28),
+        unchecked((int)Le.U32(b, 32)), unchecked((int)Le.U32(b, 36)), unchecked((int)Le.U32(b, 40)), Le.U16(b, 44),
+        new PhoneSetup(b[46], b[47], unchecked((short)Le.U16(b, 48)), b[50], b[51], Le.U16(b, 52), Le.U16(b, 54), Le.U16(b, 56)));
 
     /// <summary>TEST_MODE: flags then three zero bytes.</summary>
     public static int EncodeTestMode(byte flags, Span<byte> b)

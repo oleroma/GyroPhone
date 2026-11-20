@@ -60,6 +60,9 @@ public static class PcSetupProbe
         }
     }
 
+    /// <summary>The Wi-Fi radio of adapter <paramref name="id"/> (kept a few seconds): centre frequency and signal.</summary>
+    public static PcWifiRadio RadioOf(string id) => Radio(id);
+
     private static PcWifiRadio Radio(string id)
     {
         lock (Gate)
