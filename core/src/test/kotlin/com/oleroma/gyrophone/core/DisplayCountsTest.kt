@@ -42,4 +42,24 @@ class DisplayCountsTest {
         val deg = GyroDisplayFeed.cameraCounts(-10, 0, r, gs, GyroDisplayFeed.degPerCount(gs), FloatArray(3))
         assertEquals(1f, deg[0], 1e-4f)
     }
+
+    @Test fun cameraDisplayTurnsByCountsAndSlowsWhileAiming() {
+        val d = com.oleroma.gyrophone.core.model.GyroDisplay(
+            com.oleroma.gyrophone.core.model.GyroDisplayKind.BALL, turnsWith = com.oleroma.gyrophone.core.model.TurnsWith.CAMERA, aimSens = 0.5f,
+        )
+        val gs = GyroSettings(gameCountsPer360 = 3600f)
+        val m = FloatArray(9)
+        val f = GyroDisplayFeed("c", d)
+        f.degPerCount = GyroDisplayFeed.degPerCount(gs)
+        // The live gyro's rates do nothing: its counts come through camera().
+        repeat(50) { f.feed(60f, 0f, 60f, 0.01f, 7, pressed = false, held = false, gyro = gs) }
+        f.pose.matrix(m); assertEquals(0f, m[6], 1e-4f)
+        f.camera(300, 0, routes, gs) // 30° right in the game
+        f.pose.matrix(m); assertEquals(0.5f, m[6], 1e-3f)
+        val a = GyroDisplayFeed("a", d)
+        a.degPerCount = f.degPerCount
+        a.aiming = true
+        a.camera(600, 0, routes, gs) // aiming at half the sensitivity: still 30°
+        a.pose.matrix(m); assertEquals(0.5f, m[6], 1e-3f)
+    }
 }
