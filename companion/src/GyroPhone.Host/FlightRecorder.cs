@@ -6,7 +6,7 @@ namespace GyroPhone.Host;
 /// Diagnostics' per-packet record (docs/spec/pc-companion.md, "Diagnostics", "Flight record"): one fixed-size entry
 /// per accepted STATE, in a ring made when Diagnostics comes on (sized for the minutes it keeps), so every question
 /// about bunching, gaps or a hold-up's exact shape can be answered after the fact rather than from per-second
-/// summaries. Save writes it as a binary file (<see cref="Write"/>; tools/flight-read.py reads it).
+/// summaries. Save writes it as a binary file (<see cref="Write"/>; tools/diag/gpdiag.py flight reads it).
 /// <para>
 /// The input path only stores numbers into preallocated arrays (the engine calls it under its lock, one writer); it never
 /// allocates, locks or makes text. <see cref="Write"/> copies without the engine lock: entries the writer overwrote meanwhile

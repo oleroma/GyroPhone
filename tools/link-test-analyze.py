@@ -35,25 +35,41 @@ def read(path):
 
 def clock(run):
     c = {}
+    phone = []
     for line in read(os.path.join(run, "clock.txt")):
         parts = line.split()
         if len(parts) >= 2:
             c[parts[0]] = parts[1:]
+        if parts[:1] == ["phone_epoch"] and len(parts) >= 5:
+            try:
+                phone.append((float(parts[1]), float(parts[3]), float(parts[4])))
+            except ValueError:
+                pass
     off = 0
     if "pc_utc_offset" in c:
         z = c["pc_utc_offset"][0]
         sign = -1 if z.startswith("-") else 1
         off = sign * (int(z[1:3]) * 3600 + int(z[3:5]) * 60)
     phone_shift = 0.0  # seconds to add to phone epoch to get PC epoch
-    if "phone_epoch" in c and len(c["phone_epoch"]) >= 4:
-        p = float(c["phone_epoch"][0])
-        a, b = float(c["phone_epoch"][2]), float(c["phone_epoch"][3])
+    if phone:
+        # The reading with the shortest adb round trip: the phone's time lies within half of it.
+        p, a, b = min(phone, key=lambda r: r[2] - r[1])
         phone_shift = (a + b) / 2 - p
+        print(f"Phone clock: read over adb to within {(b - a) / 2 * 1000:.1f} ms (shortest of {len(phone)} round trips)")
+        if len(phone) > 7:
+            # Read again after the test: how far the two clocks drifted apart meanwhile.
+            first = min(phone[:7], key=lambda r: r[2] - r[1])
+            last = min(phone[7:], key=lambda r: r[2] - r[1])
+            drift = ((last[1] + last[2]) / 2 - last[0]) - ((first[1] + first[2]) / 2 - first[0])
+            print(f"Phone clock drift during the test: {drift * 1000:+.1f} ms")
     return timezone(timedelta(seconds=off)), phone_shift
 
 
 def events(run, tz):
-    out = []
+    """Each event at its exact time: the line's second column (seconds on the engine's clock when it happened), not its
+    wall-clock time, which is when the line was written (for a "late" line, the end of the hold-up). The two are tied by
+    the smallest gap between them over the log: the line written soonest after its event."""
+    rows = []
     for line in read(os.path.join(run, "input.log")):
         m = EVENT_LOOSE.match(line)
         if not m:
@@ -61,8 +77,18 @@ def events(run, tz):
         rest = m.group(3)
         kind = next((k for k in KINDS if rest.startswith(k)), rest.split(" ", 1)[0])
         detail = rest[len(kind):].strip()
-        t = datetime.strptime(m.group(1)[:26], "%Y-%m-%d %H:%M:%S.%f").replace(tzinfo=tz).timestamp()
-        out.append((t, kind, detail))
+        wall = datetime.strptime(m.group(1)[:26], "%Y-%m-%d %H:%M:%S.%f").replace(tzinfo=tz).timestamp()
+        rows.append((wall, float(m.group(2)), kind, detail))
+    out = []
+    # The engine clock restarts with the input process: tie each run of rising times on its own.
+    start = 0
+    for i in range(1, len(rows) + 1):
+        if i == len(rows) or rows[i][1] < rows[i - 1][1] - 1:
+            part = rows[start:i]
+            if part:
+                shift = min(w - r for w, r, _, _ in part)
+                out.extend((r + shift, k, d) for _, r, k, d in part)
+            start = i
     # Only the newest Link test.
     starts = [i for i, e in enumerate(out) if e[1] == "link test" and e[2].startswith("started")]
     if not starts:

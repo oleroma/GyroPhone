@@ -7,7 +7,7 @@ import java.nio.ByteOrder
 /**
  * Diagnostics' per-packet record on the phone (docs/spec/phone-settings.md, "Diagnostics", "Flight record"): one fixed
  * entry per STATE sent, in a ring made when Diagnostics comes on (sized for the minutes it keeps). A Save writes it as
- * `phone-<time>-flight.bin` beside the text save; tools/flight-read.py reads it, and pairs it with the PC's by seq.
+ * `phone-<time>-flight.bin` beside the text save; tools/diag/gpdiag.py flight reads it, and pairs it with the PC's by the phone time each STATE carries.
  *
  * Only the send thread calls [add] (plain array stores, no allocation, no lock); [write] copies from any thread and
  * leaves out the entries the send thread overwrote meanwhile.
