@@ -170,7 +170,7 @@ internal sealed class OverlaysPage : Page
         _hideAll = Parts.Toggle("Hide all", () => _app.SetOverlaysHidden(!_app.OverlaysHidden));
         _hideAll.ToolTip = "Closes every overlay window; each keeps its own Show for when this is off.";
         _hideAll.Margin = new Thickness(0, 0, 24, 0);
-        _behindAll = Parts.Toggle("All behind", SwitchAllBehind);
+        _behindAll = Parts.Toggle("All behind", () => { if (!_refreshing) _app.SwitchAllBehind(); });
         _behindAll.ToolTip = "Turns Behind other windows on for every overlay (off for all when every one has it): the game covers them, OBS Window Capture still records them.";
         _behindAll.Margin = new Thickness(0, 0, 24, 0);
         _levelAll = Parts.Button("Level all", app.LevelAll, glyph: "");
@@ -920,18 +920,6 @@ internal sealed class OverlaysPage : Page
         _app.RemoveOverlay(id);
     }
 
-    /// <summary>Every overlay is kept behind the other windows (and there is at least one).</summary>
-    private bool AllBehind() => _app.Overlays.Count > 0 && _app.Overlays.All(o => o.BehindWindows);
-
-    /// <summary>"All behind": every overlay behind the other windows, or, when they all already are, none.</summary>
-    private void SwitchAllBehind()
-    {
-        if (_refreshing) return;
-        bool behind = !AllBehind();
-        foreach (var o in _app.Overlays.ToList())
-            if (o.BehindWindows != behind) _app.ChangeOverlay(o.Id, x => x.BehindWindows = behind);
-    }
-
     private void Change(Action<OverlaySettings> change)
     {
         if (_refreshing || Picked is not { } id) return;
@@ -959,7 +947,7 @@ internal sealed class OverlaysPage : Page
             }
             Parts.SetChecked(_edit, _app.OverlayEdit);
             Parts.SetChecked(_hideAll, _app.OverlaysHidden);
-            Parts.SetChecked(_behindAll, AllBehind());
+            Parts.SetChecked(_behindAll, _app.AllBehind);
             var rf = _app.RestFade;
             Parts.SetChecked(_restOn, rf.On);
             Parts.Show(_restOptions, rf.On);
@@ -974,6 +962,7 @@ internal sealed class OverlaysPage : Page
                 : "Phone now: no data (show an overlay with the phone connected)";
             _edit.ToolTip = "Drag the overlay windows to move and resize them. Click where they overlap to pick the next one." + Keys(OverlayAction.Edit);
             _hideAll.ToolTip = "Closes every overlay window; each keeps its own Show for when this is off." + Keys(OverlayAction.HideAll);
+            _behindAll.ToolTip = "Turns Behind other windows on for every overlay (off for all when every one has it): the game covers them, OBS Window Capture still records them." + Keys(OverlayAction.BehindAll);
             _levelAll.ToolTip = "Held the way it is now, every overlay shows the phone face-on." + Keys(OverlayAction.LevelAll);
             foreach (var s in _shortcuts) s.Refresh();
             var picked = Picked == null ? null : _app.OverlayOf(Picked);
