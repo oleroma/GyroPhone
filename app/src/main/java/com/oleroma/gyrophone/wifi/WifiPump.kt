@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.wifi
 import android.net.TrafficStats
 import android.os.Process
 import android.os.SystemClock
+import com.oleroma.gyrophone.core.debug.FlightRing
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.net.Bye
 import com.oleroma.gyrophone.core.net.ByeReason
@@ -127,6 +128,12 @@ class WifiPump(private val engine: MappingEngine) {
 
     /** A Performance record runs on the PC (TEST_MODE PHONE_STATS): measure this side of the link and send PHONE_STATS each second. */
     @Volatile var phoneStats = false
+
+    /** Diagnostics' per-packet record (null while it is off): one entry per STATE sent, numbers only. */
+    @Volatile var flight: FlightRing? = null
+    // The last send's time (ns, measured only while [phoneStats]) and how late this pass woke, for [flight].
+    private var lastSendNs = 0L
+    private var passLateNs = 0L
 
     // PHONE_STATS, pump thread only, counted only while [phoneStats]: this second's sends, time in send, wake-ups and gaps.
     private var stPackets = 0
@@ -273,10 +280,12 @@ class WifiPump(private val engine: MappingEngine) {
                 idleDrainAt = now0 + IDLE_PARK_NS
             }
             val passStart = System.nanoTime()
+            passLateNs = 0L
             if (parkedUntil != 0L) {
                 // Woken early by input is fine; waking late means the thread wasn't run on time.
                 val late = passStart - parkedUntil
                 if (late > stWakeLateMaxNs) stWakeLateMaxNs = late
+                if (late > 0) passLateNs = late
                 parkedUntil = 0L
             }
             // Switch first: switchTo resets the gyro's samples, so the tail below starts from the new session's.
@@ -326,7 +335,17 @@ class WifiPump(private val engine: MappingEngine) {
                 val stateLen = WireCodec.encodeStatePlain(frame, plain, 0)
                 if (lastStateNs != 0L && now - lastStateNs > stGapMaxNs) stGapMaxNs = now - lastStateNs
                 lastStateNs = now
-                if (sendSealed(c, WireCodec.stateType(frame), stateLen)) sentCount++ else failedCount++
+                val ok = sendSealed(c, WireCodec.stateType(frame), stateLen)
+                if (ok) sentCount++ else failedCount++
+                val fl = flight
+                if (fl != null) {
+                    val sample = sampleAt != 0L && dirty
+                    val flags = (if (discrete) FlightRing.DISCRETE else 0) or
+                        (if (kind == SendScheduler.KEEPALIVE) FlightRing.KEEPALIVE else 0) or
+                        (if (!ok) FlightRing.FAILED else 0) or (if (sample) FlightRing.SAMPLE else 0)
+                    val age = if (sample) ((System.nanoTime() - sampleAt) / 1000).toInt() else -1
+                    fl.add(phoneUs(), seq, frame.phoneTimeUs, age, (lastSendNs / 1000).toInt(), (passLateNs / 1000).toInt(), flags)
+                }
                 // Only a STATE the sample changed: a keepalive carries nothing of it (a still phone's samples move nothing).
                 if (sampleAt != 0L && dirty) timing?.sent(sampleAt, System.nanoTime())
                 if (discrete && pressStamp.enabled) sendPressTime(c, frame.phoneTimeUs, now)
@@ -477,11 +496,13 @@ class WifiPump(private val engine: MappingEngine) {
         val len = ci.seal(header, src, plainLen, out)
         val measure = phoneStats
         val t0 = if (measure) System.nanoTime() else 0L
+        lastSendNs = 0L
         val d = direct
         if (d != null && d.sendDirect(c.hostAddr, out, 0, len)) {
             // The direct USB cable: timed like a socket send.
             if (measure) {
                 val dt = System.nanoTime() - t0
+                lastSendNs = dt
                 stPackets++; stSendNs += dt
                 if (dt > stSendMaxNs) stSendMaxNs = dt
                 if (dt >= SLOW_SEND_NS) stSlow++
@@ -494,6 +515,7 @@ class WifiPump(private val engine: MappingEngine) {
             s.send(packet)
             if (measure) {
                 val d = System.nanoTime() - t0
+                lastSendNs = d
                 stPackets++; stSendNs += d
                 if (d > stSendMaxNs) stSendMaxNs = d
                 if (d >= SLOW_SEND_NS) stSlow++

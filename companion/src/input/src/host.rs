@@ -329,6 +329,8 @@ struct Core {
     probe_gate: Mutex<ProbeState>,
     diag_on: AtomicBool,
     moves: RwLock<MoveRoute>,
+    /// Where the per-packet record is saved (the logs folder beside held.json); the companion copies it to its Save.
+    flight_dir: PathBuf,
     me: Weak<Core>,
 }
 
@@ -486,6 +488,19 @@ impl EngineHooks for Core {
 
     fn debug_save_requested(&self) {
         self.out.post("debug-save", Payload::None);
+        // The per-packet record, on a thread of its own (this may be the rx thread).
+        let Some(engine) = self.engine().cloned() else { return };
+        let (dir, log) = (self.flight_dir.clone(), self.log.clone());
+        let _ = std::thread::Builder::new().name("gp-flight-save".into()).spawn(move || {
+            match engine.save_flight(&dir) {
+                Some(Ok(path)) => log(&format!(
+                    "flight record saved: {}",
+                    path.file_name().and_then(|n| n.to_str()).unwrap_or("")
+                )),
+                Some(Err(e)) => log(&format!("flight record not saved: {e}")),
+                None => {}
+            }
+        });
     }
 
     fn diagnostics_changed(&self, on: bool) {
@@ -736,6 +751,7 @@ impl InputHost {
             probe_gate: Mutex::new(ProbeState::default()),
             diag_on: AtomicBool::new(false),
             moves: RwLock::new(MoveRoute::default()),
+            flight_dir: p.held_path.parent().map(|d| d.join("logs")).unwrap_or_default(),
             me: me.clone(),
         });
         let diagnostics = settings.diagnostics;

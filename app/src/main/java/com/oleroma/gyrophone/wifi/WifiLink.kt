@@ -1498,6 +1498,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         get() = pump.gyroTiming
         set(v) { pump.gyroTiming = v }
 
+    /** Diagnostics' per-packet record of the STATEs sent (null while it is off). */
+    var flight: com.oleroma.gyrophone.core.debug.FlightRing?
+        get() = pump.flight
+        set(v) { pump.flight = v }
+
     /** Bumped by [requestDebugSave]; LINK_INFO carries its low bits so the PC saves when they change. */
     @Volatile private var debugSaves = 0
 

@@ -38,6 +38,7 @@ use crate::ports::{
 use crate::press::{PressCapture, PressLatency};
 use crate::rate_limiter::{ipv4_key, RateLimiter};
 use crate::recorder::{ms1, HandOffCauses, InputRecorder, RecorderOut};
+use crate::flight::FlightRecorder;
 use crate::stall_watch::StallWatch;
 use crate::watchdog::TickSleepFactory;
 use crate::reports::{Ds4Motion, Ds4MotionFeed};
@@ -375,6 +376,8 @@ enum Effect {
     PromptClose(u32),
     DebugSave,
     ApplyDiagnostics,
+    /// The kept minutes changed while Diagnostics runs: the flight record is made again for them, off the lock.
+    ResizeFlight,
     PhoneSecond(PhoneSecond),
     StartPadJob,
     StartEnroll(u64, EnrollSave, PubKeyFile),
@@ -945,6 +948,14 @@ impl HostEngine {
             Effect::PromptClose(id) => self.prompt.close(id),
             Effect::DebugSave => self.hooks.debug_save_requested(),
             Effect::PhoneSecond(s) => self.hooks.phone_second(&s),
+            Effect::ResizeFlight => {
+                // A ring of tens of MB: never made on the rx thread.
+                if role != Role::Input || self.inline_workers {
+                    self.set_flight(true);
+                } else if let Some(me) = self.me.upgrade() {
+                    let _ = std::thread::Builder::new().name("gp-flight".into()).spawn(move || me.set_flight(true));
+                }
+            }
             Effect::ApplyDiagnostics => {
                 // DiagnosticsChanged starts or stops threads (the delivery probe): never on the rx thread.
                 if role != Role::Input || self.inline_workers {
@@ -995,6 +1006,7 @@ impl HostEngine {
         }
         *applied = on;
         self.set_stall_watch(on);
+        self.set_flight(on);
         self.hooks.diagnostics_changed(on);
     }
 
@@ -1006,6 +1018,39 @@ impl HostEngine {
         if on {
             self.set_stall_watch(true);
         }
+    }
+
+    /// Diagnostics' per-packet record (`FlightRecorder`): made outside the engine lock, sized for the minutes Diagnostics
+    /// keeps, handed to the input log under the lock, dropped when Diagnostics goes off.
+    fn set_flight(&self, on: bool) {
+        let f = if on {
+            let minutes = self.lock(Role::Ui).settings.diagnostics_minutes;
+            Some(Arc::new(FlightRecorder::new(minutes)))
+        } else {
+            None
+        };
+        let mut g = self.lock(Role::Ui);
+        if let Some(r) = g.recorder.as_mut() {
+            r.flight = f;
+        }
+    }
+
+    /// Writes the per-packet record of the minutes Diagnostics keeps into `folder`; None without one. Any thread but
+    /// the rx thread: the copy runs outside the engine lock.
+    pub fn save_flight(&self, folder: &std::path::Path) -> Option<std::io::Result<std::path::PathBuf>> {
+        let (f, now, from) = {
+            let g = self.lock(Role::Ui);
+            let f = g.recorder.as_ref().and_then(|r| r.flight.clone());
+            let now = self.clock.now_us();
+            (f, now, now - g.settings.diagnostics_minutes as i64 * 60_000_000)
+        };
+        let f = f?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+            .to_string();
+        Some(f.save(folder, &stamp, from, now))
     }
 
     /// Diagnostics' PC stall watch (`StallWatch`): runs only while Diagnostics is on; outside the engine lock.
@@ -2978,6 +3023,9 @@ impl Inner {
         }
         self.settings.diagnostics_minutes = minutes;
         self.settings_dirty = true;
+        if self.settings.diagnostics && self.recorder.as_ref().is_some_and(|r| r.flight.is_some()) {
+            self.effects.push(Effect::ResizeFlight);
+        }
     }
 
     fn save_diagnostics(&mut self) {

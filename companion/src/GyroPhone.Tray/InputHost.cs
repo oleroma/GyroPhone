@@ -179,7 +179,22 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
             SetDeliveryProbe(on);
             StateChanged();
         };
-        _engine.DebugSaveRequested = () => _out.Post("debug-save");
+        _engine.DebugSaveRequested = () =>
+        {
+            _out.Post("debug-save");
+            // The per-packet record goes beside the logs; the companion copies it next to its Save.
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    if (_engine.SaveFlight(_log.Directory) is { } path) _log.Write($"flight record saved: {Path.GetFileName(path)}");
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    _log.Write($"flight record not saved: {e.GetType().Name}: {e.Message}");
+                }
+            });
+        };
         _engine.StallSleep = () => new HighResolutionSleep();
         SetDeliveryProbe(settings.Diagnostics);
         if (hostKey != null) _authorized = new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);

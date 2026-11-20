@@ -1346,8 +1346,50 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         {
             _log.Write($"diagnostics record not saved: {e.GetType().Name}: {e.Message}");
         }
-        if (path != null) Interlocked.Increment(ref _diagSaved);
+        if (path != null)
+        {
+            Interlocked.Increment(ref _diagSaved);
+            CopyFlight(path);
+        }
         Post(Refresh);
+    }
+
+    /// <summary>
+    /// The input process writes its per-packet record (flight-*.bin) into the logs folder at the same Save: copied here next
+    /// to <paramref name="saved"/> as pc-&lt;time&gt;-flight.bin once it is there (it takes a moment to write).
+    /// </summary>
+    private void CopyFlight(string saved)
+    {
+        var since = DateTime.Now.AddSeconds(-15);
+        for (int i = 0; i < 25; i++)
+        {
+            try
+            {
+                var newest = new DirectoryInfo(_log.Directory).GetFiles("flight-*.bin")
+                    .Where(f => f.LastWriteTime >= since).OrderByDescending(f => f.LastWriteTime).FirstOrDefault();
+                // Written and closed: its size stopped changing.
+                if (newest != null && newest.Length > 0)
+                {
+                    long size = newest.Length;
+                    Thread.Sleep(300);
+                    newest.Refresh();
+                    if (newest.Length == size)
+                    {
+                        string dest = Path.ChangeExtension(saved, null) + "-flight.bin";
+                        File.Copy(newest.FullName, dest, overwrite: true);
+                        _log.Write($"flight record copied: {Path.GetFileName(dest)}");
+                        // Each is up to tens of MB: the newest 5 stay.
+                        foreach (var old in Directory.GetFiles(DebugDirectory, "pc-*-flight.bin").OrderByDescending(f => f).Skip(5)) File.Delete(old);
+                        return;
+                    }
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+            }
+            Thread.Sleep(200);
+        }
+        _log.Write("flight record: none from the input process (an older input program, or Diagnostics just came on)");
     }
 
     /// <summary>Writes the last <paramref name="minutes"/> of the event log to the debug folder; returns the path, or null.</summary>

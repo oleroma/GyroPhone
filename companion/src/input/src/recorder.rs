@@ -12,6 +12,7 @@
 //! the last 5-10 s), so it needs no clock sync and is the delay a packet added on top of the best the link did
 //! just before.
 
+use crate::flight::{self, FlightRecorder};
 use crate::link_stats::LinkStats;
 use crate::stall_watch::{self, StallWatch};
 use crate::wire;
@@ -225,6 +226,8 @@ pub struct InputRecorder {
     /// The PC stall watch while Diagnostics runs (None otherwise): tells a hold-up that waited inside the PC from one
     /// held up on the way.
     pub stall: Option<Arc<StallWatch>>,
+    /// Diagnostics' per-packet record (None while it is off): one entry per STATE and its hand-off.
+    pub flight: Option<Arc<FlightRecorder>>,
 
     // Session.
     active: bool,
@@ -329,6 +332,7 @@ impl InputRecorder {
             write_lines: true,
             second_note: None,
             stall: None,
+            flight: None,
             active: false,
             session_start_us: 0,
             have_ref: false,
@@ -546,6 +550,12 @@ impl InputRecorder {
         if extra > self.s_max_late_us {
             self.s_max_late_us = extra;
         }
+        if let Some(f) = &self.flight {
+            let flags = if moving { flight::MOVING } else { 0 }
+                | if active { flight::ACTIVE } else { 0 }
+                | if lost { flight::LOST_BEFORE } else { 0 };
+            f.state(phone_us, recv_us, extra, flags);
+        }
         if extra > Self::LATE3_US && extra <= Self::LATE_US {
             self.s_late3 = self.s_late3.saturating_add(1);
             self.t_late3 += 1;
@@ -626,7 +636,12 @@ impl InputRecorder {
             }
         }
         if let Some(recv_us) = recv_us {
-            self.hand_off_took(now_us.saturating_sub(recv_us), now_us, causes);
+            let took = now_us.saturating_sub(recv_us);
+            self.hand_off_took(took, now_us, causes);
+            if let Some(f) = &self.flight {
+                let driver = causes.pad_us.saturating_add(causes.send_input_us);
+                f.hand_off(took, causes.lock_wait_us, driver, if refused { flight::REFUSED } else { 0 });
+            }
         }
         if refused {
             self.t_refused += 1;
@@ -643,7 +658,11 @@ impl InputRecorder {
             return;
         }
         self.s_pad_hand_offs = self.s_pad_hand_offs.saturating_add(1);
-        self.hand_off_took(now_us.saturating_sub(recv_us), now_us, causes);
+        let took = now_us.saturating_sub(recv_us);
+        self.hand_off_took(took, now_us, causes);
+        if let Some(f) = &self.flight {
+            f.hand_off(took, causes.lock_wait_us, causes.pad_us, flight::PAD_ONLY);
+        }
     }
 
     fn hand_off_took(&mut self, took: i64, now_us: i64, causes: &HandOffCauses) {

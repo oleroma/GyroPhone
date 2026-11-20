@@ -90,3 +90,40 @@ public class DiagnosticsToolsTests
         }
     }
 }
+
+/// <summary>Diagnostics' per-packet record: the same file as the Rust input program's (flight.rs tests).</summary>
+public class FlightRecorderTests
+{
+    [Fact]
+    public void EntriesAreWrittenOldestFirstWithTheirHandOff()
+    {
+        var f = new GyroPhone.Host.FlightRecorder(1);
+        f.State(1000, 10_000, 50, GyroPhone.Host.FlightRecorder.Moving);
+        f.HandOff(300, 0, 120, 0);
+        f.State(2000, 11_000, 2_000, 0);
+        f.HandOff(5_000, 4_000, 200, GyroPhone.Host.FlightRecorder.PadOnly);
+        f.HandOff(9_000, 0, 0, 0); // a second hand-off of the same packet: not counted
+        f.State(3000, 12_000, 0, 0); // the newest: left out
+        var ms = new MemoryStream();
+        Assert.Equal(2, f.Write(ms, 0, 13_000, 77));
+        var b = ms.ToArray();
+        Assert.Equal("GPFLIGHT", System.Text.Encoding.ASCII.GetString(b, 0, 8));
+        Assert.Equal(2, BitConverter.ToInt64(b, 16));
+        Assert.Equal(40 + 64, b.Length);
+        Assert.Equal(11_000, BitConverter.ToInt64(b, 40 + 32));
+        Assert.Equal(5_000, BitConverter.ToInt32(b, 40 + 32 + 16));
+        Assert.Equal(GyroPhone.Host.FlightRecorder.PadOnly | GyroPhone.Host.FlightRecorder.HandedOff, BitConverter.ToUInt32(b, 40 + 32 + 28));
+        Assert.Equal(1, f.Write(new MemoryStream(), 10_500, 13_000, 77));
+    }
+
+    [Fact]
+    public void AFullRingKeepsTheNewest()
+    {
+        var f = new GyroPhone.Host.FlightRecorder(1);
+        long cap = f.Capacity;
+        for (long i = 0; i < cap + 10; i++) f.State((uint)i, i + 1, 0, 0);
+        var ms = new MemoryStream();
+        Assert.Equal(cap - 2, f.Write(ms, 0, 0, 0));
+        Assert.Equal(12, BitConverter.ToInt64(ms.ToArray(), 40));
+    }
+}

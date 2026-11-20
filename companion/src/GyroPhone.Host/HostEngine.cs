@@ -436,6 +436,7 @@ public sealed class HostEngine
             _diagApplied = on;
             SetGcWatch(on);
             SetStallWatch(on);
+            SetFlight(on);
             try { DiagnosticsChanged?.Invoke(on); }
             catch (Exception e) { _events.Log($"diagnostics notice failed: {e.GetType().Name}"); }
         }
@@ -455,6 +456,43 @@ public sealed class HostEngine
     }
 
     private Func<ITickSleep>? _stallSleep;
+
+    /// <summary>
+    /// Diagnostics' per-packet record (<see cref="FlightRecorder"/>): made outside the engine lock, sized for the minutes
+    /// Diagnostics keeps, handed to the input log under the lock (a reference store), dropped when Diagnostics goes off.
+    /// </summary>
+    private void SetFlight(bool on)
+    {
+        FlightRecorder? f = null;
+        if (on)
+        {
+            int minutes;
+            using (Lock(ByUi)) minutes = _settings.DiagnosticsMinutes;
+            try { f = new FlightRecorder(minutes); }
+            catch (OutOfMemoryException) { _events.Log("flight record: not enough memory"); }
+        }
+        using (Lock(ByUi))
+        {
+            if (Recorder is { } r) r.Flight = f;
+        }
+    }
+
+    /// <summary>
+    /// Writes the per-packet record of the minutes Diagnostics keeps to flight-&lt;time&gt;.bin in <paramref name="folder"/>;
+    /// returns the path, or null without one. Any thread but gp-rx: the copy runs outside the engine lock.
+    /// </summary>
+    public string? SaveFlight(string folder)
+    {
+        FlightRecorder? f;
+        long now, from;
+        using (Lock(ByUi))
+        {
+            f = Recorder?.Flight;
+            now = _clock.NowUs;
+            from = now - _settings.DiagnosticsMinutes * 60_000_000L;
+        }
+        return f?.Save(folder, from, now);
+    }
 
     private StallWatch? _stallWatch;
 
@@ -495,6 +533,9 @@ public sealed class HostEngine
             if (minutes == _settings.DiagnosticsMinutes) return;
             _settings.DiagnosticsMinutes = minutes;
             _settingsDirty = true;
+            // The flight record is sized for the minutes kept: made again off the lock (this may be gp-rx).
+            if (_settings.Diagnostics && Recorder?.Flight is { } fl && fl.Minutes != minutes)
+                ThreadPool.UnsafeQueueUserWorkItem(_ => SetFlight(Volatile.Read(ref _diagApplied)), null);
         }
     }
 

@@ -17,6 +17,7 @@ pub mod crypto;
 pub mod delivery;
 pub mod engine;
 pub mod file_log;
+pub mod flight;
 pub mod gyro;
 pub mod held_marker;
 pub mod host;

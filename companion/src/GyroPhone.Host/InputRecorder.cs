@@ -131,6 +131,9 @@ public sealed class InputRecorder
     private long _tStates, _tLost, _tLate, _tLate3, _tHoldups, _tGaps, _tCatchUps, _tJumps, _tSlow, _tReleases, _tRefused, _tAir, _tPc, _tPhone;
     private readonly long[] _tExtra = new long[SessionBuckets];
 
+    /// <summary>Diagnostics' per-packet record (null while it is off): one entry per STATE and its hand-off.</summary>
+    public FlightRecorder? Flight { get; set; }
+
     /// <summary>The PC stall watch while Diagnostics runs (null otherwise): tells a hold-up that waited inside the PC from one held up on the way.</summary>
     public StallWatch? Stall { get; set; }
 
@@ -265,6 +268,8 @@ public sealed class InputRecorder
         _sOver[Perf.OverFloor.Bucket(extra)]++;
         _tExtra[Math.Clamp(extra / ExtraStepUs, 0, SessionBuckets - 1)]++;
         if (extra > _sMaxLateUs) _sMaxLateUs = extra;
+        Flight?.State(phoneUs, recvUs, extra,
+            (moving ? FlightRecorder.Moving : 0) | (active ? FlightRecorder.Active : 0) | (lost ? FlightRecorder.LostBefore : 0));
         if (extra > Late3Us && extra <= LateUs)
         {
             _sLate3++;
@@ -327,6 +332,7 @@ public sealed class InputRecorder
         if (recvUs >= 0)
         {
             HandOffTook(nowUs - recvUs, nowUs, causes);
+            Flight?.HandOff(nowUs - recvUs, Us(causes.LockWaitTicks), Us(causes.PadTicks + causes.SendInputTicks), refused ? FlightRecorder.Refused : 0);
         }
         if (refused)
         {
@@ -344,6 +350,7 @@ public sealed class InputRecorder
         if (!_active) return;
         _sPadHandOffs++;
         HandOffTook(nowUs - recvUs, nowUs, causes);
+        Flight?.HandOff(nowUs - recvUs, Us(causes.LockWaitTicks), Us(causes.PadTicks), FlightRecorder.PadOnly);
     }
 
     private void HandOffTook(long took, long nowUs, in HandOffCauses causes)
