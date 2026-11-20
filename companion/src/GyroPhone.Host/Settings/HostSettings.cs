@@ -53,6 +53,12 @@ public sealed class HostSettings
     /// SendInput hands them to the window in front itself (worst ~3.4 ms, 2026-11-15 trace). Without the driver it changes nothing.
     /// </summary>
     public bool UseInputDriver { get; set; }
+    /// <summary>
+    /// "Use the Rust input program" (Performance › Input program, off by default), the companion's own setting
+    /// (companion.json): the companion starts its input process as the Rust program (companion/src/input) instead of
+    /// the original C# one. Both do the same job; the C# one stays as the fallback.
+    /// </summary>
+    public bool RustInput { get; set; }
     /// <summary>"Use this PC's keys for Press a key" on the App page: off, the PC's keyboard, mouse and controller are never read for it.</summary>
     public bool PressKeyListen { get; set; } = true;
     /// <summary>"Notify when the phone listens for a key" on the App page: a tray notification each time the phone's "Press a key" opens.</summary>

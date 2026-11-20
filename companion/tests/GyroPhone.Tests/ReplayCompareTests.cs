@@ -10,14 +10,14 @@ using GyroPhone.Protocol.Mapping;
 namespace GyroPhone.Tests;
 
 /// <summary>
-/// Replay files: the two input processes (this C# engine and the Rust one in companion/input) are given the
+/// Replay files: the two input processes (this C# engine and the Rust one in companion/src/input) are given the
 /// same packets, ticks and calls, and must do exactly the same with them: the same key and mouse events, pad
 /// reports, packets back to the phone and log lines, in the same order.
 ///
 /// Each file in companion/tests/replay/v1 is one made-up play session written by this engine: every input
 /// line, and under it (lines starting with "= ") what the engine did because of it. This test makes each
 /// session again and compares it with its file, so a change to the C# engine that changes what it does shows
-/// here; the Rust test (companion/input/tests/replay.rs) feeds the file's input lines to the Rust engine and
+/// here; the Rust test (companion/src/input/tests/replay.rs) feeds the file's input lines to the Rust engine and
 /// compares what comes out. After a wanted change, write the files again with GP_REPLAY_WRITE=1 and port the
 /// change to Rust until its test passes too.
 ///

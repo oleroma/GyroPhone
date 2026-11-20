@@ -4,7 +4,7 @@
 use serde_json::Value;
 
 pub fn vectors(name: &str) -> Value {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../core/src/test/resources/protocol/v1/");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../core/src/test/resources/protocol/v1/");
     let text = std::fs::read_to_string(format!("{path}{name}")).expect("vector file");
     serde_json::from_str(&text).expect("vector json")
 }

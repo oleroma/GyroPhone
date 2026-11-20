@@ -60,4 +60,25 @@
       <EmbeddedResource Include="$(_GpHelperDir)GyroPhoneFpsHelper.exe" LogicalName="GyroPhoneFpsHelper.exe" />
     </ItemGroup>
   </Target>
+  <!-- The Rust input program (companion/src/input) rides inside the published exe as gp_input.dll, like the FPS
+       helper: the exe started as its input process with the "rust" argument unpacks and loads it (RustInput.cs). Built by cargo
+       (Rust's build tool, on the PATH) into this project's obj folder, so later builds only compile what
+       changed. Where Rust isn't installed the companion is built without it, with a warning, and its
+       "Use the Rust input program" switch can't be turned on. Plain builds (tests) skip it. -->
+  <Target Name="EmbedRustInput" BeforeTargets="PrepareForBuild" Condition="'$(PublishSingleFile)' == 'true'">
+    <PropertyGroup>
+      <_GpRustManifest>$(MSBuildProjectDirectory)/../input/Cargo.toml</_GpRustManifest>
+      <_GpRustTarget>$(MSBuildProjectDirectory)/$(BaseIntermediateOutputPath)rust-input</_GpRustTarget>
+      <_GpRustDll>$(_GpRustTarget)/x86_64-pc-windows-msvc/release/gp_input.dll</_GpRustDll>
+    </PropertyGroup>
+    <Exec Command="cargo --version" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="_GpCargoExit" />
+    </Exec>
+    <Warning Condition="'$(_GpCargoExit)' != '0'" Text="Rust (cargo) isn't on the PATH: this companion is built without the Rust input program." />
+    <Exec Condition="'$(_GpCargoExit)' == '0'" IgnoreStandardErrorWarningFormat="true"
+          Command="cargo build --release --lib --locked --target x86_64-pc-windows-msvc --manifest-path &quot;$(_GpRustManifest)&quot; --target-dir &quot;$(_GpRustTarget)&quot;" />
+    <ItemGroup Condition="'$(_GpCargoExit)' == '0'">
+      <EmbeddedResource Include="$(_GpRustDll)" LogicalName="gp_input.dll" />
+    </ItemGroup>
+  </Target>
 </Project>

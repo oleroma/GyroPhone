@@ -26,32 +26,23 @@ use crate::win::usb::WindowsUsb;
 use crate::win::{probes, wide};
 use crate::{host, wire};
 
-/// The build this is, as the companion checks it against its own ("0.1.<build>-<commit>"); set by the build.
-pub const VERSION: &str = match option_env!("GP_INPUT_VERSION") {
-    Some(v) => v,
-    None => "dev",
-};
-
 const COMPANION_MUTEX: &str = r"Local\GyroPhoneCompanion";
 const WATCHER_YIELD: &str = r"Local\GyroPhoneWatcherYield";
-const COMPANION_EXE: &str = "GyroPhoneCompanion.exe";
 /// The companion's "start without showing the window, the input process is already running".
 const REATTACH_ARG: &str = "--reattach";
 
+/// `version` is the build this is part of, as the companion checks it against its own ("0.1.<build>-<commit>");
+/// `long_wait`: started by the watcher or after an update, when settings.json may stay locked for longer.
+///
 /// Exit codes: 0 done (or another input process already runs), 1 settings.json stayed locked (the companion
 /// says so), 2 start-up failed (the log says why).
-pub fn run() -> i32 {
+pub fn run(version: &str, long_wait: bool) -> i32 {
     // One input process per Windows session, the C# one included: they share the mutex.
     let Some(_instance) = take_instance_lock(names::INPUT_MUTEX) else {
         return 0;
     };
-    // The companion sets this for the C# input process it starts; a companion this process starts again must
-    // not get it.
-    // SAFETY: nothing else runs yet (no thread has been started), so no one reads the environment meanwhile.
-    unsafe { std::env::remove_var("DOTNET_GCgen0size") };
     // Above the game's normal-priority threads, so it is never queued behind them.
     set_process_priority_high();
-    let long_wait = std::env::args().any(|a| a == "--woken" || a == "--updated");
 
     let logs = local_folder().join("logs");
     let file = Arc::new(file_log(&logs, "companion.log", 1_000_000));
@@ -64,7 +55,7 @@ pub fn run() -> i32 {
         let f = input_file.clone();
         Arc::new(move |m: &str| f.write(m))
     };
-    let code = serve(&log, input_log, &file, long_wait);
+    let code = serve(version, &log, input_log, &file, long_wait);
     input_file.close();
     file.close();
     code
@@ -79,7 +70,7 @@ fn file_log(dir: &std::path::Path, name: &str, max_bytes: u64) -> FileLog {
     FileLog::new(dir, name, max_bytes, Box::new(local_stamp), lock)
 }
 
-fn serve(log: &Log, input_log: Log, file: &Arc<FileLog>, long_wait: bool) -> i32 {
+fn serve(version: &str, log: &Log, input_log: Log, file: &Arc<FileLog>, long_wait: bool) -> i32 {
     drivers::set_log(log);
     let region = match open_region(names::REGION) {
         Ok(r) => r,
@@ -113,7 +104,7 @@ fn serve(log: &Log, input_log: Log, file: &Arc<FileLog>, long_wait: bool) -> i32
     let roaming = roaming_folder();
     let local = local_folder();
     let platform = Platform {
-        version: VERSION.to_string(),
+        version: version.to_string(),
         pid: std::process::id(),
         elevated: is_self_elevated(),
         machine_name: machine_name(),
@@ -194,11 +185,11 @@ fn relaunch_companion(pid: i32, delay_ms: u64, still_wanted: Box<dyn Fn() -> boo
         if !still_wanted() || mutex_exists(COMPANION_MUTEX) {
             return;
         }
-        let Some(dir) = exe_folder() else {
-            log("input: starting the companion failed: this program's folder is unknown");
+        // This process is the companion's own exe (GyroPhoneCompanion.exe --input --rust).
+        let Some((exe, dir)) = exe_and_folder() else {
+            log("input: starting the companion failed: this program's path is unknown");
             return;
         };
-        let exe = dir.join(COMPANION_EXE);
         if let Err(e) = start_detached(&exe, &dir) {
             log(&format!("input: starting the companion failed: {e}"));
         }
@@ -206,8 +197,10 @@ fn relaunch_companion(pid: i32, delay_ms: u64, still_wanted: Box<dyn Fn() -> boo
     let _ = std::thread::Builder::new().name("gp-relaunch".to_string()).spawn(work);
 }
 
-fn exe_folder() -> Option<PathBuf> {
-    std::env::current_exe().ok()?.parent().map(|p| p.to_path_buf())
+fn exe_and_folder() -> Option<(PathBuf, PathBuf)> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?.to_path_buf();
+    Some((exe, dir))
 }
 
 /// Starts the companion with `--reattach`, in its own folder, inheriting none of this process's handles (a
@@ -223,8 +216,8 @@ fn start_detached(exe: &std::path::Path, dir: &std::path::Path) -> std::io::Resu
     // SAFETY: as above.
     let mut made: th::PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
     // SAFETY: NUL-ended strings that outlive the call; the command line is writable as the API asks; no handle
-    // is inherited; the environment is this process's own, less the C# input process's variable `run`
-    // removed.
+    // is inherited; the environment is this process's own (the companion sets nothing for it that a
+    // companion must not get).
     let ok = unsafe {
         th::CreateProcessW(
             exe_w.as_ptr(),

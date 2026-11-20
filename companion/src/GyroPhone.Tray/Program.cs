@@ -66,7 +66,7 @@ internal static class Program
     private static int Main(string[] args)
     {
         // The input process first, before anything here touches WinForms (it never loads it).
-        if (args.Contains(InputHost.Arg)) return InputHost.Run(args);
+        if (args.Contains(InputHost.Arg)) return args.Contains(RustInput.Arg) ? RustInput.Run(args) : InputHost.Run(args);
         return RunCompanion(args);
     }
 

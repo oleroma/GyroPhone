@@ -142,7 +142,7 @@ public class SplitTests
     }
 
     /// <summary>
-    /// The Rust input process (companion/input, shared.rs) writes Diagnostics' raw events byte by byte at these
+    /// The Rust input process (companion/src/input, shared.rs) writes Diagnostics' raw events byte by byte at these
     /// places, and the whole region at these offsets: when this fails, change both sides and bump the layout version.
     /// </summary>
     [Fact]

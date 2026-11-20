@@ -31,6 +31,8 @@ internal sealed class PerformancePage : Page
     private readonly Button _save;
     private readonly Seg<int> _catchUp;
     private readonly CheckBox _useInputDriver;
+    private readonly CheckBox _rustInput;
+    private readonly TextBlock _programSub;
     private readonly TextBlock _routeSub;
     private readonly TextBlock _logPath;
     private readonly TextBlock _buttonsSub;
@@ -165,6 +167,19 @@ internal sealed class PerformancePage : Page
             "delivery probe for the same moves. Runs only while the window is open, and only counts while it is in front.", "Hint"));
         _root.Children.Add(km);
 
+        // Input program: the original (C#) input process or the Rust one
+        var (program, pb) = Parts.Card("Input program");
+        _programSub = Parts.Text("", "Sub");
+        pb.Children.Add(_programSub);
+        _rustInput = Parts.Toggle("Use the Rust input program", app.ToggleRustInput,
+            "The input program is the part that takes the phone's packets and turns them into keys, mouse and gamepad. " +
+            "On: the new one written in Rust does it. Off: the original one. Both do exactly the same, so you can compare them. " +
+            "Switching restarts it: everything held is let go and the phone reconnects within a second or two. " +
+            "If the Rust one can't start or keeps stopping, GP goes back to the original by itself.");
+        _rustInput.Margin = new Thickness(0, 10, 0, 0);
+        pb.Children.Add(_rustInput);
+        _root.Children.Add(program);
+
         // The companion's own log
         var (debug, db) = Parts.Card("Log");
         _logPath = Parts.Text("", "Sub");
@@ -203,6 +218,12 @@ internal sealed class PerformancePage : Page
                 "Through SendInput: the input driver is installed but its mouse and keyboard aren't plugged yet (tried every 5 s; see the log).",
             _ => "Through SendInput.",
         };
+        Parts.SetChecked(_rustInput, v.RustInput == RustInputState.On);
+        _rustInput.IsEnabled = v.RustInput != RustInputState.NotInBuild;
+        _programSub.Text = v.RustInputNote
+            ?? (v.RustInput == RustInputState.NotInBuild ? "The original input program runs. This build was made without the Rust one."
+                : v.InputProgram == null ? "Starting…"
+                : $"Running now: the {(v.InputProgram == "Rust" ? "Rust" : "original")} input program.");
         _logPath.Text = $"Log: {v.LogPath}";
         var p = _app.Perf;
         var s = v.Status;

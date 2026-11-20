@@ -5,9 +5,12 @@ edition = "2021"
 description = "GyroPhone's PC input process: the phone link, the engine and the outputs."
 publish = false
 
+# The companion loads the library (gp_input.dll rides inside GyroPhoneCompanion.exe, which runs it as its
+# input process: see GyroPhone.Tray's RustInput.cs); the tests use it as an ordinary Rust library.
 [lib]
 name = "gp_input"
 path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [[bin]]
 name = "GyroPhoneInput"

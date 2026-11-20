@@ -125,7 +125,7 @@ fn flag(s: &str) -> bool {
 }
 
 fn replay(name: &str) {
-    let path = format!("{}/../tests/replay/v1/{name}.txt", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{}/../../tests/replay/v1/{name}.txt", env!("CARGO_MANIFEST_DIR"));
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}")).replace('\r', "");
     let lines: Vec<&str> = text.split('\n').collect();
 
