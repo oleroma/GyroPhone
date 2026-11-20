@@ -328,6 +328,8 @@ fn the_second_splits_floor_and_over_the_floor() {
     assert_eq!((s.late3, s.floor_ms, s.rtt_typ_ms, s.neg_lat, s.slow_hand_offs, s.moving), (5, 0.75, 2.5, 2, 1, 100));
     assert_eq!((s.over_p50_ms, s.over_p99_ms), (0.05, 5.05));
     assert_eq!(s.hand_off_max_ms, 2.5);
+    // 90 at 0, 5 at 1 ms (1000..1500), 5 at 5 ms (5000..7500).
+    assert_eq!(s.over, [90, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0]);
     assert_eq!(s.stall_max_ms, -1.0);
     let sec = &r.with(" sec ")[0];
     for part in ["floor 0.75", "rtt 1.50/2.50", "over 0.1/5.1", "late3 5", "neglat 2", "padonly 1", "slow 1"] {

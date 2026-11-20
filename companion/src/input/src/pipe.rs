@@ -397,6 +397,14 @@ pub fn push_payload(b: &mut Vec<u8>, p: &Payload) {
             field_i64(b, "pc", s.pc as i64);
             field_i64(b, "phone", s.phone as i64);
             field_i64(b, "moving", s.moving as i64);
+            b.extend_from_slice(b"\"over\":[");
+            for (i, c) in s.over.iter().enumerate() {
+                if i > 0 {
+                    b.push(b',');
+                }
+                b.extend_from_slice(c.to_string().as_bytes());
+            }
+            b.extend_from_slice(b"],");
             let trouble = s.lost > 0 || s.late > 0 || s.gaps > 0 || s.releases > 0;
             b.extend_from_slice(if trouble { b"\"trouble\":true," } else { b"\"trouble\":false," });
             end(b);

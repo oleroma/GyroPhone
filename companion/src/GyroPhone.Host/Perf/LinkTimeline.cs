@@ -38,6 +38,8 @@ public readonly record struct LinkSecond(long AtUs, int Rx, int Lost, int Late, 
     public int Phone { get; init; }
     /// <summary>Packets that moved the mouse or a stick.</summary>
     public int Moving { get; init; }
+    /// <summary>This second's packets by how much later than the fastest they came (<see cref="OverFloor.EdgesUs"/>), or null (an older input program).</summary>
+    public int[]? Over { get; init; }
 
     /// <summary>Something went wrong on the link this second.</summary>
     public bool Trouble => Lost > 0 || Late > 0 || Gaps > 0 || Releases > 0;

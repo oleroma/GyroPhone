@@ -72,6 +72,12 @@ public sealed class PerfMonitor : IDisposable
     private int _loadsHead, _loadsCount;
     private LoadSample? _lastLoad;
     private int _game;
+    // The setup while Diagnostics runs (read every SetupEvery seconds on the timer), and its changes.
+    private const int SetupEvery = 5;
+    private List<SetupItem>? _setup;
+    private readonly List<(long AtUs, DateTime At, string Text)> _setupChanges = [];
+    private int _setupTick;
+    private FloorBook? _floors;
 
     public PerfMonitor(IFrameSource source, ISystemLoad? load, IForeground foreground, IClock clock, string folder, Action<string> log)
     {
@@ -169,6 +175,61 @@ public sealed class PerfMonitor : IDisposable
     /// <summary>The way the phone's packets go now, for records ("Phone hotspot · PC Wi-Fi"), or null.</summary>
     public Func<string?>? PathNow { get; set; }
 
+    /// <summary>The PC's side of the setup and GyroPhone's own (versions, input program, overlays), or null; called on the monitor's timer, never on an input thread.</summary>
+    public Func<List<SetupItem>>? SetupNow { get; set; }
+
+    /// <summary>Gets Diagnostics lines (the setup at the start, each change, a floor warning).</summary>
+    public Action<string>? Note { get; set; }
+
+    /// <summary>The setup line as last read while Diagnostics runs, or null.</summary>
+    public string? SetupLine
+    {
+        get { lock (_lock) return _setup is { } s ? SetupSnapshot.Line(s) : null; }
+    }
+
+    /// <summary>Both sides' setup now (the phone's from its newest PHONE_STATS).</summary>
+    public List<SetupItem> ReadSetup()
+    {
+        var items = new List<SetupItem>();
+        if (PathNow?.Invoke() is { } path) items.Add(new("path", path));
+        try
+        {
+            if (SetupNow?.Invoke() is { } pc) items.AddRange(pc);
+        }
+        catch (Exception e)
+        {
+            _log($"setup not read: {e.GetType().Name}: {e.Message}");
+        }
+        if (Phone.Latest() is { } p && _clock.NowUs - p.AtUs < 10_000_000) items.AddRange(SetupSnapshot.Phone(p));
+        return items;
+    }
+
+    /// <summary>On the timer while Diagnostics runs: the setup at the start, then each change, as Diagnostics lines.</summary>
+    private void CheckSetup(long now)
+    {
+        var items = ReadSetup();
+        List<SetupItem>? before;
+        lock (_lock)
+        {
+            before = _setup;
+            _setup = items;
+        }
+        if (before == null)
+        {
+            Note?.Invoke("setup: " + SetupSnapshot.Line(items));
+            return;
+        }
+        var changes = SetupSnapshot.Changes(before, items);
+        if (changes.Count == 0) return;
+        string text = string.Join(" · ", changes);
+        lock (_lock)
+        {
+            _setupChanges.Add((now, DateTime.Now, text));
+            if (_setupChanges.Count > 500) _setupChanges.RemoveAt(0);
+        }
+        Note?.Invoke("setup changed: " + text);
+    }
+
     /// <summary>Watching the game's frames: State is On.</summary>
     public bool Watching => State == FrameWatchState.On;
 
@@ -239,6 +300,9 @@ public sealed class PerfMonitor : IDisposable
             if (on == (_diagSinceUs != long.MinValue)) return;
             _diagSinceUs = on ? _clock.NowUs : long.MinValue;
             _loadsHead = _loadsCount = 0;
+            _setup = null;
+            _setupChanges.Clear();
+            _setupTick = 0;
             if (on) _load?.Sample(); // starts its count from now
             Apply();
         }
@@ -273,7 +337,24 @@ public sealed class PerfMonitor : IDisposable
         }
         r.NotePath(path);
         var (run, text) = r.Finish(end, Link.Between(from, end + 1_100_000), Phone.Between(from, end + 1_100_000));
-        run = run with { Text = text, File = ReportPath };
+        // The setup it was made on, its changes during the run, and whether the floor moved on the same setup.
+        var setup = ReadSetup();
+        string changes;
+        lock (_lock) changes = string.Join("\n", _setupChanges.Where(c => c.AtUs > from && c.AtUs <= end).Select(c => $"{c.At:HH:mm:ss} {c.Text}"));
+        string? warning = null;
+        if (run.FloorMs > 0)
+        {
+            _floors ??= new FloorBook(Folder);
+            warning = _floors.CheckAndKeep(SetupSnapshot.LinkKey(setup), run.FloorMs, DateTime.Now, run.Name);
+        }
+        if (warning != null) Note?.Invoke("WARNING: " + warning);
+        var head = new System.Text.StringBuilder();
+        head.Append("setup: ").Append(SetupSnapshot.Line(setup)).Append('\n');
+        if (changes.Length > 0) head.Append("setup changes during the run:\n  ").Append(changes.Replace("\n", "\n  ")).Append('\n');
+        if (warning != null) head.Append("WARNING: ").Append(warning).Append('\n');
+        int firstLine = text.IndexOf('\n') + 1;
+        text = text[..firstLine] + head + text[firstLine..];
+        run = run with { Text = text, File = ReportPath, Setup = SetupSnapshot.Line(setup), SetupChanges = changes, FloorWarning = warning ?? "" };
         Keep(run);
         _log($"diagnostics saved '{run.Name}': {run.Seconds:0} s, lost {run.Lost}, late {run.Late}");
         return run;
@@ -383,6 +464,7 @@ public sealed class PerfMonitor : IDisposable
                 _busy = checking ? busy : null;
             }
             if (!diag) return;
+            if (_setupTick++ % SetupEvery == 0) CheckSetup(now);
             var second = new LoadSecond(now, load, front, PathNow?.Invoke());
             lock (_lock)
             {

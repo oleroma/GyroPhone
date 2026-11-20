@@ -122,6 +122,11 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             Path.Combine(_log.Directory, "perf"), _log.Write);
         _perf.ShowsLinkChanged += () => In.SetLinkWatch(_perf.ShowsLink);
         _perf.PathNow = () => LinkPath()?.Text;
+        _perf.SetupNow = SetupNow;
+        _perf.Note = line =>
+        {
+            if (_debug.Enabled) _debug.Add(DebugTrace.Kind.Note, line);
+        };
         OverlayForm.FpsSource = () => (_perf.View(), _perf.GameName, _perf.State, _perf.Recording);
         OverlayForm.FpsLinkSource = () =>
         {
@@ -1394,10 +1399,35 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         sb.Append($"\r\nkeys (the phone's newest state): {(held.Count == 0 ? "none" : string.Join("+", held))}");
         sb.Append($"\r\nlogging: {(_debug.Enabled ? "on" : "off")} · raw events dropped {_debug.Dropped} · counters: {s.Counters}");
         if (Hello() is { } h) sb.Append($"\r\ninput process: pid {h.Pid}, {h.Version}");
+        if (_perf.SetupLine is { } setup) sb.Append("\r\nsetup: ").Append(setup);
         return sb.ToString();
     }
 
     private InputHello? Hello() => _input.Hello;
+
+    /// <summary>The PC's side of Diagnostics' setup and GyroPhone's own (on the Performance monitor's timer, every few seconds).</summary>
+    private List<SetupItem> SetupNow()
+    {
+        var s = Snap;
+        var list = PcSetupReader.Read(IPAddress.TryParse(s.PhoneAddress, out var a) ? a : null);
+        list.Add(new("gp", Application.ProductVersion));
+        list.Add(new("input program", _input.Hello is not { } h ? "-" : h.Version.EndsWith(RustInput.VersionSuffix, StringComparison.Ordinal) ? "Rust" : "C#"));
+        list.Add(new("keys via", St?.InputDriverReady == true ? "input driver" : "SendInput"));
+        string overlays;
+        try
+        {
+            var ui = _overlays.Ui;
+            var shown = ui.OverlaysHidden ? [] : ui.Overlays.Where(o => o.Shown).Select(o => o.Kind.ToString()).ToList();
+            overlays = shown.Count == 0 ? "none" : string.Join(", ", shown);
+        }
+        catch (InvalidOperationException)
+        {
+            overlays = "-"; // changed on the UI thread meanwhile
+        }
+        list.Add(new("overlays", overlays));
+        list.Add(new("fps watch", _perf.State == FrameWatchState.On ? "on" : "off"));
+        return list;
+    }
 
     public void OpenDebugFolder()
     {

@@ -53,6 +53,12 @@ public sealed class PhoneTimeline
         Added?.Invoke(s);
     }
 
+    /// <summary>The newest second, or null before any.</summary>
+    public PhoneSecond? Latest()
+    {
+        lock (_lock) return _count == 0 ? null : _ring[(_head - 1 + Keep) % Keep];
+    }
+
     /// <summary>The seconds that ended after <paramref name="fromUs"/> and at or before <paramref name="toUs"/>, oldest first.</summary>
     public List<PhoneSecond> Between(long fromUs, long toUs)
     {

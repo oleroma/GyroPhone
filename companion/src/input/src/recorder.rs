@@ -113,6 +113,18 @@ pub struct LinkSecond {
     pub phone: i32,
     /// Packets that moved the mouse or a stick.
     pub moving: i32,
+    /// This second's packets by how much later than the fastest they came (`OVER_EDGES_US`).
+    pub over: [i32; OVER_BUCKETS],
+}
+
+/// The records' over-the-floor bucket upper edges, µs; the last bucket holds the rest. Same as OverFloor.EdgesUs.
+pub const OVER_EDGES_US: [i64; 17] =
+    [100, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000, 7500, 10000, 15000, 20000, 30000, 50000];
+pub const OVER_BUCKETS: usize = OVER_EDGES_US.len() + 1;
+
+/// The bucket of `OVER_EDGES_US` an extra delay falls in.
+pub fn over_bucket(us: i64) -> usize {
+    OVER_EDGES_US.iter().take_while(|&&e| us >= e).count()
 }
 
 /// What held up a hold-up: where its packets waited.
@@ -261,6 +273,7 @@ pub struct InputRecorder {
     // This second's extra delay over the floor (0.1 ms buckets), for "over p50/p99".
     s_extra: [i32; SECOND_BUCKETS],
     s_extra_n: i32,
+    s_over: [i32; OVER_BUCKETS],
     // Whole session.
     t_states: i64,
     t_lost: i64,
@@ -357,6 +370,7 @@ impl InputRecorder {
             s_max_inject_us: 0,
             s_extra: [0; SECOND_BUCKETS],
             s_extra_n: 0,
+            s_over: [0; OVER_BUCKETS],
             t_states: 0,
             t_lost: 0,
             t_late: 0,
@@ -527,6 +541,7 @@ impl InputRecorder {
         let bucket = (extra / Self::EXTRA_STEP_US).max(0);
         self.s_extra[bucket.min(SECOND_BUCKETS as i64 - 1) as usize] += 1;
         self.s_extra_n = self.s_extra_n.saturating_add(1);
+        self.s_over[over_bucket(extra)] += 1;
         self.t_extra[bucket.min(SESSION_BUCKETS as i64 - 1) as usize] += 1;
         if extra > self.s_max_late_us {
             self.s_max_late_us = extra;
@@ -747,6 +762,7 @@ impl InputRecorder {
             pc: self.s_pc,
             phone: self.s_phone,
             moving: self.s_moving,
+            over: self.s_over,
         };
         self.push(RecorderOut::Second(second));
         self.clear_second();
@@ -847,6 +863,7 @@ impl InputRecorder {
         self.s_pad_hand_offs = 0;
         self.s_extra = [0; SECOND_BUCKETS];
         self.s_extra_n = 0;
+        self.s_over = [0; OVER_BUCKETS];
         self.s_gaps = 0;
         self.s_releases = 0;
         self.s_injects = 0;

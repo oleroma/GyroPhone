@@ -417,11 +417,13 @@ fn event_payloads_have_the_companions_names() {
         at_us: 7, rx: 1000, lost: 0, late: 2, max_late_ms: 3.5, gaps: 0, releases: 0, lat_p50_ms: 1.25, lat_p99_ms: -1.0, jitter_ms: 0.5,
         floor_ms: 0.75, rtt_typ_ms: 2.0, over_p50_ms: 0.25, over_p99_ms: 4.5, late3: 3, hand_off_max_ms: 0.5, slow_hand_offs: 1, lock_wait_ms: 0.125,
         stall_max_ms: -1.0, stalls: 4, neg_lat: 5, air: 6, pc: 7, phone: 8, moving: 900,
+        over: [1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9],
     };
     assert_eq!(
         json!({ "atUs": 7, "rx": 1000, "lost": 0, "late": 2, "maxLateMs": 3.5, "gaps": 0, "releases": 0, "latP50Ms": 1.25, "latP99Ms": -1.0, "jitterMs": 0.5,
             "floorMs": 0.75, "rttTypMs": 2.0, "overP50Ms": 0.25, "overP99Ms": 4.5, "late3": 3, "handOffMaxMs": 0.5, "slowHandOffs": 1, "lockWaitMs": 0.125,
-            "stallMaxMs": -1.0, "stalls": 4, "negLat": 5, "air": 6, "pc": 7, "phone": 8, "moving": 900, "trouble": true }),
+            "stallMaxMs": -1.0, "stalls": 4, "negLat": 5, "air": 6, "pc": 7, "phone": 8, "moving": 900,
+            "over": [1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9], "trouble": true }),
         payload_json(&Payload::LinkSecond(s))
     );
     assert_eq!(json!(false), payload_json(&Payload::LinkSecond(LinkSecond { late: 0, ..s }))["trouble"]);

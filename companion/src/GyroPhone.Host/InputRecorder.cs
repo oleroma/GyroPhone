@@ -125,6 +125,8 @@ public sealed class InputRecorder
     // This second's extra delay over the floor (0.1 ms buckets), for "over p50/p99".
     private readonly int[] _sExtra = new int[SecondBuckets];
     private int _sExtraN;
+    // The same, in the records' coarser buckets (OverFloor), handed on with the second.
+    private readonly int[] _sOver = new int[Perf.OverFloor.Buckets];
     // Whole session.
     private long _tStates, _tLost, _tLate, _tLate3, _tHoldups, _tGaps, _tCatchUps, _tJumps, _tSlow, _tReleases, _tRefused, _tAir, _tPc, _tPhone;
     private readonly long[] _tExtra = new long[SessionBuckets];
@@ -260,6 +262,7 @@ public sealed class InputRecorder
         long extra = rel - Math.Min(_minCur, _minPrev);
         _sExtra[Math.Clamp(extra / ExtraStepUs, 0, SecondBuckets - 1)]++;
         _sExtraN++;
+        _sOver[Perf.OverFloor.Bucket(extra)]++;
         _tExtra[Math.Clamp(extra / ExtraStepUs, 0, SessionBuckets - 1)]++;
         if (extra > _sMaxLateUs) _sMaxLateUs = extra;
         if (extra > Late3Us && extra <= LateUs)
@@ -438,6 +441,7 @@ public sealed class InputRecorder
             Pc = _sPc,
             Phone = _sPhone,
             Moving = _sMoving,
+            Over = (int[])_sOver.Clone(),
         });
         ClearSecond();
     }
@@ -479,6 +483,7 @@ public sealed class InputRecorder
         _sStates = _sMoving = _sLost = _sLate = _sLate3 = _sGaps = _sReleases = _sInjects = _sPadHandOffs = _sMaxStep = _sSlow = _sCatchUps = _sJumps = _sEvents = _sSkipped = 0;
         _sAir = _sPc = _sPhone = 0;
         Array.Clear(_sExtra);
+        Array.Clear(_sOver);
         _sExtraN = 0;
         _sPx = _sMaxLateUs = _sMaxInjectUs = _sMaxLockWaitUs = 0;
         _sLockHolder = null;
