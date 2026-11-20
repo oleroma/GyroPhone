@@ -19,6 +19,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../GyroPhone.Windows/EtwPresents.cs" Link="EtwPresents.cs" />
+    <Compile Include="../GyroPhone.Windows/EtwNetArrivals.cs" Link="EtwNetArrivals.cs" />
     <Compile Include="../GyroPhone.Windows/FrameHelperWire.cs" Link="FrameHelperWire.cs" />
   </ItemGroup>
 </Project>

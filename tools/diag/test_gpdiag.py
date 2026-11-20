@@ -90,6 +90,27 @@ class GpDiagTest(unittest.TestCase):
         self.assertIn("Paired by the phone time they carry: 3 of 3 PC packets", out)
         self.assertTrue(any("1 came 3 ms+ over the floor: 1 of them left the phone late" in l for l in out), out)
 
+    def test_network_arrivals_split_waiting_in_the_pc(self):
+        d = tempfile.mkdtemp()
+        pc = os.path.join(d, "pc-flight.bin")
+        net = os.path.join(d, "pc-net.bin")
+        recv = (10_000, 11_000, 16_000, 13_000 + 100)
+        extra = (100, 100, 4_000, 4_000)
+        with open(pc, "wb") as f:
+            f.write(b"GPFLIGHT" + struct.pack("<iiqqq", 1, 32, 4, 0, 0))
+            for i in range(4):
+                f.write(struct.pack("<qIiiiiI", recv[i] if i < 3 else 20_000, 5_000 + i * 1000, extra[i], 300, 0, 100, 33))
+        # Windows got them: on time, on time, 4 ms before the program took it (waited in the PC), just before (came late).
+        arrived = (9_900, 10_900, 12_000, 19_900)
+        with open(net, "wb") as f:
+            f.write(b"GPNETARR" + struct.pack("<iiqqq", 1, 16, 5, 0, 0))
+            f.write(struct.pack("<qiHH", 5_000, 100, 40000, 0))
+            for a in arrived:
+                f.write(struct.pack("<qiHH", a, 120, 40000, 0))
+        out = gpdiag.flight_lines([pc, net])
+        self.assertIn("Network arrivals: 5 datagrams; 4 of 4 PC packets paired", out)
+        self.assertTrue(any("2 came 3 ms+ over the floor: 1 mostly waited in the PC, 1 mostly came late to the PC" in l for l in out), out)
+
 
 if __name__ == "__main__":
     unittest.main()

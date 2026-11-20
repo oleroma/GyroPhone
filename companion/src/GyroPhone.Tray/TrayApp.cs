@@ -46,6 +46,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     private readonly Pairing _pairing;
     /// <summary>The Performance page's frame watcher and test records (logs\perf).</summary>
     private readonly PerfMonitor _perf;
+    private readonly NetArrivalWatch _net;
 
     private readonly TrayIcons _icons = new();
     private readonly NotifyIcon _tray;
@@ -118,6 +119,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         {
             _log.Write($"key names: {e.GetType().Name}");
         }
+        _net = new NetArrivalWatch(_log.Write);
         _perf = new PerfMonitor(new FpsHelperSource(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
             Path.Combine(_log.Directory, "perf"), _log.Write);
         _perf.ShowsLinkChanged += () => In.SetLinkWatch(_perf.ShowsLink);
@@ -440,6 +442,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             _debug.SetOn(on, "switched");
         }
         _perf.SetDiagnostics(on, Set.DiagnosticsMinutes);
+        _net.SetOn(on, Set.DiagnosticsMinutes);
         OverlayTiming.On = on;
     }
 
@@ -649,6 +652,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         In.SetDiagnosticsMinutes(minutes);
         _perf.SetDiagnostics(Set.Diagnostics, minutes);
+        _net.SetOn(Set.Diagnostics, minutes);
         Refresh();
     }
 
@@ -1349,9 +1353,31 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         if (path != null)
         {
             Interlocked.Increment(ref _diagSaved);
+            SaveNetArrivals(path, minutes);
             CopyFlight(path);
         }
         Post(Refresh);
+    }
+
+    /// <summary>Diagnostics' network arrival watch: pc-&lt;time&gt;-net.bin next to <paramref name="saved"/> (the newest 5 stay).</summary>
+    private void SaveNetArrivals(string saved, int minutes)
+    {
+        try
+        {
+            string dest = Path.ChangeExtension(saved, null) + "-net.bin";
+            long from = (long)(System.Diagnostics.Stopwatch.GetTimestamp() * (1_000_000.0 / System.Diagnostics.Stopwatch.Frequency)) - minutes * 60_000_000L;
+            if (_net.Save(dest, from) == null)
+            {
+                _log.Write($"network arrivals: none ({_net.State})");
+                return;
+            }
+            _log.Write($"network arrivals saved: {Path.GetFileName(dest)} ({_net.State})");
+            foreach (var old in Directory.GetFiles(DebugDirectory, "pc-*-net.bin").OrderByDescending(f => f).Skip(5)) File.Delete(old);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _log.Write($"network arrivals not saved: {e.GetType().Name}: {e.Message}");
+        }
     }
 
     /// <summary>
@@ -1903,6 +1929,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             _refreshSoon?.Stop();
             _updater.Dispose();
             _perf.Dispose();
+            _net.Dispose();
             if (_overlays.TakeDirty() is { } json) _uiStore.WriteAtomic(json);
             _debug.SetOn(false, "exit");
             _input.Dispose();

@@ -3,7 +3,7 @@
 
     python tools/diag/gpdiag.py summary <pc-save.txt> [more saves...]
     python tools/diag/gpdiag.py compare <A.txt> [A2.txt ...] -- <B.txt> [B2.txt ...]
-    python tools/diag/gpdiag.py flight <pc-...-flight.bin> [phone-...-flight.bin]
+    python tools/diag/gpdiag.py flight <pc-...-flight.bin> [phone-...-flight.bin] [pc-...-net.bin]
 
 Reads PC Diagnostics saves (Documents\\GyroPhone\\Debug\\pc-*.txt, from either input program: both write the same
 "sec" lines) and the per-packet flight records saved beside them (pc-*-flight.bin, and the phone's
@@ -294,7 +294,32 @@ def read_flight(path):
             entries.append({"at_us": at, "seq": seq, "phone_us": phone, "age_us": age, "send_us": send,
                             "wake_late_us": wake, "flags": flags})
         return "phone", head, entries
+    if magic == b"GPNETARR":
+        for i in range(count):
+            at, size_b, port, _ = struct.unpack_from("<qiHH", data, 40 + i * size)
+            entries.append({"at_us": at, "bytes": size_b, "port": port})
+        return "net", head, entries
     raise ValueError(f"{path}: not a GyroPhone flight record")
+
+
+def pair_net(pc, net, window_us=50_000):
+    """For each PC packet, the time it waited in the PC: from Windows receiving it (the newest arrival not yet used,
+    at or before the input program's receive stamp, within 50 ms) to the input program taking it; None when unpaired.
+    Both clocks are QueryPerformanceCounter microseconds."""
+    import bisect
+    at = [x["at_us"] for x in net]
+    used = set()
+    waits = []
+    for x in pc:
+        i = bisect.bisect_right(at, x["recv_us"]) - 1
+        while i >= 0 and i in used and x["recv_us"] - at[i] <= window_us:
+            i -= 1
+        if i < 0 or x["recv_us"] - at[i] > window_us:
+            waits.append(None)
+            continue
+        used.add(i)
+        waits.append(x["recv_us"] - at[i])
+    return waits
 
 
 def pct(values, q):
@@ -306,11 +331,13 @@ def pct(values, q):
 
 def flight_lines(paths):
     out = []
-    pc = phone = None
+    pc = phone = net = None
     for p in paths:
         kind, head, e = read_flight(p)
         if kind == "pc":
             pc = e
+        elif kind == "net":
+            net = e
         else:
             phone = e
     if pc is not None:
@@ -343,6 +370,19 @@ def flight_lines(paths):
             slow_send = sum(1 for ph, _ in late if ph["send_us"] > 2000 or ph["wake_late_us"] > 2000)
             out.append(f"  {len(late)} came 3 ms+ over the floor: {slow_send} of them left the phone late (slow send or late wake), "
                        f"{len(late) - slow_send} left on time (held up after the phone)")
+    if pc is not None and net is not None:
+        waits = pair_net(pc, net)
+        got = [w for w in waits if w is not None]
+        out.append(f"Network arrivals: {len(net)} datagrams; {len(got)} of {len(pc)} PC packets paired")
+        if got:
+            ms = [w / 1000 for w in got]
+            out.append(f"  waited in the PC after Windows got it: p50 {fmt(pct(ms, .5))} p99 {fmt(pct(ms, .99))} "
+                       f"max {fmt(max(ms))} ms; {sum(1 for w in got if w >= 1000)} waited 1 ms+")
+            late = [(x, w) for x, w in zip(pc, waits) if w is not None and x["extra_us"] > 3000]
+            if late:
+                inside = sum(1 for x, w in late if w >= x["extra_us"] / 2)
+                out.append(f"  {len(late)} came 3 ms+ over the floor: {inside} mostly waited in the PC, "
+                           f"{len(late) - inside} mostly came late to the PC")
     return out
 
 
