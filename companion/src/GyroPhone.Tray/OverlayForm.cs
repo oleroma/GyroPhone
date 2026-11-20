@@ -139,7 +139,7 @@ internal sealed class OverlayForm : Form
         _drawPicture = DrawPicture;
         _presentPicture = PresentPicture;
         var s = Settings ?? new OverlaySettings();
-        Text = $"{Program.AppName} {OverlaySettings.KindName(s.Kind).ToLowerInvariant()} overlay";
+        Text = WindowTitle(s.Kind, "");
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         TopMost = true;
@@ -218,6 +218,26 @@ internal sealed class OverlayForm : Form
             _title = value;
             if (!ClickThrough) SettingsChanged();
         }
+    }
+
+    /// <summary>
+    /// The window's title, which OBS Window Capture finds it by: the kind, then its own part
+    /// (its label, or a number when there are several of its kind; "" for a lone unlabelled one,
+    /// so the title stays as it was before labels were in it). Set by the tray only when it changes.
+    /// </summary>
+    public string WindowTitlePart
+    {
+        set
+        {
+            var t = WindowTitle(Settings?.Kind ?? OverlayKind.Pointer, value);
+            if (Text != t) Text = t;
+        }
+    }
+
+    private static string WindowTitle(OverlayKind kind, string part)
+    {
+        var t = $"{Program.AppName} {OverlaySettings.KindName(kind).ToLowerInvariant()} overlay";
+        return part.Length == 0 ? t : $"{t}: {part}";
     }
 
     /// <summary>On top of the other overlay windows, without taking focus.</summary>
