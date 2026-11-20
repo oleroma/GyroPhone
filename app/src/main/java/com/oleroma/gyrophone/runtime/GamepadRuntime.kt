@@ -2114,8 +2114,17 @@ class GamepadRuntime(context: Context) {
             val deg = GyroDisplayFeed.cameraDegrees(dx, dy, routes, gs, cameraDeg)
             overlay.camera(deg[0], deg[1], deg[2])
         }
-        if (follows) for (f in feeds) f.camera(dx, dy, routes, gs)
+        if (follows) {
+            val perCount = displayDegPerCount()
+            for (f in feeds) {
+                f.degPerCount = perCount
+                f.camera(dx, dy, routes, gs)
+            }
+        }
     }
+
+    /** Game camera degrees per mouse count for the displays ([GyroDisplayFeed.degPerCount]): one division, no allocation. */
+    private fun displayDegPerCount(): Float = GyroDisplayFeed.degPerCount(engine.gyroSettings)
 
     /** The routes and gyro settings [cameraMapNow] was made from, and its value (gyro thread). */
     private var cameraMapRoutes: List<Mapping>? = null
@@ -2138,11 +2147,12 @@ class GamepadRuntime(context: Context) {
      * Feeds one bias-corrected gyro sample to the gyro displays and the parallax edge: [m] as they
      * show it ([displayMotion]) and [cam] as the gyro mouse measures the turn, for what follows the
      * camera; [real] in World or Player space; [axes] move the mouse now; [routes] the gyro routes
-     * this sample already fetched, if any.
+     * this sample already fetched, if any; [sentDx], [sentDy] the mouse counts the live gyro sent
+     * with this sample, which turn what follows the camera by the counts ([GyroDisplay.turnsByCounts]).
      */
     private fun feedVisuals(
         v: TouchVisuals, feeds: Array<GyroDisplayFeed>, m: GyroMouse.Motion, cam: GyroMouse.Motion, real: Boolean, dt: Float, axes: Int,
-        routes: List<Mapping>? = null,
+        routes: List<Mapping>? = null, sentDx: Int = 0, sentDy: Int = 0,
     ) {
         val ratchets = if (inputAllowed) engine.ratchetsHeld else 0
         val pressed = ratchets and poseRatchets.inv() != 0
@@ -2151,16 +2161,22 @@ class GamepadRuntime(context: Context) {
         val gs = if (axes != 0) engine.gyroSettings else null
         val map = if (axes != 0) cameraMapNow(routes) else 0
         val out = engine.lastOutput
+        val perCount = displayDegPerCount()
+        val counts = axes != 0 && (sentDx != 0 || sentDy != 0)
         for (f in feeds) {
             if (map != 0) f.cameraMap = map
-            f.firing = f.display.kind == com.oleroma.gyrophone.core.model.GyroDisplayKind.LASER &&
-                inputAllowed && com.oleroma.gyrophone.core.engine.LaserFire.held(f.display.laserFire, out)
-            f.aiming = f.display.kind == com.oleroma.gyrophone.core.model.GyroDisplayKind.LASER &&
-                inputAllowed && com.oleroma.gyrophone.core.engine.LaserFire.held(f.display.laserAim, out)
-            f.realWorld = real
             val d = f.display
+            f.degPerCount = perCount
+            f.firing = d.kind == com.oleroma.gyrophone.core.model.GyroDisplayKind.LASER &&
+                inputAllowed && com.oleroma.gyrophone.core.engine.LaserFire.held(d.laserFire, out)
+            // Every display turning by the counts slows while aiming (Aim sens); the pointer also changes its look.
+            f.aiming = (d.kind == com.oleroma.gyrophone.core.model.GyroDisplayKind.LASER || d.turnsByCounts) &&
+                inputAllowed && com.oleroma.gyrophone.core.engine.LaserFire.held(d.laserAim, out)
+            f.realWorld = real
             val c = if (d.isTrackball || d.followsCamera) cam else m
             f.feed(c.yaw, c.pitch, c.roll, dt, axes, pressed, ratchets != 0, gs)
+            // The live gyro's counts, as the game gets them (its glide with every axis off comes through [drainCamera]).
+            if (counts && d.turnsByCounts && gs != null) f.camera(sentDx, sentDy, routes ?: engine.gyroRoutes(), gs)
         }
         if (dt == 0f || !v.gyroEdge) return
         if (v.gyroEdgeTilt) worldPose.fuse(m.yaw, m.pitch, m.roll, dt, GyroDisplayFeed.HEADING_EASE_S)
@@ -2370,7 +2386,7 @@ class GamepadRuntime(context: Context) {
         drainCamera()
         // With the PC doing the gyro math the phone's gyro displays are off: what moves is the PC's to say.
         if (pcMode) gyroLiveAxes = 0
-        else if (visuals) feedVisuals(v, feeds, shown, cam, real, dt, axes, routesNow)
+        else if (visuals) feedVisuals(v, feeds, shown, cam, real, dt, axes, routesNow, sentDx, sentDy)
         if (!pcMode && !covered && feeds.isNotEmpty() && v.restFade.on) {
             restDetector.settings = v.restFade
             restDetector.gyro(shown.yaw, shown.pitch, shown.roll, dt, System.nanoTime())
