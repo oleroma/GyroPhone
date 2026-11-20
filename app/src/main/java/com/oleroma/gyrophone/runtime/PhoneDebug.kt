@@ -51,6 +51,10 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
 
     private var job: Job? = null
     private var worker: Thread? = null
+    private val setupReader = PhoneSetupReader(context)
+    /** The setup line last logged, and the parts of it whose change is logged as an event. */
+    @Volatile private var setupLine: String? = null
+    private var setupKey: String? = null
 
     /** Applies the stored switch; called once the runtime is wired. */
     fun init() {
@@ -102,11 +106,29 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
                     val now = System.nanoTime()
                     if (now >= nextSecond) {
                         nextSecond = now + 1_000_000_000L
-                        t.secondTick(if (runtime.linkState.value is LinkState.Connected) linkLine(runtime.linkStats()) else null)
+                        readSetup(t)
+                        val connected = runtime.linkState.value is LinkState.Connected
+                        t.secondTick(if (connected) linkLine(runtime.linkStats()) + (runtime.wifi.clockLine()?.let { " · $it" } ?: "") else null)
                     }
                 }
             } catch (_: InterruptedException) {
             }
+        }
+    }
+
+    /**
+     * The phone's setup (battery, charger, heat, USB network adapter, Wi-Fi standard), once a second on this thread:
+     * handed to PHONE_STATS, and logged as a "setup" event when something other than the battery level and
+     * temperature changes, so a run's setup changes are in the record.
+     */
+    private fun readSetup(t: DebugTrace) {
+        val (setup, line) = runCatching { setupReader.read(runtime.wifi.wifiGenerationNow()) }.getOrNull() ?: return
+        runtime.wifi.setPhoneSetup(setup)
+        setupLine = line
+        val key = "${setup.flags} ${setup.thermal} ${setup.usbVendor}:${setup.usbProduct} ${setup.wifiStandard}"
+        if (key != setupKey) {
+            t.note((if (setupKey == null) "setup: " else "setup changed: ") + line)
+            setupKey = key
         }
     }
 
@@ -118,6 +140,8 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         runtime.wifi.debugTrace = false
         runtime.wifi.gyroTiming = null
         runtime.ratchetTiming.enabled = false
+        runtime.wifi.setPhoneSetup(com.oleroma.gyrophone.core.net.PhoneSetup.UNKNOWN)
+        setupKey = null
         trace = null
     }
 
@@ -197,7 +221,8 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
     private fun header(): List<String> = buildList {
         add("transport: ${runtime.transport.value.name.lowercase()} · ${describe(runtime.linkState.value)}")
         add("connection: " + if (runtime.transport.value == com.oleroma.gyrophone.link.TransportKind.WIFI) runtime.wifi.connectionLine() else "Bluetooth")
-        add("link: " + linkLine(runtime.linkStats()))
+        add("link: " + linkLine(runtime.linkStats()) + (runtime.wifi.clockLine()?.let { " · $it" } ?: ""))
+        add("setup: " + (setupLine ?: runCatching { setupReader.read(runtime.wifi.wifiGenerationNow()).second }.getOrDefault("unknown")))
         val g = runtime.gyroInfo.value
         add("gyro: ${g.source} · ${g.rateHz} Hz · " + if (g.active) "moving the mouse" else "idle")
         val p = runtime.activeProfile.value
@@ -238,9 +263,11 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
             append("sent ${s.sentPerSecond}/s")
             if (s.failedPerSecond > 0) append(", failed ${s.failedPerSecond}/s")
             s.hostRxPerSecond?.let { append(" · PC got $it/s") }
-            s.lossPercent?.let { append(" · loss ${"%.1f".format(it)}%") }
-            if (s.latP50Ms != null && s.latP99Ms != null) append(" · latency ${"%.1f".format(s.latP50Ms)} / ${"%.1f".format(s.latP99Ms)} ms (p50/p99)")
-            s.rttMs?.let { append(" · round trip ${"%.1f".format(it)} ms") }
+            // Dot decimals whatever the phone's language: scripts read these lines.
+            fun f1(v: Float) = String.format(Locale.US, "%.1f", v)
+            s.lossPercent?.let { append(" · loss ${f1(it)}%") }
+            if (s.latP50Ms != null && s.latP99Ms != null) append(" · latency ${f1(s.latP50Ms)} / ${f1(s.latP99Ms)} ms (p50/p99)")
+            s.rttMs?.let { append(" · round trip ${f1(it)} ms") }
             if (s.usb) append(if (s.hotspot) " · phone hotspot" else if (s.ethernet) " · Ethernet" else if (s.usbDirect) " · USB direct" else " · USB tethering")
             else if (s.band != null && s.band != 0) append(" · ${s.band} GHz")
             s.rssi?.let { if (!s.usb) append(" $it dBm") }
