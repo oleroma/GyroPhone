@@ -452,12 +452,26 @@ public class ReplayCompareTests
             ];
             byte kind = kinds[R(kinds.Length)];
             if (kind == PacketType.Motion && !Motion) kind = PacketType.LinkInfo;
-            var plain = Bytes(PacketType.PlainSize(kind));
+            var plain = Body(kind);
             if (Chance(30)) Array.Clear(plain, R(plain.Length), 0);
             if (Chance(20)) Array.Clear(plain);
             var d = _phone.Sealed(kind, plain);
             Remember(d);
             Rx(_phone, d);
+        }
+
+        /// <summary>
+        /// A random body. PHONE_STATS grew from 32 to 64 bytes: its first 32 still come from the random stream and the
+        /// rest are made from them, so the stream (and with it every session) stays as it was before it grew.
+        /// </summary>
+        private byte[] Body(byte kind)
+        {
+            int size = PacketType.PlainSize(kind);
+            if (kind != PacketType.PhoneStats) return Bytes(size);
+            var b = new byte[size];
+            Bytes(32).CopyTo(b, 0);
+            for (int i = 32; i < size; i++) b[i] = (byte)(b[i - 32] * 31 + i);
+            return b;
         }
 
         private void Silence()
