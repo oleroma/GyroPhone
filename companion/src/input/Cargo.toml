@@ -12,10 +12,6 @@ name = "gp_input"
 path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
-[[bin]]
-name = "GyroPhoneInput"
-path = "src/main.rs"
-
 [dependencies]
 aes-gcm = { version = "0.10", default-features = false, features = ["aes", "zeroize"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdh", "arithmetic"] }

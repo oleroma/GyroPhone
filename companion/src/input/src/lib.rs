@@ -1,7 +1,9 @@
 //! GyroPhone's PC input process, in Rust: the phone link (UDP and the USB cable), packet checking,
 //! pairing, sessions, the engine that turns the phone's state into keys, mouse and pad state, and the
 //! outputs. It does the same job as the C# input process (`GyroPhoneCompanion.exe --input`) and talks
-//! to the companion the same way, so either can run behind the Performance tab's switch.
+//! to the companion the same way, so either can run behind the Performance tab's switch. It is built as
+//! a library (gp_input.dll) that rides inside the companion's exe, which loads it and calls
+//! `gp_input_run` when started with `--input --rust`.
 //!
 //! The wire format is `docs/spec/protocol.md`; every byte layout here must match `Wire.kt` on the
 //! phone and `GyroPhone.Protocol` in the companion. The shared vectors in
@@ -45,21 +47,6 @@ pub mod watchdog;
 #[cfg(windows)]
 pub mod win;
 pub mod wire;
-
-/// The process's entry point when started as a program of its own (development only: the companion loads
-/// the library and calls `gp_input_run`). Returns the exit code.
-pub fn run() -> i32 {
-    #[cfg(windows)]
-    {
-        let long_wait = std::env::args().any(|a| a == "--woken" || a == "--updated");
-        win::run::run(option_env!("GP_INPUT_VERSION").unwrap_or("dev"), long_wait)
-    }
-    #[cfg(not(windows))]
-    {
-        eprintln!("gp-input runs on Windows only");
-        2
-    }
-}
 
 /// What the companion's exe calls to be the input process (GyroPhoneCompanion.exe --input --rust): runs until
 /// the companion says Exit and returns the process's exit code. `version` is `version_len` UTF-16 units, the
