@@ -104,7 +104,8 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
 
         _region = SharedRegion.CreateOrOpen(SplitNames.Region);
         _overlayWake = new EventWaitHandle(false, EventResetMode.AutoReset, SplitNames.OverlayWake);
-        _input = new InputClient(_exePath, _log.Write, inputArgs);
+        // A build without the Rust input program (made where Rust isn't installed) runs the original one whatever was chosen.
+        _input = new InputClient(_exePath, _log.Write, inputArgs, uiSettings.RustInput && RustInput.InThisBuild);
         _overlays = new OverlayHost(uiSettings, _region, _overlayWake, (on, compass, samples, keys) => In.SetOverlay(on, compass, samples, keys), _clock);
         if (fresh) _overlays.MarkDirty();
         _debug = new DebugTrace(() => _clock.NowUs, queue: _region.Debug);
@@ -130,6 +131,13 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         _input.Event += OnInputEvent;
         _input.Connected += OnInputConnected;
         _input.Lost += () => Post(Refresh);
+        _input.RustGaveUp += why => Post(() =>
+        {
+            _overlays.Change(s => s.RustInput = false);
+            _rustInputNote = $"The Rust input program was switched off: it {why}. The original one runs. See the log.";
+            Balloon(Program.AppName, _rustInputNote, ToolTipIcon.Warning);
+            Refresh();
+        });
 
 
         _menu = new ContextMenuStrip();
@@ -527,13 +535,30 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             set.DiagnosticsMinutes,
             Volatile.Read(ref _diagSaved),
             set.UseInputDriver,
-            st?.InputDriverReady == true ? InputDriverState.Ready : st?.InputDriverInstalled == true ? InputDriverState.NotPlugged : InputDriverState.NotInstalled);
+            st?.InputDriverReady == true ? InputDriverState.Ready : st?.InputDriverInstalled == true ? InputDriverState.NotPlugged : InputDriverState.NotInstalled,
+            !RustInput.InThisBuild ? RustInputState.NotInBuild : _overlays.Ui.RustInput ? RustInputState.On : RustInputState.Off,
+            !_input.Attached || _input.Hello is not { } hello ? null : hello.Version.EndsWith(RustInput.VersionSuffix, StringComparison.Ordinal) ? "Rust" : "Original",
+            _rustInputNote);
     }
 
 
     public void SetCatchUpMs(int ms)
     {
         In.SetCatchUpMs(ms);
+        Refresh();
+    }
+
+    /// <summary>Why the companion switched the Rust input program off by itself; cleared when the switch is used.</summary>
+    private string? _rustInputNote;
+
+    public void ToggleRustInput()
+    {
+        if (!RustInput.InThisBuild) return;
+        bool on = !_overlays.Ui.RustInput;
+        _overlays.Change(s => s.RustInput = on);
+        _rustInputNote = null;
+        _log.Write($"input program: {(on ? "Rust" : "original")} chosen on the Performance page");
+        _input.SetRust(on);
         Refresh();
     }
 

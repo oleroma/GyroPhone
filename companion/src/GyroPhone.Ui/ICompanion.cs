@@ -47,7 +47,21 @@ public sealed record CompanionView(
     int DiagnosticsMinutes = 3,
     int DiagnosticsSaved = 0,
     bool UseInputDriver = false,
-    InputDriverState InputDriver = InputDriverState.NotInstalled);
+    InputDriverState InputDriver = InputDriverState.NotInstalled,
+    RustInputState RustInput = RustInputState.NotInBuild,
+    // Which input program runs now ("Rust" or "Original"), or null while none is attached.
+    string? InputProgram = null,
+    // Why the Rust input program was switched off by GP itself, until the switch is used again.
+    string? RustInputNote = null);
+
+/// <summary>"Use the Rust input program" on Performance › Input program.</summary>
+public enum RustInputState
+{
+    /// <summary>This build was made without the Rust input program: the switch can't be used.</summary>
+    NotInBuild,
+    Off,
+    On,
+}
 
 /// <summary>The optional input driver (a virtual USB mouse and keyboard), for Performance › Keyboard and mouse.</summary>
 public enum InputDriverState
@@ -115,6 +129,11 @@ public interface ICompanion
     void SetCatchUpMs(int ms);
     /// <summary>"Use input driver" (Performance › Keyboard and mouse): the input driver instead of SendInput, when it is installed.</summary>
     void ToggleUseInputDriver();
+    /// <summary>
+    /// "Use the Rust input program" (Performance › Input program): the input process runs as the Rust program instead
+    /// of the original one. Switching restarts the input process: everything held is let go and the phone reconnects.
+    /// </summary>
+    void ToggleRustInput();
     /// <summary>
     /// "Delivery test" (Performance › Keyboard and mouse): opens a window that reads raw mouse input in front, like a
     /// game, next to Diagnostics' background delivery probe, while it is open.
