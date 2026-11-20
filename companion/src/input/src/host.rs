@@ -468,10 +468,11 @@ impl EngineHooks for Core {
         let Some(engine) = self.engine() else { return };
         for o in out {
             match o {
-                RecorderOut::Line(line) => {
-                    self.trace(TraceKind::Link, line);
+                RecorderOut::Line(ev) => {
+                    let line = ev.text();
+                    self.trace(TraceKind::Link, &line);
                     if engine.link_test_running() {
-                        (self.input_log)(line);
+                        (self.input_log)(&line);
                     }
                 }
                 RecorderOut::Second(s) => self.out.post("link-second", Payload::LinkSecond(*s)),
@@ -775,6 +776,7 @@ impl InputHost {
             }
         }));
         engine.set_recorder(Some(recorder));
+        engine.set_stall_sleep(p.tick_sleep.clone());
         if let Some(pc_pad) = &p.pc_pad {
             engine.set_pc_pad(pc_pad.clone());
         }

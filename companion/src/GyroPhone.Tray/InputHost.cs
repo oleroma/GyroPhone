@@ -180,6 +180,7 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
             StateChanged();
         };
         _engine.DebugSaveRequested = () => _out.Post("debug-save");
+        _engine.StallSleep = () => new HighResolutionSleep();
         SetDeliveryProbe(settings.Diagnostics);
         if (hostKey != null) _authorized = new AuthorizedPhonesWatcher(_keyFiles, _engine.SetAuthorizedPhones, _log.Write);
         PowerQos.TryDisableForProcess(_log.Write);

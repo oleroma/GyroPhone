@@ -38,6 +38,8 @@ use crate::ports::{
 use crate::press::{PressCapture, PressLatency};
 use crate::rate_limiter::{ipv4_key, RateLimiter};
 use crate::recorder::{ms1, HandOffCauses, InputRecorder, RecorderOut};
+use crate::stall_watch::StallWatch;
+use crate::watchdog::TickSleepFactory;
 use crate::reports::{Ds4Motion, Ds4MotionFeed};
 use crate::session::{DatagramSender, HostSession, RandomFn, SessionManager, SessionSender};
 use crate::settings::{self, HostSettings, PairedPhone};
@@ -122,7 +124,7 @@ pub enum TraceKind {
 }
 
 /// PHONE_STATS on the engine's clock (Perf.PhoneSecond).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PhoneSecond {
     pub at_us: i64,
     pub states: i32,
@@ -133,6 +135,17 @@ pub struct PhoneSecond {
     pub wake_late_ms: f32,
     pub gap_max_ms: f32,
     pub phone_tx: i64,
+    pub rtt_min_ms: f32,
+    pub rtt_typ_ms: f32,
+    pub drift_ppm: f32,
+    pub pings: i32,
+    pub battery: i32,
+    pub setup_flags: i32,
+    pub temp_deci_c: i32,
+    pub thermal: i32,
+    pub usb_vendor: i32,
+    pub usb_product: i32,
+    pub wifi_standard: i32,
 }
 
 /// What the engine hands to the rest of the input process. Except `move_sent`, every call comes right after the
@@ -616,6 +629,9 @@ pub struct HostEngine {
     rec_out: Mutex<Vec<RecorderOut>>,
     /// What `EngineHooks::diagnostics_changed` was last told.
     diag_applied: Mutex<bool>,
+    /// The exact sleep Diagnostics' PC stall watch uses; None: no stall watch.
+    stall_sleep: Mutex<Option<TickSleepFactory>>,
+    stall_watch: Mutex<Option<Arc<StallWatch>>>,
 }
 
 struct Guard<'a> {
@@ -645,7 +661,9 @@ impl Drop for Guard<'_> {
         let wake = g.publish_view();
         let effects = if g.effects.is_empty() { Vec::new() } else { std::mem::take(&mut g.effects) };
         let mut lines = None;
-        if g.recorder.as_ref().is_some_and(|r| r.has_pending()) {
+        // Never on the rx thread: the events' text is made where they are handed over, so they wait for the next
+        // other holder (the watchdog's tick at the latest).
+        if self.role != Role::Input && g.recorder.as_ref().is_some_and(|r| r.has_pending()) {
             // Busy (another thread is handing lines over): they stay queued for the next time.
             if let Ok(mut buf) = self.e.rec_out.try_lock() {
                 if let Some(r) = g.recorder.as_mut() {
@@ -880,6 +898,8 @@ impl HostEngine {
             inline_workers: options.inline_workers,
             rec_out: Mutex::new(Vec::new()),
             diag_applied: Mutex::new(diag),
+            stall_sleep: Mutex::new(None),
+            stall_watch: Mutex::new(None),
         });
         // Hands over what the construction queued (unreadable keys, "diagnostics on").
         drop(engine.lock(Role::Ui));
@@ -974,7 +994,40 @@ impl HostEngine {
             return;
         }
         *applied = on;
+        self.set_stall_watch(on);
         self.hooks.diagnostics_changed(on);
+    }
+
+    /// The exact sleep Diagnostics' PC stall watch uses (a high-resolution waitable timer on Windows); None: no stall
+    /// watch. Starts it when Diagnostics is on already.
+    pub fn set_stall_sleep(&self, sleep: Option<TickSleepFactory>) {
+        *self.stall_sleep.lock().unwrap_or_else(|e| e.into_inner()) = sleep;
+        let on = self.lock(Role::Ui).settings.diagnostics;
+        if on {
+            self.set_stall_watch(true);
+        }
+    }
+
+    /// Diagnostics' PC stall watch (`StallWatch`): runs only while Diagnostics is on; outside the engine lock.
+    fn set_stall_watch(&self, on: bool) {
+        let Some(sleep) = self.stall_sleep.lock().unwrap_or_else(|e| e.into_inner()).clone() else { return };
+        let watch = {
+            let mut w = self.stall_watch.lock().unwrap_or_else(|e| e.into_inner());
+            if on {
+                let watch = w.get_or_insert_with(|| Arc::new(StallWatch::new(sleep, self.clock.clone()))).clone();
+                watch.start();
+                Some(watch)
+            } else {
+                if let Some(watch) = w.as_ref() {
+                    watch.stop();
+                }
+                None
+            }
+        };
+        let mut g = self.lock(Role::Ui);
+        if let Some(r) = g.recorder.as_mut() {
+            r.stall = watch;
+        }
     }
 
     /// The pad thread: plugs or unplugs outside the lock until the pad is what was last asked for.
@@ -2103,7 +2156,11 @@ impl Inner {
             }
             packet::PHONE_STATS => {
                 if self.settings.diagnostics {
-                    let s = self.to_phone_second(&codec::decode_phone_stats(plain), now_us);
+                    let p = codec::decode_phone_stats(plain);
+                    if p.rtt_typ_us > 0 {
+                        self.stats.phone_rtt_typ_us = p.rtt_typ_us;
+                    }
+                    let s = self.to_phone_second(&p, now_us);
                     self.effects.push(Effect::PhoneSecond(s));
                 }
             }
@@ -2146,6 +2203,17 @@ impl Inner {
             wake_late_ms: p.wake_late_max_us as f32 / 1000.0,
             gap_max_ms: p.state_gap_max_us as f32 / 1000.0,
             phone_tx: p.phone_tx_packets as i64,
+            rtt_min_ms: if p.rtt_min_us >= 0 { p.rtt_min_us as f32 / 1000.0 } else { -1.0 },
+            rtt_typ_ms: if p.rtt_typ_us >= 0 { p.rtt_typ_us as f32 / 1000.0 } else { -1.0 },
+            drift_ppm: p.drift_ppb as f32 / 1000.0,
+            pings: p.pings as i32,
+            battery: p.setup.battery_pct as i32,
+            setup_flags: p.setup.flags as i32,
+            temp_deci_c: p.setup.temp_deci_c as i32,
+            thermal: p.setup.thermal as i32,
+            usb_vendor: p.setup.usb_vendor as i32,
+            usb_product: p.setup.usb_product as i32,
+            wifi_standard: p.setup.wifi_standard as i32,
         }
     }
 
@@ -2564,6 +2632,14 @@ impl Inner {
             let motion_only = mapping::MOUSE_MOVE | mapping::MOUSE_WHEEL | mapping::MOUSE_HWHEEL;
             if self.inject[..n].iter().any(|e| e.kind == InjectKind::Key || e.flags & !motion_only != 0) {
                 self.held_version = self.held_version.wrapping_add(1);
+            }
+        } else if frame && self.rec_on() {
+            // Only the virtual controller changed: time this hand-off too (controller-only play has slow ones as well).
+            let now = self.clock.now_us();
+            let causes = self.hand_off;
+            let recv = self.pending_recv_us;
+            if let Some(r) = self.recorder.as_mut() {
+                r.pad_hand_off(recv, now, &causes);
             }
         }
         if frame && self.settings.measure_buttons {

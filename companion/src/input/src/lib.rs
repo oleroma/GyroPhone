@@ -37,6 +37,7 @@ pub mod reports;
 pub mod session;
 pub mod settings;
 pub mod shared;
+pub mod stall_watch;
 pub mod state_frame;
 pub mod sys;
 pub mod udp;

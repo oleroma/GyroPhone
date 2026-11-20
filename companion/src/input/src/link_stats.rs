@@ -34,6 +34,11 @@ pub struct LinkStats {
     pub total_lost: i64,
     pub total_states: i64,
     pub last_link_info: Option<LinkInfo>,
+    /// Latencies below zero in the last second (the clock offset is wrong): counted, not hidden in the lowest bucket.
+    pub negative_per_sec: i32,
+    /// The phone's typical round trip (PHONE_STATS, Diagnostics only), µs; 0 unknown.
+    pub phone_rtt_typ_us: i32,
+    neg: i32,
 }
 
 impl Default for LinkStats {
@@ -60,6 +65,9 @@ impl Default for LinkStats {
             total_lost: 0,
             total_states: 0,
             last_link_info: None,
+            negative_per_sec: 0,
+            phone_rtt_typ_us: 0,
+            neg: 0,
         }
     }
 }
@@ -106,6 +114,9 @@ impl LinkStats {
             return None;
         }
         let lat = latency_us(phone_time_us, host_recv_us, self.clock_offset_us);
+        if lat < 0 {
+            self.neg = self.neg.saturating_add(1);
+        }
         let b = (lat / BUCKET_US).clamp(0, BUCKETS as i64 - 1) as usize;
         self.hist[b] += 1;
         self.hist_count += 1;
@@ -132,6 +143,8 @@ impl LinkStats {
         }
         // `as u32` saturates at the ends and turns a NaN into 0.
         self.jitter_us = if self.n > 1 { (self.m2 / (self.n - 1) as f64).sqrt() as u32 } else { 0 };
+        self.negative_per_sec = self.neg;
+        self.neg = 0;
         self.hist = [0; BUCKETS];
         self.hist_count = 0;
         self.rx_sealed = 0;

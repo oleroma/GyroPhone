@@ -23,7 +23,7 @@ impl Rec {
         self.rec.take(&mut out);
         for o in out {
             match o {
-                RecorderOut::Line(l) => self.lines.push(l),
+                RecorderOut::Line(l) => self.lines.push(l.text()),
                 RecorderOut::Second(s) => self.seconds.push(s),
             }
         }
@@ -128,11 +128,11 @@ fn second_line_and_session_summary_count_without_naming_keys() {
     assert_eq!(r.with(" release "), ["     0.300 release       phone silent 250 ms: let go of 2 held keys or buttons"]);
     assert_eq!(
         r.with(" sec "),
-        ["     1.000 sec           rx 0 moving 1 lost 5 late 0 maxlate 0.0 jitter 0.0 inj 2 px 75 maxstep 70 handoff 3.0 slow 1 bigmoves 1"]
+        ["     1.000 sec           rx 0 moving 1 lost 5 late 0 maxlate 0.0 over 0.1/0.1 jitter 0.0 inj 2 px 75 maxstep 70 handoff 3.0 slow 1 bigmoves 1"]
     );
     assert_eq!(
         r.with("session end"),
-        ["     2.000 session end   timed out after 2 s: states 1 lost 5 late 0 holdups 0 phone-gaps 0 catch-ups 0 jumps 1 slow 1 releases 1 refused 0; extra delay ms p50 <1 p99 <1 p99.9 <1"]
+        ["     2.000 session end   timed out after 2 s: states 1 lost 5 late 0 late3 0 holdups 0 (air 0 pc 0 phone 0) phone-gaps 0 catch-ups 0 jumps 1 slow 1 releases 1 refused 0; over the floor ms p50 <0.1 p99 <0.1 p99.9 <0.1"]
     );
 }
 
@@ -236,4 +236,102 @@ fn any_numbers_are_taken_without_a_panic_and_the_queue_stays_small() {
     }
     rec.take(&mut out);
     assert!(out.len() <= 4096);
+}
+
+/// 200 on-time packets, then 30 that arrive 40 ms late, then normal again; returns the time after.
+fn hold_up(r: &mut Rec, t0: i64) -> i64 {
+    let mut t = t0;
+    let mut phone = 5_000u32;
+    for _ in 0..200 {
+        r.rec.state(phone, t + 3000, true, true, false);
+        t += 1000;
+        phone += 1000;
+    }
+    for _ in 0..30 {
+        r.rec.state(phone, t + 3000 + 40_000, true, true, false);
+        t += 1000;
+        phone += 1000;
+    }
+    for _ in 0..50 {
+        r.rec.state(phone, t + 3000, true, true, false);
+        t += 1000;
+        phone += 1000;
+    }
+    t
+}
+
+fn watch() -> std::sync::Arc<gp_input::stall_watch::StallWatch> {
+    struct Zero;
+    impl gp_input::ports::Clock for Zero {
+        fn now_us(&self) -> i64 {
+            0
+        }
+    }
+    std::sync::Arc::new(gp_input::stall_watch::StallWatch::new(
+        std::sync::Arc::new(|| Box::new(gp_input::watchdog::PlainTickSleep)),
+        std::sync::Arc::new(Zero),
+    ))
+}
+
+#[test]
+fn a_hold_up_says_whether_it_waited_inside_the_pc_or_on_the_way() {
+    // No stall watch (Diagnostics off): the old wording.
+    let mut r = Rec::new();
+    hold_up(&mut r, 1_000_000);
+    r.rec.second(&LinkStats::default(), 2_000_000);
+    assert!(r.with(" late ")[0].ends_with("(sent on time: held up on the way)"), "{:?}", r.lines);
+    assert_eq!(r.seconds[0].air, 30);
+
+    // The PC stalled 5 ms while the packets waited: PC.
+    let w = watch();
+    w.start();
+    let mut r = Rec::new();
+    r.rec.stall = Some(w.clone());
+    w.add(1_230_000, 5_000);
+    hold_up(&mut r, 1_000_000);
+    r.rec.second(&LinkStats::default(), 2_000_000);
+    let late = r.with(" late ");
+    assert!(late[0].ends_with("(sent on time, the PC stalled 5.0 ms then: PC)"), "{}", late[0]);
+    assert_eq!((r.seconds[0].pc, r.seconds[0].air, r.seconds[0].late), (30, 0, 30));
+    assert!(r.with(" sec ")[0].contains("heldup air 0 pc 30 phone 0"));
+
+    // The PC ran on time: on the way.
+    let mut r = Rec::new();
+    r.rec.stall = Some(w.clone());
+    hold_up(&mut r, 3_000_000);
+    r.rec.second(&LinkStats::default(), 4_000_000);
+    assert!(r.with(" late ")[0].ends_with("(sent on time, the PC ran on time: air)"));
+    assert_eq!(r.seconds[0].air, 30);
+    w.stop();
+}
+
+#[test]
+fn the_second_splits_floor_and_over_the_floor() {
+    let mut r = Rec::new();
+    let mut phone = 1_000u32;
+    let mut t = 10_000i64;
+    // 90 packets on time, 5 at 5 ms over (late3), 5 at 1 ms over.
+    for i in 0..100 {
+        let extra = if i >= 95 { 1_000 } else if i >= 90 { 5_000 } else { 0 };
+        r.rec.state(phone, t + extra, true, true, false);
+        phone += 1000;
+        t += 1000;
+    }
+    r.rec.pad_hand_off(t, t + 2_500, &NONE);
+    let mut stats = LinkStats::default();
+    stats.phone_rtt_typ_us = 2_500;
+    stats.negative_per_sec = 2;
+    stats.last_link_info = Some(gp_input::codec::LinkInfo { rtt_min_us: 1_500, ..Default::default() });
+    r.rec.second(&stats, 1_000_000);
+    r.drain();
+    let s = r.seconds[0];
+    assert_eq!((s.late3, s.floor_ms, s.rtt_typ_ms, s.neg_lat, s.slow_hand_offs, s.moving), (5, 0.75, 2.5, 2, 1, 100));
+    assert_eq!((s.over_p50_ms, s.over_p99_ms), (0.05, 5.05));
+    assert_eq!(s.hand_off_max_ms, 2.5);
+    assert_eq!(s.stall_max_ms, -1.0);
+    let sec = &r.with(" sec ")[0];
+    for part in ["floor 0.75", "rtt 1.50/2.50", "over 0.1/5.1", "late3 5", "neglat 2", "padonly 1", "slow 1"] {
+        assert!(sec.contains(part), "{part}: {sec}");
+    }
+    assert_eq!(r.with("slow hand-off").len(), 1);
 }
