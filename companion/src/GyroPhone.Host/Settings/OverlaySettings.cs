@@ -121,6 +121,11 @@ public sealed class OverlaySettings
     public string Label { get; set; } = "";
     public bool Shown { get; set; }
     public OverlayBackground Background { get; set; } = OverlayBackground.Transparent;
+    /// <summary>
+    /// Kept behind every other window (outside Edit), so a game covers it: it's not seen while playing,
+    /// but OBS Window Capture (the "Windows 10 (1903 and up)" method) still records it.
+    /// </summary>
+    public bool BehindWindows { get; set; }
     /// <summary>Turns are shown this many times larger (0.5..3).</summary>
     public float MotionScale { get; set; } = 1f;
     /// <summary>Window place and size; X, Y = -1 until placed.</summary>

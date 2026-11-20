@@ -52,6 +52,7 @@ internal sealed class OverlaysPage : Page
 
     // Window
     private readonly CheckBox _shown;
+    private readonly CheckBox _behind;
     private readonly Seg<OverlayBackground> _background;
     private readonly SliderRow _opacity;
     private readonly Seg<OverlayQuality> _quality;
@@ -287,6 +288,9 @@ internal sealed class OverlaysPage : Page
         var (show, sb) = Parts.Card();
         _shown = Parts.Toggle("Show this overlay", () => { if (Picked is { } id) _app.SetOverlayShown(id, !(_app.OverlayOf(id)?.Shown ?? false)); });
         sb.Children.Add(_shown);
+        _behind = Parts.Toggle("Behind other windows", () => Change(o => o.BehindWindows = !o.BehindWindows),
+            "For recording: the game covers it, so you don't see it while playing, but OBS Window Capture still records it (capture method \"Windows 10 (1903 and up)\"). Edit brings it to the front to place it.");
+        sb.Children.Add(_behind);
         _windowTab.Children.Add(show);
         var (bg, bb) = Parts.Card("Background");
         _background = new Seg<OverlayBackground>(b => Change(o => o.Background = b), false,
@@ -1029,6 +1033,7 @@ internal sealed class OverlaysPage : Page
         _labelHint.Text = o.Label.Length == 0 ? _app.OverlayName(o) : "";
         Parts.Show(_labelHint, _label.Text.Length == 0);
         Parts.SetChecked(_shown, o.Shown);
+        Parts.SetChecked(_behind, o.BehindWindows);
         _background.Set(o.Background);
         _opacity.Set(MathF.Round(o.Opacity * 100f));
         _quality.Set(o.Quality);
