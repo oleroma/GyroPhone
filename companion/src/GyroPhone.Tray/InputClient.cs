@@ -142,6 +142,7 @@ internal sealed class InputClient : IDisposable
                 continue;
             }
             bool rustAttached = Hello?.Version.EndsWith(RustInput.VersionSuffix, StringComparison.Ordinal) == true;
+            int attachedPid = Hello?.Pid ?? 0;
             long attachedAt = Environment.TickCount64;
             using var gone = new ManualResetEventSlim();
             channel.Closed += gone.Set;
@@ -166,6 +167,9 @@ internal sealed class InputClient : IDisposable
             if (_stopping) return;
             if (Interlocked.Exchange(ref _switching, 0) == 1)
             {
+                // The line closes a moment before the old process is gone: until it is, it still holds the lock that says
+                // "an input process runs", and this would wait for an answer on its pipe instead of starting the new one.
+                if (attachedPid > 0) WaitForExit(attachedPid, 10_000);
                 _log($"input: starting the {(_rust ? "Rust" : "original")} input program in its place");
                 _rustFailures = 0;
                 Lost?.Invoke();
