@@ -911,6 +911,7 @@ public class OverlayTests
         Assert.Equal("Ctrl+Alt+R", s.OverlayShortcuts.LevelAll);
         Assert.Equal("Ctrl+Alt+O", s.OverlayShortcuts.HideAll);
         Assert.Equal("Ctrl+Alt+E", s.OverlayShortcuts.Edit);
+        Assert.Equal("Ctrl+Alt+B", s.OverlayShortcuts.BehindAll);
         // A cleared one stays cleared.
         s.OverlayShortcuts.Edit = "";
         s.Normalize();

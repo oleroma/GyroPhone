@@ -142,6 +142,7 @@ public enum OverlayAction
     LevelAll,
     HideAll,
     Edit,
+    BehindAll,
 }
 
 /// <summary>
@@ -153,17 +154,20 @@ public sealed class OverlayShortcuts
     public const string DefaultLevelAll = "Ctrl+Alt+R";
     public const string DefaultHideAll = "Ctrl+Alt+O";
     public const string DefaultEdit = "Ctrl+Alt+E";
+    public const string DefaultBehindAll = "Ctrl+Alt+B";
 
     public string? LevelAll { get; set; } = DefaultLevelAll;
     public string? HideAll { get; set; } = DefaultHideAll;
     public string? Edit { get; set; } = DefaultEdit;
+    public string? BehindAll { get; set; } = DefaultBehindAll;
 
-    public static IReadOnlyList<OverlayAction> All { get; } = [OverlayAction.LevelAll, OverlayAction.HideAll, OverlayAction.Edit];
+    public static IReadOnlyList<OverlayAction> All { get; } = [OverlayAction.LevelAll, OverlayAction.HideAll, OverlayAction.Edit, OverlayAction.BehindAll];
 
     public static string ActionName(OverlayAction a) => a switch
     {
         OverlayAction.LevelAll => "Level all",
         OverlayAction.HideAll => "Hide or show all overlays",
+        OverlayAction.BehindAll => "All behind on or off",
         _ => "Edit on or off",
     };
 
@@ -171,6 +175,7 @@ public sealed class OverlayShortcuts
     {
         OverlayAction.LevelAll => LevelAll,
         OverlayAction.HideAll => HideAll,
+        OverlayAction.BehindAll => BehindAll,
         _ => Edit,
     }) ?? "";
 
@@ -180,6 +185,7 @@ public sealed class OverlayShortcuts
         {
             case OverlayAction.LevelAll: LevelAll = keys; break;
             case OverlayAction.HideAll: HideAll = keys; break;
+            case OverlayAction.BehindAll: BehindAll = keys; break;
             default: Edit = keys; break;
         }
     }
@@ -190,6 +196,7 @@ public sealed class OverlayShortcuts
         LevelAll ??= DefaultLevelAll;
         HideAll ??= DefaultHideAll;
         Edit ??= DefaultEdit;
+        BehindAll ??= DefaultBehindAll;
     }
 }
 

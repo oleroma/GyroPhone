@@ -730,6 +730,17 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         return twins.Count > 1 ? $"{label} ({twins.IndexOf(o) + 1})" : label;
     }
 
+    /// <summary>Every overlay is kept behind the other windows (and there is at least one).</summary>
+    public bool AllBehind => _overlays.Ui.Overlays.Count > 0 && _overlays.Ui.Overlays.All(o => o.BehindWindows);
+
+    /// <summary>"All behind": every overlay behind the other windows, or, when they all already are, none.</summary>
+    public void SwitchAllBehind()
+    {
+        bool behind = !AllBehind;
+        foreach (var o in _overlays.Ui.Overlays.ToList())
+            if (o.BehindWindows != behind) ChangeOverlay(o.Id, x => x.BehindWindows = behind);
+    }
+
     public void SetTrayClick(TrayClickAction action)
     {
         _overlays.Change(s => s.TrayClick = action);
@@ -915,6 +926,10 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         {
             Checked = OverlayEdit,
         });
+        menu.DropDownItems.Add(new ToolStripMenuItem("All behind: the game covers them, OBS still records them" + KeysSuffix(OverlayAction.BehindAll), null, (_, _) => SwitchAllBehind())
+        {
+            Checked = AllBehind,
+        });
         menu.DropDownItems.Add(new ToolStripMenuItem("Level all: as held now shows face-on" + KeysSuffix(OverlayAction.LevelAll), null, (_, _) => LevelAll()));
         if (_overlays.Ui.Overlays.Any(o => o.Kind == OverlayKind.Laser))
             menu.DropDownItems.Add(new ToolStripMenuItem("Clear pointers", null, (_, _) => ClearAllLasers()));
@@ -981,6 +996,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             case OverlayAction.LevelAll: LevelAll(); break;
             case OverlayAction.HideAll: SetOverlaysHidden(!OverlaysHidden); break;
             case OverlayAction.Edit: SetOverlayEdit(!OverlayEdit); break;
+            case OverlayAction.BehindAll: SwitchAllBehind(); break;
         }
     }
 

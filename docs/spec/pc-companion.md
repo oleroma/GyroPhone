@@ -62,7 +62,7 @@ All engine state is under one lock, which gp-rx takes for every packet and Flush
 - the version, a status line, and a problems line that opens Home;
 - **Open GyroPhone**, **Pause input**;
 - **Gamepad output** ▸ Xbox 360 (default) / DualShock 4 / Off (keyboard and mouse only);
-- **Overlays** ▸ one switch per window, Hide all overlays (Ctrl+Alt+O), Edit: drag the windows to move and resize (Ctrl+Alt+E), Level all: as held now shows face-on (Ctrl+Alt+R), Overlay settings…;
+- **Overlays** ▸ one switch per window, Hide all overlays (Ctrl+Alt+O), Edit: drag the windows to move and resize (Ctrl+Alt+E), All behind: the game covers them, OBS still records them (Ctrl+Alt+B), Level all: as held now shows face-on (Ctrl+Alt+R), Overlay settings…;
 - **Pair new phone…**;
 - **Exit**.
 

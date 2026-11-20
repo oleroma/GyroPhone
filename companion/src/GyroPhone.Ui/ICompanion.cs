@@ -175,6 +175,10 @@ public interface ICompanion
     bool OverlayEdit { get; }
     void SetOverlayEdit(bool on);
     void ChangeOverlay(string id, Action<OverlaySettings> change);
+    /// <summary>Every overlay is kept behind the other windows (and there is at least one).</summary>
+    bool AllBehind { get; }
+    /// <summary>"All behind": every overlay behind the other windows, or, when they all already are, none.</summary>
+    void SwitchAllBehind();
     string AddOverlay(OverlayKind kind);
     void RemoveOverlay(string id);
     void LevelOverlay(string id);
