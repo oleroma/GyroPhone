@@ -4,7 +4,9 @@ namespace GyroPhone.Protocol;
 /// The gyro run on the PC in "Use PC controller for gyro ratchet" mode: takes each STATE_GYRO's raw
 /// samples (<see cref="PcGyroTail"/>) once, by seq, fills a gap from the running totals, works out
 /// per sample which axes are on (the phone's, flipped by the PC controller's ratchets held at that
-/// sample's time and by its Toggle gyro), runs <see cref="GyroMath"/> with the phone's settings and
+/// sample's time and by its Toggle gyro), measures each sample in the gyro space of each axis
+/// (<see cref="GyroSpaces"/>, against the up the phone sent with it; a held PC controller button's
+/// own space included), runs <see cref="GyroMath"/> with the phone's settings and
 /// puts the result into the frame: mouse and wheel into its wrapping totals, the game pad axes
 /// merged into its pad the way the phone merges them. Frames without the tail keep the totals
 /// offset, so the cursor never jumps back. One per session; not thread safe.
@@ -21,6 +23,7 @@ public sealed class PcGyro
 
     private readonly GyroMath _math = new();
     private readonly float[] _pad = new float[GyroMath.PadAxes];
+    private readonly float[] _spaced = new float[3];
     private readonly long[] _own = new long[3];
     private readonly long[] _sum = new long[3];
     private readonly long[] _hostUs = new long[PcGyroTail.MaxSamples];
@@ -143,20 +146,25 @@ public sealed class PcGyro
                 long at = n > first ? _hostUs[first] - t.DtUs[first] : nowUs;
                 int axes = n > first ? t.Axes[first] : PhoneAxes;
                 float dtUs = gap;
-                Sample(y / dtUs, p / dtUs, r / dtUs, gap / 1e6f, axes, at, toggle, t, cfg, heldAt);
+                int u = n > first ? first : n - 1;
+                Sample(y / dtUs, p / dtUs, r / dtUs, gap / 1e6f, axes, at, toggle, t, cfg, heldAt, u);
                 GapFills = unchecked(GapFills + 1);
             }
         }
         for (int i = first; i < n; i++)
         {
-            Sample(t.Rate[i * 3], t.Rate[i * 3 + 1], t.Rate[i * 3 + 2], t.DtUs[i] / 1e6f, t.Axes[i], _hostUs[i], toggle, t, cfg, heldAt);
+            Sample(t.Rate[i * 3], t.Rate[i * 3 + 1], t.Rate[i * 3 + 2], t.DtUs[i] / 1e6f, t.Axes[i], _hostUs[i], toggle, t, cfg, heldAt, i);
         }
         Remember(t, nowUs);
     }
 
-    /// <summary>One sample: rates in 1/16 deg/s over <paramref name="dt"/> seconds, the phone's <paramref name="phoneAxes"/>, at host time <paramref name="atUs"/>.</summary>
+    /// <summary>
+    /// One sample: rates in 1/16 deg/s about the phone's own axes over <paramref name="dt"/> seconds,
+    /// the phone's <paramref name="phoneAxes"/>, at host time <paramref name="atUs"/>, with the up of
+    /// tail sample <paramref name="upAt"/> (-1: none).
+    /// </summary>
     private void Sample(float yawQ, float pitchQ, float rollQ, float dt, int phoneAxes, long atUs, int toggle,
-        PcGyroTail t, PadGyroConfig cfg, Func<long, uint>? heldAt)
+        PcGyroTail t, PadGyroConfig cfg, Func<long, uint>? heldAt, int upAt)
     {
         uint held = heldAt == null ? 0u : heldAt(atUs);
         int flips = heldAt == null ? 0 : GyroGate.FlipsOf(held, cfg);
@@ -170,8 +178,17 @@ public sealed class PcGyro
             Array.Clear(_pad);
             return;
         }
-        var o = _math.Step(yawQ / PcGyroTail.RateScale, pitchQ / PcGyroTail.RateScale, rollQ / PcGyroTail.RateScale,
-            dt, config, eff, t.Tightening, t.Smoothing);
+        float ux = 0f, uy = 0f, uz = 0f;
+        if (upAt >= 0)
+        {
+            ux = t.Up[upAt * 3] / PcGyroTail.UpScale;
+            uy = t.Up[upAt * 3 + 1] / PcGyroTail.UpScale;
+            uz = t.Up[upAt * 3 + 2] / PcGyroTail.UpScale;
+        }
+        // Each axis in its own space, as the phone measures it (GyroMouse.inSpaces).
+        GyroSpaces.InSpaces(yawQ / PcGyroTail.RateScale, pitchQ / PcGyroTail.RateScale, rollQ / PcGyroTail.RateScale,
+            config.Space, ux, uy, uz, _spaced);
+        var o = _math.Step(_spaced[0], _spaced[1], _spaced[2], dt, config, eff, t.Tightening, t.Smoothing);
         _adjX = unchecked(_adjX + o.Dx);
         _adjY = unchecked(_adjY + o.Dy);
         _adjW = unchecked(_adjW + o.Wheel);
@@ -266,16 +283,16 @@ public sealed class PcGyro
         f.Rt = Trigger(f.Rt, _pad[5]);
     }
 
-    // Like the phone: the gyro's stick wins when it is pushed further, a trigger takes the larger pull.
+    // Like the phone: the gyro's push adds to the stick's and trigger's own, up to full.
     private static short Stick(short other, float g)
     {
         int v = (int)(Math.Clamp(g, -1f, 1f) * 32767);
-        return Math.Abs(v) > Math.Abs((int)other) ? (short)v : other;
+        return (short)Math.Clamp(v + other, -32767, 32767);
     }
 
     private static ushort Trigger(ushort other, float g)
     {
         int v = (int)(Math.Min(Math.Abs(g), 1f) * 1023);
-        return (ushort)Math.Max(v, other);
+        return (ushort)Math.Min(v + other, 1023);
     }
 }

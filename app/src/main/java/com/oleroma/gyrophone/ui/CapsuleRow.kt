@@ -221,8 +221,10 @@ internal fun CapsuleRow(
                             }
                         }
                     },
+                // A held press started a reorder (the tap sees the lift before the drag ends): no tap, also
+                // when let go without moving. (An onLongPress on the tap would eat the drag's moves.)
                 onTap = {
-                    when (c) {
+                    if (dragged == null) when (c) {
                         is Capsule.Ws -> if (c.index == wsIndex) onEdit() else runtime.switchWorkspace(c.index)
                         Capsule.Devices -> onDevices()
                         Capsule.App -> onApp()

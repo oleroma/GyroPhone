@@ -53,12 +53,24 @@ public sealed class HostSession : IDisposable
         get { lock (_txLock) return _endpoint; }
     }
 
-    /// <summary>Follows the source of the latest authenticated packet.</summary>
+    /// <summary>
+    /// Whether a datagram came from the session's current endpoint. No lock: the endpoint object is never changed
+    /// in place, only replaced (in <see cref="UpdateEndpoint"/>).
+    /// </summary>
+    public bool IsEndpoint(SocketAddress from) => Volatile.Read(ref _endpoint).Equals(from);
+
+    /// <summary>
+    /// Follows the source of the latest authenticated packet. Called for every one on gp-rx, its only writer, so the
+    /// unchanged case reads without TxLock (a send holding it never delays a received packet); the endpoint
+    /// object is never changed in place, only replaced under the lock.
+    /// </summary>
     public void UpdateEndpoint(SocketAddress from)
     {
+        if (Volatile.Read(ref _endpoint).Equals(from)) return;
+        var copy = Copy(from);
         lock (_txLock)
         {
-            if (!_endpoint.Equals(from)) _endpoint = Copy(from);
+            _endpoint = copy;
         }
     }
 

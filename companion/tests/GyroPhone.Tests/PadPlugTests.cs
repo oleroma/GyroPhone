@@ -29,6 +29,47 @@ public class PadPlugTests
     }
 
     [Fact]
+    public void PadLostUnderneathIsPluggedAgainOffTheInputPath()
+    {
+        var h = new Harness();
+        var phone = h.NewPhone();
+        h.Connect(phone);
+        Assert.Equal(1, h.Pad.Plugs);
+        h.Pad.FailWith = new InvalidOperationException("target not plugged in");
+        h.Pad.LoseOnFail = true;
+        h.Pad.PlugFails = true; // the driver is still resetting
+
+        // The STATE's keys and mouse go on; the submit never plugs a pad itself.
+        h.Send(phone, phone.State(f => { f.SetKey(UsageW, true); f.Buttons = 1; f.MouseTotalX += 4; }));
+        Assert.Contains((ushort)0x11, h.KeyMouse.HeldKeys);
+        Assert.Equal(4, h.KeyMouse.MouseX);
+        Assert.Equal(1, h.Pad.Plugs);
+        Assert.Equal(OutputMode.None, h.Pad.Plugged);
+        h.Pad.FailWith = null;
+
+        // The watchdog has the pad thread plug it again at once, then after 1 s, 2 s and so on while that fails.
+        h.Tick(Wire.WatchdogTickMs);
+        Assert.Equal(2, h.Pad.Plugs);
+        h.Tick(500);
+        Assert.Equal(2, h.Pad.Plugs);
+        h.Tick(600);
+        Assert.Equal(3, h.Pad.Plugs);
+        h.Tick(1_500);
+        Assert.Equal(3, h.Pad.Plugs);
+
+        // Once the driver is back the pad is too, with the held button, and no more plugs follow.
+        h.Pad.PlugFails = false;
+        h.Tick(600);
+        Assert.Equal(4, h.Pad.Plugs);
+        Assert.Equal(OutputMode.Xbox360, h.Pad.Plugged);
+        Assert.True(h.Engine.Snapshot().PadPlugged);
+        h.Send(phone, phone.State(f => f.MouseTotalX += 1));
+        Assert.Equal(XusbButtons.A, h.Pad.X360[^1].Buttons);
+        h.Tick(5_000);
+        Assert.Equal(4, h.Pad.Plugs);
+    }
+
+    [Fact]
     public void PadUnpluggedAfterFiveMinutesWithoutSession()
     {
         var h = new Harness();

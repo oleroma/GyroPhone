@@ -50,6 +50,19 @@ class TiltShakeTest {
         assertEquals(-0.5f, t.y, 0.02f)
     }
 
+    @Test fun aSavedRangeUnderOneDegreeIsTheSmallestRangeNotACrash() {
+        val t = TiltShake().apply {
+            displayRotation = 0
+            settings = com.oleroma.gyrophone.core.model.GyroSettings(tiltRangeDeg = 0.5f, tiltYRangeDeg = 0f, tiltDeadzoneDeg = 3f)
+        }
+        var g = upright(0.0)
+        t.update(g[0], g[1], g[2], 0)
+        g = upright(30.0)
+        repeat(60) { t.update(g[0], g[1], g[2], it * 20 * MS) }
+        // Clamped to the 5° minimum: 30° is past full.
+        assertEquals(1f, t.x, 1e-3f)
+    }
+
     @Test fun eachTiltAxisHasItsOwnRangeAndDeadzoneOrTheShared() {
         val t = TiltShake().apply {
             displayRotation = 0

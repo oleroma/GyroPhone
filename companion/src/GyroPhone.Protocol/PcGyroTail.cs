@@ -4,28 +4,34 @@ namespace GyroPhone.Protocol;
 /// The STATE_GYRO tail after STATE_HIRES ("Use PC controller for gyro ratchet" with a host that
 /// takes <see cref="WelcomeFlags.PcGyro"/>): the phone's raw gyro samples and its resolved gyro
 /// settings, so the PC runs the gyro math (<see cref="PcGyro"/>). Fixed size, little-endian:
-/// u8 flags, u8 count, u16 newest seq, u32 newest time (µs), 8 × 9-byte sample slots (u16 dt µs,
-/// i16 yaw, pitch, roll in 1/16 deg/s, u8 axes), 3 × i64 running totals, then the 181-byte config
-/// (its last 75 bytes: per axis an acceleration curve, u8 point count with bit 7 = speed from the
-/// axis, bit 6 = smooth, then 6 × (u16 speed in 0.1 deg/s, u16 gain in 0.001)).
+/// u8 flags, u8 count, u16 newest seq, u32 newest time (µs), 8 × 15-byte sample slots (u16 dt µs,
+/// i16 yaw, pitch, roll in 1/16 deg/s about the phone's own axes, u8 axes, i16 × 3 the world's up
+/// in the phone's frame in 1/16384, all 0 when not known), 3 × i64 running totals, then the 182-byte
+/// config (after the routes: per axis an acceleration curve, u8 point count with bit 7 = speed from
+/// the axis, bit 6 = smooth, then 6 × (u16 speed in 0.1 deg/s, u16 gain in 0.001); then u8 spaces,
+/// 2 bits per axis, yaw in bits 0-1: <see cref="GyroSpaces"/>).
 /// </summary>
 public sealed class PcGyroTail
 {
-    public const int Size = 285;
+    public const int Size = ConfigOff + ConfigSize;
     public const int MaxSamples = 8;
     public const int MaxRoutes = 12;
     /// <summary>Rates are sent in 1/16 deg/s.</summary>
     public const float RateScale = 16f;
+    /// <summary>The up vector is sent in 1/16384.</summary>
+    public const float UpScale = 16384f;
 
     /// <summary>The gyro may move (input allowed, not measuring, gyro on, samples flowing).</summary>
     public const byte FlagMayMove = 1;
     /// <summary>Sample times are host time (phone time plus the clock sync offset); else phone time.</summary>
     public const byte FlagClock = 2;
 
-    private const int SampleOff = 8, SampleSize = 9, TotalsOff = 80, ConfigOff = 104, RoutesOff = 138, RouteSize = 6, RoutesRel = RoutesOff - ConfigOff;
+    private const int SampleOff = 8, SampleSize = 15, TotalsOff = SampleOff + MaxSamples * SampleSize, ConfigOff = TotalsOff + 24;
+    private const int RouteSize = 6, RoutesRel = 34;
     private const int CurvesRel = RoutesRel + MaxRoutes * RouteSize, CurveSize = 1 + GyroMath.MaxCurvePoints * 4;
+    private const int SpacesRel = CurvesRel + 3 * CurveSize;
     /// <summary>Bytes of the config block.</summary>
-    public const int ConfigSize = CurvesRel + 3 * CurveSize;
+    public const int ConfigSize = SpacesRel + 1;
     private const byte CurveAxisSpeed = 0x80, CurveSmooth = 0x40;
 
     public byte Flags;
@@ -41,6 +47,8 @@ public sealed class PcGyroTail
     public readonly short[] Rate = new short[MaxSamples * 3];
     /// <summary>Per sample: the phone's gyro axes on (bits 0..2).</summary>
     public readonly byte[] Axes = new byte[MaxSamples];
+    /// <summary>[sample * 3 + k]: the world's up in the phone's frame (right, up, toward the player) in 1/<see cref="UpScale"/>; all 0 = not known.</summary>
+    public readonly short[] Up = new short[MaxSamples * 3];
     /// <summary>Per axis: running total of rate × dt µs over every sample sent this session (wrapping).</summary>
     public readonly long[] Totals = new long[3];
     /// <summary>The phone's current resolved gyro settings.</summary>
@@ -63,6 +71,7 @@ public sealed class PcGyroTail
             DtUs[i] = Le.U16(b, o);
             for (int a = 0; a < 3; a++) Rate[i * 3 + a] = Le.I16(b, o + 2 + a * 2);
             Axes[i] = (byte)(b[o + 8] & 7);
+            for (int k = 0; k < 3; k++) Up[i * 3 + k] = Le.I16(b, o + 9 + k * 2);
         }
         for (int a = 0; a < 3; a++) Totals[a] = Le.I64(b, TotalsOff + a * 8);
         DecodeConfig(b[ConfigOff..], Config, out Tightening, out Smoothing);
@@ -82,6 +91,7 @@ public sealed class PcGyroTail
             Le.PutU16(b, o, DtUs[i]);
             for (int a = 0; a < 3; a++) Le.PutI16(b, o + 2 + a * 2, Rate[i * 3 + a]);
             b[o + 8] = Axes[i];
+            for (int k = 0; k < 3; k++) Le.PutI16(b, o + 9 + k * 2, Up[i * 3 + k]);
         }
         for (int a = 0; a < 3; a++) Le.PutI64(b, TotalsOff + a * 8, Totals[a]);
         EncodeConfig(b[ConfigOff..], Config, Tightening, Smoothing);
@@ -96,6 +106,7 @@ public sealed class PcGyroTail
         o.DtUs.CopyTo(DtUs, 0);
         o.Rate.CopyTo(Rate, 0);
         o.Axes.CopyTo(Axes, 0);
+        o.Up.CopyTo(Up, 0);
         o.Totals.CopyTo(Totals, 0);
         Config.CopyFrom(o.Config);
         Tightening = o.Tightening;
@@ -141,6 +152,12 @@ public sealed class PcGyroTail
             }
             c.SetCurve(a, flat[..(n * 2)], (b[o] & CurveAxisSpeed) != 0, (b[o] & CurveSmooth) != 0);
         }
+        // A space this host does not know (a newer phone) reads Local.
+        for (int a = 0; a < 3; a++)
+        {
+            int sp = (b[SpacesRel] >> (2 * a)) & 3;
+            c.Space[a] = sp <= GyroSpaces.Player ? sp : GyroSpaces.Local;
+        }
     }
 
     /// <summary>Writes <see cref="ConfigSize"/> bytes of config block.</summary>
@@ -178,6 +195,9 @@ public sealed class PcGyroTail
                 Le.PutU16(b, o + 3 + j * 4, (ushort)MathF.Round(c.Curves[a][2 * j + 1] * 1000f, MidpointRounding.AwayFromZero));
             }
         }
+        int spaces = 0;
+        for (int a = 0; a < 3; a++) spaces |= (c.Space[a] & 3) << (2 * a);
+        b[SpacesRel] = (byte)spaces;
     }
 
     private static float F32(ReadOnlySpan<byte> b, int off) => BitConverter.Int32BitsToSingle(Le.I32(b, off));

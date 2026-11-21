@@ -54,12 +54,19 @@ object Wire {
     const val OVERLAY_LAYOUT_PLAIN = 200
     /** OVERLAY_SAMPLES: each gyro sample's turn in the OVERLAY that follows ([OverlayFeed.encodeSamples]). */
     const val OVERLAY_SAMPLES_PLAIN = 264
+    /** OVERLAY_FRAMES: one piece of what the pad shows over its buttons ([OverlayFeed.encodeFrames]), as OVERLAY_LAYOUT's. */
+    const val OVERLAY_FRAMES_PLAIN = OVERLAY_LAYOUT_PLAIN
     /** MOTION: the phone's raw gyro and accelerometer samples for the PC's DualShock 4 or DualSense ([MotionFeed]). */
     const val MOTION_PLAIN = MotionFeed.SIZE
     /** PRESS_TIME: u32 STATE time, u32 input event time (both low 32 bits of the phone's elapsed-realtime µs). */
     const val PRESS_TIME_PLAIN = 8
-    /** PHONE_STATS: u32 time, u16 states, packets, failed, slow sends, u32 send total µs, send max µs, wake late max µs, STATE gap max µs, phone tx packets ([PhoneStats]). */
-    const val PHONE_STATS_PLAIN = 32
+    /**
+     * PHONE_STATS: u32 time, u16 states, packets, failed, slow sends, u32 send total µs, send max µs, wake late max µs,
+     * STATE gap max µs, phone tx packets; then (from 32) i32 best round trip µs, typical round trip µs, clock drift ppb,
+     * u16 pings; the setup: u8 battery %, flags, i16 battery temperature (0.1 °C), u8 thermal status, Wi-Fi standard,
+     * u16 USB network adapter vendor, product, Wi-Fi channel width MHz; 6 reserved bytes ([PhoneStats]).
+     */
+    const val PHONE_STATS_PLAIN = 64
     /** TEST_MODE: u8 [TestModeFlags], 3 reserved bytes. */
     const val TEST_MODE_PLAIN = 4
     /** CAPTURE: u8 [CaptureFlags], 3 reserved bytes. */
@@ -164,6 +171,7 @@ object Wire {
         PacketType.OVERLAY -> OVERLAY_PLAIN
         PacketType.OVERLAY_LAYOUT -> OVERLAY_LAYOUT_PLAIN
         PacketType.OVERLAY_SAMPLES -> OVERLAY_SAMPLES_PLAIN
+        PacketType.OVERLAY_FRAMES -> OVERLAY_FRAMES_PLAIN
         PacketType.MOTION -> MOTION_PLAIN
         PacketType.PRESS_TIME -> PRESS_TIME_PLAIN
         PacketType.PHONE_STATS -> PHONE_STATS_PLAIN
@@ -214,6 +222,8 @@ object PacketType {
     const val OVERLAY_SAMPLES = 0x2C
     /** Once a second while TEST_MODE has [TestModeFlags.PHONE_STATS] (a Performance record runs): the phone's side of the link ([PhoneStats]). */
     const val PHONE_STATS = 0x2D
+    /** Sent while HOST_STATUS has [HostStatusFlags.OVERLAY], when they change and every second: the pad's button frames and bars, in pieces. Older PCs drop it. */
+    const val OVERLAY_FRAMES = 0x2E
     const val BYE = 0x2F
     const val PONG = 0x30
     const val HOST_STATUS = 0x31
@@ -409,6 +419,12 @@ object TestModeFlags {
     /** With [PHONE_STATS]: a 3-bit counter; the phone saves its Diagnostics when it changes (a Save on the PC). */
     const val DIAG_SAVE_MASK = 0x70
     const val DIAG_SAVE_SHIFT = 4
+
+    /**
+     * Not a test: a Keys overlay is open on the PC, so the phone reads its attached pad's keys and sends them with the
+     * frames (OVERLAY_FRAMES, [OverlayFeed.keysWanted]) while HOST_STATUS has [HostStatusFlags.OVERLAY]. Older phones ignore it.
+     */
+    const val OVERLAY_KEYS = 0x80
 }
 
 /** BYE reason (phone). */

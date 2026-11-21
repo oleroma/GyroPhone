@@ -5,6 +5,7 @@ import com.oleroma.gyrophone.core.net.SendScheduler.Companion.NONE
 import com.oleroma.gyrophone.core.net.SendScheduler.Companion.NORMAL
 import com.oleroma.gyrophone.core.net.SendScheduler.Companion.REPEAT
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SendSchedulerTest {
@@ -107,9 +108,64 @@ class SendSchedulerTest {
         }
     }
 
+    @Test fun aLatePacketDoesNotPushTheNextOneBack() {
+        val s = SendScheduler(1000)
+        s.step(0, dirty = true)
+        // Due at 1 ms, went 0.3 ms late: the next is still due at 2 ms, not at 2.3.
+        assertEquals(NORMAL, s.step(1_300_000, dirty = true))
+        assertEquals(2 * ms, s.sendableAt())
+        assertEquals(NORMAL, s.step(2 * ms, dirty = true))
+        // Very late (3 ms after it was due): only half an interval is given back, so two packets are never closer than that.
+        assertEquals(NORMAL, s.step(6 * ms, dirty = true))
+        assertEquals(6 * ms + ms / 2, s.sendableAt())
+        assertEquals(NONE, s.step(6 * ms + ms / 2 - 1, dirty = true))
+        assertEquals(NORMAL, s.step(6 * ms + ms / 2, dirty = true))
+        assertEquals(7 * ms + ms / 2, s.sendableAt())
+    }
+
+    @Test fun gyroSamplesGoOutAsTheyComeEachInItsOwnPacket() {
+        // A sample every 1.05 ms, seen by the app up to 0.3 ms late, unevenly: at 1000 Hz none waits for the rate limit.
+        val s = SendScheduler(1000)
+        val late = longArrayOf(0, 300_000, 50_000, 250_000, 0, 150_000, 300_000, 0)
+        var waited = 0
+        for (k in 0 until 2000) {
+            val at = k * 1_050_000L + late[k % late.size]
+            if (k > 0 && s.sendableAt() > at) waited++
+            if (s.step(at, dirty = true) == NONE) s.step(s.sendableAt(), dirty = true)
+        }
+        assertEquals(0, waited)
+    }
+
+    @Test fun aBusyStreamStillNeverExceedsTheRate() {
+        // Changes far faster than the rate, at uneven moments: 1000 packets a second, no more.
+        val s = SendScheduler(1000)
+        var sent = 0
+        var t = 0L
+        var i = 0
+        while (t < 1000 * ms) {
+            if (s.step(t, dirty = true) != NONE) sent++
+            t += if (i++ % 3 == 0) 370_000 else 130_000
+        }
+        assertTrue("sent $sent", sent in 900..1001)
+    }
+
     @Test fun flagsPerKind() {
         assertEquals(StateFlags.REPEAT, SendScheduler.flagsFor(REPEAT))
         assertEquals(StateFlags.KEEPALIVE, SendScheduler.flagsFor(KEEPALIVE))
         assertEquals(0, SendScheduler.flagsFor(NORMAL))
+    }
+
+    @Test fun idleKeepaliveIsSlowerAndTheNormalOneComesBackAtOnce() {
+        val s = SendScheduler(1000)
+        s.step(0)
+        s.keepaliveNs = SendScheduler.IDLE_KEEPALIVE_NS
+        assertEquals(NONE, s.step(20 * ms))
+        assertEquals(150 * ms, s.nextDeadline())
+        assertTrue(SendScheduler.IDLE_KEEPALIVE_NS < Wire.RELEASE_TIMEOUT_MS * ms)
+        assertEquals(KEEPALIVE, s.step(150 * ms))
+        // Input allowed again: overdue, so a keepalive with the current state goes out on the next pass.
+        s.keepaliveNs = SendScheduler.KEEPALIVE_NS
+        assertEquals(KEEPALIVE, s.step(200 * ms))
+        assertEquals(NONE, s.step(210 * ms))
     }
 }

@@ -24,7 +24,10 @@ public interface IInputControl
     void SetPaused(bool paused);
     /// <summary>Session lock or sleep: release-all, inputs held back until unlocked.</summary>
     void SetLocked(bool locked);
-    /// <summary>Looks for the gamepad driver again; null when found, else why not.</summary>
+    /// <summary>
+    /// Looks for the gamepad driver again; "" when found, else why not. Null only on the companion's side,
+    /// when the call wasn't done (no input process, or no answer in time).
+    /// </summary>
     string? RetryDriver();
     void SetCatchUpMs(int ms);
     /// <summary>"Use input driver": keys and mouse through the input driver when it is installed (off: SendInput).</summary>
@@ -44,8 +47,6 @@ public interface IInputControl
     // Connection
     void SetUsbDirect(bool on);
     void TakeUsbFromAdb();
-    /// <summary>The active phone's address, for naming the way the packets go (null without a phone).</summary>
-    string? PhoneAddress();
 
     // App and Diagnostics
     void SetStartWithWindows(bool on);
@@ -70,7 +71,7 @@ public interface IInputControl
 
     // Overlays
     /// <summary>What the companion's overlays ask of the phone (<see cref="HostEngine.SetOverlay"/>).</summary>
-    void SetOverlay(bool on, bool compass, bool samples);
+    void SetOverlay(bool on, bool compass, bool samples, bool keys = false);
 }
 
 /// <summary>The names both processes use in the user's Windows session.</summary>

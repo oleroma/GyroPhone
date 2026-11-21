@@ -240,8 +240,13 @@ private fun SwitchSetting(title: String, hint: String, checked: Boolean, onChang
 
 /** A stick's deadzone and direction zones. */
 @Composable
-internal fun StickSettings(control: TouchControl, onControlChange: (TouchControl) -> Unit) {
+internal fun StickSettings(control: TouchControl, turnKnown: Boolean, onControlChange: (TouchControl) -> Unit) {
     val current by rememberUpdatedState(control)
+    OverrideSwitch(
+        "Flick stick",
+        FLICK_HINT + if (turnKnown) "" else " Set your game's full turn in the workspace's Gyro settings first: without it the stick does nothing.",
+        control.flick, control.flick, { onControlChange(current.copy(flick = false)) },
+    ) { on -> onControlChange(current.copy(flick = on)) }
     Searchable("Deadzone", "stick rest centre") { Column {
         Text("Deadzone " + (control.deadzone * 100).roundToInt() + "%", style = MaterialTheme.typography.labelLarge)
         Slider(

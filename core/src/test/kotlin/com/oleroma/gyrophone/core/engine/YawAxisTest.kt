@@ -1,5 +1,6 @@
 package com.oleroma.gyrophone.core.engine
 
+import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.YawAxis
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -87,5 +88,22 @@ class YawAxisTest {
         val y = mouse.withYawAxis(m, YawAxis.SCREEN_Y); val c = mouse.withYawAxis(m, YawAxis.CUSTOM, 90f)
         assertEquals(y.yaw, c.yaw, 1e-5f); assertEquals(y.pitch, c.pitch, 1e-5f); assertEquals(y.roll, c.roll, 1e-5f)
         assertEquals(m, mouse.withYawAxis(m, YawAxis.CUSTOM, 0f))
+    }
+
+    @Test
+    fun routeTurnsTheSampleByTheYawAxis() {
+        // Held upright (Screen Y, landscape), turning left and right is a turn about the sensor's x axis:
+        // that moves the cursor sideways, and the turn through the screen (z) no longer does.
+        fun dx(axis: YawAxis, gx: Float, gz: Float): Int {
+            val m = GyroMouse().apply { yawAxis = axis }
+            val routes = Bindings.gyroMouseMappings()
+            var sum = 0
+            repeat(20) { sum += m.route(gx, 0f, gz, 0.005f, routes).dx }
+            return sum
+        }
+        assertEquals(true, dx(YawAxis.SCREEN_Z, 0f, -1f) > 0)
+        assertEquals(0, dx(YawAxis.SCREEN_Z, -1f, 0f))
+        assertEquals(true, dx(YawAxis.SCREEN_Y, -1f, 0f) > 0)
+        assertEquals(0, dx(YawAxis.SCREEN_Y, 0f, -1f))
     }
 }

@@ -147,12 +147,23 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             pump.wake.run()
         }
 
+    /** No input can be sent now (the pad left with "Only while the pad is open"): keepalives slow down ([WifiPump.idle]). */
+    var inputIdle: Boolean
+        get() = pump.idle
+        set(v) {
+            pump.idle = v
+        }
+
     /** What is held on the PC while [pressCapture] (CAPTURED); empty when the session ends. Called on the link's thread. */
     @Volatile var onPcPresses: ((List<PcPress>) -> Unit)? = null
 
     private val _linkTest = MutableStateFlow(false)
     /** The PC runs a Link test (TEST_MODE): the pump sends fake input, the pad shows a note. */
     val linkTest: StateFlow<Boolean> = _linkTest
+
+    private val _keysOverlay = MutableStateFlow(false)
+    /** The PC has a Keys overlay open (TEST_MODE OVERLAY_KEYS): the attached pad's keys are read for it ([com.oleroma.gyrophone.runtime.PadKeysWatch]). */
+    val keysOverlay: StateFlow<Boolean> = _keysOverlay
 
     /** The PC's TEST_MODE flags; 0 without a session. */
     @Volatile private var testMode = 0
@@ -162,6 +173,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             pump.linkTest = v and TestModeFlags.LINK_TEST != 0
             pump.phoneStats = v and TestModeFlags.PHONE_STATS != 0
             _linkTest.value = v and TestModeFlags.LINK_TEST != 0
+            overlay.keysWanted = v and TestModeFlags.OVERLAY_KEYS != 0
+            _keysOverlay.value = v and TestModeFlags.OVERLAY_KEYS != 0
             // A Save on the PC: its counter changed since the last TEST_MODE that had one.
             val save = if (v and TestModeFlags.PHONE_STATS != 0) (v and TestModeFlags.DIAG_SAVE_MASK) shr TestModeFlags.DIAG_SAVE_SHIFT else -1
             if (save >= 0 && pcSaves >= 0 && save != pcSaves) onPcSave?.invoke()
@@ -275,6 +288,16 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 usbCabled = cabled
                 post { retryCable() } // look at once, and a new plug-in tries the cable again
             }
+        }
+    }
+    /**
+     * The interfaces Android tethers now (its sticky TETHER_STATE_CHANGED), or null before one came: the phone's
+     * hotspot is one of them, so a second Wi-Fi client interface is never taken for it ([UsbTether.find]).
+     */
+    @Volatile private var tethered: Set<String>? = null
+    private val tetherReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            tethered = tetheredOf(intent)
         }
     }
     /** The session runs over the direct cable (accessory mode), not tethering. */
@@ -391,12 +414,13 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     override fun start() {
         if (running) return
         // A stop just before (a quick switch back) still winding down: its state must be gone first.
-        stopThread?.let { t ->
-            try {
-                t.join()
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
+        // The start then runs when the wind-down ends, so the caller (the UI thread) never waits for it.
+        synchronized(stopGate) {
+            if (windingDown) {
+                startWhenStopped = true
+                return
             }
+            startWhenStopped = false
         }
         stopThread = null
         val s = try {
@@ -413,6 +437,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         }
         socket = s
         wifiSocket = s
+        allowCableSenders()
         running = true
         commands.clear()
         binder.register(s)
@@ -425,6 +450,9 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         val filter = IntentFilter(ACTION_USB_STATE).apply { addAction(AccessoryBridge.ACTION_PERMISSION) }
         appContext.registerReceiver(usbStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
             ?.let { usbCabled = it.getBooleanExtra(EXTRA_USB_CONNECTED, true) }
+        tethered = null
+        appContext.registerReceiver(tetherReceiver, IntentFilter(ACTION_TETHER_STATE_CHANGED), Context.RECEIVER_NOT_EXPORTED)
+            ?.let { tethered = tetheredOf(it) }
         _state.value = LinkState.Searching
         post { autoConnect() }
         rxThread = Thread({ rxLoop() }, "gp-wifi-rx").apply { start() }
@@ -439,15 +467,26 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
      * [start] waits for the wind-down to finish.
      */
     fun stop(byeReason: Int) {
+        // A start waiting for an earlier stop's wind-down is called off.
+        synchronized(stopGate) { startWhenStopped = false; startPosted = false }
         if (!running) return
         running = false
         engine.onChange = null
         keys.stopWatching()
         runCatching { appContext.unregisterReceiver(usbStateReceiver) }
+        runCatching { appContext.unregisterReceiver(tetherReceiver) }
         wakeRx() // out of its receive wait now, so the join below is short
         _state.value = LinkState.Off
+        synchronized(stopGate) { windingDown = true }
         stopThread = Thread({ windDown(byeReason) }, "gp-wifi-stop").apply { start() }
     }
+
+    // A stop's wind-down is running ([windDown]), and a [start] asked meanwhile runs once it ends.
+    private val stopGate = Any()
+    private var windingDown = false
+    private var startWhenStopped = false
+    private var startPosted = false
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     /** The second half of [stop], on `gp-wifi-stop`. */
     private fun windDown(byeReason: Int) {
@@ -482,6 +521,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         accessory.close()
         wifiSocket?.close()
         wifiSocket = null
+        allowCableSenders()
         socket = null
         locks.release()
         foundMap.clear()
@@ -496,9 +536,16 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         _nothingFound.value = false
         _notice.value = null
         hostStatus = null
+        pcCableOn = false
         testMode = 0
         welcomeHostFlags = null
         _state.value = LinkState.Off
+        val restart = synchronized(stopGate) {
+            windingDown = false
+            startWhenStopped.also { startWhenStopped = false; startPosted = it }
+        }
+        // Called off again by a stop() before it runs.
+        if (restart) mainHandler.post { if (synchronized(stopGate) { startPosted.also { startPosted = false } }) start() }
     }
 
     /** Runs a USB check now instead of at the next once-a-second one (the accessory was just attached or allowed). */
@@ -509,6 +556,19 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         cableRefused = false
         cableQuietSinceMs = 0L
         nextUsbCheckMs = 0L
+    }
+
+    /** Diagnostics' setup reading for PHONE_STATS (from its own thread). */
+    fun setPhoneSetup(setup: com.oleroma.gyrophone.core.net.PhoneSetup) { pump.setup = setup }
+
+    /** The Wi-Fi standard now (4 to 7), 0 when unknown or the session runs over a cable. */
+    fun wifiGenerationNow(): Int = if (usbActive) 0 else binder.info.wifiGeneration ?: 0
+
+    /** For Diagnostics' link line: the clock sync's typical round trip and drift, or null before a ping came back. */
+    fun clockLine(): String? {
+        val typ = pump.clockRttTypUs
+        if (typ < 0) return null
+        return String.format(java.util.Locale.US, "round trip typical %.2f ms · clock drift %+.1f ppm", typ / 1000.0, pump.clockDriftPpb / 1000.0)
     }
 
     override fun stats(): LinkStats {
@@ -670,6 +730,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             }
             val s = socket ?: break
             pollUsbProbe()
+            // Moving to USB: the live session still runs on Wi-Fi until the WELCOME there, so its
+            // replies (PONG, HOST_STATUS, RUMBLE) are read too, not left queued.
+            val w = wifiSocket
+            if (usbPending && w != null && w !== s) drainWifi(w, packet, buf)
             try {
                 packet.setLength(buf.size)
                 s.receive(packet)
@@ -692,12 +756,33 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         }
     }
 
-    private fun onDatagram(buf: ByteArray, len: Int, from: InetSocketAddress, nowMs: Long) {
+    /** Reads what waits on the Wi-Fi socket [w] while the main receive is on the USB one ([usbPending]). */
+    private fun drainWifi(w: DatagramSocket, packet: DatagramPacket, buf: ByteArray) {
+        try {
+            w.soTimeout = 1
+            while (usbPending && running) {
+                packet.setLength(buf.size)
+                w.receive(packet)
+                val from = packet.socketAddress as? InetSocketAddress ?: continue
+                onDatagram(buf, packet.length, from, SystemClock.elapsedRealtime(), viaUsb = false)
+            }
+        } catch (e: SocketTimeoutException) {
+            // nothing more waits
+        } catch (e: IOException) {
+            // closed or failing: the main loop finds out on its own socket
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "bad datagram", e)
+        } finally {
+            runCatching { w.soTimeout = RX_TIMEOUT_MS }
+        }
+    }
+
+    private fun onDatagram(buf: ByteArray, len: Int, from: InetSocketAddress, nowMs: Long, viaUsb: Boolean = usbActive) {
         val type = WireCodec.classify(buf, len)
         if (type < 0 && type != WireCodec.BAD_VERSION) return // a newer host's ERROR VERSION goes to the session
         when (type) {
             // On the USB socket the sender's address is the cable's, not the PC's on Wi-Fi.
-            PacketType.ANNOUNCE -> (WireCodec.decodePlain(buf, len) as? Announce)?.let { onAnnounce(it, from, nowMs, viaUsb = usbActive) }
+            PacketType.ANNOUNCE -> (WireCodec.decodePlain(buf, len) as? Announce)?.let { onAnnounce(it, from, nowMs, viaUsb = viaUsb) }
             PacketType.KEY_ENROLL_ACK -> {
                 qrFlow?.let { handleQrOuts(it, it.onDatagram(buf, len, from)) }
                 return
@@ -705,7 +790,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             PacketType.PAIR_HOST, PacketType.PAIR_ACK, PacketType.PAIR_DONE -> {
                 val f = pairFlow ?: return
                 val p = WireCodec.decodePlain(buf, len) ?: return
-                handlePairOuts(f.onPacket(p, nowMs))
+                handlePairOuts(f.onPacket(p, nowMs, from))
                 return
             }
         }
@@ -974,6 +1059,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         if (usbActive) useWifi()
         locks.release()
         hostStatus = null
+        pcCableOn = false
         testMode = 0
         welcomeHostFlags = null
         publishState()
@@ -1129,7 +1215,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 // The USB session is up: the pump moves to its socket now.
                 if (s != null && usbPending) {
                     usbPending = false
-                    usbSocket?.let { pump.useSocket(it) }
+                    usbSocket?.let { u ->
+                        pump.useSocket(u)
+                        runCatching { u.soTimeout = RX_TIMEOUT_MS }
+                    }
                 }
                 // The gyro's sample times go out in the phone's clock until this session's first PONG.
                 pump.clockOffsetUs = null
@@ -1139,12 +1228,17 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 clock.reset()
                 clockOffsetUs = 0L
                 rttMinUs = -1L
+                // Every new session (a restarted companion's too): its first HOST_STATUS with the cable switch on
+                // retries a cable left alone.
+                pcCableOn = false
                 // A replacement is the same PC: its overlay stays on until its next HOST_STATUS says otherwise.
                 if (s == null) { hostStatus = null; testMode = 0; onPcPresses?.invoke(emptyList()) }
                 // Until the first HOST_STATUS, WELCOME's output mode says whether the pad takes motion.
                 else if (hostStatus == null) motion.padTakesMotion = OutputMode.takesMotion(s.outputMode)
                 welcomeHostFlags = s?.hostFlags
-                if (s != null) locks.acquire() else locks.release()
+                // The low-latency lock only while the session runs on Wi-Fi: over USB, Ethernet or the
+                // phone's hotspot it would only keep the Wi-Fi radio out of power save for nothing.
+                if (s != null && !usbActive) locks.acquire() else locks.release()
                 changed = true
             }
             is PhoneSessionFlow.Out.Status -> {
@@ -1174,13 +1268,18 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     private fun onPong(p: Pong) {
         val t4 = WifiPump.phoneUs()
-        if (clock.add(p.t1, p.t2, p.t3, t4)) {
-            clockOffsetUs = clock.offsetUs
-            rttMinUs = clock.rttMinUs
-            pump.requestLinkInfo()
-        }
-        // Every sample, not only a faster one: the best sample in the window changes as old ones leave it.
-        if (clock.hasSample) pump.clockOffsetUs = clock.offsetUs
+        val changed = clock.add(p.t1, p.t2, p.t3, t4)
+        if (!clock.hasSample) return
+        // Every sample: the offset follows the clocks' drift (ClockSync), so LINK_INFO, the PC gyro tail and
+        // PHONE_STATS always carry the current one; a big change is sent at once.
+        clockOffsetUs = clock.offsetUs
+        rttMinUs = clock.rttMinUs
+        pump.clockOffsetUs = clock.offsetUs
+        pump.clockRttMinUs = clock.rttMinUs
+        pump.clockRttTypUs = clock.rttTypUs
+        pump.clockDriftPpb = clock.driftPpb
+        pump.pongs++
+        if (changed) pump.requestLinkInfo()
     }
 
 
@@ -1200,7 +1299,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             // The cable is used only while the PC answers on it: when the companion has it off, the cable
             // still shows but nobody answers, and tethering or the hotspot must not wait behind it.
             val cable = if (usbCabled && !cableRefused) accessory.poll() else null
-            if (cable == null || usbHostAddr != null) cableQuietSinceMs = 0L
+            // Not during the USB back-off either: the probe sends no DISCOVER then, so no PC could answer.
+            if (cable == null || usbHostAddr != null || nowMs < usbBackoffUntilMs) cableQuietSinceMs = 0L
             else if (cableQuietSinceMs == 0L) cableQuietSinceMs = nowMs
             val quiet = cable != null && !usbActive && cableQuietSinceMs != 0L && nowMs - cableQuietSinceMs >= CABLE_QUIET_MS
             if (quiet) {
@@ -1210,7 +1310,7 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
                 accessory.close()
             }
             val t = cable?.takeIf { !quiet }
-                ?: UsbTether.find(wifiIf, hotspot = wifiIf != null || binder.network == null)
+                ?: UsbTether.find(wifiIf, hotspot = wifiIf != null || binder.network == null, tethered = tethered)
             if (t != usb) {
                 if (usbActive) useWifi()
                 closeUsb()
@@ -1270,6 +1370,13 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
             null
         }
         nextUsbProbeMs = 0L
+        allowCableSenders()
+    }
+
+    /** The direct cable takes datagrams only from this link's own sockets, not from other apps ([AccessoryBridge.allowFrom]). */
+    private fun allowCableSenders() {
+        val probe = usbProbe?.let { p -> runCatching { (p.localAddress as? InetSocketAddress)?.port }.getOrNull() } ?: 0
+        accessory.allowFrom(wifiSocket?.localPort ?: 0, probe, usbSocket?.localPort ?: 0)
     }
 
     /** Reads the probe's ANNOUNCEs without waiting: the PC that answered and its USB address. */
@@ -1309,14 +1416,17 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbProbe?.let { runCatching { it.close() } }
         usbProbe = null
         usbSocket = s
+        allowCableSenders()
         usbActive = true
         usbDirect = u.direct
         usbHotspot = u.hotspot
         usbEthernet = u.ethernet
         usbSilentSinceMs = 0L
         socket = s
-        // The live Wi-Fi session keeps sending on the Wi-Fi socket until the USB one's WELCOME.
+        // The live Wi-Fi session keeps sending on the Wi-Fi socket until the USB one's WELCOME; meanwhile
+        // the receive loop waits on USB only briefly between reads of the Wi-Fi socket ([drainWifi]).
         usbPending = live != null
+        if (usbPending) runCatching { s.soTimeout = PENDING_RX_TIMEOUT_MS }
         if (!usbPending) pump.useSocket(s)
         session?.let { f ->
             f.hostAddr?.let { wifiHostAddr = it }
@@ -1335,8 +1445,10 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbEthernet = false
         socket = w
         pump.useSocket(w)
+        if (live != null) locks.acquire()
         usbSocket?.close()
         usbSocket = null
+        allowCableSenders()
         usbHostId = null
         usbHostAddr = null
         // A fresh ANNOUNCE first, else where the PC was on Wi-Fi before USB, else its stored address.
@@ -1364,6 +1476,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         usbEthernet = false
         usbHostId = null
         usbHostAddr = null
+        // Closed ports leave the list, so another app can't bind one and send down the cable.
+        allowCableSenders()
     }
 
     private fun onNetworkChanged() {
@@ -1378,6 +1492,16 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     /** Debugging is on: LINK_INFO asks the PC to keep its debug log too ([LinkInfoFlags.DEBUG_TRACE]). */
     @Volatile var debugTrace = false
+
+    /** Diagnostics is on: the send thread times each gyro sample's way out ([com.oleroma.gyrophone.core.debug.GyroTiming]); null: nothing is timed. */
+    var gyroTiming: com.oleroma.gyrophone.core.debug.GyroTiming?
+        get() = pump.gyroTiming
+        set(v) { pump.gyroTiming = v }
+
+    /** Diagnostics' per-packet record of the STATEs sent (null while it is off). */
+    var flight: com.oleroma.gyrophone.core.debug.FlightRing?
+        get() = pump.flight
+        set(v) { pump.flight = v }
 
     /** Bumped by [requestDebugSave]; LINK_INFO carries its low bits so the PC saves when they change. */
     @Volatile private var debugSaves = 0
@@ -1531,6 +1655,9 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         private const val TAG = "WifiLink"
         private const val RX_TIMEOUT_MS = 50
         private const val RX_JOIN_MS = 300L
+
+        /** The USB socket's receive wait while the session still runs on Wi-Fi ([usbPending]): Wi-Fi replies wait at most this. */
+        private const val PENDING_RX_TIMEOUT_MS = 5
         private const val SEND_BUFFER = 8192
         private const val REFRESH_MS = 1000L
         private const val UNKNOWN_LATENCY = -1 // 0xFFFFFFFF
@@ -1553,6 +1680,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         /** The sticky broadcast for a USB cable to a computer (hidden in UsbManager), and its extra. */
         private const val ACTION_USB_STATE = "android.hardware.usb.action.USB_STATE"
         private const val EXTRA_USB_CONNECTED = "connected"
+        /** Android's sticky tether state broadcast (hidden in TetheringManager), and its extra of the interfaces tethered now. */
+        private const val ACTION_TETHER_STATE_CHANGED = "android.net.conn.TETHER_STATE_CHANGED"
+        private const val EXTRA_ACTIVE_TETHER = "tetherArray"
+
+        private fun tetheredOf(intent: Intent): Set<String>? = intent.getStringArrayListExtra(EXTRA_ACTIVE_TETHER)?.toSet()
         /** After a QR code pairing, how long to wait for the PC to answer a key DISCOVER. */
         private const val QR_CONNECT_WAIT_MS = 5000L
         /** When a PC answered several key DISCOVERs, the most useful answer wins. */

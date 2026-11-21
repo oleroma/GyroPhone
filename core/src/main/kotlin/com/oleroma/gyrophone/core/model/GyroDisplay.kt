@@ -114,12 +114,17 @@ data class GyroDisplay(
     /** BALL, v2: a trackball ([turnsWith] [TurnsWith.TRACKBALL] since v3). */
     val trackball: Boolean = false,
     /**
-     * [TurnsWith.CAMERA] and [TurnsWith.TRACKBALL]: with [trackballRws] as far as the game's camera
-     * once the game's turn is known ([GyroSettings.gameCountsPer360]), else as far as the phone;
-     * without, [trackballSpin] times the phone's turn.
+     * [TurnsWith.CAMERA] and [TurnsWith.TRACKBALL]: with [trackballRws] by the mouse counts actually
+     * sent, as far as the game's camera once the game's turn is known ([GyroSettings.gameCountsPer360]),
+     * else as far as the phone at the workspace's sensitivity; without, [trackballSpin] times the phone's turn.
      */
     val trackballSpin: Float = 1f,
     val trackballRws: Boolean = true,
+    /**
+     * Turning by the mouse counts ([turnsByCounts]): while the Aim display output ([laserAim]) is sent
+     * it turns [aimSens] as far, as the game turns its camera slower while aiming (0.1 .. 1).
+     */
+    val aimSens: Float = 1f,
     /**
      * [TurnsWith.TRACKBALL]: which gyro turn rolls it about each of its axes, one byte each: about
      * its up axis Y (yaw, turning left and right), its right axis X (pitch), the axis along the beam Z (roll,
@@ -198,6 +203,8 @@ data class GyroDisplay(
      * glows as it flashes; the gun's muzzle blasts a forward plume and side jets, as wide as its muzzle and as long as its calibre.
      */
     val muzzleFlash: Boolean = true,
+    /** Each gun's own muzzle flash size (the Gun look's blast, 1 = as wide as its muzzle and as long as its calibre), by its key, where changed. */
+    val gunFlash: Map<String, Float> = emptyMap(),
     /**
      * LASER crosshair and gun, Simulate spread: each Fire display shot lands off the aim point, a random way, by
      * up to the gun's spread ([spreadOf]); the crosshair and gun kick toward it. With [laserBloom], shots fired in
@@ -315,6 +322,12 @@ data class GyroDisplay(
     /** It turns with the game's camera ([TurnsWith.CAMERA] or [TurnsWith.TRACKBALL]): no gravity, compass or turn amount. */
     val followsCamera: Boolean get() = kind.pose && turnsWith != TurnsWith.PHONE
 
+    /**
+     * It turns by the mouse counts sent ([followsCamera] as far as the game's camera, [trackballRws]):
+     * the live gyro's too, so every sensitivity, card scale, acceleration and filter the game gets shows.
+     */
+    val turnsByCounts: Boolean get() = followsCamera && trackballRws
+
     /** [rest] as an array, only while it applies (with gravity), else null. */
     val restNow: FloatArray? get() = if (needsGravity) rest?.takeIf { it.size == 4 }?.toFloatArray() else null
 
@@ -400,6 +413,9 @@ data class GyroDisplay(
     /** [gun]'s kick size (0.05 .. 2): its own setting or 50%. */
     fun kickOf(gun: com.oleroma.gyrophone.core.engine.Guns.Gun = gun()): Float = gunKick[gun.key] ?: 0.5f
 
+    /** [gun]'s muzzle flash size ([FLASH_SIZE_MIN] .. [FLASH_SIZE_MAX]): its own setting or 100%. */
+    fun flashOf(gun: com.oleroma.gyrophone.core.engine.Guns.Gun = gun()): Float = (gunFlash[gun.key] ?: 1f).coerceIn(FLASH_SIZE_MIN, FLASH_SIZE_MAX)
+
     /** [gun]'s spread (degrees): its own setting or its default. */
     fun spreadOf(gun: com.oleroma.gyrophone.core.engine.Guns.Gun = gun()): Float = gunSpread[gun.key] ?: gun.spreadDeg
 
@@ -412,6 +428,10 @@ data class GyroDisplay(
     companion object {
         /** The current settings layout ([v]). */
         const val VERSION = 3
+
+        /** The muzzle flash size slider's range ([flashOf]). */
+        const val FLASH_SIZE_MIN = 0.25f
+        const val FLASH_SIZE_MAX = 3f
 
         /** A new display of [kind], with the PC overlays' defaults: gravity, easing back on ratchet over 2 s. */
         fun create(kind: GyroDisplayKind) = GyroDisplay(kind, v = VERSION, gravity = true, ease = true, easeSeconds = 2f)
@@ -571,9 +591,14 @@ val GyroDisplay.gimbalLocks: Int
  * A trackball's locked axes in [axes] ([GyroDisplay.trackballAxes]; bit 0 yaw, 1 pitch, 2 roll): those
  * no gyro turn drives (None), held at 0; and those saved with [TRACKBALL_LOCK] before None meant it.
  */
-fun trackballLocks(axes: Int): Int = (0..2).fold(0) { acc, i ->
-    val code = axes shr (8 * i) and 0xFF
-    if (code and 0x1F == 0 || code and TRACKBALL_LOCK != 0) acc or (1 shl i) else acc
+fun trackballLocks(axes: Int): Int {
+    // A plain loop: it runs every gyro sample and must not allocate.
+    var acc = 0
+    for (i in 0..2) {
+        val code = axes shr (8 * i) and 0xFF
+        if (code and 0x1F == 0 || code and TRACKBALL_LOCK != 0) acc = acc or (1 shl i)
+    }
+    return acc
 }
 
 /**

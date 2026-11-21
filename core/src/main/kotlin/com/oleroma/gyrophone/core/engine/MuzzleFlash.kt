@@ -35,10 +35,13 @@ object MuzzleFlash {
     fun mix(a: Int, b: Int, t: Float): Int {
         val k = t.coerceIn(0f, 1f)
         var out = 0
-        for (s in intArrayOf(24, 16, 8, 0)) {
+        // Each channel's shift, alpha first, with no array made per call.
+        var s = 24
+        while (s >= 0) {
             val ca = (a ushr s) and 0xFF
             val cb = (b ushr s) and 0xFF
             out = out or ((ca + ((cb - ca) * k).toInt()).coerceIn(0, 255) shl s)
+            s -= 8
         }
         return out
     }

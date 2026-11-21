@@ -45,6 +45,10 @@ import com.oleroma.gyrophone.core.model.isTouchpad
 import com.oleroma.gyrophone.core.model.nothing
 import com.oleroma.gyrophone.core.model.slides
 import com.oleroma.gyrophone.core.model.valueTarget
+import com.oleroma.gyrophone.core.net.OverlayBar
+import com.oleroma.gyrophone.core.net.OverlayFrames
+import com.oleroma.gyrophone.core.net.OverlayLine
+import com.oleroma.gyrophone.core.net.OverlayMark
 import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
@@ -91,6 +95,9 @@ class ValueBars internal constructor(val marks: List<ValueMark>, val bars: Boole
     internal val values = FloatArray(2 * MAX_SHOWN)
     internal val labels = arrayOfNulls<AnnotatedString>(marks.size)
     internal val laid = arrayOfNulls<TextLayoutResult>(marks.size)
+
+    /** Each mark's lines as text and colour, for the PC's phone overlay ([toOverlay]). */
+    internal val plain = arrayOfNulls<List<OverlayLine>>(marks.size)
 
     /** Each mark's frame sits in its middle, else outside. */
     internal val inside = BooleanArray(marks.size)
@@ -170,6 +177,13 @@ fun rememberValueBars(engine: MappingEngine, marks: List<ValueMark>, active: () 
         val live = ArrayList<String>()
         val lastLive = arrayOfNulls<List<String>>(vb.marks.size)
         val liveUntil = LongArray(vb.marks.size)
+        // What the labels were last built from: a pass where none of it changed (a finger resting, no
+        // lingering line running out) builds nothing.
+        var builtShown: List<Mapping>? = null
+        var builtActive: Set<Mapping>? = null
+        val builtToggles = HashMap<Mapping, Boolean>()
+        var builtCounts = Float.NaN
+        var lingerEnds = Long.MAX_VALUE
         var first = true
         while (true) {
             // The first read is at once: a new overlay shows the values from its first frame.
@@ -198,14 +212,23 @@ fun rememberValueBars(engine: MappingEngine, marks: List<ValueMark>, active: () 
                 engine.togglesOn(shownMs, toggles)
             }
             val counts = engine.workspace.gyro.gameCountsPer360
+            if (!changed && now < lingerEnds && shownMs === builtShown && active == builtActive &&
+                toggles == builtToggles && counts.toBits() == builtCounts.toBits()
+            ) continue
+            builtShown = shownMs
+            builtActive = active
+            builtToggles.clear(); builtToggles.putAll(toggles)
+            builtCounts = counts
             var centered: MutableSet<String>? = null
             for ((k, mk) in vb.marks.withIndex()) {
+                val plainLines = ArrayList<OverlayLine>()
                 val label = buildAnnotatedString {
                     var any = false
                     fun line(s: String, c: Color?) {
                         if (any) append(if (vb.row[k]) ROW else "\n")
                         any = true
                         if (c == null) append(s) else withStyle(SpanStyle(color = c)) { append(s) }
+                        plainLines.add(OverlayLine(s, if (c == TOGGLE_ON) OverlayLine.ON else if (c == TOGGLE_OFF) OverlayLine.OFF else OverlayLine.PLAIN))
                     }
                     if (vb.frames) {
                         live.clear()
@@ -238,11 +261,14 @@ fun rememberValueBars(engine: MappingEngine, marks: List<ValueMark>, active: () 
                 }.takeIf { it.isNotEmpty() }
                 if (label != vb.labels[k]) {
                     vb.labels[k] = label
+                    vb.plain[k] = plainLines.takeIf { it.isNotEmpty() }
                     vb.laid[k] = label?.let { text.measure(it, VALUE_STYLE) }
                     changed = true
                 }
                 if (label != null && vb.inside[k]) (centered ?: HashSet<String>().also { centered = it }).add(mk.id)
             }
+            lingerEnds = Long.MAX_VALUE
+            for (t in liveUntil) if (t > now && t < lingerEnds) lingerEnds = t
             val now2 = centered ?: emptySet()
             if (now2 != vb.centered) vb.centered = now2
             if (changed) vb.frame++
@@ -250,6 +276,37 @@ fun rememberValueBars(engine: MappingEngine, marks: List<ValueMark>, active: () 
     }
     return vb
 }
+
+/**
+ * What the pad shows over its buttons now, for the PC's phone overlay to show the same ([OverlayFrames]):
+ * each mark's frame lines and where they sit, its sliders icon and its Position bars (one per axis: the
+ * first chip driven on it, as [ValueBarsOverlay] draws them, in [barColor]). [textPx] and [dp] in pad pixels.
+ */
+fun ValueBars.toOverlay(textPx: Float, dp: Float, barColor: Int): OverlayFrames {
+    val out = ArrayList<OverlayMark>(marks.size)
+    for ((k, mk) in marks.withIndex()) {
+        val bars = ArrayList<OverlayBar>()
+        if (this.bars) {
+            for (axis in FingerAxis.entries) {
+                for (j in chips.indices) {
+                    val src = chips[j].source as? InputSource.Finger ?: continue
+                    if (src.id != mk.id || src.axis != axis) continue
+                    val v = values[2 * j]
+                    if (v.isNaN()) continue
+                    bars.add(OverlayBar(axis.ordinal, v, mk.steps[axis] ?: 0))
+                    break
+                }
+            }
+        }
+        val lines = plain[k].orEmpty()
+        if (lines.isEmpty() && bars.isEmpty() && !mk.set) continue
+        out.add(OverlayMark(mk.id, inside[k] && mk.framed, row[k], mk.set, lines, bars))
+    }
+    return OverlayFrames(textPx, dp, barColor, out)
+}
+
+/** The frames' text size in px ([VALUE_STYLE]'s, as measured with [density]). */
+fun valueTextPx(density: androidx.compose.ui.unit.Density): Float = with(density) { VALUE_STYLE.fontSize.toPx() }
 
 /** The frames outside their buttons ([ValueBars]): drawn behind the buttons. */
 @Composable
@@ -391,11 +448,14 @@ private fun linePart(m: Mapping, out: Float, counts: Float): LinePart {
     val p = "%.0f".format(pct.coerceIn(0f, 1f) * 100)
     return when (val t = m.target) {
         is OutputTarget.GyroSens -> {
-            val name = if (t.axis == com.oleroma.gyrophone.core.model.MotionAxis.NONE) "" else t.axis.label
-            if (counts > 0f) LinePart(p, KIND_RWS, name, "%.2f".format(GameSens.rws(out, counts)))
+            val name = if (t.named > 0) com.oleroma.gyrophone.core.model.NamedSens.nameOf(t.named, false) else if (t.axis == com.oleroma.gyrophone.core.model.MotionAxis.NONE) "" else t.axis.label
+            if (t.named > 0 && counts <= 0f) LinePart(p, KIND_PAD, name, "%.1f".format(out).removeSuffix(".0").removeSuffix(",0"))
+            else if (counts > 0f) LinePart(p, KIND_RWS, name, "%.2f".format(GameSens.rws(out, counts)))
             else LinePart(p, KIND_SENS, name, "%.1f".format(out).removeSuffix(".0").removeSuffix(",0"))
         }
-        is OutputTarget.TouchSens -> LinePart(p, KIND_TOUCH, t.axis?.name ?: "", "%.2f".format(out))
+        is OutputTarget.TouchSens ->
+            if (t.named > 0) LinePart(p, KIND_PAD, com.oleroma.gyrophone.core.model.NamedSens.nameOf(t.named, true), "%.2f".format(out))
+            else LinePart(p, KIND_TOUCH, t.axis?.name ?: "", "%.2f".format(out))
         OutputTarget.TapTime -> LinePart(p, KIND_PAD, "Tap", "%.0f ms".format(out))
         is OutputTarget.GyroGlide, is OutputTarget.TiltRange ->
             LinePart(p, KIND_PAD, Describe.shortTarget(t), if (t is OutputTarget.GyroGlide) "%.0f ms".format(out) else "%.0f°".format(out))

@@ -42,7 +42,9 @@ public sealed record HostSnapshot(
     // The optional GyroPhone pad driver (driver/) is installed, so the DualSense output can plug.
     bool DualSenseOk = false,
     // The phone's "Press a key" is open: this PC's keyboard, mouse and controller are read for it.
-    bool Capturing = false)
+    bool Capturing = false,
+    // The connected phone's address as the PC sees it (loopback over the direct USB cable), or null.
+    string? PhoneAddress = null)
 {
     /// <summary>The driver the chosen output needs works: ours for the DualSense, ViGEmBus for the others.</summary>
     public bool OutputDriverOk => OutputMode == OutputMode.DualSense ? DualSenseOk : DriverOk;
@@ -72,10 +74,14 @@ public sealed class HostEngine
     private const long StatusIntervalUs = Wire.StatusIntervalMs * 1000L;
     private const long RumbleMinIntervalUs = 10_000; // at most 100 Hz
     private const int RumbleDirty = 1 << 16;
+    private const long RumbleRepeatUs = 1_000_000;
+    private const int RumbleOffRepeats = 3;
     private const long EndedSidQuietUs = 1_000_000; // stray BYE/STATE copies after an end draw no ERROR
     /// <summary>How long a pad button pressed and released inside one receive burst stays visible to polling games.</summary>
     private const long PadEdgeHoldUs = 20_000;
     private const long PadRetryUs = 100_000; // a broken ViGEm bus is retried at 10 Hz, not per packet
+    private const long PadReplugUs = 1_000_000; // a pad lost underneath is plugged again after 1 s,
+    private const long PadReplugMaxUs = 10_000_000; // then less often while that fails, up to every 10 s
     /// <summary>The pad stays plugged this long after a session ends, so a reconnect finds the same controller.</summary>
     private const long PadIdleUnplugUs = 5 * 60 * 1_000_000L;
 
@@ -120,6 +126,9 @@ public sealed class HostEngine
     private readonly SessionManager _sessions;
     private readonly PairingManager _pairing;
     private readonly RateLimiter _errorLimiter = new(Wire.ErrorRatePerIp, Wire.ErrorRateGlobal);
+    // Decrypt attempts for a session from an address other than its own (a migration, or forged packets
+    // that reuse the sid seen in clear): a failed GCM open throws, so a flood must not reach it.
+    private readonly RateLimiter _foreignOpenLimiter = new(Wire.ErrorRatePerIp, Wire.ErrorRateGlobal);
     private readonly LinkStats _stats = new();
     private IPadSink _pad;
     // Plugging and unplugging the pad block in the driver, so they run on a pad thread outside the lock
@@ -131,6 +140,9 @@ public sealed class HostEngine
     /// <summary>Pad sinks replaced by <see cref="SetPadSink"/>: the pad thread unplugs and disposes them.</summary>
     private readonly List<IPadSink> _padRetired = [];
     private readonly ManualResetEventSlim _padIdle = new(true);
+    /// <summary>The pad went away underneath (driver reset, disabled): the watchdog has the pad thread plug it again.</summary>
+    private bool _padLost;
+    private long _padReplugAtUs, _padReplugGapUs;
     /// <summary>Host time the last session ended: the pad is unplugged <see cref="PadIdleUnplugUs"/> later if none started.</summary>
     private long _padIdleFromUs;
     /// <summary>The phone of the last session: forgetting it with no session up unplugs the pad it would come back to.</summary>
@@ -168,6 +180,10 @@ public sealed class HostEngine
     private readonly MouseCatchUp _catchUp = new();
     private uint _lastStatePhoneUs;
     private bool _hasStatePhone;
+    /// <summary>The last STATE was a Link test frame (fake totals).</summary>
+    private bool _lastStateLinkTest;
+    /// <summary>A MOTION injected the pending STATE mid-burst; the next STATE of the burst still gets the edge hold.</summary>
+    private bool _flushedForMotion;
     private long _lostAtState;
 
     // injected state
@@ -208,7 +224,7 @@ public sealed class HostEngine
     private bool _injectFailed;
 
     // Phone overlay: asked for in HOST_STATUS while on (the companion's overlays say what they want, SetOverlay).
-    private bool _overlayOn, _overlayCompass, _overlaySamples;
+    private bool _overlayOn, _overlayCompass, _overlaySamples, _overlayKeys;
     // "Measure buttons" (PRESS_TIME).
     private readonly PressLatency _press = new();
     private bool MeasuringButtons => _settings.MeasureButtons;
@@ -219,7 +235,10 @@ public sealed class HostEngine
     private long _lastStatusUs;
     private KeyLabels? _keyLabels;
     private int _rumbleNext; // (large << 8) | small, plus RumbleDirty while unsent
+    /// <summary>The rumble the phone was last sent (a new phone starts at 0).</summary>
     private int _lastRumble;
+    /// <summary>Repeats of <see cref="_lastRumble"/> still to send; int.MaxValue while it is on.</summary>
+    private int _rumbleRepeats;
     private long _lastRumbleUs = -RumbleMinIntervalUs;
     private bool _settingsDirty;
     private bool _anyDatagram;
@@ -259,6 +278,7 @@ public sealed class HostEngine
         Debug = new DebugTrace(() => _clock.NowUs, queue: _shared.Debug, forward: debugForward);
         Debug.SetOn(settings.Diagnostics, "on since the last run");
         SetGcWatch(settings.Diagnostics);
+        _diagApplied = settings.Diagnostics;
         _events = new TracedEvents(events ?? NullHostEvents.Instance, Debug);
         _sessions = new SessionManager(random);
         _pairing = new PairingManager(prompt, () => (_settings.HostId, _settings.HostName), OnPaired, random, newPairKey);
@@ -294,7 +314,10 @@ public sealed class HostEngine
     /// </summary>
     public Action? DebugSaveRequested { get; set; }
 
-    /// <summary>Diagnostics switched (true on); on the thread that switched it, maybe under the engine lock.</summary>
+    /// <summary>
+    /// Diagnostics switched (true on); never under the engine lock: on the thread that switched it, or on a pool thread
+    /// when a datagram switched it (gp-rx holds the lock then).
+    /// </summary>
     public Action<bool>? DiagnosticsChanged { get; set; }
 
     /// <summary>The save counter of the last LINK_INFO with the debug flag; -1 until one in this session.</summary>
@@ -366,6 +389,9 @@ public sealed class HostEngine
     /// <summary>Runs a pad plug or unplug job; null: on a new "gp-pad" thread. Tests run it at once.</summary>
     internal Action<Action>? PadWorker { get; init; }
 
+    /// <summary>Runs a QR enrolment's key save; null: on a new "gp-enroll" thread. Tests run it at once.</summary>
+    internal Action<Action>? EnrollWorker { get; init; }
+
     /// <summary>
     /// "Diagnostics": every log at once (<see cref="Debug"/>, the input log's lines, PHONE_STATS, the overlays' draw
     /// times), told to the phone (HOST_STATUS <see cref="HostStatusFlags2.PcLogging"/>, whose switch follows) and
@@ -380,14 +406,113 @@ public sealed class HostEngine
             _settings.Diagnostics = on;
             _settingsDirty = true;
             Debug.SetOn(on, why);
-            SetGcWatch(on);
             RecorderSwitched(was, wasWriting, on ? "diagnostics on" : "diagnostics off");
             _events.Log("diagnostics " + (on ? "on" : "off") + " (" + why + ")");
             _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
             if (_sessions.Active is { } a) SendTestMode(a);
         }
-        try { DiagnosticsChanged?.Invoke(on); }
-        catch (Exception e) { _events.Log($"diagnostics notice failed: {e.GetType().Name}"); }
+        // The GC watch and DiagnosticsChanged (the delivery probe's thread and window) start or stop threads: never
+        // under the engine lock. Switched from a datagram (the phone's switch, tools/gp-log.sh), gp-rx still holds it,
+        // so a pool thread does them and input goes on.
+        if (!Monitor.IsEntered(_lock)) ApplyDiagnostics();
+        else if (Interlocked.Exchange(ref _diagApplyQueued, 1) == 0)
+            ThreadPool.UnsafeQueueUserWorkItem(_ => ApplyDiagnostics(), null);
+    }
+
+    // What the GC watch and DiagnosticsChanged were last switched to (under _diagApplyGate), and a pending switch.
+    private readonly object _diagApplyGate = new();
+    private bool _diagApplied;
+    private int _diagApplyQueued;
+
+    /// <summary>Switches the GC watch and tells DiagnosticsChanged to Diagnostics as it is now; outside the engine lock.</summary>
+    private void ApplyDiagnostics()
+    {
+        lock (_diagApplyGate)
+        {
+            Volatile.Write(ref _diagApplyQueued, 0);
+            bool on;
+            using (Lock(ByUi)) on = _settings.Diagnostics;
+            if (on == _diagApplied) return;
+            _diagApplied = on;
+            SetGcWatch(on);
+            SetStallWatch(on);
+            SetFlight(on);
+            try { DiagnosticsChanged?.Invoke(on); }
+            catch (Exception e) { _events.Log($"diagnostics notice failed: {e.GetType().Name}"); }
+        }
+    }
+
+    /// <summary>The exact sleep the PC stall watch uses (a high-resolution waitable timer on Windows); null: no stall watch.</summary>
+    public Func<ITickSleep>? StallSleep
+    {
+        get => _stallSleep;
+        set
+        {
+            _stallSleep = value;
+            bool on;
+            using (Lock(ByUi)) on = _settings.Diagnostics;
+            if (on) SetStallWatch(true);
+        }
+    }
+
+    private Func<ITickSleep>? _stallSleep;
+
+    /// <summary>
+    /// Diagnostics' per-packet record (<see cref="FlightRecorder"/>): made outside the engine lock, sized for the minutes
+    /// Diagnostics keeps, handed to the input log under the lock (a reference store), dropped when Diagnostics goes off.
+    /// </summary>
+    private void SetFlight(bool on)
+    {
+        FlightRecorder? f = null;
+        if (on)
+        {
+            int minutes;
+            using (Lock(ByUi)) minutes = _settings.DiagnosticsMinutes;
+            try { f = new FlightRecorder(minutes); }
+            catch (OutOfMemoryException) { _events.Log("flight record: not enough memory"); }
+        }
+        using (Lock(ByUi))
+        {
+            if (Recorder is { } r) r.Flight = f;
+        }
+    }
+
+    /// <summary>
+    /// Writes the per-packet record of the minutes Diagnostics keeps to flight-&lt;time&gt;.bin in <paramref name="folder"/>;
+    /// returns the path, or null without one. Any thread but gp-rx: the copy runs outside the engine lock.
+    /// </summary>
+    public string? SaveFlight(string folder)
+    {
+        FlightRecorder? f;
+        long now, from;
+        using (Lock(ByUi))
+        {
+            f = Recorder?.Flight;
+            now = _clock.NowUs;
+            from = now - _settings.DiagnosticsMinutes * 60_000_000L;
+        }
+        return f?.Save(folder, from, now);
+    }
+
+    private StallWatch? _stallWatch;
+
+    /// <summary>Diagnostics' PC stall watch (<see cref="StallWatch"/>): runs only while Diagnostics is on; outside the engine lock.</summary>
+    private void SetStallWatch(bool on)
+    {
+        if (_stallSleep is not { } sleep) return;
+        if (on)
+        {
+            _stallWatch ??= new StallWatch(sleep, () => _clock.NowUs);
+            _stallWatch.Start();
+        }
+        else
+        {
+            _stallWatch?.Stop();
+        }
+        using (Lock(ByUi))
+        {
+            if (Recorder is { } r) r.Stall = on ? _stallWatch : null;
+        }
     }
 
     // Diagnostics' memory cleanup lines (GcWatch): made the first time Diagnostics is on, then only switched.
@@ -408,6 +533,9 @@ public sealed class HostEngine
             if (minutes == _settings.DiagnosticsMinutes) return;
             _settings.DiagnosticsMinutes = minutes;
             _settingsDirty = true;
+            // The flight record is sized for the minutes kept: made again off the lock (this may be gp-rx).
+            if (_settings.Diagnostics && Recorder?.Flight is { } fl && fl.Minutes != minutes)
+                ThreadPool.UnsafeQueueUserWorkItem(_ => SetFlight(Volatile.Read(ref _diagApplied)), null);
         }
     }
 
@@ -492,6 +620,8 @@ public sealed class HostEngine
     private void Unlock()
     {
         bool outer = --_lockDepth == 0;
+        // gp-rx never makes the input log's text: the next other holder (the watchdog's tick at the latest) writes it.
+        bool input = _holder == ByInput;
         try
         {
             if (outer) PublishView();
@@ -500,7 +630,7 @@ public sealed class HostEngine
         {
             Monitor.Exit(_lock);
         }
-        if (outer) Recorder?.WritePending();
+        if (outer && !input) Recorder?.WritePending();
     }
 
     private readonly struct Scope(HostEngine engine) : IDisposable
@@ -590,7 +720,7 @@ public sealed class HostEngine
                 if (WireCodec.TryDecodeDiscover(d, out var disc)) Reply(Announce(disc, nowUs), from);
                 return;
             case PacketType.PairStart:
-                if (WireCodec.TryDecodePairStart(d, out var ps)) ReplyPairing(_pairing.OnStart(ps, nowUs, _reply), from);
+                if (WireCodec.TryDecodePairStart(d, out var ps)) ReplyPairing(_pairing.OnStart(ps, nowUs, _reply, RateLimiter.Ipv4Key(from)), from);
                 else _dropped++;
                 return;
             case PacketType.PairReveal:
@@ -640,6 +770,11 @@ public sealed class HostEngine
             SendError(ErrorCode.SessionUnknown, d.Length, from, nowUs);
             return;
         }
+        if (!s.IsEndpoint(from) && !_foreignOpenLimiter.TryAcquire(from, nowUs))
+        {
+            _badAuth++; // over the limit for packets from elsewhere: dropped before the decrypt
+            return;
+        }
         if (!s.TryOpen(d, _plain))
         {
             _badAuth++; // stale seq or failed tag: silence
@@ -682,6 +817,7 @@ public sealed class HostEngine
             case PacketType.LinkInfo:
                 var info = WireCodec.DecodeLinkInfo(plain);
                 _stats.OnLinkInfo(info);
+                _keepAwakeWake.Set(); // the path may have changed between Wi-Fi and a wire
                 OnDebugFlags(info.Flags, nowUs);
                 break;
             // Overlay data: copied as it came for gp-overlay (OverlayWorker), which does the rest.
@@ -699,6 +835,11 @@ public sealed class HostEngine
             case PacketType.OverlayLayout:
                 if (!_overlayOn) break;
                 _overlayInbox.Put(OverlayInbox.Kind.Layout, plain, nowUs, Environment.TickCount64);
+                _overlayQueued = true;
+                break;
+            case PacketType.OverlayFrames:
+                if (!_overlayOn) break;
+                _overlayInbox.Put(OverlayInbox.Kind.Frames, plain, nowUs, Environment.TickCount64);
                 _overlayQueued = true;
                 break;
             case PacketType.Motion:
@@ -880,7 +1021,21 @@ public sealed class HostEngine
         // A burst can hold a press and its release: inject the older frame first so no edge is lost.
         // Frames that differ only in motion still merge into one injection.
         // Flush re-enters the engine lock OnDatagram holds.
+        // A Link test's frames carry fake mouse and wheel totals: where they start or stop, the gap to
+        // the real totals is no movement. Inject what is pending on its own side, then rebase.
+        bool linkTest = (_rxFrame.Flags & StateFlags.LinkTest) != 0;
+        if (_hasStatePhone && linkTest != _lastStateLinkTest)
+        {
+            if (_hasPending) Flush(nowUs, edge: true);
+            _mouse.Reset();
+            _catchUp.Clear();
+            _accWheel = _accHWheel = 0;
+        }
+        _lastStateLinkTest = linkTest;
         if (_hasPending && EdgesDiffer(_pending, _rxFrame)) Flush(nowUs, edge: true);
+        // A MOTION already injected the frame before this one in the same burst: a pad press it dropped stays visible.
+        else if (_flushedForMotion && !_hasPending && EdgesDiffer(_pending, _rxFrame)) HoldPadEdge(nowUs);
+        _flushedForMotion = false;
         _pending.CopyFrom(_rxFrame);
         _hasPending = true;
         _heldOutputsDirty = true;
@@ -943,6 +1098,11 @@ public sealed class HostEngine
         var s = _sessions.CreatePending(hello, name, pairKey, _settings.HostId,
             (byte)_settings.OutputMode, (byte)((PadDriverOk ? WelcomeFlags.VigemOk : 0) | WelcomeFlags.HiresWheel | WelcomeFlags.PcGyro | WelcomeFlags.Motion),
             from, nowUs);
+        if (s == null)
+        {
+            _dropped++; // a replayed HELLO while the phone's newer attempt is pending: no reply
+            return;
+        }
         Reply(s.Welcome, from);
     }
 
@@ -984,6 +1144,9 @@ public sealed class HostEngine
         // The phone restarts its totals and gyro samples at 0 for a new session; the PC controller's toggle stays.
         _mouse.Reset();
         _pcGyro.Rebase();
+        // The phone starts with its rumble off: a game's ongoing rumble goes to it again.
+        _lastRumble = 0;
+        _rumbleRepeats = 0;
         _accWheel = _accHWheel = 0;
         _catchUp.Clear();
         _hasStatePhone = false;
@@ -993,6 +1156,7 @@ public sealed class HostEngine
         _hasPending = false;
         _padPhoneId = s.PhoneId;
         PlugPad();
+        WakeTimers();
         if (_phones.TryGetValue(Convert.ToHexString(s.PhoneId), out var phone))
         {
             phone.Info.LastSeenUtc = DateTime.UtcNow;
@@ -1018,7 +1182,14 @@ public sealed class HostEngine
     private volatile bool _catchingUp;
 
     /// <summary>Injects the newest STATE received since the last Flush: pad only when the mapped frame changed, SendInput only with events.</summary>
-    public void Flush(long nowUs) => Flush(nowUs, edge: false);
+    public void Flush(long nowUs)
+    {
+        using (Lock(ByInput))
+        {
+            _flushedForMotion = false; // the burst ended
+            FlushLocked(nowUs, edge: false);
+        }
+    }
 
     /// <summary><paramref name="edge"/>: a newer STATE with other keys or buttons replaces this one in the same burst.</summary>
     private void Flush(long nowUs, bool edge)
@@ -1102,6 +1273,11 @@ public sealed class HostEngine
                     break;
                 }
             }
+        }
+        else if (frame && Rec is { } padRec)
+        {
+            // Only the virtual controller changed: time this hand-off too (controller-only play has slow ones as well).
+            padRec.PadHandOff(_pendingRecvUs, _clock.NowUs, _handOff);
         }
         if (frame && MeasuringButtons) _press.OnInjected(_pending.PhoneTimeUs, _clock.NowUs, ClockOffsetUs, _stats.LastLinkInfo != null);
         if (frame && _hasPendingSample)
@@ -1250,6 +1426,13 @@ public sealed class HostEngine
         if (!PadTakesMotion || _paused || _locked || _releasedForSilence) return;
         _motionFrame.Decode(plain);
         int n = _ds4Motion.Take(_motionFrame, _motionOut, nowUs);
+        // Each reading is a driver call: inject the STATE this burst holds first, so its keys, mouse and
+        // pad frame do not wait for them, and the readings carry its buttons.
+        if (n > 0 && _hasPending)
+        {
+            Flush(nowUs, edge: false);
+            _flushedForMotion = true;
+        }
         SubmitMotion(n);
     }
 
@@ -1265,6 +1448,13 @@ public sealed class HostEngine
     {
         _exceptions++;
         _padFrameValid = false;
+        // The sink says the pad is gone: plugging again blocks in the driver, so the watchdog has the pad thread do it.
+        if (!_padLost && !_padBusy && _padWant != OutputMode.None && _pad.Plugged == OutputMode.None)
+        {
+            _padLost = true;
+            _padReplugAtUs = long.MinValue;
+            _padReplugGapUs = PadReplugUs;
+        }
         if (_loggedPadFailure) return;
         _loggedPadFailure = true;
         _events.Log($"pad submit failed: {e.GetType().Name}");
@@ -1312,6 +1502,18 @@ public sealed class HostEngine
             if (_padHeld && nowUs >= _padHoldUntilUs && !_hasPending && !_paused && !_locked) SubmitPad(_pending, nowUs);
             _sessions.ExpirePending(nowUs);
             if (_pairing.Tick(nowUs)) _events.StateChanged();
+            // A pad lost underneath is plugged again on the pad thread: at once, then after 1, 2, 4, 8 and every 10 s while that fails.
+            if (_padLost && !_padBusy)
+            {
+                if (_padWant == OutputMode.None || _pad.Plugged == _padWant) _padLost = false;
+                else if (nowUs >= _padReplugAtUs)
+                {
+                    if (_padReplugAtUs == long.MinValue) _events.Log($"{_padWant} pad was lost; plugging it again");
+                    _padReplugAtUs = nowUs + _padReplugGapUs;
+                    _padReplugGapUs = Math.Min(_padReplugGapUs * 2, PadReplugMaxUs);
+                    RequestPad(_padWant);
+                }
+            }
             // No session for a long while: the pad is unplugged until the next one.
             if (_sessions.Active == null && _padWant != OutputMode.None && nowUs - _padIdleFromUs >= PadIdleUnplugUs)
             {
@@ -1319,7 +1521,7 @@ public sealed class HostEngine
                 RequestPad(OutputMode.None);
             }
 
-            SendPendingRumble(nowUs);
+            SendPendingRumble(nowUs, repeat: true);
             a = _sessions.Active;
             if (_capture.On)
             {
@@ -1337,6 +1539,8 @@ public sealed class HostEngine
                 SendStatus(a, nowUs);
                 if (Debug.Enabled) Debug.SecondTick(DebugLinkLine(), nowUs);
             }
+            _watchdogIdle = a == null && _sessions.Pending.Count == 0 && !_pairing.Busy(nowUs) && _qr == null &&
+                _linkTestUntilUs == long.MinValue && !_capture.On && !_injectFailed && !_padHeld && !_padBusy && HeldCount() == 0;
         }
     }
 
@@ -1654,19 +1858,98 @@ public sealed class HostEngine
     /// <summary>
     /// Sends KEEP_AWAKE to the active session (the keep-awake thread, every <see cref="Wire.KeepAwakeMs"/>): a Wi-Fi
     /// client in power save wakes only at each beacon, so without it the phone's packets arrive in 100 ms batches while
-    /// it sends little. Skipped over USB, Ethernet and loopback, where no radio sleeps. Takes no engine lock, so it never
-    /// holds up input: a session dropped meanwhile just ignores the send.
+    /// it sends little. Skipped over USB, Ethernet and loopback, and where the PC's own adapter toward the phone is no
+    /// Wi-Fi client (a cable to the router, or the PC's Mobile hotspot): no radio of the PC sleeps there, and the phone
+    /// would only be kept awake for nothing. Takes no engine lock, so it never holds up input: a session dropped
+    /// meanwhile just ignores the send.
     /// </summary>
-    public void KeepAwake()
+    public bool KeepAwake()
     {
         var a = _sessions.Active;
-        if (a == null || !a.Promoted || !KeepAwakeWanted(_stats.LastLinkInfo, a.Endpoint)) return;
+        if (a == null || !a.Promoted || !KeepAwakeWanted(_stats.LastLinkInfo, a.Endpoint, PcWifiClientFor(a.Endpoint))) return false;
         a.SendSealed(PacketType.KeepAwake, _keepAwakePlain, _sender);
+        return true;
     }
 
-    /// <summary>False over a wire (the phone's LINK_INFO says USB or Ethernet) or loopback (USB direct); true otherwise, also before the first LINK_INFO.</summary>
-    public static bool KeepAwakeWanted(LinkInfo? link, SocketAddress to)
+    /// <summary>How long the keep-awake thread rests while no KEEP_AWAKE is wanted (also the catch for a missed wake).</summary>
+    public const int KeepAwakeIdleWaitMs = 1000;
+    /// <summary>How often the watchdog ticks while <see cref="WatchdogIdle"/>.</summary>
+    public const int WatchdogIdleTickMs = 250;
+    private readonly ManualResetEventSlim _keepAwakeWake = new(false), _tickWake = new(false);
+    private volatile bool _watchdogIdle;
+
+    /// <summary>
+    /// The keep-awake thread's rest after <see cref="KeepAwake"/> sent nothing: no 100 Hz timer while no phone is
+    /// connected, or over a wire. Woken when a session starts or a LINK_INFO comes; else it looks again after
+    /// <see cref="KeepAwakeIdleWaitMs"/>.
+    /// </summary>
+    public void RestKeepAwake()
     {
+        _keepAwakeWake.Reset();
+        var a = _sessions.Active;
+        if (a != null && a.Promoted && KeepAwakeWanted(_stats.LastLinkInfo, a.Endpoint, PcWifiClientFor(a.Endpoint))) return;
+        _keepAwakeWake.Wait(KeepAwakeIdleWaitMs);
+    }
+
+    /// <summary>
+    /// Nothing on the PC needs the watchdog's 50 ms tick: no session, pending session, pairing or QR code, Link test,
+    /// "Press a key", held input or dropped ups. Set by each tick.
+    /// </summary>
+    public bool WatchdogIdle => _watchdogIdle;
+
+    /// <summary>The watchdog's rest while <see cref="WatchdogIdle"/>, up to <see cref="WatchdogIdleTickMs"/>; a new session ends it at once.</summary>
+    public void RestWatchdog()
+    {
+        _tickWake.Reset();
+        if (!_watchdogIdle) return;
+        _tickWake.Wait(WatchdogIdleTickMs);
+    }
+
+    /// <summary>Ends both rests (a session started, the link changed, or the threads stop).</summary>
+    public void WakeTimers()
+    {
+        _watchdogIdle = false;
+        _keepAwakeWake.Set();
+        _tickWake.Set();
+    }
+
+    /// <summary>The PC's adapter toward the phone at an IPv4 address, as the watchdog's probe last found it.</summary>
+    private sealed record PcSide(uint Phone, bool WifiClient);
+    private volatile PcSide? _pcSide;
+
+    /// <summary>
+    /// The PC's adapter on <paramref name="phone"/>'s subnet, from the watchdog's probe (every second; null: not found).
+    /// It holds only for that address: a session from another address is "not known" again until the next probe.
+    /// </summary>
+    public void SetPcAdapter(System.Net.IPAddress? phone, Perf.PcAdapter? adapter)
+    {
+        PcSide? side = null;
+        if (phone is { AddressFamily: AddressFamily.InterNetwork } && adapter != null)
+        {
+            Span<byte> b = stackalloc byte[4];
+            if (phone.TryWriteBytes(b, out _)) side = new PcSide((uint)(b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]), adapter.Station);
+        }
+        bool wake = side is not { WifiClient: false } && _pcSide is { WifiClient: false };
+        _pcSide = side;
+        if (wake) _keepAwakeWake.Set();
+    }
+
+    /// <summary>Whether the PC reaches <paramref name="to"/> as a Wi-Fi client; null while not known for that address.</summary>
+    private bool? PcWifiClientFor(SocketAddress to)
+    {
+        var p = _pcSide;
+        if (p == null || to.Family != AddressFamily.InterNetwork || to.Size < 8) return null;
+        return (uint)(to[4] << 24 | to[5] << 16 | to[6] << 8 | to[7]) == p.Phone ? p.WifiClient : null;
+    }
+
+    /// <summary>
+    /// False over a wire (the phone's LINK_INFO says USB or Ethernet), loopback (USB direct), or when the PC's own adapter
+    /// toward the phone is known to be no Wi-Fi client (<paramref name="pcWifiClient"/> false: a cable, or the PC's
+    /// hotspot); true otherwise, also before the first LINK_INFO and while the PC's adapter isn't known.
+    /// </summary>
+    public static bool KeepAwakeWanted(LinkInfo? link, SocketAddress to, bool? pcWifiClient = null)
+    {
+        if (pcWifiClient == false) return false;
         if (link is { } l && ((l.Flags & (LinkInfoFlags.Usb | LinkInfoFlags.Ethernet)) != 0 ||
             l.Path is LinkPath.UsbTether or LinkPath.UsbDirect or LinkPath.Ethernet)) return false;
         return !IsLoopback(to);
@@ -1712,12 +1995,20 @@ public sealed class HostEngine
     /// at once), with its compass readings and each gyro sample when they want those, and they go into the overlay ring
     /// (<see cref="OverlayHost"/>). Off: the phone stops sending them.
     /// </summary>
-    public void SetOverlay(bool on, bool compass = false, bool samples = false)
+    public void SetOverlay(bool on, bool compass = false, bool samples = false, bool keys = false)
     {
         using (Lock(ByUi))
         {
             compass &= on;
             samples &= on;
+            keys &= on;
+            if (keys != _overlayKeys)
+            {
+                // TEST_MODE carries it (HOST_STATUS has no room): told at once, an "off" a few times.
+                _overlayKeys = keys;
+                _testModeOffRepeats = TestModeFlagsNow() == 0 ? 3 : 0;
+                if (_sessions.Active is { } k) SendTestMode(k);
+            }
             if (on == _overlayOn && compass == _overlayCompass && samples == _overlaySamples) return;
             if (on != _overlayOn)
             {
@@ -1761,8 +2052,22 @@ public sealed class HostEngine
             uint age = unchecked((uint)(nowUs - ClockOffsetUs) - p.TimeUs);
             if (age < 10_000_000) at = nowUs - age;
         }
+        if (p.RttTypUs > 0) _stats.PhoneRttTypUs = p.RttTypUs;
         return new Perf.PhoneSecond(at, p.States, p.Packets, p.Failed, p.SlowSends, p.SendMaxUs / 1000f, p.WakeLateMaxUs / 1000f,
-            p.StateGapMaxUs / 1000f, p.PhoneTxPackets);
+            p.StateGapMaxUs / 1000f, p.PhoneTxPackets)
+        {
+            RttMinMs = p.RttMinUs >= 0 ? p.RttMinUs / 1000f : -1,
+            RttTypMs = p.RttTypUs >= 0 ? p.RttTypUs / 1000f : -1,
+            DriftPpm = p.DriftPpb / 1000f,
+            Pings = p.Pings,
+            Battery = p.Setup.BatteryPct,
+            SetupFlags = p.Setup.Flags,
+            TempDeciC = p.Setup.TempDeciC,
+            Thermal = p.Setup.Thermal,
+            UsbVendor = p.Setup.UsbVendor,
+            UsbProduct = p.Setup.UsbProduct,
+            WifiStandard = p.Setup.WifiStandard,
+        };
     }
 
     /// <summary>A Link test runs (<see cref="SetLinkTest"/>).</summary>
@@ -1840,9 +2145,27 @@ public sealed class HostEngine
     /// The phone keys in authorized_phones (from the folder watcher). New keys are paired at once;
     /// a phone whose file is gone is dropped, live session included.
     /// </summary>
-    public void SetAuthorizedPhones(IReadOnlyList<AuthorizedPhone> phones)
+    public void SetAuthorizedPhones(IReadOnlyList<AuthorizedPhone> phones) => SetAuthorizedPhones(phones, null, null);
+
+    /// <param name="prePublicKey">A key whose secrets <paramref name="pre"/> were worked out before the lock (a QR
+    /// enrolment), so its ECDH never runs under it; taken over, or wiped when not needed.</param>
+    private void SetAuthorizedPhones(IReadOnlyList<AuthorizedPhone> phones, byte[]? prePublicKey, (byte[] PhoneId, byte[] PairKey)? pre)
     {
         using (Lock(ByUi))
+        {
+            try
+            {
+                SetAuthorizedPhonesLocked(phones, prePublicKey, ref pre);
+            }
+            finally
+            {
+                if (pre is { } unused) CryptographicOperations.ZeroMemory(unused.PairKey);
+            }
+        }
+    }
+
+    private void SetAuthorizedPhonesLocked(IReadOnlyList<AuthorizedPhone> phones, byte[]? prePublicKey, ref (byte[] PhoneId, byte[] PairKey)? pre)
+    {
         {
             if (_hostKey == null) return;
             _authorizedList = phones;
@@ -1862,7 +2185,13 @@ public sealed class HostEngine
                     next.TryAdd(Convert.ToHexString(old.PhoneId), new KeyPhone(p.File, name, old.PhoneId, old.PairKey, old.Fingerprint, old.KeyId, old.PublicKey) { LastSeenUtc = old.LastSeenUtc });
                     continue;
                 }
-                var (id, pairKey) = KeyPairing.HostSecrets(_hostKey, p.Key.PublicKey);
+                byte[] id, pairKey;
+                if (pre is { } done && prePublicKey != null && prePublicKey.AsSpan().SequenceEqual(p.Key.PublicKey))
+                {
+                    (id, pairKey) = done;
+                    pre = null; // taken over
+                }
+                else (id, pairKey) = KeyPairing.HostSecrets(_hostKey, p.Key.PublicKey);
                 var hex = Convert.ToHexString(id);
                 if (next.ContainsKey(hex))
                 {
@@ -1924,10 +2253,12 @@ public sealed class HostEngine
         HostCounters counters;
         string? qrName;
         IPcPad pcPad;
+        System.Net.SocketAddress? endpoint;
         using (Lock(ByUi))
         {
             long now = _clock.NowUs;
             var a = _sessions.Active;
+            endpoint = a?.Endpoint; // a copy the session replaces (never changes) when the phone moves: read after the lock
             phoneName = a?.PhoneName;
             connected = a != null;
             silent = _releasedForSilence;
@@ -1956,7 +2287,28 @@ public sealed class HostEngine
             _hostKeyFingerprint, qrS, qrName,
             padGyro ? pcPad.Name ?? "" : null,
             dualSenseOk,
-            _capture.On);
+            _capture.On,
+            AddressText(endpoint));
+    }
+
+    /// <summary>The last endpoint <see cref="AddressText"/> turned into text, so a steady phone makes no new string.</summary>
+    private volatile Tuple<System.Net.SocketAddress, string?>? _addressText;
+
+    private string? AddressText(System.Net.SocketAddress? endpoint)
+    {
+        if (endpoint == null) return null;
+        if (_addressText is { } last && ReferenceEquals(last.Item1, endpoint)) return last.Item2;
+        string? text;
+        try
+        {
+            text = ((System.Net.IPEndPoint)new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0).Create(endpoint)).Address.ToString();
+        }
+        catch (Exception)
+        {
+            text = null;
+        }
+        _addressText = Tuple.Create(endpoint, text);
+        return text;
     }
 
     /// <summary>The paired phones for <see cref="Snapshot"/>; null after a change, made again on the next one.</summary>
@@ -2000,26 +2352,53 @@ public sealed class HostEngine
         }
         if (q.EnrolledKey == null)
         {
+            // Saving the file and the ECDH stay off gp-rx and the lock (a slow disk or a virus scan would
+            // freeze a playing phone's input); the phone resends KEY_ENROLL every 250 ms and gets OK once done.
+            if (q.Saving) return;
+            q.Saving = true;
             var key = new PubKeyFile(e.PkP, e.Name.Length > 0 ? e.Name : "Phone");
-            string? file;
-            try
-            {
-                file = q.Save(key);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                file = null;
-                _events.Log($"could not save the key of '{key.Name}': {ex.GetType().Name}");
-            }
-            if (file == null) return; // the phone retries; nothing was authorized
-            q.EnrolledKey = e.PkP;
-            q.EnrolledName = key.Name;
-            _events.Log($"'{key.Name}' paired by QR code");
-            SetAuthorizedPhones([.. _authorizedList.Where(a => !a.Key.PublicKey.AsSpan().SequenceEqual(e.PkP)), new AuthorizedPhone(file, key)]);
+            if (EnrollWorker != null) EnrollWorker(() => SaveEnrolled(q, key));
+            else new Thread(() => SaveEnrolled(q, key)) { IsBackground = true, Name = "gp-enroll" }.Start();
+            if (q.EnrolledKey == null) return;
         }
         byte status = q.EnrolledKey.AsSpan().SequenceEqual(e.PkP) ? EnrollStatus.Ok : EnrollStatus.Used;
         WireCodec.EncodeKeyEnrollAck(e.ReqId, e.TokenId, status, q.Token, e.PkP, ack);
         Reply(ack, from);
+    }
+
+    /// <summary>The QR enrolment's worker: saves the phone's key file, then authorizes it.</summary>
+    private void SaveEnrolled(QrSession q, PubKeyFile key)
+    {
+        string? file = null;
+        string? failed = null;
+        (byte[] PhoneId, byte[] PairKey)? secrets = null;
+        try
+        {
+            file = q.Save(key);
+            // The ECDH too, before the lock (the host key, once set, never changes).
+            if (file != null && _hostKey is { } hostKey) secrets = KeyPairing.HostSecrets(hostKey, key.PublicKey);
+        }
+        catch (Exception ex)
+        {
+            // Off gp-rx nothing else would catch it, and an unhandled throw on a thread ends the process.
+            failed = ex.GetType().Name;
+        }
+        using (Lock(ByUi))
+        {
+            q.Saving = false;
+            if (failed != null) _events.Log($"could not save the key of '{key.Name}': {failed}");
+            if (file == null || failed != null)
+            {
+                if (secrets is { } s) CryptographicOperations.ZeroMemory(s.PairKey);
+                return; // the phone retries; nothing was authorized
+            }
+            q.EnrolledKey = key.PublicKey;
+            q.EnrolledName = key.Name;
+            _events.Log($"'{key.Name}' paired by QR code");
+            SetAuthorizedPhones([.. _authorizedList.Where(a => !a.Key.PublicKey.AsSpan().SequenceEqual(key.PublicKey)), new AuthorizedPhone(file, key)],
+                key.PublicKey, secrets);
+        }
+        _events.StateChanged();
     }
 
     private bool IssuedToken(ReadOnlySpan<byte> tokenId)
@@ -2406,6 +2785,7 @@ public sealed class HostEngine
         if (MeasuringButtons) flags |= TestModeFlags.PressTimes;
         if (_linkTestUntilUs != long.MinValue) flags |= TestModeFlags.LinkTest;
         if (_settings.Diagnostics) flags |= (byte)(TestModeFlags.PhoneStats | (_diagSaves << TestModeFlags.DiagSaveShift));
+        if (_overlayKeys) flags |= TestModeFlags.OverlayKeys;
         return flags;
     }
 
@@ -2432,15 +2812,33 @@ public sealed class HostEngine
     private void OnRumble(byte large, byte small) =>
         Interlocked.Exchange(ref _rumbleNext, RumbleDirty | (large << 8) | small);
 
-    /// <summary>Sends a recorded rumble change as RUMBLE, at most 100 Hz. Called under the lock from Flush and OnTick.</summary>
-    private void SendPendingRumble(long nowUs)
+    /// <summary>
+    /// Sends a recorded rumble change as RUMBLE, at most 100 Hz. Called under the lock from Flush and OnTick.
+    /// <paramref name="repeat"/> (OnTick only, never on the input path): a RUMBLE is one datagram, so the value
+    /// the phone should have goes again every second while it is on and <see cref="RumbleOffRepeats"/> times after
+    /// it stops; a lost "stop" would leave the phone vibrating.
+    /// </summary>
+    private void SendPendingRumble(long nowUs, bool repeat = false)
     {
         int v = Volatile.Read(ref _rumbleNext);
-        if ((v & RumbleDirty) == 0 || nowUs - _lastRumbleUs < RumbleMinIntervalUs) return;
-        if (Interlocked.CompareExchange(ref _rumbleNext, v & 0xFFFF, v) != v) return; // newer value: next call
+        if ((v & RumbleDirty) != 0)
+        {
+            if (nowUs - _lastRumbleUs < RumbleMinIntervalUs) return;
+            if (Interlocked.CompareExchange(ref _rumbleNext, v & 0xFFFF, v) != v) return; // newer value: next call
+        }
         var a = _sessions.Active;
         int packed = v & 0xFFFF;
-        if (a == null || packed == _lastRumble) return;
+        if (a == null) return;
+        if (packed != _lastRumble)
+        {
+            if (nowUs - _lastRumbleUs < RumbleMinIntervalUs) return;
+            _rumbleRepeats = packed == 0 ? RumbleOffRepeats : int.MaxValue;
+        }
+        else
+        {
+            if (!repeat || _rumbleRepeats == 0 || nowUs - _lastRumbleUs < RumbleRepeatUs) return;
+            if (_rumbleRepeats != int.MaxValue) _rumbleRepeats--;
+        }
         _lastRumble = packed;
         _lastRumbleUs = nowUs;
         Span<byte> p = stackalloc byte[Wire.RumblePlain];
@@ -2471,6 +2869,8 @@ internal sealed class QrSession(byte[] token, byte[] tokenId, long expiresUs, Fu
     public long ExpiresUs { get; } = expiresUs;
     public Func<PubKeyFile, string?> Save { get; } = save;
     public byte[]? EnrolledKey { get; set; }
+    /// <summary>The key file is being saved off gp-rx.</summary>
+    public bool Saving { get; set; }
     public string? EnrolledName { get; set; }
 
     public void Clear() => System.Security.Cryptography.CryptographicOperations.ZeroMemory(Token);

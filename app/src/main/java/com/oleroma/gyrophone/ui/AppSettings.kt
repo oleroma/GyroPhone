@@ -94,8 +94,64 @@ private fun DefaultsTab(runtime: GamepadRuntime) {
                 onSettings = null,
                 onClose = { mapping = false },
                 settings = touchpadSettings(runtime, level),
+                level = profile.defaults,
             )
         }
+    }
+}
+
+/**
+ * The automatic backups ([com.oleroma.gyrophone.data.SettingsBackups]), newest first, each with
+ * Restore (asks first; what is there now is backed up before it is replaced).
+ */
+@Composable
+private fun AutoBackups(runtime: GamepadRuntime) {
+    val context = LocalContext.current
+    // Read again whenever the section is shown and after a restore.
+    var shown by remember { mutableIntStateOf(0) }
+    val list = remember(shown) { runtime.backups() }
+    var asking by remember { mutableStateOf<com.oleroma.gyrophone.data.SettingsBackups.Entry?>(null) }
+    val fmt = remember { java.text.SimpleDateFormat("EEE d MMM, HH:mm", java.util.Locale.getDefault()) }
+    Searchable("Automatic backups", "backup restore undo lost settings wiped automatic copy") {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Automatic backups", style = MaterialTheme.typography.labelLarge)
+            Text(
+                "GP keeps the last 20 copies of your setup by itself: one every 10 minutes while you change things, " +
+                    "and one before every update, import or restore. They stay on this phone.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (list.isEmpty()) Text("None yet.", style = MaterialTheme.typography.bodySmall)
+            for (e in list) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(fmt.format(java.util.Date(e.timeMs)), style = MaterialTheme.typography.bodyMedium)
+                        Text(e.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = { asking = e }) { Text("Restore") }
+                }
+            }
+        }
+    }
+    asking?.let { e ->
+        AlertDialog(
+            onDismissRequest = { asking = null },
+            title = { Text("Restore this backup?") },
+            text = {
+                Text(
+                    "Every workspace, the Defaults and the device presets go back to how they were on " + fmt.format(java.util.Date(e.timeMs)) +
+                        ". What you have now is backed up first, so you can come back to it.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    asking = null
+                    note(context, if (runtime.restoreBackup(e)) "Restored" else "That backup can't be read")
+                    shown++
+                }) { Text("Restore", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { asking = null }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -109,6 +165,8 @@ private fun AppTab(runtime: GamepadRuntime) {
     val padOnly by runtime.padOnlyInput.collectAsStateWithLifecycle()
     val padOnlyHardware by runtime.padOnlyHardware.collectAsStateWithLifecycle()
     val startFullscreen by runtime.startFullscreen.collectAsStateWithLifecycle()
+    val doubleBack by runtime.doubleBackPanel.collectAsStateWithLifecycle()
+    val doubleBackMs by runtime.doubleBackMs.collectAsStateWithLifecycle()
     val keepScreenOn by runtime.keepScreenOn.collectAsStateWithLifecycle()
     val gameRumble by runtime.gameRumble.collectAsStateWithLifecycle()
     val blackIdle by runtime.blackScreenIdle.collectAsStateWithLifecycle()
@@ -149,6 +207,7 @@ private fun AppTab(runtime: GamepadRuntime) {
     val diagOn by runtime.debug.enabled.collectAsStateWithLifecycle()
     val diagKeep by runtime.debug.keepMinutes.collectAsStateWithLifecycle()
     val usbDirect by runtime.usbDirectOn.collectAsStateWithLifecycle()
+    val usbWaiting by runtime.usbPads.waiting.collectAsStateWithLifecycle()
     val tight by runtime.gyroTightening.collectAsStateWithLifecycle()
     val smooth by runtime.gyroSmoothing.collectAsStateWithLifecycle()
     val capRws by runtime.sensCapRws.collectAsStateWithLifecycle()
@@ -161,6 +220,24 @@ private fun AppTab(runtime: GamepadRuntime) {
                 "Start in fullscreen", startFullscreen,
                 hint = "The pad opens in fullscreen when the app starts. Press ← and → together, or Back, to leave it.",
             ) { runtime.setStartFullscreen(it) }
+            SwitchRow(
+                "Double Back to leave fullscreen", doubleBack,
+                hint = "Guards against stray Back swipes in play: in fullscreen, one Back does nothing, and two Backs in a row " +
+                        "bring the top row back. A Fullscreen mapping (long press ← or →) still leaves it at once.",
+            ) { runtime.setDoubleBackPanel(it) }
+            if (doubleBack) Searchable("Double Back time", "back twice mistouch fast milliseconds") {
+                Column {
+                    Text("Double Back time", style = MaterialTheme.typography.titleSmall)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        GamepadRuntime.DOUBLE_BACK_MS.forEach { ms ->
+                            FilterChip(
+                                selected = doubleBackMs == ms,
+                                onClick = { runtime.setDoubleBackMs(ms) },
+                                label = { Text(if (ms < 1000) "$ms ms" else "${ms / 1000} s") })
+                        }
+                    }
+                }
+            }
             SwitchRow(
                 "Keep the screen on while the pad is open", keepScreenOn,
                 hint = if (keepScreenOn) "The phone doesn't dim or lock while the pad is on screen. Its pages and other apps lock as usual."
@@ -308,12 +385,14 @@ private fun AppTab(runtime: GamepadRuntime) {
             OverrideSlider(
                 "appGyroTight", if (tight < 0.05f) "Jitter cutoff off" else "Jitter cutoff %.1f°/s", tight, 0f..5f, 0.1f,
                 overridden = false, onReset = null,
-                hint = "Turns slower than this move less, which hides hand shake. Every workspace uses it.",
+                hint = "When the phone turns slower than this, the cursor moves less, which hides hand shake. It compares the phone's own " +
+                        "turning speed, so it works the same at any sensitivity. Every workspace uses it.",
             ) { v -> runtime.setGyroTightening(v) }
             OverrideSlider(
                 "appGyroSmooth", if (smooth < 0.05f) "Smoothing off" else "Smoothing below %.1f°/s", smooth, 0f..10f, 0.1f,
                 overridden = false, onReset = null,
-                hint = "Turns slower than this are averaged over a few samples, which steadies slow aim. Every workspace uses it.",
+                hint = "When the phone turns slower than this, its motion is spread over 8 ms, which steadies slow aim. Faster turns " +
+                        "go straight through. It compares the phone's own turning speed. Every workspace uses it.",
             ) { v -> runtime.setGyroSmoothing(v) }
             OverrideSlider(
                 "appSensCapRws", "Slider cap %.1f RWS", capRws,
@@ -359,6 +438,17 @@ private fun AppTab(runtime: GamepadRuntime) {
                     "(when input is sent, see Screen), other apps get nothing from it, and its buttons reach the PC from the background too."
                 else "USB gamepads go through Android like any other: only while GP is on screen.",
             ) { runtime.setUsbDirect(it) }
+            val waitingPad = usbWaiting
+            if (usbDirect && waitingPad != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Not read directly yet: $waitingPad is waiting for your \"Allow\". Until then it works through Android.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { runtime.usbPads.askNow() }) { Text("Allow") }
+                }
+            }
             Text("Debug", style = MaterialTheme.typography.titleSmall)
             SwitchRow(
                 "Diagnostics", diagOn,
@@ -413,6 +503,7 @@ private fun AppTab(runtime: GamepadRuntime) {
                     }
                 }
             }
+            AutoBackups(runtime)
         },
         category(runtime, "about", "About", "Version and gyro sensor") {
             Searchable("About", "version GyroPhone gyro rate sensor Hz", gyro.source) {

@@ -71,6 +71,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -125,6 +126,7 @@ import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.engine.MappingEngine
+import com.oleroma.gyrophone.core.model.SliderOverrides
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.ButtonHow
 import com.oleroma.gyrophone.core.model.ButtonLibrary
@@ -135,8 +137,8 @@ import com.oleroma.gyrophone.core.model.FingerAxis
 import com.oleroma.gyrophone.core.model.FingerAxisSettings
 import com.oleroma.gyrophone.core.model.GyroDisplay
 import com.oleroma.gyrophone.core.model.GyroDisplayKind
+import com.oleroma.gyrophone.core.model.DevicePresets
 import com.oleroma.gyrophone.core.model.GyroMode
-import com.oleroma.gyrophone.core.model.GyroSettings
 import com.oleroma.gyrophone.core.model.How
 import com.oleroma.gyrophone.core.model.Inheritance
 import com.oleroma.gyrophone.core.model.InputSource
@@ -178,6 +180,7 @@ import com.oleroma.gyrophone.core.model.withPlacement
 import com.oleroma.gyrophone.core.model.withSets
 import com.oleroma.gyrophone.core.net.OverlayControl
 import com.oleroma.gyrophone.core.net.OverlayFeed
+import com.oleroma.gyrophone.core.net.OverlayFrames
 import com.oleroma.gyrophone.core.net.OverlayLayout
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlin.math.abs
@@ -216,6 +219,9 @@ private const val LAYER_POLL_MS = 100L
 
 /** How long a button keeps showing what it sent after it stops. */
 private const val LIVE_LINGER_MS = 700L
+
+/** How often the pad looks whether the PC's phone overlay is on (it then sends the frames). */
+private const val OVERLAY_ON_POLL_MS = 500L
 private val LIVE_LABEL_COLOR = Color(0xFFFFE08A)
 
 /** Edit mode: how much of a control (all of a smaller one) must stay on screen, in dp: about a fingertip. */
@@ -465,6 +471,8 @@ fun PadScreen(
     val profile by runtime.activeProfile.collectAsStateWithLifecycle().heldWhile(hidden)
     val wsIndex by runtime.workspaceIndex.collectAsStateWithLifecycle().heldWhile(hidden)
     val controllers by runtime.controllers.collectAsStateWithLifecycle()
+    // The app in front: the frames stop while it isn't and the PC's overlay is off (polls are not paused with the activity).
+    val onScreen by runtime.onScreen.collectAsStateWithLifecycle()
     val library by runtime.buttonLibrary.collectAsStateWithLifecycle()
     /** A library button being removed (asks first). */
     var removingLib by remember { mutableStateOf<LibraryButton?>(null) }
@@ -479,6 +487,12 @@ fun PadScreen(
 
     /** The pad's top-left in the window, to turn a drop from the edit menu into a place on the pad. */
     var padOrigin by remember { mutableStateOf(Offset.Zero) }
+
+    val firstStart by runtime.firstStart.collectAsStateWithLifecycle()
+    if (firstStart && !hidden) FirstStartDialog(
+        onConnection = { runtime.firstStartDone(); onOpenMenu(PadMenuPage.Connection) },
+        onDone = { runtime.firstStartDone() },
+    )
 
     /** Something being dragged out of the edit menu: its label, where the finger is (window), and whether it is out on the pad. */
     var dropping by remember { mutableStateOf<Triple<String, Offset, Boolean>?>(null) }
@@ -596,6 +610,11 @@ fun PadScreen(
 
     fun redoEdit() {
         val d = draft ?: return
+        // A change made since the last undo (not a step yet) ends what could be redone, as it will once it settles.
+        if (undoBase[0] != null && d != undoBase[0]) {
+            redoSteps.clear()
+            return
+        }
         val next = redoSteps.removeLastOrNull() ?: return
         undoSteps.add(undoBase[0] ?: d)
         undoBase[0] = next
@@ -611,6 +630,8 @@ fun PadScreen(
     /** Pointers currently routed to engine.buttonDown/Move/Up. */
     val buttonFingers = remember { HashSet<Long>() }
     var fingersOnButtons by remember { mutableIntStateOf(0) }
+    /** Fingers on the touchpad in play (its frame's labels follow them every frame, [ValueBars]). */
+    var fingersOnPad by remember { mutableIntStateOf(0) }
     var pressedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var latchedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
 
@@ -647,12 +668,15 @@ fun PadScreen(
     /** Quick-tap run for the reveal: last touch-down (event nanos) and taps so far. */
     val tapRun = remember { LongArray(2) }
 
+    /** Bumped by each start of the play touch handler: only the newest one's end lets go of what is held. */
+    val playGen = remember { IntArray(1) }
+
     /**
-     * Restarts the play touch handler on layout changes but not on gyro changes, so the gyro
-     * corner switching the mode leaves held sticks and buttons alone.
+     * Restarts the play touch handler only when what it reads changes ([Profile.playTouchKey]): a
+     * slider's saved value, a gyro change (the gyro corner) or Set orientation leaves held sticks and
+     * buttons alone.
      */
-    val playKey =
-        remember(profile) { profile.copy(workspaces = profile.workspaces.map { it.copy(gyro = GyroSettings()) }) }
+    val playKey = remember(profile, wsIndex) { profile.playTouchKey(wsIndex) }
     val shown = draft ?: profile
     val shownIndex = (if (editing) editIndex else wsIndex).coerceIn(0, shown.workspaces.lastIndex)
     val ws = shown.workspace(shownIndex)
@@ -667,6 +691,8 @@ fun PadScreen(
     val hasLayers = remember(ws.mappings, ws.keyboard, ws.mouse, ws.phone, ws.pads) {
         (ws.mappings + ws.keyboard + ws.mouse + ws.phone + ws.pads.flatMap { it.mappings }).any { it.target is OutputTarget.Layer }
     }
+    // The PC's Keys overlay names what the pad's keys send in this set ([GamepadRuntime.padLayers]).
+    LaunchedEffect(layers) { runtime.padLayers.value = layers }
     LaunchedEffect(hasLayers, editing, hidden) {
         if (!hasLayers || editing || hidden) {
             layers = MappingEngine.Layers(MappingSet.BASE, emptyList())
@@ -683,18 +709,15 @@ fun PadScreen(
         layered(ws.mappings, layers.set, layers.overrides).filterNot { Describe.isHaptic(it.target) }
             .groupBy { MappingProfiles.touchId(it.source) }
     }
-    // What each control really presses now, for the PC's phone overlay (live labels: the engine's
-    // mappings in use, held inputs carrying their old set's included). The pad shows it in the frames ([ValueBars]).
+    // What each control really presses now (the engine's mappings in use, held inputs carrying their old
+    // set's included): it lights the controls; the frames show it ([ValueBars], on the PC's phone overlay too).
     val labelCache = remember { LabelCache() }
     val inUseCache = remember { arrayOfNulls<List<Mapping>>(1) }
     val inUseShown = remember { arrayOf<List<Mapping>>(emptyList()) }
-    // The mappings on at the last poll, and the label text per control they make.
-    val activeCache = remember { arrayOf<List<Mapping>>(emptyList()) }
-    val activeText = remember { arrayOf<Map<String, String>>(emptyMap()) }
-    val liveLabels = remember { mutableStateMapOf<String, String>() }
-    val liveUntil = remember { HashMap<String, Long>() }
     val liveWatchUntil = remember { LongArray(1) }
     var liveWatching by remember { mutableStateOf(false) }
+    // Read fresh by the play handler, which a long press time saved from a slider doesn't restart.
+    val longPressMs by rememberUpdatedState(ws.longPressMs)
 
     /** The touch mappings in use that light or label their control: not haptics, empty ones or gyro cards. */
     fun shownInUse(): List<Mapping> {
@@ -706,36 +729,6 @@ fun PadScreen(
                 .filterNot { it.source is InputSource.Gyro || it.source is InputSource.Tilt || it.source is InputSource.Shake }
         }
         return inUseShown[0]
-    }
-
-    fun refreshLive(active: List<Mapping>) {
-        val now = SystemClock.uptimeMillis()
-        if (!visuals.liveMappings || editing) {
-            liveLabels.clear(); liveUntil.clear()
-            return
-        }
-        val last = activeCache[0]
-        if (active.size != last.size || active.indices.any { active[it] !== last[it] }) {
-            activeCache[0] = active
-            // The touchpad's under "" (shown at the pad's top centre when the workspace asks).
-            activeText[0] = active.groupBy { MappingProfiles.touchId(it.source) ?: "" }
-                .mapValues { (_, ms) -> ms.map { Describe.shortTarget(it.target) }.distinct().joinToString(" + ") }
-                .filterValues { it.isNotEmpty() }
-        }
-        val texts = activeText[0]
-        for ((id, text) in texts) {
-            if (liveLabels[id] != text) liveLabels[id] = text
-            liveUntil[id] = now + LIVE_LINGER_MS
-        }
-        if (liveUntil.size > texts.size) {
-            val entries = liveUntil.entries.iterator()
-            while (entries.hasNext()) {
-                val (id, until) = entries.next()
-                if (id in texts || until >= now) continue
-                entries.remove()
-                if (id in liveLabels) liveLabels.remove(id)
-            }
-        }
     }
 
     fun refreshHighlights() {
@@ -750,13 +743,12 @@ fun PadScreen(
         for (m in active) MappingProfiles.touchId(m.source)?.let(ids::add)
         for (m in shown) if (m.source.slides) MappingProfiles.touchId(m.source)?.takeIf { it in p }?.let(ids::add)
         if (ids != activeIds) activeIds = ids
-        refreshLive(active)
-        if (liveWatching && SystemClock.uptimeMillis() > liveWatchUntil[0] && liveLabels.isEmpty() && ids.isEmpty()) liveWatching = false
+        if (liveWatching && SystemClock.uptimeMillis() > liveWatchUntil[0] && ids.isEmpty()) liveWatching = false
     }
 
     /** A touch began or ended: watch the mappings for a while (gestures fire after lifts). */
     fun watchLive() {
-        liveWatchUntil[0] = SystemClock.uptimeMillis() + ws.longPressMs + LIVE_LINGER_MS
+        liveWatchUntil[0] = SystemClock.uptimeMillis() + longPressMs + LIVE_LINGER_MS
         if (!liveWatching) liveWatching = true
     }
 
@@ -766,6 +758,7 @@ fun PadScreen(
         swipeLines.clear()
         moveRulers.clear()
         fingersOnButtons = 0
+        fingersOnPad = 0
         for (id in stickPos.keys.toList()) runtime.engine.setTouchStick(id, 0f, 0f)
         stickPos.clear()
         runtime.wifi.overlay.clearTouches()
@@ -977,6 +970,14 @@ fun PadScreen(
                 val next = change(old)
                 WorkspaceDefaults.markOwn(old, if (Bindings.sameSwipeInputs(old, next)) next else Bindings.matchSwipeModes(next))
             })
+        }
+
+        /** The edited workspace's layers changed; a removed one also goes from its pinned device preset ([Profile.withSets]). */
+        fun editSets(sets: List<MappingSet>, removed: Int?) {
+            editWorkspace { it.withSets(sets, removed) }
+            if (removed == null) return
+            val d = draft ?: return
+            draft = DevicePresets.dropSet(d, d.workspace(editIndex).devicePreset, removed)
         }
 
         fun isCorner(d: Profile, id: String) = d.corners.any { it.id == id }
@@ -1512,6 +1513,7 @@ fun PadScreen(
                 // Hidden under a menu page: a finger still down from before acts on nothing (and the
                 // handler starts afresh, with no finger of before, when the pad shows again).
                 if (hidden) return@pointerInput
+                val gen = ++playGen[0]
                 val workspace = profile.workspace(wsIndex)
                 // Gyro displays are only drawn: they take no touches.
                 val controls = workspace.touchControls.filterNot { it.kind == TouchKind.DISPLAY }
@@ -1629,6 +1631,8 @@ fun PadScreen(
                         pointer in padOwner -> {
                             padOwner.remove(pointer)
                             runtime.engine.touchpadCancel(pid)
+                            // A zone takes or gives back the finger on a move, not a touch-down or lift.
+                            fingersOnPad = padOwner.size
                             FingerJob.PAD
                         }
 
@@ -1662,6 +1666,7 @@ fun PadScreen(
                         FingerJob.PAD -> {
                             padOwner.add(pointer)
                             runtime.engine.touchpadDown(pid, p.x, p.y, at)
+                            fingersOnPad = padOwner.size
                         }
 
                         FingerJob.BUTTON -> if (origin != null) {
@@ -1722,7 +1727,7 @@ fun PadScreen(
                     if (f.outside) count(outsideCount, f.origin!!.id, TouchAreaKind.OUTSIDE, -1)
                 }
 
-                awaitPointerEventScope {
+                try { awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
                         // Event time for the touchpad's speed math (processing time jitters).
@@ -1922,10 +1927,15 @@ fun PadScreen(
                                 chordFired[0] = false
                             }
                             if (fingersOnButtons != buttonFingers.size) fingersOnButtons = buttonFingers.size
+                            if (fingersOnPad != padOwner.size) fingersOnPad = padOwner.size
                             watchLive()
                             refreshHighlights()
                         }
                     }
+                } } finally {
+                    // Restarted (a workspace switch, a layout change) or gone: what this handler held lets go
+                    // now, not on the next touch. A newer handler already started owns what is held.
+                    if (playGen[0] == gen) releaseAll()
                 }
             }
         }
@@ -1989,7 +1999,16 @@ fun PadScreen(
         // The buttons' frames (their mappings active now, their Toggles, their sliders' values), read
         // once for the frames behind the buttons and the bars and frames over them.
         val frames = visuals.liveMappings
-        val valueBars = if (editing || covered || !(frames || visuals.positionRuler)) null else {
+        // Whether the PC's overlay is on (it shows the frames too), polled in play while the pad shows.
+        val overlayOn by produceState(runtime.wifi.overlay.wanted, editing, hidden) {
+            while (!editing && !hidden) {
+                value = runtime.wifi.overlay.wanted
+                delay(OVERLAY_ON_POLL_MS)
+            }
+        }
+        // Hidden under a menu page, or the app in the background with the PC's overlay off: no frames
+        // (nothing would show them).
+        val valueBars = if (editing || covered || hidden || (!onScreen && !overlayOn) || !(frames || visuals.positionRuler)) null else {
             // Only the buttons and mappings decide the marks: a workspace edit that changes neither (a
             // slider's saved value) keeps the overlay as it is.
             val valueMarks = remember(ws.touchControls, ws.mappings, ws.padFingers, ws.gyro.gameCountsPer360, w, h, portrait, frames, visuals.positionRuler) {
@@ -2023,10 +2042,12 @@ fun PadScreen(
                     }
                 }
             }
+            // Every frame only while something can change them: a finger on the touchpad (when it has a
+            // frame) or a button, a press, or a while after a touch; else at the idle rate.
             val padMarked = valueMarks.any { it.id.isEmpty() }
             rememberValueBars(
                 runtime.engine, valueMarks,
-                { padMarked || fingersOnButtons > 0 || pressedIds.isNotEmpty() || liveWatching },
+                { (padMarked && fingersOnPad > 0) || fingersOnButtons > 0 || pressedIds.isNotEmpty() || liveWatching },
                 bars = visuals.positionRuler, frames = frames,
             )
         }
@@ -2052,7 +2073,7 @@ fun PadScreen(
                     fun name(id: Int) = if (id == MappingSet.BASE) "Base" else ws.sets.firstOrNull { it.id == id }?.label ?: "Layer $id"
                     (listOf(name(layers.set)) + layers.overrides.map { "+ " + name(it) }).joinToString(" ")
                 }
-                // The layout without what changes on a press (live labels, held corners and sticks):
+                // The layout without what changes on a press (held corners and sticks, lit controls, frames):
                 // those are read outside composition below, so a press doesn't recompose the pad.
                 val overlayBase = OverlayLayout(
                     widthPx = w.roundToInt(),
@@ -2084,20 +2105,30 @@ fun PadScreen(
                     },
                 )
                 LaunchedEffect(overlayBase) {
-                    snapshotFlow {
-                        val controls = overlayBase.controls
-                        var live: ArrayList<OverlayControl>? = null
-                        for (i in controls.indices) {
-                            val c = controls[i]
-                            if (c.kind != OverlayControl.BUTTON && c.kind != OverlayControl.STICK) continue
-                            val l = liveLabels[c.id] ?: continue
-                            if (l != c.label) (live ?: ArrayList(controls).also { live = it })[i] = c.copy(label = l)
-                        }
-                        (live?.let { overlayBase.copy(controls = it) } ?: overlayBase) to (cornersHeld + heldSticks)
-                    }.collect { (layout, held) ->
-                        runtime.wifi.overlay.setLayout(layout)
-                        runtime.wifi.overlay.uiHeld = held
+                    runtime.wifi.overlay.setLayout(overlayBase)
+                    snapshotFlow { cornersHeld + heldSticks }.collect { runtime.wifi.overlay.uiHeld = it }
+                }
+                // Lit as the pad lights them: while one of their mappings is active.
+                LaunchedEffect(Unit) {
+                    try {
+                        snapshotFlow { activeIds }.collect { runtime.wifi.overlay.uiLit = it }
+                    } finally {
+                        runtime.wifi.overlay.uiLit = null
                     }
+                }
+                // The frames and bars as the pad shows them, built only while the PC's overlay is on ([overlayOn]).
+                val frameDensity = LocalDensity.current
+                val barColor = visuals.rulerColor.toInt()
+                LaunchedEffect(valueBars, overlayOn, frameDensity, barColor) {
+                    val vb = valueBars
+                    if (vb == null) {
+                        runtime.wifi.overlay.setFrames(OverlayFrames.NONE)
+                        return@LaunchedEffect
+                    }
+                    if (!overlayOn) return@LaunchedEffect
+                    val textPx = valueTextPx(frameDensity)
+                    val dp = frameDensity.density
+                    snapshotFlow { vb.frame }.collect { runtime.wifi.overlay.setFrames(vb.toOverlay(textPx, dp, barColor)) }
                 }
             }
             valueBars?.let { ValueFramesBehind(it, Modifier.fillMaxSize()) }
@@ -2246,6 +2277,9 @@ fun PadScreen(
 
 
         if (linkTest && !editing) LinkTestNote()
+
+        val calibratePopup by runtime.calibratePopup.collectAsStateWithLifecycle()
+        calibratePopup?.let { if (!editing) CalibratePopup(it) }
 
         if (black) BlackScreen { black = false }
 
@@ -2590,7 +2624,7 @@ fun PadScreen(
                                 .size(if (small) 14.dp else 22.dp),
                         )
                         val canUndo = undoSteps.isNotEmpty() || (undoBase[0] != null && draft !== undoBase[0])
-                        val canRedo = redoSteps.isNotEmpty()
+                        val canRedo = redoSteps.isNotEmpty() && (undoBase[0] == null || draft == undoBase[0])
                         val mainRows = min(panelRows, mainRowsCap(portrait))
                         // Select's Sync choices for the picked controls.
                         val sync = SyncChoices(editControls(), if (selectMode) picked else emptySet())
@@ -3139,26 +3173,29 @@ fun PadScreen(
                         labelShown = ws.touchpadLabelShown,
                         onLabelShown = { v -> editWorkspace { it.copy(touchpadLabelShown = v) } },
                         onMappingsChange = { m ->
-                            editWorkspace { it.copy(mappings = m) }
+                            editWorkspace { SliderOverrides.pruned(it.copy(mappings = m)) }
                         },
+                        namedSens = ws.namedSens,
+                        onNamedSens = { change -> editWorkspace(change) },
                         onSettings = null,
                         onClose = close,
                         sets = ws.sets,
                         editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
                         onEditSet = { mapSet = it },
-                        onSetsChange = { sets, removed -> editWorkspace { it.withSets(sets, removed) } },
+                        onSetsChange = { sets, removed -> editSets(sets, removed) },
                         zoneSettings = ws.touchpad,
                         onZoneSettings = { a, b ->
                             editWorkspace { it.copy(touchpad = it.touchpad.copy(holdZones = a, dirHoldZones = b)) }
                         },
                         // ⚙ edits the settings of the layer picked in the set bar.
                         settings = touchpadSettings(runtime, setLevel(ws, d.defaults, mapSet) { change -> editWorkspace(change) })
-                            .let { t -> MappingSettings(t.action, shared = workspacePage, sharedTop = workspaceTop) },
+                            .let { t -> MappingSettings(t.action, shared = workspacePage, sharedTop = workspaceTop, sens = t.sens) },
                         // Base takes the Defaults' mappings of what it does not map; a layer shows Base's greyed.
                         inherited = if (mapSet == MappingSet.BASE || ws.sets.none { s -> s.id == mapSet }) {
                             Inheritance.defaults(d.defaults)
                         } else emptyList(),
                         parentName = "Defaults",
+                        level = ws,
                     )
                 }
             } else if (d != null && sel != null && !dragging && menu != EditMenu.NONE) {
@@ -3252,7 +3289,9 @@ fun PadScreen(
                             runtime = runtime,
                             label = sel.label,
                             onLabel = { v -> updateControl(sel.id) { it.copy(label = v) } },
-                            onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
+                            onMappingsChange = { m -> editWorkspace { SliderOverrides.pruned(it.copy(mappings = m)) } },
+                            namedSens = ws.namedSens,
+                            onNamedSens = { change -> editWorkspace(change) },
                             // Over the settings when it was opened from there: back to them; else they open over it.
                             onSettings = { pages.over = menu == EditMenu.MAPPING },
                             // The control stays selected (ready to pinch); a tap on empty space clears it.
@@ -3260,7 +3299,7 @@ fun PadScreen(
                             sets = ws.sets,
                             editSet = if (ws.sets.any { s -> s.id == mapSet }) mapSet else MappingSet.BASE,
                             onEditSet = { mapSet = it },
-                            onSetsChange = { sets, removed -> editWorkspace { it.withSets(sets, removed) } },
+                            onSetsChange = { sets, removed -> editSets(sets, removed) },
                             zoneSettings = if (sel.swipes) sel.surfaceSettings(ws.touchpad) else null,
                             onZoneSettings = { a, b ->
                                 updateControl(sel.id) { it.copy(surface = it.ownSurface.copy(holdZones = a, dirHoldZones = b)) }
@@ -3295,7 +3334,7 @@ fun PadScreen(
                                 }
                             },
                             onSize = { resize(sel.id, it) },
-                            onMappingsChange = { m -> editWorkspace { it.copy(mappings = m) } },
+                            onMappingsChange = { m -> editWorkspace { SliderOverrides.pruned(it.copy(mappings = m)) } },
                             // Opened from the mapping editor: back to it; else it opens over these.
                             onEditMappings = { pages.over = menu == EditMenu.CONTEXT },
                             onDuplicate = duplicateSel,
@@ -3936,3 +3975,29 @@ private fun fadeAlpha(c: TouchControl, ws: Workspace, touched: () -> Boolean): S
 
 /** The pad's background (the gyro displays' layer paints it too: [GyroDisplaysLayer]). */
 val PAD_BACKGROUND = Color(0xFF101318)
+
+/**
+ * The first-start card of a new install: the three steps to play, the Connection page one tap
+ * away. Closed (either button), it never shows again.
+ */
+@Composable
+private fun FirstStartDialog(onConnection: () -> Unit, onDone: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("Welcome to GP") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("1. On your Windows PC, install the GP companion: GyroPhoneCompanion.exe from github.com/oleroma/GyroPhone/releases. It gives the fastest link, a few milliseconds.")
+                Text("2. In the companion's tray menu choose Pair new phone… Then open Connection here, tap Scan QR code and point the camera at its code.")
+                Text("3. That's it: the phone connects by itself from now on. The workspaces at the top (← →) come with gyro mouse and touchpad ready.")
+                Text(
+                    "Hold the phone and play: the gyro moves the mouse. Settings and the Connection page show tips when something could be faster.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onConnection) { Text("Open Connection") } },
+        dismissButton = { TextButton(onClick = onDone) { Text("Got it") } },
+    )
+}

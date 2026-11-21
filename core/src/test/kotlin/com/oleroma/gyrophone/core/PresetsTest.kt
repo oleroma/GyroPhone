@@ -119,6 +119,15 @@ class PresetsTest {
         assertEquals(null, w.pads[0].match)
     }
 
+    @Test fun wasdTriggersClickOnPadsWithBrakeAndGas() {
+        // Xbox pads over Bluetooth report their triggers as brake (left) and gas (right).
+        val ms = BuiltinProfiles.kbmPadMappings()
+        val brake = InputSource.Axis(com.oleroma.gyrophone.core.model.AndroidAxis.BRAKE, com.oleroma.gyrophone.core.model.AxisHalf.POSITIVE)
+        val gas = InputSource.Axis(com.oleroma.gyrophone.core.model.AndroidAxis.GAS, com.oleroma.gyrophone.core.model.AxisHalf.POSITIVE)
+        assertTrue(ms.any { it.source == brake && it.target == OutputTarget.Mouse(com.oleroma.gyrophone.core.model.MouseButton.RIGHT) })
+        assertTrue(ms.any { it.source == gas && it.target == OutputTarget.Mouse(com.oleroma.gyrophone.core.model.MouseButton.LEFT) })
+    }
+
     @Test fun wasdStickPressesKeysAndRatchetPausesGyro() {
         val w = BuiltinProfiles.wasdWorkspace
         assertEquals(GyroMode.ALWAYS, w.gyro.mode)

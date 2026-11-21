@@ -89,7 +89,7 @@ object ProfileExport {
             ?: throw NotAnExport("This GyroPhone file is damaged.")
         fun <T> list(key: String, decode: (String) -> List<T>?): List<T> =
             (obj[key] as? JsonArray)?.let { decode(json.encodeToString(JsonElement.serializer(), it)) }.orEmpty()
-        return Read(kind, profile.profile, list("library", ButtonLibrary::decode), list("presets", MappingPresets::decode), profile.dropped)
+        return Read(kind, profile.profile, list("library", ButtonLibrary::decodeLenient), list("presets", MappingPresets::decodeLenient), profile.dropped)
     }
 
     /** [name], or "[name] 2", "[name] 3"... whichever no workspace of [p] has. */
@@ -106,6 +106,7 @@ object ProfileExport {
      * its own, its device preset added beside [p]'s. Where it followed the Defaults of the phone it
      * came from and [p]'s Defaults differ, it takes the old value as its own, so it works the same;
      * where they agree it keeps following them, so nothing shows as an override that changes nothing.
+     * Its global controls come in as its own ([TouchControl.global] off), so none spreads to the others.
      */
     fun addWorkspace(p: Profile, r: Read): Profile {
         val src = r.profile
@@ -138,6 +139,9 @@ object ProfileExport {
             presets = presets + dp.copy(id = id)
             w.copy(devicePreset = id)
         }
+        // Its global controls become its own: kept global, the next sync would copy them, mappings
+        // and all, into every workspace here that has no control with that id.
+        if (w.touchControls.any { it.global }) w = w.copy(touchControls = w.touchControls.map { if (it.global) it.copy(global = false) else it })
         w = w.copy(id = ProfileJson.newWorkspaceId(p.workspaces.map { it.id }), name = freeName(p, w.name))
         return p.copy(workspaces = p.workspaces + w, devicePresets = presets)
     }

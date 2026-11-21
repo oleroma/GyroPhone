@@ -31,6 +31,11 @@ public sealed class LinkStats
     public uint LatP50Us { get; private set; } = HostStatus.Unknown;
     public uint LatP99Us { get; private set; } = HostStatus.Unknown;
     public uint JitterUs { get; private set; }
+    /// <summary>Latencies below zero in the last second (the clock offset is wrong); counted, not put in the lowest bucket unseen.</summary>
+    public int NegativePerSec { get; private set; }
+    /// <summary>The phone's typical round trip (PHONE_STATS, Diagnostics only), µs; 0 unknown.</summary>
+    public int PhoneRttTypUs { get; set; }
+    private int _neg;
     public uint LastSeq => _lastSeq;
     public long TotalLost { get; private set; }
     public long TotalStates { get; private set; }
@@ -53,6 +58,8 @@ public sealed class LinkStats
         JitterUs = 0;
         TotalLost = TotalStates = 0;
         LastLinkInfo = null;
+        NegativePerSec = _neg = 0;
+        PhoneRttTypUs = 0;
     }
 
     /// <summary>Every accepted sealed P->H packet (seq is shared by all types).</summary>
@@ -85,6 +92,7 @@ public sealed class LinkStats
         _lastArrivalUs = hostRecvUs;
         if (!_haveOffset) return long.MinValue;
         long lat = LatencyUs(phoneTimeUs, hostRecvUs, _clockOffsetUs);
+        if (lat < 0) _neg++;
         long b = Math.Clamp(lat / BucketUs, 0, Buckets - 1);
         _hist[b]++;
         _histCount++;
@@ -126,6 +134,8 @@ public sealed class LinkStats
             LatP50Us = LatP99Us = HostStatus.Unknown;
         }
         JitterUs = _n > 1 ? (uint)Math.Min(uint.MaxValue, Math.Sqrt(_m2 / (_n - 1))) : 0;
+        NegativePerSec = _neg;
+        _neg = 0;
         Array.Clear(_hist);
         _histCount = 0;
         _rxSealed = _rxStates = _lost = 0;

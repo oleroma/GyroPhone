@@ -11,7 +11,25 @@ namespace GyroPhone.Host.Perf;
 /// <param name="GapMaxMs">The longest time between two STATEs the phone sent, ms (the keepalive is 20 ms).</param>
 /// <param name="PhoneTx">Packets the whole phone sent (every app).</param>
 public readonly record struct PhoneSecond(long AtUs, int States, int Packets, int Failed, int SlowSends,
-    float SendMaxMs, float WakeLateMs, float GapMaxMs, long PhoneTx);
+    float SendMaxMs, float WakeLateMs, float GapMaxMs, long PhoneTx)
+{
+    /// <summary>The phone's clock sync: best round trip of its last 8 pings and the middle of its last 16, ms (−1 unknown).</summary>
+    public float RttMinMs { get; init; } = -1;
+    public float RttTypMs { get; init; } = -1;
+    /// <summary>How fast the PC's clock gains on the phone's, millionths.</summary>
+    public float DriftPpm { get; init; }
+    /// <summary>Pings answered this second.</summary>
+    public int Pings { get; init; }
+    /// <summary>Battery % (255 unknown), PhoneSetup flags (1 charging, 2 battery saver, 4 USB network adapter, 8 Doze), battery temperature (0.1 °C, short.MinValue unknown), thermal status (0..6, 255 unknown).</summary>
+    public int Battery { get; init; } = 255;
+    public int SetupFlags { get; init; }
+    public int TempDeciC { get; init; } = short.MinValue;
+    public int Thermal { get; init; } = 255;
+    /// <summary>The USB network adapter on the phone (0 none), and the Wi-Fi standard (4..7, 0 unknown or on a cable).</summary>
+    public int UsbVendor { get; init; }
+    public int UsbProduct { get; init; }
+    public int WifiStandard { get; init; }
+}
 
 /// <summary>The last 20 minutes of <see cref="PhoneSecond"/>s, for test records. Written by the engine, read by the monitor.</summary>
 public sealed class PhoneTimeline
@@ -33,6 +51,12 @@ public sealed class PhoneTimeline
             if (_count < Keep) _count++;
         }
         Added?.Invoke(s);
+    }
+
+    /// <summary>The newest second, or null before any.</summary>
+    public PhoneSecond? Latest()
+    {
+        lock (_lock) return _count == 0 ? null : _ring[(_head - 1 + Keep) % Keep];
     }
 
     /// <summary>The seconds that ended after <paramref name="fromUs"/> and at or before <paramref name="toUs"/>, oldest first.</summary>

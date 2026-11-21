@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.core.model
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -28,6 +29,7 @@ data class PresetChip(
     val options: MapOptions? = null,
     val range: AxisRange? = null,
     val perDp: Float? = null,
+    val buzz: Boolean = false,
 )
 
 /**
@@ -53,8 +55,21 @@ object MappingPresets {
 
     fun encode(presets: List<MappingPreset>): String = json.encodeToString(listSerializer, presets)
 
-    /** Reads a saved list; unreadable text gives null (the caller keeps the file). */
+    /**
+     * Reads a saved list; unreadable text gives null (the caller keeps the file), and so does an
+     * item this build can't read (a newer build's action or input): [decodeLenient] reads the rest.
+     */
     fun decode(text: String): List<MappingPreset>? = runCatching { json.decodeFromString(listSerializer, text) }.getOrNull()
+
+    /**
+     * The items of a saved list this build can read, each unreadable one left out (a newer build's
+     * action or input); null when the text is no list at all. For showing them: saving over the
+     * file is still refused while [decode] can't read it whole, so those items aren't lost.
+     */
+    fun decodeLenient(text: String): List<MappingPreset>? {
+        val items = runCatching { json.parseToJsonElement(text) as? JsonArray }.getOrNull() ?: return null
+        return items.mapNotNull { runCatching { json.decodeFromJsonElement(MappingPreset.serializer(), it) }.getOrNull() }
+    }
 
     fun newId(taken: Collection<String>): String {
         var n = 1
@@ -103,7 +118,7 @@ object MappingPresets {
         keepFingers: Boolean = false,
     ): List<PresetChip> = inputs.flatMap { input ->
         Bindings.entries(mappings, input).map { e ->
-            PresetChip(slot(input.sources.first(), index(input), keepFingers), e.target, e.options, e.range, e.perDp)
+            PresetChip(slot(input.sources.first(), index(input), keepFingers), e.target, e.options, e.range, e.perDp, e.buzz)
         }
     }.distinct()
 
@@ -127,7 +142,7 @@ object MappingPresets {
         for ((s, list) in chips.groupBy { it.slot }) {
             val input = bySlot[s] ?: continue
             val now = Bindings.entries(out, input)
-            val add = list.map { Bindings.Entry(it.target, it.options, it.range, it.perDp) }
+            val add = list.map { Bindings.Entry(it.target, it.options, it.range, it.perDp, it.buzz) }
                 .filter { e -> now.none { it.target == e.target && it.shape == e.shape } }
             if (add.isNotEmpty()) out = Bindings.setEntries(out, input, now + add)
         }
@@ -149,7 +164,11 @@ object MappingPresets {
         fun addZoned(i: BindableInput) {
             val s = i.sources.firstOrNull() as? InputSource.Surface
             if (s != null && s.input.heldSwipe) for (z in 0 until TouchpadSettings.MAX_HOLD_ZONES) add(Bindings.zoneInput(i, z))
-            else add(i)
+            else {
+                add(i)
+                // A stick direction's outer zone (its chips after the separator).
+                Bindings.stickOuter(i)?.let(::add)
+            }
         }
         val surfaces = LinkedHashSet<Pair<Int, String>>()
         for (top in tops.filterNot(Bindings::isTriggerOf)) {
@@ -164,7 +183,7 @@ object MappingPresets {
 
     /** The settings of a touch control a preset brings: everything but its id, look and place. */
     val BUTTON_SETTINGS: Set<String> = setOf(
-        "deadzone", "zones", "longPressMs", "zoneInterrupt", "zoneResume", "followLayers", "surface",
+        "deadzone", "zones", "outerRing", "longPressMs", "zoneInterrupt", "zoneResume", "followLayers", "surface",
         "sharesTouches", "gyro", "fingers",
     )
 
@@ -173,7 +192,7 @@ object MappingPresets {
         is InputSource.Touch -> setOf("followLayers", "sharesTouches")
         is InputSource.TouchTap, is InputSource.TouchLongPress, is InputSource.TouchDoubleTap -> setOf("longPressMs")
         is InputSource.TouchArea -> setOf("zoneInterrupt", "zoneResume", "longPressMs")
-        is InputSource.TouchStick, is InputSource.TouchStickDiagonal -> setOf("deadzone", "zones")
+        is InputSource.TouchStick, is InputSource.TouchStickDiagonal -> setOf("deadzone", "zones", "outerRing")
         // A move, swipe or held direction: the surface's settings (sensitivity, directions...); a tap: its timing.
         is InputSource.Surface -> when (kind.input) {
             SurfaceInput.TAP, SurfaceInput.DOUBLE_TAP, SurfaceInput.LONG_PRESS -> setOf("longPressMs")

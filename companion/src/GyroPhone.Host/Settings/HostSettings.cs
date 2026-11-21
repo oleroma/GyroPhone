@@ -14,8 +14,11 @@ public sealed class HostSettings
     public OutputMode OutputMode { get; set; } = OutputMode.Xbox360;
     public bool StartWithWindows { get; set; }
     public TrayClickAction TrayClick { get; set; } = TrayClickAction.OpenMainWindow;
-    /// <summary>Switch a phone on the USB cable to accessory mode and use it as a link (Windows only).</summary>
-    public bool UsbDirect { get; set; } = true;
+    /// <summary>
+    /// Switch a phone on the USB cable to accessory mode and use it as a link (Windows only). Off until the user
+    /// turns it on: it switches any Android device with USB debugging on the cable, not only a GyroPhone phone.
+    /// </summary>
+    public bool UsbDirect { get; set; }
     public List<PairedPhone> PairedPhones { get; set; } = [];
     /// <summary>The overlay windows (phone, 3D shape, attitude indicator, bubble disk), each with its own settings.</summary>
     public List<OverlaySettings> Overlays { get; set; } = [];
@@ -24,7 +27,11 @@ public sealed class HostSettings
     /// and the window's size, named by <see cref="OverlaySettings.Label"/>; not where the window was.
     /// </summary>
     public List<OverlaySettings> OverlayPresets { get; set; } = [];
-    /// <summary>Overlay windows can be dragged to move and resize; off, the mouse goes through them to the game.</summary>
+    /// <summary>
+    /// Overlay windows can be dragged to move and resize; off, the mouse goes through them to the game.
+    /// Not saved: every start begins with Edit off, so the mouse never stops at an overlay over a game.
+    /// </summary>
+    [JsonIgnore]
     public bool OverlayEdit { get; set; }
     /// <summary>Every overlay window is hidden (shortcut or tray), each keeping its own Show for when this is off.</summary>
     public bool OverlaysHidden { get; set; }
@@ -46,6 +53,12 @@ public sealed class HostSettings
     /// SendInput hands them to the window in front itself (worst ~3.4 ms, 2026-11-15 trace). Without the driver it changes nothing.
     /// </summary>
     public bool UseInputDriver { get; set; }
+    /// <summary>
+    /// "Use the Rust input program" (Performance › Input program, off by default), the companion's own setting
+    /// (companion.json): the companion starts its input process as the Rust program (companion/src/input) instead of
+    /// the original C# one. Both do the same job; the C# one stays as the fallback.
+    /// </summary>
+    public bool RustInput { get; set; }
     /// <summary>"Use this PC's keys for Press a key" on the App page: off, the PC's keyboard, mouse and controller are never read for it.</summary>
     public bool PressKeyListen { get; set; } = true;
     /// <summary>"Notify when the phone listens for a key" on the App page: a tray notification each time the phone's "Press a key" opens.</summary>
@@ -129,6 +142,7 @@ public enum OverlayAction
     LevelAll,
     HideAll,
     Edit,
+    BehindAll,
 }
 
 /// <summary>
@@ -140,17 +154,20 @@ public sealed class OverlayShortcuts
     public const string DefaultLevelAll = "Ctrl+Alt+R";
     public const string DefaultHideAll = "Ctrl+Alt+O";
     public const string DefaultEdit = "Ctrl+Alt+E";
+    public const string DefaultBehindAll = "Ctrl+Alt+B";
 
     public string? LevelAll { get; set; } = DefaultLevelAll;
     public string? HideAll { get; set; } = DefaultHideAll;
     public string? Edit { get; set; } = DefaultEdit;
+    public string? BehindAll { get; set; } = DefaultBehindAll;
 
-    public static IReadOnlyList<OverlayAction> All { get; } = [OverlayAction.LevelAll, OverlayAction.HideAll, OverlayAction.Edit];
+    public static IReadOnlyList<OverlayAction> All { get; } = [OverlayAction.LevelAll, OverlayAction.HideAll, OverlayAction.Edit, OverlayAction.BehindAll];
 
     public static string ActionName(OverlayAction a) => a switch
     {
         OverlayAction.LevelAll => "Level all",
         OverlayAction.HideAll => "Hide or show all overlays",
+        OverlayAction.BehindAll => "All behind on or off",
         _ => "Edit on or off",
     };
 
@@ -158,6 +175,7 @@ public sealed class OverlayShortcuts
     {
         OverlayAction.LevelAll => LevelAll,
         OverlayAction.HideAll => HideAll,
+        OverlayAction.BehindAll => BehindAll,
         _ => Edit,
     }) ?? "";
 
@@ -167,6 +185,7 @@ public sealed class OverlayShortcuts
         {
             case OverlayAction.LevelAll: LevelAll = keys; break;
             case OverlayAction.HideAll: HideAll = keys; break;
+            case OverlayAction.BehindAll: BehindAll = keys; break;
             default: Edit = keys; break;
         }
     }
@@ -177,6 +196,7 @@ public sealed class OverlayShortcuts
         LevelAll ??= DefaultLevelAll;
         HideAll ??= DefaultHideAll;
         Edit ??= DefaultEdit;
+        BehindAll ??= DefaultBehindAll;
     }
 }
 

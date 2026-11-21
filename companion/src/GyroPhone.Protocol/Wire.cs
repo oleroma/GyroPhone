@@ -66,12 +66,19 @@ public static class Wire
     public const int OverlayLayoutPlain = 200;
     /// <summary>OVERLAY_SAMPLES: each gyro sample's turn in the OVERLAY that follows (<see cref="OverlaySamples"/>).</summary>
     public const int OverlaySamplesPlain = 264;
+    /// <summary>OVERLAY_FRAMES: one piece of the pad's button frames and bars (<see cref="OverlayMarks"/>), as OVERLAY_LAYOUT's.</summary>
+    public const int OverlayFramesPlain = OverlayLayoutPlain;
     /// <summary>MOTION: the phone's raw gyro and accelerometer samples for the DualShock 4 (<see cref="MotionFrame"/>).</summary>
     public const int MotionPlain = MotionFrame.Size;
     /// <summary>PRESS_TIME: u32 STATE time, u32 input event time (low 32 bits of the phone's µs clock).</summary>
     public const int PressTimePlain = 8;
-    /// <summary>PHONE_STATS: u32 time, u16 states, packets, failed, slow sends, u32 send total µs, send max µs, wake late max µs, STATE gap max µs, phone tx packets (<see cref="PhoneStats"/>).</summary>
-    public const int PhoneStatsPlain = 32;
+    /// <summary>
+    /// PHONE_STATS: u32 time, u16 states, packets, failed, slow sends, u32 send total µs, send max µs, wake late max µs, STATE gap
+    /// max µs, phone tx packets; then i32 best round trip µs, typical round trip µs, clock drift ppb, u16 pings; the setup: u8
+    /// battery %, flags, i16 battery temperature (0.1 °C), u8 thermal status, Wi-Fi standard, u16 USB network adapter vendor,
+    /// product, Wi-Fi channel width MHz; 6 reserved (<see cref="PhoneStats"/>).
+    /// </summary>
+    public const int PhoneStatsPlain = 64;
     /// <summary>TEST_MODE: u8 <see cref="TestModeFlags"/>, 3 reserved bytes.</summary>
     public const int TestModePlain = 4;
     /// <summary>CAPTURE: u8 <see cref="CaptureFlags"/>, 3 reserved bytes.</summary>
@@ -285,6 +292,11 @@ public static class TestModeFlags
     /// <summary>With <see cref="PhoneStats"/>: a 3-bit counter of the PC's Saves; the phone saves its side when it changes.</summary>
     public const byte DiagSaveMask = 0x70;
     public const int DiagSaveShift = 4;
+    /// <summary>
+    /// Not a test: a Keys overlay is open, so the phone reads its attached pad's keys and sends them with the frames
+    /// (OVERLAY_FRAMES, <see cref="OverlayKeys"/>) while HOST_STATUS has <see cref="HostStatusFlags.Overlay"/>. Older phones ignore it.
+    /// </summary>
+    public const byte OverlayKeys = 0x80;
 }
 
 /// <summary>HOST_STATUS's second flags byte (byte 22).</summary>

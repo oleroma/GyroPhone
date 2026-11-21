@@ -53,6 +53,41 @@ object Bindings {
             }
         }
 
+    /**
+     * The outer zone of stick direction [s] (a controller stick's or a touch stick's direction or
+     * diagonal): the same way, pushed past the stick's outer ring. Null for anything else.
+     */
+    fun outerSource(s: InputSource): InputSource? = when (s) {
+        is InputSource.Axis ->
+            if (s.half != AxisHalf.FULL && s.stage == AxisStage.NONE && PhysicalSticks.isStickAxis(s.axis)) s.copy(stage = AxisStage.OUTER) else null
+        is InputSource.TouchStick -> if (s.half != AxisHalf.FULL && !s.outer) s.copy(outer = true) else null
+        is InputSource.TouchStickDiagonal -> if (!s.outer) s.copy(outer = true) else null
+        else -> null
+    }
+
+    /** [s] in a stick direction's outer zone ([outerSource]). */
+    fun isOuter(s: InputSource): Boolean = when (s) {
+        is InputSource.Axis -> s.stage == AxisStage.OUTER && s.half != AxisHalf.FULL
+        is InputSource.TouchStick -> s.outer
+        is InputSource.TouchStickDiagonal -> s.outer
+        else -> false
+    }
+
+    /** [s] without its outer zone ([isOuter]): the direction itself; any other source as it is. */
+    fun innerSource(s: InputSource): InputSource = when {
+        !isOuter(s) -> s
+        s is InputSource.Axis -> s.copy(stage = AxisStage.NONE)
+        s is InputSource.TouchStick -> s.copy(outer = false)
+        s is InputSource.TouchStickDiagonal -> s.copy(outer = false)
+        else -> s
+    }
+
+    /** Stick direction card [input]'s outer zone ([outerSource]), or null when it is no stick direction. */
+    fun stickOuter(input: BindableInput): BindableInput? {
+        if (input.sources.isEmpty()) return null
+        return input.copy(sources = input.sources.map { outerSource(it) ?: return null })
+    }
+
     /** [input] (a held direction of a surface) in length zone [zone] ([InputSource.Surface.zone]). */
     fun zoneInput(input: BindableInput, zone: Int): BindableInput =
         input.copy(sources = input.sources.map { s -> if (s is InputSource.Surface) s.copy(zone = zone) else s })
@@ -123,6 +158,19 @@ object Bindings {
     fun isTriggerOf(input: BindableInput): Boolean =
         input.sources.firstOrNull()?.let { Triggers.of(it) != Trigger.HOLD } == true
 
+    /** [inputs] (a card's) have chips that do something, and every one of them buzzes ([Mapping.buzz]). */
+    fun buzzes(mappings: List<Mapping>, inputs: List<BindableInput>): Boolean {
+        val own = mappings.filter { m -> !m.target.nothing && !Describe.isHaptic(m.target) && inputs.any { belongs(m, it) } }
+        return own.isNotEmpty() && own.all { it.buzz }
+    }
+
+    /** [mappings] with every chip of [inputs] (a card's) buzzing or not ([Mapping.buzz]). */
+    fun setBuzz(mappings: List<Mapping>, inputs: List<BindableInput>, on: Boolean): List<Mapping> =
+        mappings.map { m ->
+            val fits = !m.target.nothing && !Describe.isHaptic(m.target) && inputs.any { belongs(m, it) }
+            if (fits && m.buzz != on) m.copy(buzz = on) else m
+        }
+
     /**
      * Replaces every mapping whose source is one of input.sources with sources x targets. Keeps
      * other mappings and their order; new ones go where the first removed one was, else at the end.
@@ -138,8 +186,9 @@ object Bindings {
         val kept = mappings.filterNot { belongs(it, input) }
         val ranges = mappings.filter { belongs(it, input) && it.range != null }.associate { it.target to it.range }
         val sets = mappings.filter { belongs(it, input) && it.perDp != null }.associate { it.target to it }
+        val buzzes = mappings.filter { belongs(it, input) && it.buzz }.mapTo(HashSet()) { it.target }
         val added = input.sources.flatMap { s ->
-            targets.distinct().map { Mapping(s, it, options = options(it), range = ranges[it], perDp = sets[it]?.perDp) }
+            targets.distinct().map { Mapping(s, it, options = options(it), range = ranges[it], perDp = sets[it]?.perDp, buzz = it in buzzes) }
         }
         val at = if (first < 0) kept.size else first
         return kept.subList(0, at) + added + kept.subList(at, kept.size)
@@ -154,13 +203,14 @@ object Bindings {
         val options: MapOptions?,
         val range: AxisRange? = null,
         val perDp: Float? = null,
+        val buzz: Boolean = false,
     ) {
         val shape: Pair<How, Int> get() = (options ?: MapOptions()).shape
     }
 
     /** [input]'s chips in order, an exact duplicate (same target and How) left out. */
     fun entries(mappings: List<Mapping>, input: BindableInput): List<Entry> =
-        mappings.filter { belongs(it, input) }.map { Entry(it.target, it.options, it.range, it.perDp) }.distinctBy { it.target to it.shape }
+        mappings.filter { belongs(it, input) }.map { Entry(it.target, it.options, it.range, it.perDp, it.buzz) }.distinctBy { it.target to it.shape }
 
     /** The [n]th (from 0) of [input]'s chips of [target]; null = none. */
     fun entry(mappings: List<Mapping>, input: BindableInput, target: OutputTarget, n: Int): Entry? =
@@ -171,7 +221,7 @@ object Bindings {
         val first = mappings.indexOfFirst { belongs(it, input) }
         val kept = mappings.filterNot { belongs(it, input) }
         val list = entries.distinctBy { it.target to it.shape }
-        val added = input.sources.flatMap { s -> list.map { Mapping(s, it.target, options = it.options, range = it.range, perDp = it.perDp) } }
+        val added = input.sources.flatMap { s -> list.map { Mapping(s, it.target, options = it.options, range = it.range, perDp = it.perDp, buzz = it.buzz) } }
         val at = if (first < 0) kept.size else first
         return kept.subList(0, at) + added + kept.subList(at, kept.size)
     }
@@ -183,9 +233,10 @@ object Bindings {
         return setEntries(mappings, input, es)
     }
 
+    /** Adds [target] as a new chip of [input] (none if it has it already); its other chips stay as they are. */
     fun addTarget(mappings: List<Mapping>, input: BindableInput, target: OutputTarget): List<Mapping> {
-        val current = targets(mappings, input)
-        return if (target in current) mappings else setTargets(mappings, input, current + target)
+        if (target in targets(mappings, input)) return mappings
+        return setEntries(mappings, input, entries(mappings, input) + Entry(target, null))
     }
 
     fun removeTarget(mappings: List<Mapping>, input: BindableInput, target: OutputTarget): List<Mapping> =

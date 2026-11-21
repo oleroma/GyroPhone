@@ -23,7 +23,7 @@ object WorkspaceMappings {
         // Old latch settings become Toggle chips ([ToggleUpgrade]); the Defaults' still count for the workspaces.
         val d = set.defaults
         val defaults = ToggleUpgrade.latches(d.copy(mappings = Triggers.upgrade(d.mappings)))
-        val presets = set.devicePresets.map { DevicePresets.withPhoneDefaults(DevicePresets.fixStandIns(it)) }
+        val presets = set.devicePresets.map { DevicePresets.withPhoneDefaults(DevicePresets.foldOuterAny(DevicePresets.fixStandIns(it))) }
         return set.copy(
             defaults = defaults,
             devicePresets = presets,

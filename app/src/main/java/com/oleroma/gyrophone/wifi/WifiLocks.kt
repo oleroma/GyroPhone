@@ -5,7 +5,7 @@ import android.net.wifi.WifiManager
 import android.util.Log
 
 /**
- * Holds a WIFI_MODE_FULL_LOW_LATENCY lock while a session is live: it keeps the radio out of
+ * Holds a WIFI_MODE_FULL_LOW_LATENCY lock while a session is live on Wi-Fi: it keeps the radio out of
  * power save, which otherwise batches our packets behind the AP's beacon interval. Android only
  * honours it while the screen is on and GyroPhone is in front, which the Wi-Fi panel says.
  */

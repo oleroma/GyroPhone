@@ -46,6 +46,8 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     private readonly Pairing _pairing;
     /// <summary>The Performance page's frame watcher and test records (logs\perf).</summary>
     private readonly PerfMonitor _perf;
+    private readonly NetArrivalWatch _net;
+    private readonly AbTest _ab;
 
     private readonly TrayIcons _icons = new();
     private readonly NotifyIcon _tray;
@@ -68,7 +70,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     private readonly Dictionary<string, OverlayForm> _overlayForms = [];
     // The open windows, for the pacer thread (the dictionary is the UI thread's).
     private volatile OverlayForm[] _overlayList = [];
-    private OverlayWheel? _overlayWheel;
     // The overlays' global shortcuts; null until the server owns the port (one instance holds them).
     private Hotkeys? _hotkeys;
     private OverlayPacer? _pacer;
@@ -105,8 +106,9 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
 
         _region = SharedRegion.CreateOrOpen(SplitNames.Region);
         _overlayWake = new EventWaitHandle(false, EventResetMode.AutoReset, SplitNames.OverlayWake);
-        _input = new InputClient(_exePath, _log.Write, inputArgs);
-        _overlays = new OverlayHost(uiSettings, _region, _overlayWake, (on, compass, samples) => In.SetOverlay(on, compass, samples), _clock);
+        // A build without the Rust input program (made where Rust isn't installed) runs the original one whatever was chosen.
+        _input = new InputClient(_exePath, _log.Write, inputArgs, uiSettings.RustInput && RustInput.InThisBuild);
+        _overlays = new OverlayHost(uiSettings, _region, _overlayWake, (on, compass, samples, keys) => In.SetOverlay(on, compass, samples, keys), _clock);
         if (fresh) _overlays.MarkDirty();
         _debug = new DebugTrace(() => _clock.NowUs, queue: _region.Debug);
         _pairing = new Pairing(this);
@@ -118,10 +120,21 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         {
             _log.Write($"key names: {e.GetType().Name}");
         }
+        _net = new NetArrivalWatch(_log.Write);
+        _ab = new AbTest(AbGet, AbSet, line =>
+        {
+            _log.Write(line);
+            if (_debug.Enabled) _debug.Add(DebugTrace.Kind.Note, line);
+        });
         _perf = new PerfMonitor(new FpsHelperSource(_log.Write), new SystemLoad(_log.Write), new Foreground(), _clock,
             Path.Combine(_log.Directory, "perf"), _log.Write);
         _perf.ShowsLinkChanged += () => In.SetLinkWatch(_perf.ShowsLink);
         _perf.PathNow = () => LinkPath()?.Text;
+        _perf.SetupNow = SetupNow;
+        _perf.Note = line =>
+        {
+            if (_debug.Enabled) _debug.Add(DebugTrace.Kind.Note, line);
+        };
         OverlayForm.FpsSource = () => (_perf.View(), _perf.GameName, _perf.State, _perf.Recording);
         OverlayForm.FpsLinkSource = () =>
         {
@@ -131,6 +144,13 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         _input.Event += OnInputEvent;
         _input.Connected += OnInputConnected;
         _input.Lost += () => Post(Refresh);
+        _input.RustGaveUp += why => Post(() =>
+        {
+            _overlays.Change(s => s.RustInput = false);
+            _rustInputNote = $"The Rust input program was switched off: it {why}. The original one runs. See the log.";
+            Balloon(Program.AppName, _rustInputNote, ToolTipIcon.Warning);
+            Refresh();
+        });
 
 
         _menu = new ContextMenuStrip();
@@ -224,7 +244,8 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     private void StartOverlays()
     {
         GcWatch.NameCurrentThread("window thread");
-        _pacer = new OverlayPacer(TickOverlays, OverlayWantHz, OverlayScreenHz, _log.Write);
+        _pacer = new OverlayPacer(TickOverlays, OverlayWantHz, OverlayScreenHz, OverlaysBusy, _log.Write);
+        _overlays.Published = _pacer.Wake;
         ApplyOverlays(); // shown last time: shown again
         try
         {
@@ -328,6 +349,8 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         if (Volatile.Read(ref _exited) != 0) return;
         SaveUiSettings();
         ApplyDiagnostics();
+        if (!Set.Diagnostics) _ab.Stop(Environment.TickCount64, "Diagnostics off");
+        else _ab.Tick(Environment.TickCount64);
         var st = St;
         var s = Snap;
         bool serverOk = st?.Server == nameof(ServerState.Running);
@@ -427,6 +450,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             _debug.SetOn(on, "switched");
         }
         _perf.SetDiagnostics(on, Set.DiagnosticsMinutes);
+        _net.SetOn(on, Set.DiagnosticsMinutes);
         OverlayTiming.On = on;
     }
 
@@ -527,13 +551,73 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             set.DiagnosticsMinutes,
             Volatile.Read(ref _diagSaved),
             set.UseInputDriver,
-            st?.InputDriverReady == true ? InputDriverState.Ready : st?.InputDriverInstalled == true ? InputDriverState.NotPlugged : InputDriverState.NotInstalled);
+            st?.InputDriverReady == true ? InputDriverState.Ready : st?.InputDriverInstalled == true ? InputDriverState.NotPlugged : InputDriverState.NotInstalled,
+            !RustInput.InThisBuild ? RustInputState.NotInBuild : _overlays.Ui.RustInput ? RustInputState.On : RustInputState.Off,
+            !_input.Attached || _input.Hello is not { } hello ? null : hello.Version.EndsWith(RustInput.VersionSuffix, StringComparison.Ordinal) ? "Rust" : "Original",
+            _rustInputNote,
+            AbText());
+    }
+
+    private string? AbText()
+    {
+        if (_ab.Running is not { } t) return null;
+        int left = _ab.SecondsLeft(Environment.TickCount64);
+        return $"Phase {_ab.Phase}, {(_ab.InB ? "B" : "A")}: {AbTest.Name(t)} {_ab.Label(_ab.InB)} · next switch in {left / 60}:{left % 60:00} " +
+            $"(A {_ab.Label(false)}, B {_ab.Label(true)}, every {_ab.Minutes} min)";
+    }
+
+    private bool AbGet(AbTest.Thing t) => t == AbTest.Thing.InputProgram ? _overlays.Ui.RustInput : !_overlays.Ui.OverlaysHidden;
+
+    /// <summary>The A/B test's switch: like the Performance page's switches, without refreshing (it runs inside Refresh).</summary>
+    private void AbSet(AbTest.Thing t, bool on)
+    {
+        if (t == AbTest.Thing.InputProgram)
+        {
+            if (!RustInput.InThisBuild) return;
+            _overlays.Change(s => s.RustInput = on);
+            _rustInputNote = null;
+            _log.Write($"input program: {(on ? "Rust" : "original")} chosen by the A/B test");
+            _input.SetRust(on);
+        }
+        else
+        {
+            _overlays.SetOverlaysHidden(!on);
+            ApplyOverlays();
+        }
+    }
+
+    public void StartAbTest(AbTest.Thing thing, int minutes)
+    {
+        if (!Set.Diagnostics) return;
+        if (thing == AbTest.Thing.InputProgram && !RustInput.InThisBuild) return;
+        _ab.Start(thing, minutes, Environment.TickCount64);
+        Refresh();
+    }
+
+    public void StopAbTest()
+    {
+        _ab.Stop(Environment.TickCount64, "stopped on the Performance page");
+        Refresh();
     }
 
 
     public void SetCatchUpMs(int ms)
     {
         In.SetCatchUpMs(ms);
+        Refresh();
+    }
+
+    /// <summary>Why the companion switched the Rust input program off by itself; cleared when the switch is used.</summary>
+    private string? _rustInputNote;
+
+    public void ToggleRustInput()
+    {
+        if (!RustInput.InThisBuild) return;
+        bool on = !_overlays.Ui.RustInput;
+        _overlays.Change(s => s.RustInput = on);
+        _rustInputNote = null;
+        _log.Write($"input program: {(on ? "Rust" : "original")} chosen on the Performance page");
+        _input.SetRust(on);
         Refresh();
     }
 
@@ -619,6 +703,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         In.SetDiagnosticsMinutes(minutes);
         _perf.SetDiagnostics(Set.Diagnostics, minutes);
+        _net.SetOn(Set.Diagnostics, minutes);
         Refresh();
     }
 
@@ -689,6 +774,31 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         var same = _overlays.Ui.Overlays.Where(x => x.Kind == o.Kind).ToList();
         var name = OverlaySettings.KindName(o.Kind);
         return same.Count > 1 ? $"{name} {same.IndexOf(o) + 1}" : name;
+    }
+
+    /// <summary>
+    /// What tells an overlay's window apart from the others of its kind in its title, for OBS Window Capture:
+    /// its label; else its number among its kind ("" when it's the only one); a label two of a kind share
+    /// gets its place among those as well. Taken from the saved list order, so it stays the same after a restart.
+    /// </summary>
+    public string WindowTitlePart(OverlaySettings o)
+    {
+        var same = _overlays.Ui.Overlays.Where(x => x.Kind == o.Kind).ToList();
+        var label = o.Label.Trim();
+        if (label.Length == 0) return same.Count > 1 ? $"{same.IndexOf(o) + 1}" : "";
+        var twins = same.Where(x => string.Equals(x.Label.Trim(), label, StringComparison.CurrentCultureIgnoreCase)).ToList();
+        return twins.Count > 1 ? $"{label} ({twins.IndexOf(o) + 1})" : label;
+    }
+
+    /// <summary>Every overlay is kept behind the other windows (and there is at least one).</summary>
+    public bool AllBehind => _overlays.Ui.Overlays.Count > 0 && _overlays.Ui.Overlays.All(o => o.BehindWindows);
+
+    /// <summary>"All behind": every overlay behind the other windows, or, when they all already are, none.</summary>
+    public void SwitchAllBehind()
+    {
+        bool behind = !AllBehind;
+        foreach (var o in _overlays.Ui.Overlays.ToList())
+            if (o.BehindWindows != behind) ChangeOverlay(o.Id, x => x.BehindWindows = behind);
     }
 
     public void SetTrayClick(TrayClickAction action)
@@ -876,6 +986,10 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         {
             Checked = OverlayEdit,
         });
+        menu.DropDownItems.Add(new ToolStripMenuItem("All behind: the game covers them, OBS still records them" + KeysSuffix(OverlayAction.BehindAll), null, (_, _) => SwitchAllBehind())
+        {
+            Checked = AllBehind,
+        });
         menu.DropDownItems.Add(new ToolStripMenuItem("Level all: as held now shows face-on" + KeysSuffix(OverlayAction.LevelAll), null, (_, _) => LevelAll()));
         if (_overlays.Ui.Overlays.Any(o => o.Kind == OverlayKind.Laser))
             menu.DropDownItems.Add(new ToolStripMenuItem("Clear pointers", null, (_, _) => ClearAllLasers()));
@@ -907,7 +1021,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     /// <summary>" (Ctrl+Alt+R)" for a menu item or button, or "" when the action has no keys.</summary>
     public string KeysSuffix(OverlayAction a) => Shortcuts.Get(a) is { Length: > 0 } k ? $" ({k})" : "";
 
-    /// <summary>Whether another app holds <paramref name="a"/>'s keys, so they do nothing here.</summary>
+    /// <summary>Whether another app (or an AltGr character) holds <paramref name="a"/>'s keys, so they do nothing here.</summary>
     public bool ShortcutTaken(OverlayAction a) => _hotkeys?.IsTaken(a) ?? false;
 
     /// <summary>Sets <paramref name="a"/>'s keys ("" = none) and holds them at once.</summary>
@@ -927,9 +1041,13 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     private void ApplyShortcuts()
     {
         if (_hotkeys == null) return;
-        foreach (var a in _hotkeys.Apply(Shortcuts))
-            _log.Write($"overlay: {Shortcuts.Get(a)} ({OverlayShortcuts.ActionName(a)}) is taken by another app");
+        _shortcutsActive = _overlays.Ui.Overlays.Count > 0;
+        foreach (var a in _hotkeys.Apply(Shortcuts, _shortcutsActive))
+            _log.Write($"overlay: {Shortcuts.Get(a)} ({OverlayShortcuts.ActionName(a)}) is taken by another app or types a character with AltGr");
     }
+
+    /// <summary>Whether the shortcuts are held: only while at least one overlay is set up.</summary>
+    private bool _shortcutsActive;
 
     private void OnShortcut(OverlayAction a)
     {
@@ -938,6 +1056,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             case OverlayAction.LevelAll: LevelAll(); break;
             case OverlayAction.HideAll: SetOverlaysHidden(!OverlaysHidden); break;
             case OverlayAction.Edit: SetOverlayEdit(!OverlayEdit); break;
+            case OverlayAction.BehindAll: SwitchAllBehind(); break;
         }
     }
 
@@ -1002,7 +1121,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         _overlays.SetOverlayEdit(on);
         foreach (var f in _overlayForms.Values.ToList()) f.SettingsChanged();
-        UpdateOverlayWheel();
         Refresh();
     }
 
@@ -1163,6 +1281,15 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         return want;
     }
 
+    /// <summary>Whether an open overlay window is busy (pacer thread): else the pacer ticks slowly.</summary>
+    private bool OverlaysBusy()
+    {
+        long now = Environment.TickCount64;
+        foreach (var f in _overlayList)
+            if (OverlayPacing.Busy(now, f.BusyAt)) return true;
+        return false;
+    }
+
     /// <summary>The fastest refresh rate of the screens the open overlay windows are on (pacer thread); 0 = none known yet.</summary>
     private int OverlayScreenHz()
     {
@@ -1176,30 +1303,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         _overlayList = [.. _overlayForms.Values];
         _pacer?.SetRunning(_overlayList.Length > 0);
-        UpdateOverlayWheel();
-    }
-
-    /// <summary>The wheel resizes overlays only while Edit is on and one is open.</summary>
-    private void UpdateOverlayWheel()
-    {
-        bool on = OverlayEdit && _overlayForms.Count > 0;
-        // The hook's own thread calls these: they read only the pacer's copy of the list and the windows' own handles.
-        if (on) _overlayWheel ??= new OverlayWheel(
-            h =>
-            {
-                foreach (var f in _overlayList)
-                    if (h != IntPtr.Zero && f.Hwnd == h) return f;
-                return null;
-            },
-            () =>
-            {
-                var id = _selectedOverlay;
-                if (id == null) return null;
-                foreach (var f in _overlayList)
-                    if (f.Id == id && f.Hwnd != IntPtr.Zero && f.Visible) return f;
-                return null;
-            });
-        if (_overlayWheel != null) _overlayWheel.Enabled = on;
     }
 
     /// <summary>The open overlay windows' draw times, for the Debug window.</summary>
@@ -1212,7 +1315,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             + (shapes.Length > 0 ? " · " + shapes : "");
     }
 
-    /// <summary>An overlay window that shows the phone's pose is open (the FPS overlay needs nothing from the phone).</summary>
+    /// <summary>An overlay window that needs the phone's data is open (its pose, or the Keys overlay's keys; the FPS overlay needs nothing from the phone).</summary>
     private bool PoseOverlaysOpen() => _overlayForms.Keys.Any(id => OverlayOf(id) is not { Kind: OverlayKind.Fps });
 
     private void ApplyOverlays()
@@ -1237,12 +1340,14 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         foreach (var id in _overlayForms.Keys.Where(id => OverlayOf(id) == null).ToList())
             if (_overlayForms.Remove(id, out var f)) f.Close();
         _overlays.SetOverlay(PoseOverlaysOpen());
+        if (_shortcutsActive != _overlays.Ui.Overlays.Count > 0) ApplyShortcuts();
         // The game's frames are watched only while an FPS overlay is on.
         _perf.Watch(_overlays.Ui.Overlays.Any(o => o.Kind == OverlayKind.Fps && o.Shown));
         OverlaysChanged();
         foreach (var f in _overlayForms.Values)
         {
             f.Title = OverlayOf(f.Id) is { } o ? OverlayName(o) : "";
+            if (OverlayOf(f.Id) is { } w) f.WindowTitlePart = WindowTitlePart(w);
             f.Selected = f.Id == _selectedOverlay;
         }
     }
@@ -1296,8 +1401,72 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         {
             _log.Write($"diagnostics record not saved: {e.GetType().Name}: {e.Message}");
         }
-        if (path != null) Interlocked.Increment(ref _diagSaved);
+        if (path != null)
+        {
+            Interlocked.Increment(ref _diagSaved);
+            SaveNetArrivals(path, minutes);
+            CopyFlight(path);
+        }
         Post(Refresh);
+    }
+
+    /// <summary>Diagnostics' network arrival watch: pc-&lt;time&gt;-net.bin next to <paramref name="saved"/> (the newest 5 stay).</summary>
+    private void SaveNetArrivals(string saved, int minutes)
+    {
+        try
+        {
+            string dest = Path.ChangeExtension(saved, null) + "-net.bin";
+            long from = (long)(System.Diagnostics.Stopwatch.GetTimestamp() * (1_000_000.0 / System.Diagnostics.Stopwatch.Frequency)) - minutes * 60_000_000L;
+            if (_net.Save(dest, from) == null)
+            {
+                _log.Write($"network arrivals: none ({_net.State})");
+                return;
+            }
+            _log.Write($"network arrivals saved: {Path.GetFileName(dest)} ({_net.State})");
+            foreach (var old in Directory.GetFiles(DebugDirectory, "pc-*-net.bin").OrderByDescending(f => f).Skip(5)) File.Delete(old);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _log.Write($"network arrivals not saved: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// The input process writes its per-packet record (flight-*.bin) into the logs folder at the same Save: copied here next
+    /// to <paramref name="saved"/> as pc-&lt;time&gt;-flight.bin once it is there (it takes a moment to write).
+    /// </summary>
+    private void CopyFlight(string saved)
+    {
+        var since = DateTime.Now.AddSeconds(-15);
+        for (int i = 0; i < 25; i++)
+        {
+            try
+            {
+                var newest = new DirectoryInfo(_log.Directory).GetFiles("flight-*.bin")
+                    .Where(f => f.LastWriteTime >= since).OrderByDescending(f => f.LastWriteTime).FirstOrDefault();
+                // Written and closed: its size stopped changing.
+                if (newest != null && newest.Length > 0)
+                {
+                    long size = newest.Length;
+                    Thread.Sleep(300);
+                    newest.Refresh();
+                    if (newest.Length == size)
+                    {
+                        string dest = Path.ChangeExtension(saved, null) + "-flight.bin";
+                        File.Copy(newest.FullName, dest, overwrite: true);
+                        _log.Write($"flight record copied: {Path.GetFileName(dest)}");
+                        // Each is up to tens of MB: the newest 5 stay.
+                        foreach (var old in Directory.GetFiles(DebugDirectory, "pc-*-flight.bin").OrderByDescending(f => f).Skip(5)) File.Delete(old);
+                        return;
+                    }
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+            }
+            Thread.Sleep(200);
+        }
+        _log.Write("flight record: none from the input process (an older input program, or Diagnostics just came on)");
     }
 
     /// <summary>Writes the last <paramref name="minutes"/> of the event log to the debug folder; returns the path, or null.</summary>
@@ -1340,7 +1509,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
               .Append(l.RssiDbm != 0 ? $" · {l.RssiDbm} dBm {l.LinkMbps} Mbps" : ""); // 0 on a cable: no radio
         if (s.Connected)
             sb.Append("\r\nconnection: ").Append(LinkPaths.Connection(s.PhoneLink,
-                IPAddress.TryParse(In.PhoneAddress(), out var phoneAt) ? phoneAt : null, PcSetupProbe.Ssid));
+                IPAddress.TryParse(s.PhoneAddress, out var phoneAt) ? phoneAt : null, PcSetupProbe.Ssid));
         sb.Append($"\r\npad: {_debug.CurrentPad}");
         var held = new List<string>();
         var scratch = new StateFrame();
@@ -1349,10 +1518,35 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         sb.Append($"\r\nkeys (the phone's newest state): {(held.Count == 0 ? "none" : string.Join("+", held))}");
         sb.Append($"\r\nlogging: {(_debug.Enabled ? "on" : "off")} · raw events dropped {_debug.Dropped} · counters: {s.Counters}");
         if (Hello() is { } h) sb.Append($"\r\ninput process: pid {h.Pid}, {h.Version}");
+        if (_perf.SetupLine is { } setup) sb.Append("\r\nsetup: ").Append(setup);
         return sb.ToString();
     }
 
     private InputHello? Hello() => _input.Hello;
+
+    /// <summary>The PC's side of Diagnostics' setup and GyroPhone's own (on the Performance monitor's timer, every few seconds).</summary>
+    private List<SetupItem> SetupNow()
+    {
+        var s = Snap;
+        var list = PcSetupReader.Read(IPAddress.TryParse(s.PhoneAddress, out var a) ? a : null);
+        list.Add(new("gp", Application.ProductVersion));
+        list.Add(new("input program", _input.Hello is not { } h ? "-" : h.Version.EndsWith(RustInput.VersionSuffix, StringComparison.Ordinal) ? "Rust" : "C#"));
+        list.Add(new("keys via", St?.InputDriverReady == true ? "input driver" : "SendInput"));
+        string overlays;
+        try
+        {
+            var ui = _overlays.Ui;
+            var shown = ui.OverlaysHidden ? [] : ui.Overlays.Where(o => o.Shown).Select(o => o.Kind.ToString()).ToList();
+            overlays = shown.Count == 0 ? "none" : string.Join(", ", shown);
+        }
+        catch (InvalidOperationException)
+        {
+            overlays = "-"; // changed on the UI thread meanwhile
+        }
+        list.Add(new("overlays", overlays));
+        list.Add(new("fps watch", _perf.State == FrameWatchState.On ? "on" : "off"));
+        return list;
+    }
 
     public void OpenDebugFolder()
     {
@@ -1422,7 +1616,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         var s = Snap;
         if (!s.Connected || s.PhoneLink is not { } l) return null;
-        var pc = LinkPaths.AdapterFor(IPAddress.TryParse(In.PhoneAddress(), out var a) ? a : null);
+        var pc = LinkPaths.AdapterFor(IPAddress.TryParse(s.PhoneAddress, out var a) ? a : null);
         return (LinkPaths.Describe(l, pc), LinkPaths.Setup(l, pc));
     }
 
@@ -1622,27 +1816,34 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         bool added = FirewallHelper.AddRuleElevated(_exePath);
         bool ok = FirewallHelper.RuleExists(_exePath);
-        _log.Write($"firewall rule add {(added ? "ok" : "failed or declined")}, present {ok}");
+        bool usb = FirewallHelper.UsbRuleExists(_exePath);
+        _log.Write($"firewall rule add {(added ? "ok" : "failed or declined")}, present {ok}, USB rule present {usb}");
         Post(() =>
         {
             _firewallOk = ok;
+            _usbRuleOk = usb;
             Refresh();
             if (!ok)
                 Balloon("Firewall rule not added", "Windows did not add the rule (the prompt was declined or failed).", ToolTipIcon.Warning);
         });
     });
 
-    public void RetryDriver()
+    /// <summary>Looks for the gamepad driver again, off the UI thread (the input process may take seconds).</summary>
+    public void RetryDriver() => Task.Run(() =>
     {
-        if (In.RetryDriver() is { } error)
+        string? result = In.RetryDriver();
+        Post(() =>
         {
-            MessageBox.Show($"{error}.\n\nInstall ViGEmBus from {ViGEmPadSink.DriverDownloadUrl}, then choose Retry driver again.",
-                Program.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
-        }
-        Balloon("Gamepad driver found", "Game pad output is on.", ToolTipIcon.Info);
-        Refresh();
-    }
+            if (result == null)
+                Balloon("Gamepad driver not checked", "The input process didn't answer. Try again in a moment.", ToolTipIcon.Warning);
+            else if (result.Length > 0)
+                MessageBox.Show($"{result}.\n\nInstall ViGEmBus from {ViGEmPadSink.DriverDownloadUrl}, then choose Retry driver again.",
+                    Program.AppName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else
+                Balloon("Gamepad driver found", "Game pad output is on.", ToolTipIcon.Info);
+            Refresh();
+        });
+    });
 
     public void RestartAsAdmin()
     {
@@ -1757,8 +1958,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
         _mainWindow?.Close();
         _deliveryTest?.Close();
         foreach (var f in _overlayForms.Values.ToList()) f.Close();
-        _overlayWheel?.Dispose();
-        _overlayWheel = null;
         _hotkeys?.Dispose();
         _hotkeys = null;
         _pacer?.Dispose();
@@ -1781,6 +1980,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             _refreshSoon?.Stop();
             _updater.Dispose();
             _perf.Dispose();
+            _net.Dispose();
             if (_overlays.TakeDirty() is { } json) _uiStore.WriteAtomic(json);
             _debug.SetOn(false, "exit");
             _input.Dispose();

@@ -55,11 +55,11 @@ class LaserTraceTest {
         assertTrue(front.isNotEmpty() && back.isNotEmpty())
     }
 
-    @Test fun rifleShowsItsNearFacesFarthestFirst() {
+    @Test fun rifleShowsItsNearFaces() {
         val id = floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f)
         val faces = LaserTrace.rifle(id, axon = true, turned = null)
         assertEquals(30, faces.size) // 10 boxes, 3 faces of each toward the viewer
-        for (i in 1 until faces.size) assertTrue(faces[i - 1].depth <= faces[i].depth)
+        // Their drawing order: GunFaceOrderTest.
         for (f in faces) assertTrue(f.light in 0f..1f)
     }
 
@@ -110,6 +110,19 @@ class LaserTraceTest {
         assertEquals(2, t.strokes.count)
         assertTrue(t.strokes.gap(0))
         assertFalse(t.strokes.gap(1))
+    }
+
+    @Test fun aClearAskedFromElsewhereWaitsForTheTracesThread() {
+        val t = LaserTrace()
+        t.add(0f, 0f, -1f, 0, draw = true, held = false)
+        t.add(0.1f, 0f, -1f, 20, draw = true, held = false)
+        val v = t.version
+        t.requestClear()
+        assertEquals(2, t.strokes.count)
+        assertTrue(t.clearIfAsked())
+        assertEquals(0, t.strokes.count)
+        assertTrue(t.version > v)
+        assertFalse(t.clearIfAsked())
     }
 
     private val normalMap = longArrayOf(0xFFFF8080, 0xFF008080, 0xFF80FF80, 0xFF800080, 0xFF8080FF, 0xFF808000)

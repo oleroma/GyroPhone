@@ -47,7 +47,23 @@ public sealed record CompanionView(
     int DiagnosticsMinutes = 3,
     int DiagnosticsSaved = 0,
     bool UseInputDriver = false,
-    InputDriverState InputDriver = InputDriverState.NotInstalled);
+    InputDriverState InputDriver = InputDriverState.NotInstalled,
+    RustInputState RustInput = RustInputState.NotInBuild,
+    // Which input program runs now ("Rust" or "Original"), or null while none is attached.
+    string? InputProgram = null,
+    // Why the Rust input program was switched off by GP itself, until the switch is used again.
+    string? RustInputNote = null,
+    // Diagnostics' A/B test now ("Phase 3, B: input program C#, 1:20 left"), or null when none runs.
+    string? AbTest = null);
+
+/// <summary>"Use the Rust input program" on Performance › Input program.</summary>
+public enum RustInputState
+{
+    /// <summary>This build was made without the Rust input program: the switch can't be used.</summary>
+    NotInBuild,
+    Off,
+    On,
+}
 
 /// <summary>The optional input driver (a virtual USB mouse and keyboard), for Performance › Keyboard and mouse.</summary>
 public enum InputDriverState
@@ -116,10 +132,22 @@ public interface ICompanion
     /// <summary>"Use input driver" (Performance › Keyboard and mouse): the input driver instead of SendInput, when it is installed.</summary>
     void ToggleUseInputDriver();
     /// <summary>
+    /// "Use the Rust input program" (Performance › Input program): the input process runs as the Rust program instead
+    /// of the original one. Switching restarts the input process: everything held is let go and the phone reconnects.
+    /// </summary>
+    void ToggleRustInput();
+    /// <summary>
     /// "Delivery test" (Performance › Keyboard and mouse): opens a window that reads raw mouse input in front, like a
     /// game, next to Diagnostics' background delivery probe, while it is open.
     /// </summary>
     void OpenDeliveryTest();
+    /// <summary>
+    /// Diagnostics' "A/B test": switches <paramref name="thing"/> back and forth every <paramref name="minutes"/> and marks
+    /// each phase in the log, for tools/diag/gpdiag.py ab. Only while Diagnostics is on.
+    /// </summary>
+    void StartAbTest(GyroPhone.Host.Perf.AbTest.Thing thing, int minutes);
+    /// <summary>Stops the A/B test and puts the switched thing back as it was.</summary>
+    void StopAbTest();
 
     // Performance
     /// <summary>The Performance page's frame watcher, link seconds and test records.</summary>
@@ -156,6 +184,10 @@ public interface ICompanion
     bool OverlayEdit { get; }
     void SetOverlayEdit(bool on);
     void ChangeOverlay(string id, Action<OverlaySettings> change);
+    /// <summary>Every overlay is kept behind the other windows (and there is at least one).</summary>
+    bool AllBehind { get; }
+    /// <summary>"All behind": every overlay behind the other windows, or, when they all already are, none.</summary>
+    void SwitchAllBehind();
     string AddOverlay(OverlayKind kind);
     void RemoveOverlay(string id);
     void LevelOverlay(string id);

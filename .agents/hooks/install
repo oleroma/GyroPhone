@@ -126,8 +126,12 @@ swap_keys() {
   local gp_data
   gp_data="$(cygpath -u "$APPDATA")/GyroPhone"
 
-  if ! command -v adb >/dev/null 2>&1 ||
-    [ "$(adb devices | awk -F'\t' 'NR > 1 && $2 == "device"' | wc -l | tr -d ' ')" != 1 ]; then
+  # agent-install sets ANDROID_SERIAL when one phone is listed twice (USB and wireless): every adb
+  # call then goes to that phone.
+  if ! command -v adb >/dev/null 2>&1 || {
+    [ "$(adb devices | awk -F'\t' 'NR > 1 && $2 == "device"' | wc -l | tr -d ' ')" != 1 ] &&
+      ! adb devices | awk -F'\t' -v s="${ANDROID_SERIAL:-}" 'NR > 1 && $2 == "device" && s != "" && $1 == s {f=1} END {exit !f}'
+  }; then
     note "Key pairing skipped: no single phone connected over adb."
     return
   fi
@@ -171,17 +175,19 @@ swap_keys() {
 }
 
 # ---- PC: the drivers' files (not the drivers themselves) ----
-# Copies the folder the build made (build/<dir>/pkg here in the build worktree) to the repo's
-# build\<name>-driver, next to the other build files. No zip: the zip is only for releases.
+# Unpacks the build's <name>-driver.zip (the build being installed, local or from CI) to the repo's
+# build\<name>-driver, next to the other build files.
 # unpack_driver <zip> <build dir> <name> <what>
 unpack_driver() {
-  local zip="$1" src="build/$2/pkg" name="$3" what="$4" dest dest_w dver
+  local zip="$1" name="$3" what="$4" dest dest_w dver
   [ -n "$zip" ] || return 0
   # The build files come from build/builds/<build>/; the folder goes next to the newest build
   # files directly in build/, replacing the previous build's, like the APK and the companion.
   dest="$(dirname "$(dirname "$(dirname "$zip")")")/$name-driver"
   dest_w="$(cygpath -w "$dest")"
-  if [ ! -f "$src/$name.inf" ] || ! rm -rf "$dest" || ! mkdir -p "$dest" || ! cp -f "$src"/* "$dest"/; then
+  # Windows' own tar (bsdtar) reads zips; Git Bash's GNU tar doesn't.
+  if [ ! -f "$zip" ] || ! rm -rf "$dest" || ! mkdir -p "$dest" ||
+    ! /c/Windows/System32/tar.exe -xf "$(cygpath -w "$zip")" -C "$dest_w" || [ ! -f "$dest/$name.inf" ]; then
     note "Couldn't copy the $what into $dest_w."
     return
   fi

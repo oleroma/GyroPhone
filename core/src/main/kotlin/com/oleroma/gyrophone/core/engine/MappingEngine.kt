@@ -13,6 +13,8 @@ import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.AxisRange
 import com.oleroma.gyrophone.core.model.MoveSlot
 import com.oleroma.gyrophone.core.model.SetValue
+import com.oleroma.gyrophone.core.model.NamedSens
+import com.oleroma.gyrophone.core.model.SensLink
 import com.oleroma.gyrophone.core.model.SliderOverrides
 import com.oleroma.gyrophone.core.model.valueTarget
 import com.oleroma.gyrophone.core.model.settingTarget
@@ -130,8 +132,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Per axis id: the tuning of the physical stick it is part of (null = raw), from the pinned preset ([Workspace.stickTunings]). */
     private val axisStick = arrayOfNulls<StickTuning>(AXIS_SLOTS)
 
-    /** [axisStick] for a pad whose right stick is RX / RY ([PadDevice.rightStickRx]). */
-    private val axisStickRx = arrayOfNulls<StickTuning>(AXIS_SLOTS)
+    /** Pad sticks with flick stick on ([StickTuning.flick]): id, X axis, Y axis. */
+    private var padFlicks: List<Triple<String, Int, Int>> = emptyList()
+    private var anyPadFlick = false
+
 
     /** Per axis id: the tuning of the physical trigger it is part of (null = the defaults). */
     private val axisTrigger = arrayOfNulls<TriggerTuning>(AXIS_SLOTS)
@@ -179,19 +183,68 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val all = sensNow[MotionAxis.NONE.ordinal]
         if (!all.isNaN()) r = r.copy(
             sensitivity = all, yawSensitivity = null, pitchSensitivity = null, rollSensitivity = null,
-            yawScale = null, pitchScale = null, rollScale = null,
+            yawScale = null, pitchScale = null, rollScale = null, yawLink = null, pitchLink = null, rollLink = null,
         )
         val yaw = sensNow[MotionAxis.YAW.ordinal]
-        if (!yaw.isNaN()) r = r.copy(yawSensitivity = yaw, yawScale = null)
+        if (!yaw.isNaN()) r = r.withSensitivity(MotionAxis.YAW, yaw)
         val pitch = sensNow[MotionAxis.PITCH.ordinal]
-        if (!pitch.isNaN()) r = r.copy(pitchSensitivity = pitch, pitchScale = null)
+        if (!pitch.isNaN()) r = r.withSensitivity(MotionAxis.PITCH, pitch)
         val roll = sensNow[MotionAxis.ROLL.ordinal]
-        if (!roll.isNaN()) r = r.copy(rollSensitivity = roll, rollScale = null)
+        if (!roll.isNaN()) r = r.withSensitivity(MotionAxis.ROLL, roll)
         for (i in GYRO_VALUE_SLOTS.indices) {
             val v = gyroValNow[i]
             if (!v.isNaN()) r = SliderOverrides.gyroValue(r, GYRO_VALUE_SLOTS[i], v)
         }
         return r
+    }
+
+    /**
+     * Named Gyro sens and Touch sens chips ([OutputTarget.GyroSens.named], [OutputTarget.TouchSens.named])
+     * in effect, by number (index 0 unused); NaN = none. Set by [refreshSens] like [sensNow].
+     */
+    private var namedGyroNow = FloatArray(1) { Float.NaN }
+    private var namedTouchNow = FloatArray(1) { Float.NaN }
+    private var namedGyroSeq = LongArray(1)
+    private var namedTouchSeq = LongArray(1)
+    private var namedGyroVals = FloatArray(1)
+    private var namedTouchVals = FloatArray(1)
+
+    /**
+     * Sizes the named sensitivities' arrays for [w]'s ([Workspace.namedSens], by id) and names them
+     * for showing ([NamedSens.active]); allocates only when the workspace has more than before.
+     */
+    private fun fitNamed(w: Workspace) {
+        if (w.namedSens != NamedSens.active) NamedSens.active = w.namedSens
+        val size = (w.namedSens.maxOfOrNull { it.id } ?: 0) + 1
+        if (size <= namedGyroNow.size) return
+        namedGyroNow = namedGyroNow.copyOf(size).also { it.fill(Float.NaN, namedGyroNow.size, size) }
+        namedTouchNow = namedTouchNow.copyOf(size).also { it.fill(Float.NaN, namedTouchNow.size, size) }
+        namedGyroSeq = LongArray(size); namedTouchSeq = LongArray(size)
+        namedGyroVals = FloatArray(size); namedTouchVals = FloatArray(size)
+    }
+
+    /** Named Gyro sens [n] now: its chip in effect, else its kept slider value, else none (the shared Sensitivity). */
+    private val namedGyro: (Int) -> Float? = { n ->
+        namedGyroNow.getOrNull(n)?.takeUnless { it.isNaN() } ?: if (ws.sliders.isEmpty()) null else SliderOverrides.named(ws.sliders, false, n)
+    }
+
+    /** Named Touch sens [n] now, like [namedGyro]. */
+    private val namedTouch: (Int) -> Float? = { n ->
+        namedTouchNow.getOrNull(n)?.takeUnless { it.isNaN() } ?: if (ws.sliders.isEmpty()) null else SliderOverrides.named(ws.sliders, true, n)
+    }
+
+    /** The gyro settings for [gyroNow]: [gyroBase] with the sensitivity chips over it, every link worked out. */
+    private fun gyroFrom(base: GyroSettings): GyroSettings = withSens(base).resolved(namedGyro)
+
+    /** The held buttons' touchpad settings ([updateGyroNow]), kept so a named Touch sens change can work them out again. */
+    private var heldTouchNow: ButtonGyro? = null
+
+    /** Sets [touchBase] and the touchpad's settings from the settings in effect, the held buttons' and the chips. */
+    private fun applyTouch() {
+        val under = if (ws.sliders.isEmpty()) eff.touchpad else SliderOverrides.overTouch(eff.touchpad, ws.sliders)
+        touchBase = heldTouchNow?.over(under, namedTouch) ?: under
+        val t = withTouchSens(touchBase).resolved(namedTouch)
+        if (t != touchpad.settings) touchpad.settings = t
     }
 
     /**
@@ -245,11 +298,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private fun withTouchSens(t: TouchpadSettings): TouchpadSettings {
         var r = t
         val all = touchSensNow[0]
-        if (!all.isNaN()) r = r.copy(sensitivity = all, moves = r.moves?.map { it.copy(sensitivity = null, scale = null) })
+        if (!all.isNaN()) r = r.copy(sensitivity = all, moves = r.moves?.map { it.copy(sensitivity = null, scale = null, link = null) })
         val x = touchSensNow[1]
-        if (!x.isNaN()) r = r.withMove(MoveSlot.X1) { it.copy(sensitivity = x, scale = null) }
+        if (!x.isNaN()) r = r.withMove(MoveSlot.X1) { it.copy(sensitivity = x, scale = null, link = null) }
         val y = touchSensNow[2]
-        if (!y.isNaN()) r = r.withMove(MoveSlot.Y1) { it.copy(sensitivity = y, scale = null) }
+        if (!y.isNaN()) r = r.withMove(MoveSlot.Y1) { it.copy(sensitivity = y, scale = null, link = null) }
         return r
     }
 
@@ -269,6 +322,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         touchBest.fill(null); touchBestSeq.fill(-1L); touchVals.fill(0f)
         tapBestSeq = -1L; tapVal = 0f
         gyroValSeq.fill(-1L); gyroValVals.fill(0f)
+        namedGyroSeq.fill(-1L); namedTouchSeq.fill(-1L)
         val now = clock()
         forEachGroup { ms, dev ->
             for (i in ms.indices) {
@@ -280,7 +334,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 if (v.isNaN()) continue
                 sensSeen.add(m)
                 val seq = sensOrder.getOrPut(m) { ++sensSeq }
-                if (t is OutputTarget.GyroSens) {
+                if (t is OutputTarget.GyroSens && t.named > 0) {
+                    val n = t.named
+                    if (n < namedGyroSeq.size && seq > namedGyroSeq[n]) {
+                        namedGyroSeq[n] = seq; namedGyroVals[n] = v
+                    }
+                } else if (t is OutputTarget.TouchSens && t.named > 0) {
+                    val n = t.named
+                    if (n < namedTouchSeq.size && seq > namedTouchSeq[n]) {
+                        namedTouchSeq[n] = seq; namedTouchVals[n] = v
+                    }
+                } else if (t is OutputTarget.GyroSens) {
                     val a = t.axis.ordinal
                     if (seq > bestSeq[a]) {
                         bestSeq[a] = seq; best[a] = m; vals[a] = v
@@ -322,7 +386,21 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 gyroValNow[i] = v; changed = true
             }
         }
-        if (changed) gyroNow = withSens(gyroBase)
+        for (n in 1 until namedGyroNow.size) {
+            val v = if (namedGyroSeq[n] < 0L) Float.NaN else namedGyroVals[n].coerceIn(MIN_SENS_CHIP, MAX_SENS_CHIP)
+            if (v.toBits() != namedGyroNow[n].toBits()) {
+                namedGyroNow[n] = v; changed = true
+            }
+        }
+        if (changed) gyroNow = gyroFrom(gyroBase)
+        var namedTouchChanged = false
+        for (n in 1 until namedTouchNow.size) {
+            val v = if (namedTouchSeq[n] < 0L) Float.NaN else namedTouchVals[n].coerceIn(MIN_TOUCH_SENS_CHIP, MAX_TOUCH_SENS_CHIP)
+            if (v.toBits() != namedTouchNow[n].toBits()) {
+                namedTouchNow[n] = v; namedTouchChanged = true
+            }
+        }
+        if (namedTouchChanged) applyTouch()
         var touchChanged = false
         for (i in 0 until 3) {
             val v = if (touchBest[i] == null || (i != 0 && touchBestSeq[i] < touchBestSeq[0])) Float.NaN
@@ -331,8 +409,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 touchSensNow[i] = v; touchChanged = true
             }
         }
-        if (touchChanged) {
-            val t = withTouchSens(touchBase)
+        if (touchChanged && !namedTouchChanged) {
+            val t = withTouchSens(touchBase).resolved(namedTouch)
             if (t != touchpad.settings) touchpad.settings = t
         }
         val tap = if (tapBestSeq < 0L) -1 else SliderOverrides.tapMs(tapVal)
@@ -525,8 +603,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** What sensitivity chip [m] starts a nudge from with no kept value: the setting in effect now. */
     private fun settingOf(m: Mapping): Float = when (val t = m.target) {
-        is OutputTarget.GyroSens -> if (t.axis == MotionAxis.NONE) gyroBase.sensitivity else gyroBase.sensitivityOf(t.axis)
-        is OutputTarget.TouchSens -> when (t.axis) {
+        is OutputTarget.GyroSens -> when {
+            t.named > 0 -> namedGyro(t.named) ?: gyroBase.sensitivity
+            t.axis == MotionAxis.NONE -> gyroBase.sensitivity
+            else -> gyroBase.sensitivityOf(t.axis, namedGyro)
+        }
+        is OutputTarget.TouchSens -> if (t.named > 0) namedTouch(t.named) ?: touchBase.sensitivity else when (t.axis) {
             null -> touchBase.sensitivity
             StickAxis.X -> touchBase.feel(1).sensitivityX
             StickAxis.Y -> touchBase.feel(1).sensitivityY
@@ -709,19 +791,19 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (g.anyGyro) held = held?.under(g) ?: g
             if (g.anyTouch) heldTouch = heldTouch?.under(g) ?: g
         }
-        // Slider overrides lie over everything set, a held button's own included.
-        gyroBase = (held?.over(eff.gyro) ?: eff.gyro).let { if (ws.sliders.isEmpty()) it else SliderOverrides.overGyro(it, ws.sliders) }
-        gyroNow = withSens(gyroBase)
+        // Slider overrides set the workspace's values: a held button's own lie over them.
+        val under = if (ws.sliders.isEmpty()) eff.gyro else SliderOverrides.overGyro(eff.gyro, ws.sliders)
+        gyroBase = held?.over(under) ?: under
+        gyroNow = gyroFrom(gyroBase)
         pcHeldGyro = if (heldPhys.isEmpty() || ws.pads.isEmpty()) emptyList() else heldPhys.mapNotNull { b ->
             if (!b.id.startsWith(PhysicalDevice.CONTROLLER.name + ":")) return@mapNotNull null
             val g = b.gyroIn(sets).takeIf { it.anyGyro } ?: return@mapNotNull null
             val place = b.sources.firstNotNullOfOrNull { src -> pcPlace(src).takeIf { it >= 0 } } ?: return@mapNotNull null
             // Over the settings in effect with the phone's own held button, if any: the PC's wins while held.
-            place to g.over(gyroNow)
+            place to g.over(gyroNow).resolved(namedGyro)
         }.distinctBy { it.first }
-        touchBase = (heldTouch?.over(eff.touchpad) ?: eff.touchpad).let { if (ws.sliders.isEmpty()) it else SliderOverrides.overTouch(it, ws.sliders) }
-        val t = withTouchSens(touchBase)
-        if (t != touchpad.settings) touchpad.settings = t
+        heldTouchNow = heldTouch
+        applyTouch()
         // Every change of the buttons held or the mappings in use comes through here.
         routesCache = null
     }
@@ -833,6 +915,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private class Dev(var device: PadDevice?) {
         /** Index into [padMappings]; -1 = not attached here (the device does nothing). */
         var pad = -1
+
+        /** Its flick sticks' states, by index into [padFlicks] (made on first use). */
+        val flicks = arrayOfNulls<FlickStick>(2)
         val keys = BitSet()
 
         /** Gestures of its keys that have gesture mappings, by key code (also in [tapList]). */
@@ -856,8 +941,16 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         private val shown = BitSet()
         private val scratch = BitSet()
 
+        /**
+         * Whole taps (press and release) of a key queued behind one already waiting to show: a mouse
+         * wheel's notches come as taps, several between two snapshots. Each shows as a press of its
+         * own once the one before has shown up again ([shownInSnapshot]); at most [MAX_QUEUED_TAPS].
+         */
+        private var queuedTaps: IntArray? = null
+        private var anyQueued = false
+
         val active: Boolean
-            get() = axisCount > 0 || !keys.isEmpty || !pressedSince.isEmpty || !shown.isEmpty ||
+            get() = axisCount > 0 || !keys.isEmpty || !pressedSince.isEmpty || !shown.isEmpty || anyQueued ||
                     (gestures.isNotEmpty() && gestures.values.any { it.anyOn })
         val hasAxes: Boolean get() = axisCount > 0
 
@@ -877,15 +970,44 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             scratch.clear(); scratch.or(keys); scratch.or(pressedSince); scratch.andNot(shown)
             shown.and(keys); shown.andNot(releasedSince); shown.or(scratch)
             pressedSince.clear(); releasedSince.clear()
+            if (anyQueued) nextQueuedTap()
+        }
+
+        /** A queued tap of a key that now shows up (and is not held) waits to show, as a fresh tap would. */
+        private fun nextQueuedTap() {
+            val q = queuedTaps ?: return
+            var left = false
+            for (code in q.indices) {
+                if (q[code] == 0) continue
+                if (!shown.get(code) && !keys.get(code)) {
+                    q[code]--
+                    pressedSince.set(code); releasedSince.set(code)
+                }
+                if (q[code] > 0) left = true
+            }
+            anyQueued = left
         }
 
         fun setKey(code: Int, pressed: Boolean) {
             if (code < 0) return
+            // A press after a whole tap that has not shown yet (pressed and let go since the last
+            // snapshot, shown up): its output is a tap of its own, queued, so it isn't merged into
+            // that one. Its level and edges (events, gestures) are as ever.
+            if (pressed && !keys.get(code) && !shown.get(code) && pressedSince.get(code) && releasedSince.get(code) && code < QUEUED_TAP_CODES) {
+                val q = queuedTaps ?: IntArray(QUEUED_TAP_CODES).also { queuedTaps = it }
+                if (q[code] < MAX_QUEUED_TAPS) { q[code]++; anyQueued = true }
+            }
             keys.set(code, pressed)
             if (pressed) pressedSince.set(code) else releasedSince.set(code)
         }
 
-        fun setAxis(a: Int, value: Float) {
+        /** Raw axis [a] as the mappings have it ([PhysicalSticks.canonicalAxis]): a pad's RX / RY stick as Z / RZ, its Z / RZ as triggers. */
+        fun setAxis(a: Int, raw: Float) {
+            val rx = device?.rightStickRx == true
+            setSlot(PhysicalSticks.canonicalAxis(a, rx), PhysicalSticks.canonicalValue(a, raw, rx))
+        }
+
+        private fun setSlot(a: Int, value: Float) {
             if (a !in 0 until AXIS_SLOTS) return
             val v = if (abs(value) < AXIS_EPSILON) 0f else value
             if (axes[a] == 0f && v != 0f) axisCount++ else if (axes[a] != 0f && v == 0f) axisCount--
@@ -894,10 +1016,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
         /** Whether [setAxis] of the first [n] pairs would change anything. */
         fun differs(ids: IntArray, values: FloatArray, n: Int): Boolean {
+            val rx = device?.rightStickRx == true
             for (i in 0 until n) {
-                val a = ids[i]
+                val a = PhysicalSticks.canonicalAxis(ids[i], rx)
                 if (a !in 0 until AXIS_SLOTS) continue
-                val v = if (abs(values[i]) < AXIS_EPSILON) 0f else values[i]
+                val raw = PhysicalSticks.canonicalValue(ids[i], values[i], rx)
+                val v = if (abs(raw) < AXIS_EPSILON) 0f else raw
                 if (axes[a] != v) return true
             }
             return false
@@ -910,6 +1034,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         fun clear() {
             keys.clear(); axes.fill(0f); axisCount = 0
             pressedSince.clear(); releasedSince.clear(); shown.clear()
+            queuedTaps?.fill(0); anyQueued = false
             modeHeld.clear()
         }
     }
@@ -1042,8 +1167,15 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private val setTouchHeld = HashMap<String, Long>()
     private val touchSticks = HashMap<String, StickState>()
 
-    /** Deadzone and zones of a touch stick; [diagonalMapped] by [StickDiagonal] ordinal. */
-    private class StickCfg(val deadzone: Float, val zones: StickZones, val diagonalMapped: BooleanArray)
+    /** Deadzone, zones and outer ring of a touch stick; [diagonalMapped] by [StickDiagonal] ordinal. */
+    private class StickCfg(
+        val deadzone: Float, val zones: StickZones, val diagonalMapped: BooleanArray, val outerRing: Float,
+        /** Flick stick ([TouchControl.flick]): it turns the mouse, its mappings see it centred. */
+        val flick: Boolean = false,
+    )
+
+    /** Touch flick sticks' states, by stick id (a pad's are its [Dev.flicks]). */
+    private val flicks = HashMap<String, FlickStick>()
 
     private var stickCfgs: Map<String, StickCfg> = emptyMap()
 
@@ -1057,6 +1189,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         var mag = 0f
         var zoned = false
         var dirs = 0
+        /** Past its outer ring ([TouchControl.outerRing]): the directions' outer zones may fire. */
+        var outer = false
     }
 
     // Fingers on touch buttons (see buttonDown), fixed slots so pointer events allocate little.
@@ -1094,6 +1228,46 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** The touchpad's chips that must not fire now: [passBlocks] of [gestureButtons]. */
     private var touchBlocked: Set<Mapping> = emptySet()
 
+    /** The touchpad's chips [blocked] for some [gestureButtons], and the touchpad's [map] without them. */
+    private class BlockedMap(val blocked: Set<Mapping>, val map: SurfaceMap)
+
+    /**
+     * What one layer state ([layerSet] with [layerOverrides]) puts in effect that depends on nothing
+     * else, so a layer switch reuses it instead of working it out again on the input path: the
+     * settings in effect ([eff]), and with nothing carried on touch, [passBlocks], [seeThrough] and
+     * the touchpad's maps per [gestureButtons] combination.
+     */
+    private class LayerCache {
+        var eff: Workspace? = null
+        var blocks: Map<String, Set<Mapping>>? = null
+        var seeThrough: Set<String> = emptySet()
+        var fullMap: SurfaceMap? = null
+        val blockedMaps = HashMap<Set<String>, BlockedMap>()
+    }
+
+    /** [LayerCache] per layer state (the set in use, then its overrides), for workspace [layerCachesOf]. */
+    private val layerCaches = HashMap<List<Int>, LayerCache>()
+    private var layerCachesOf: Workspace? = null
+    private val layerKey = ArrayList<Int>()
+
+    /** The touch group's [LayerCache] for the mappings in use now. */
+    private var touchCache = LayerCache()
+
+    /** The [LayerCache] of layer state [full] with [overrides] in the workspace now ([ws]). */
+    private fun layerCache(full: Int = layerSet, overrides: List<Int> = layerOverrides): LayerCache {
+        if (layerCachesOf !== ws) {
+            layerCaches.clear(); layerCachesOf = ws
+        }
+        // Looked up with a reused key: a layer switch allocates only for a state not seen before.
+        val key = layerKey
+        key.clear(); key.add(full); for (i in overrides.indices) key.add(overrides[i])
+        return layerCaches[key] ?: LayerCache().also { layerCaches[ArrayList(key)] = it }
+    }
+
+    /** The settings in effect in layer state [c] ([full] with [overrides]), worked out once. */
+    private fun layerEff(c: LayerCache, full: Int = layerSet, overrides: List<Int> = layerOverrides): Workspace =
+        c.eff ?: WorkspaceDefaults.layered(ws, full, overrides).also { c.eff = it }
+
     /** The workspace's touch buttons: each takes the touchpad's mappings it does not map itself. */
     private var buttonIds: List<String> = emptyList()
 
@@ -1110,6 +1284,12 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * [areaKey]: the same as a button's own touch, on its long press and double tap times.
      */
     private val areaGestures = HashMap<String, ButtonGestures>()
+
+    /** Each [areaGestures] entry's held source (on [Trigger.HOLD]), by [areaKey]: its gestures follow the set in use. */
+    private val areaSources = HashMap<String, InputSource.TouchArea>()
+
+    /** One [areaGestures] entry per control id (all of a control's areas share its times), for [ownLongNs] without building [areaKey]. */
+    private val areaTimes = HashMap<String, ButtonGestures>()
 
     private fun areaKey(id: String, kind: TouchAreaKind) = kind.ordinal.toString() + ":" + id
     private val tapList = ArrayList<ButtonGestures>()
@@ -1295,6 +1475,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     @Volatile
     var onSetOrientation: ((Boolean) -> Unit)? = null
 
+    /**
+     * Called with its countdown and measuring time (s) when a [OutputTarget.Calibrate] mapping fires,
+     * inside the engine lock, as [onSetOrientation].
+     */
+    @Volatile
+    var onCalibrate: ((Int, Int) -> Unit)? = null
+
     /** Called when a [OutputTarget.ClearDisplays] mapping fires, inside the engine lock, as [onSetOrientation]. */
     @Volatile
     var onClearDisplays: Runnable? = null
@@ -1463,13 +1650,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             latched.remove(id)
             if (id !in touches && id.removePrefix(PHYS) !in physDown) pressOrder.remove(id)
         }
-        ws = w
+        // Overrides a chip no longer keeps don't count (a removed or changed slider chip).
+        ws = SliderOverrides.pruned(w)
+        fitNamed(w)
         heldPhys = heldOf(w)
         for (id in physDown) if (PHYS + id !in latched) pressOrder.remove(PHYS + id)
         physDown.clear()
-        axisStick.fill(null); axisStickRx.fill(null); axisTrigger.fill(null)
+        axisStick.fill(null); axisTrigger.fill(null)
         for ((id, axes) in PhysicalSticks.sticks) w.stickTunings[id]?.let { axisStick[axes.first] = it; axisStick[axes.second] = it }
-        for ((id, axes) in PhysicalSticks.sticksRx) w.stickTunings[id]?.let { axisStickRx[axes.first] = it; axisStickRx[axes.second] = it }
+        padFlicks = PhysicalSticks.sticks.filter { (id, _) -> w.stickTunings[id]?.flick == true }.map { (id, axes) -> Triple(id, axes.first, axes.second) }
+        anyPadFlick = padFlicks.isNotEmpty()
+        for (d in deviceList) d.flicks.fill(null)
         for ((id, axes) in PhysicalSticks.triggers) w.triggerTunings[id]?.let { axisTrigger[axes.first] = it; axisTrigger[axes.second] = it }
         // A physical button's gyro mappings while held (its Motion tab) route with the touch buttons' ([gyroRoutes]).
         val physGyro = physGyroOf(w)
@@ -1523,7 +1714,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             )
             tapStates[c.id] = st; tapList.add(st)
         }
-        areaGestures.clear()
+        areaGestures.clear(); areaSources.clear(); areaTimes.clear()
         for (k in w.mappings.mapNotNull { (it.source as? InputSource.TouchArea)?.takeIf { a -> a.on != Trigger.HOLD }?.copy(on = Trigger.HOLD) }.distinct()) {
             val c = w.touchControls.firstOrNull { it.id == k.id }
             val double = targetsOf(w.mappings, k.copy(on = Trigger.DOUBLE_TAP))
@@ -1532,16 +1723,27 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 hasDouble = double.isNotEmpty(),
                 tapWaits = double.isNotEmpty() && shapesOf(w.mappings, k.copy(on = Trigger.DOUBLE_TAP)) != shapesOf(w.mappings, k.copy(on = Trigger.TAP)),
             )
-            areaGestures[areaKey(k.id, k.kind)] = st; tapList.add(st)
+            areaGestures[areaKey(k.id, k.kind)] = st; areaSources[areaKey(k.id, k.kind)] = k; areaTimes[k.id] = st; tapList.add(st)
         }
         stickCfgs = w.touchControls.filter { it.kind == TouchKind.STICK }.associate { c ->
-            c.id to StickCfg(c.deadzone.coerceIn(0f, TouchControl.MAX_DEADZONE), c.zones, BooleanArray(StickDiagonal.entries.size))
+            c.id to StickCfg(
+                c.deadzone.coerceIn(0f, TouchControl.MAX_DEADZONE), c.zones, BooleanArray(StickDiagonal.entries.size),
+                c.outerRing.coerceIn(TouchControl.MIN_OUTER_RING, 1f), c.flick,
+            )
         }
+        flicks.clear()
         releaseHeld()
         for (d in deviceList) d.pad = resolvePad(d.device)
         layerSet = MappingSet.BASE; layerOverrides.clear(); layerHolds.clear(); backLayers = null
         carried = Array(allPads.size + 1) { HashMap() }; anyCarried = false
         applyLayers()
+        // Each layer's settings, switched to or laid over Base, are worked out now, not on its button's press.
+        for (set in ws.sets) {
+            if (set.settings == null) continue
+            layerEff(layerCache(set.id, emptyList()), set.id, emptyList())
+            val over = listOf(set.id)
+            layerEff(layerCache(MappingSet.BASE, over), MappingSet.BASE, over)
+        }
         touchpad.cancel(clock())
         // Toggle buttons that are on keep their gyro cards on.
         settleToggles(clock())
@@ -1553,7 +1755,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         anyDevice.clear()
         touches.clear(); pressOrder.clear(); latched.clear(); physDown.clear(); setTouchHeld.clear(); touchSticks.clear()
         fingers.clear(); fingerPointer.clear(); sensOrder.clear(); sensNow.fill(Float.NaN); touchSensNow.fill(Float.NaN); tapNow = -1
-        gyroValNow.fill(Float.NaN)
+        gyroValNow.fill(Float.NaN); namedGyroNow.fill(Float.NaN); namedTouchNow.fill(Float.NaN)
         kept.clear(); slideBase.clear(); shown.clear()
         updateGyroNow()
         for (s in surfaceList) s.reset()
@@ -1624,6 +1826,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun setAxis(device: PadDevice, axis: Int, value: Float) {
         synchronized(lock) {
             firingEvents(clock()) { deviceFor(device).setAxis(axis, value) }
+            if (anyPadFlick) flickPad(deviceFor(device))
         }
         onChange?.run()
     }
@@ -1640,6 +1843,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val dev = deviceFor(device)
                 for (i in 0 until n) dev.setAxis(axes[i], values[i])
             }
+            if (anyPadFlick) flickPad(deviceFor(device))
         }
         onChange?.run()
     }
@@ -1960,6 +2164,30 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         onChange?.run()
     }
 
+    /** [dev]'s flick sticks moved (maybe): each turns the mouse by its tuning's travel. */
+    private fun flickPad(dev: Dev) {
+        for (i in padFlicks.indices) {
+            val (_, ax, ay) = padFlicks[i]
+            val t = axisStick[ax] ?: continue
+            val x = dev.axis(ax)
+            val y = dev.axis(ay)
+            val span = (t.outer - t.inner).coerceAtLeast(0.01f)
+            val push = ((hypot(x, y) - t.inner) / span).coerceIn(0f, 1f)
+            val f = dev.flicks[i] ?: FlickStick().also { dev.flicks[i] = it }
+            flickTurn(f, x, y, push)
+        }
+    }
+
+    /** Flick stick [f] at [x], [y], pushed [push]: its turn goes to the mouse at once, by the workspace's game turn. */
+    private fun flickTurn(f: FlickStick, x: Float, y: Float, push: Float) {
+        val deg = f.update(x, y, push)
+        if (deg == 0f) return
+        val per360 = eff.gyro.gameCountsPer360
+        // Without the game's full turn GP can't tell how far a degree is: the stick does nothing then.
+        if (per360 <= 0f) return
+        mouseDx += f.counts(deg, per360 / 360f)
+    }
+
     /** Touch stick deflection, each axis in -1..1 (Y positive = down, like the HID game pad). */
     fun setTouchStick(id: String, x: Float, y: Float) {
         synchronized(lock) {
@@ -1972,9 +2200,15 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val dz = cfg?.deadzone ?: 0f
                 if (dz > 0f) k = if (mag <= dz) 0f else min(1f, (mag - dz) / (1f - dz)) / mag
                 v.x = x * k; v.y = y * k; mag = min(1f, mag * k)
+                if (cfg?.flick == true) {
+                    // A flick stick turns the mouse now, with this event; its mappings see it at rest.
+                    flickTurn(flicks.getOrPut(id) { FlickStick() }, v.x, v.y, mag)
+                    v.x = 0f; v.y = 0f; mag = 0f
+                }
                 v.mag = mag
                 v.zoned = cfg != null && cfg.zones != StickZones.OVERLAP
                 v.dirs = if (!v.zoned || mag == 0f) 0 else zoneDirs(v.x, v.y, cfg!!)
+                v.outer = mag > 0f && mag >= (cfg?.outerRing ?: TouchControl.DEFAULT_OUTER_RING)
             }
         }
         onChange?.run()
@@ -2385,23 +2619,6 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     }
 
     /**
-     * Replaces the active workspace's gyro settings (the gyro corner switching its mode) without
-     * releasing what is held. A toggle press made before no longer flips the new mode.
-     */
-    fun setGyro(settings: GyroSettings) {
-        synchronized(lock) {
-            if (settings == ws.gyro) return
-            ws = ws.copy(gyro = settings)
-            current = current.updateWorkspace(workspaceIndex) { it.copy(gyro = settings) }
-            gyroToggled = false
-            toggleEpoch++
-            applyLayerSettings()
-        }
-        onChange?.run()
-    }
-
-    /** Releases everything and goes back to Base, e.g. when the profile changes or the host disconnects. */
-    /**
      * [p] differs from [profile] only in the active workspace's slider overrides ([onSetValue]):
      * they go into effect without letting anything held go. Anything else goes through [profile]
      * as an edit.
@@ -2413,7 +2630,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 current = p; applyWorkspace(); return@synchronized
             }
             current = p
-            ws = ws.copy(sliders = loaded.sliders)
+            ws = ws.copy(sliders = SliderOverrides.live(loaded), namedSens = loaded.namedSens)
+            fitNamed(ws)
             kept.values.removeIf { it.committed }
             applyLayerSettings()
             refreshSens()
@@ -2421,6 +2639,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         onChange?.run()
     }
 
+    /** Releases everything and goes back to Base, e.g. when the profile changes or the host disconnects. */
     fun reset() {
         synchronized(lock) {
             trace?.queue(DebugTrace.Kind.STATE) { "reset: everything released" }
@@ -2509,9 +2728,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (!anyDevice.modeSeen) anyDevice.modeHeld.clear()
         anyDevice.modeSeen = false
         shakeShown = true
-        for (a in 0 until 4) if (abs(gyroPad[a]) > abs(stick[a])) stick[a] = gyroPad[a]
-        trigger[0] = max(trigger[0], abs(gyroPad[GamepadAxis.LT.ordinal]))
-        trigger[1] = max(trigger[1], abs(gyroPad[GamepadAxis.RT.ordinal]))
+        // The gyro's push adds to the sticks' and triggers' own (aim with the stick, correct with the gyro), up to full.
+        for (a in 0 until 4) stick[a] = (stick[a] + gyroPad[a]).coerceIn(-1f, 1f)
+        trigger[0] = (trigger[0] + abs(gyroPad[GamepadAxis.LT.ordinal])).coerceAtMost(1f)
+        trigger[1] = (trigger[1] + abs(gyroPad[GamepadAxis.RT.ordinal])).coerceAtMost(1f)
         holdModeKeys()
         if (kept.isNotEmpty()) {
             var other = accButtons != 0 || accMouse != 0 || accUp || accDown || accLeft || accRight
@@ -2597,13 +2817,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for ((m, v) in hapticNow) {
             when (val t = m.target) {
                 is OutputTarget.Haptic -> {
-                    val feel = t.feel ?: eff.haptics
+                    val feel = t.feel ?: feelOf(m)
                     if (t.held) {
                         if (held == null || feel.strength * v > held.strength * level) {
                             held = feel; level = v
                         }
                     } else if (v >= PRESS_THRESHOLD && (hapticWas[m] ?: 0f) < PRESS_THRESHOLD &&
-                        (t.edge ?: eff.hapticEdge) != HapticEdge.RELEASE
+                        (t.edge ?: edgeOf(m)) != HapticEdge.RELEASE
                     ) {
                         hapticTicks.add(feel)
                     }
@@ -2615,19 +2835,23 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                         OutputTarget.HapticStep.MAX_STEP_PERCENT
                     )
                     val step = (v * 100f / pct + 1e-3f).toInt()
-                    if (step != (hapticSteps.put(m, step) ?: 0)) hapticTicks.add(t.feel ?: eff.haptics)
+                    if (step != (hapticSteps.put(m, step) ?: 0)) hapticTicks.add(t.feel ?: feelOf(m))
                 }
 
-                else -> Unit
+                // A Buzz chip ([Mapping.buzz]): a tick as it presses, like a haptic tick of its own.
+                else -> if (v >= PRESS_THRESHOLD && (hapticWas[m] ?: 0f) < PRESS_THRESHOLD && edgeOf(m) != HapticEdge.RELEASE) {
+                    hapticTicks.add(feelOf(m))
+                }
             }
         }
         // Ticks on release that dropped under half since the last snapshot (gone from hapticNow when at rest).
         for ((m, was) in hapticWas) {
             val t = m.target
-            if (t is OutputTarget.Haptic && !t.held && was >= PRESS_THRESHOLD &&
-                (hapticNow[m] ?: 0f) < PRESS_THRESHOLD && (t.edge ?: eff.hapticEdge) != HapticEdge.PRESS
-            ) {
-                hapticTicks.add(t.feel ?: eff.haptics)
+            if (was < PRESS_THRESHOLD || (hapticNow[m] ?: 0f) >= PRESS_THRESHOLD) continue
+            if (t is OutputTarget.Haptic && !t.held && (t.edge ?: edgeOf(m)) != HapticEdge.PRESS) {
+                hapticTicks.add(t.feel ?: feelOf(m))
+            } else if (m.buzz && !Describe.isHaptic(t) && edgeOf(m) != HapticEdge.PRESS) {
+                hapticTicks.add(feelOf(m))
             }
         }
         // Per-step ones back at 0 since the last snapshot tick on the way down too.
@@ -2636,7 +2860,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             while (it.hasNext()) {
                 val e = it.next()
                 if (e.key !in hapticNow) {
-                    if (e.value != 0) hapticTicks.add((e.key.target as OutputTarget.HapticStep).feel ?: eff.haptics)
+                    if (e.value != 0) hapticTicks.add((e.key.target as OutputTarget.HapticStep).feel ?: feelOf(e.key))
                     it.remove()
                 }
             }
@@ -2646,6 +2870,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         hapticLevel = level
         val w = hapticWas; hapticWas = hapticNow; hapticNow = w
     }
+
+    /** The haptic feel of [m]'s touch control ([TouchControl.haptics]), else the workspace's. */
+    private fun feelOf(m: Mapping): HapticFeel =
+        MappingProfiles.touchId(m.source)?.let { controlsById[it]?.haptics } ?: eff.haptics
+
+    /** When [m]'s ticks play: its touch control's ([TouchControl.hapticEdge]), else the workspace's. */
+    private fun edgeOf(m: Mapping): HapticEdge =
+        MappingProfiles.touchId(m.source)?.let { controlsById[it]?.hapticEdge } ?: eff.hapticEdge
 
     /** Adds one source group's outputs; its stick axes sum, then merge by largest deflection. */
     private fun accumulate(ms: List<Mapping>, dev: Dev?) {
@@ -2676,6 +2908,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 // A swipe direction's own outputs are not another input for its latch.
                 if (latchChip(m.source)) stickies.add(null, m.target)
                 sameSeen(m, dev, now)
+            }
+            // A Buzz chip ticks as it presses: watched like a haptic tick ([collectHaptics]).
+            if (m.buzz) {
+                val a = min(1f, abs(v))
+                if (a > HAPTIC_MIN_LEVEL) hapticNow[m] = max(a, hapticNow[m] ?: 0f)
             }
             when (val t = m.target) {
                 is OutputTarget.Pad -> if (v >= PRESS_THRESHOLD) when (t.button) {
@@ -2710,7 +2947,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 OutputTarget.GyroHold, OutputTarget.GyroToggle, OutputTarget.GyroPause, is OutputTarget.GyroPauseAxis,
                 OutputTarget.SwitchApps, OutputTarget.Zoom, is OutputTarget.Layer, OutputTarget.LayerBack,
                 OutputTarget.LetGo, OutputTarget.BlackScreen, is OutputTarget.SetOrientation, OutputTarget.ClearDisplays,
-                OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen,
+                is OutputTarget.Calibrate, OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen,
                 OutputTarget.NoOutput, is OutputTarget.Off -> Unit
 
                 // The gyro reads it on every sample ([refreshSens]); the touchpad when it changes.
@@ -3194,7 +3431,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** [t] fires when it is pressed ([onPress]) rather than being held. */
     private fun isEvent(t: OutputTarget) = t is OutputTarget.Wheel || t == OutputTarget.GyroToggle || t is OutputTarget.Layer ||
             t == OutputTarget.LayerBack || t == OutputTarget.LetGo || t == OutputTarget.BlackScreen ||
-            t is OutputTarget.SetOrientation || t == OutputTarget.ClearDisplays || isPadAction(t)
+            t is OutputTarget.SetOrientation || t == OutputTarget.ClearDisplays || t is OutputTarget.Calibrate || isPadAction(t)
 
     private fun isPadAction(t: OutputTarget) =
         t == OutputTarget.PreviousWorkspace || t == OutputTarget.NextWorkspace || t == OutputTarget.Fullscreen
@@ -3257,7 +3494,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 is InputSource.Touch -> surfaces[b.id]
                 else -> null
             }
-            sh.splitNs = surface?.longPressNanos ?: touchpad.longPressNanos
+            // Else the button's, area's or key's own gesture timing; the touchpad's only for surfaces.
+            sh.splitNs = surface?.longPressNanos ?: ownLongNs(src, dev) ?: touchpad.longPressNanos
             sh.moved = surface?.pastTapSlop == true
         }
         if (derived == Trigger.RELEASE && src is InputSource.Surface) {
@@ -3286,6 +3524,19 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         if (o.endsOnTap && o.mode == How.TOGGLE) sh.touched(touchedNow(src, dev), now)
         sh.update(on, now)
         return if (sh.on(now)) 1f else 0f
+    }
+
+    /** The long-press time the gestures of [src]'s touch button, touch area or key ([dev]'s) run on; null for others. */
+    private fun ownLongNs(src: InputSource, dev: Dev?): Long? = when (src) {
+        is InputSource.TouchDoubleTap -> tapStates[src.id]?.longNs
+        is InputSource.TouchArea -> areaTimes[src.id]?.longNs
+        is InputSource.KeyGesture -> {
+            val d = dev ?: anyDevice
+            d.gestures[src.keyCode]?.longNs
+                ?: ((ws.keyTimings.firstOrNull { it.keyCode == src.keyCode }?.longPressMs ?: (if (tapNow >= 0) tapNow else tapBase))
+                    .coerceIn(Workspace.MIN_LONG_PRESS_MS, Workspace.MAX_LONG_PRESS_MS) * 1_000_000L)
+        }
+        else -> null
     }
 
     /** The button or surface [src] is a trigger of is touched (pressed) now. */
@@ -3388,6 +3639,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen -> onPadAction?.invoke(t)
             is OutputTarget.SetOrientation -> onSetOrientation?.invoke(t.granular)
             OutputTarget.ClearDisplays -> onClearDisplays?.run()
+            is OutputTarget.Calibrate -> onCalibrate?.invoke(
+                t.countdownS.coerceIn(0, OutputTarget.Calibrate.MAX_COUNTDOWN_S),
+                t.measureS.coerceIn(OutputTarget.Calibrate.MIN_MEASURE_S, OutputTarget.Calibrate.MAX_MEASURE_S),
+            )
             else -> Unit
         }
     }
@@ -3557,15 +3812,21 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         // A button's fingers drive the touchpad for the touchpad's chips it takes ([Inheritance.passedOn]);
         // only its own chips run on the button.
         touchMappings = touchInUse.filter { !it.target.nothing }
-        val blocks = HashMap<String, Set<Mapping>>()
-        val clear = HashSet<String>()
-        for (id in buttonIds) {
-            val b = Inheritance.passedOn(touchInUse, id) ?: continue
-            blocks[id] = b
-            if (touchMappings.none { MappingProfiles.touchId(it.source) == id }) clear.add(id)
+        // With nothing carried on touch, the touch mappings in use are the layer state's alone: reuse its work.
+        val tc = if (carried.getOrNull(0).isNullOrEmpty()) layerCache() else LayerCache()
+        touchCache = tc
+        tc.blocks?.let { passBlocks = it; seeThrough = tc.seeThrough } ?: run {
+            val blocks = HashMap<String, Set<Mapping>>()
+            val clear = HashSet<String>()
+            for (id in buttonIds) {
+                val b = Inheritance.passedOn(touchInUse, id) ?: continue
+                blocks[id] = b
+                if (touchMappings.none { MappingProfiles.touchId(it.source) == id }) clear.add(id)
+            }
+            tc.blocks = blocks; tc.seeThrough = clear
+            passBlocks = blocks
+            seeThrough = clear
         }
-        passBlocks = blocks
-        seeThrough = clear
         padMappings = Array(allPads.size) { inUse(allPads[it], carried.getOrNull(it + 1)) }
         mapsLeftTriggerAxis =
             BooleanArray(padMappings.size) { mapsTriggerAxis(padMappings[it], AndroidAxis.LTRIGGER, AndroidAxis.BRAKE) }
@@ -3597,7 +3858,16 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for ((id, st) in tapStates) {
             val double = targetsOf(touchMappings, InputSource.TouchDoubleTap(id))
             st.hasDouble = double.isNotEmpty()
-            st.tapWaits = double.isNotEmpty() && double != targetsOf(touchMappings, InputSource.TouchTap(id))
+            st.tapWaits = double.isNotEmpty() &&
+                shapesOf(touchMappings, InputSource.TouchDoubleTap(id)) != shapesOf(touchMappings, InputSource.TouchTap(id))
+        }
+        // A touch area waits for a double tap only where the set in use maps one.
+        for ((key, k) in areaSources) {
+            val st = areaGestures[key] ?: continue
+            val dbl = k.copy(on = Trigger.DOUBLE_TAP)
+            val double = targetsOf(touchMappings, dbl)
+            st.hasDouble = double.isNotEmpty()
+            st.tapWaits = double.isNotEmpty() && shapesOf(touchMappings, dbl) != shapesOf(touchMappings, k.copy(on = Trigger.TAP))
         }
         keyCfgs = Array(padMappings.size) { keyGestureCfgs(padMappings[it]) }
         anyKeyCfgs = keyGestureCfgs(padMappings.flatMap { it })
@@ -3618,7 +3888,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * buttons' surfaces, and the gesture times of touch buttons and keys without their own.
      */
     private fun applyLayerSettings() {
-        val e = WorkspaceDefaults.layered(ws, layerSet, layerOverrides)
+        val e = layerEff(layerCache())
         eff = e
         touchpad.settings = e.touchpad
         updateGyroNow()
@@ -3661,10 +3931,23 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** The touchpad runs its chips but those [gestureButtons] override ([touchBlocked]). */
     private fun blockTouchpad(force: Boolean = false) {
-        val blocked = if (gestureButtons.isEmpty()) emptySet() else gestureButtons.flatMapTo(HashSet()) { passBlocks[it].orEmpty() }
-        if (!force && blocked == touchBlocked) return
-        touchBlocked = blocked
-        touchpad.map = SurfaceMap(if (blocked.isEmpty()) touchMappings else touchMappings.filterNot { it in blocked })
+        val tc = touchCache
+        if (gestureButtons.isEmpty()) {
+            if (!force && touchBlocked.isEmpty()) return
+            touchBlocked = emptySet()
+            touchpad.map = tc.fullMap ?: SurfaceMap(touchMappings).also { tc.fullMap = it }
+            return
+        }
+        // Each combination of buttons compiles its touchpad map once per layer state.
+        val b = tc.blockedMaps[gestureButtons] ?: run {
+            val blocked = gestureButtons.flatMapTo(HashSet()) { passBlocks[it].orEmpty() }
+            val map = if (blocked.isEmpty()) tc.fullMap ?: SurfaceMap(touchMappings).also { tc.fullMap = it }
+            else SurfaceMap(touchMappings.filterNot { it in blocked })
+            BlockedMap(blocked, map).also { tc.blockedMaps[HashSet(gestureButtons)] = it }
+        }
+        if (!force && b.blocked == touchBlocked) return
+        touchBlocked = b.blocked
+        touchpad.map = b.map
     }
 
     private fun unpass(slot: Int) {
@@ -3750,7 +4033,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
         is InputSource.TouchStick -> {
             val v = touchSticks[source.id]
-            when {
+            val plain = when {
                 v == null -> 0f
                 v.zoned && source.half != AxisHalf.FULL -> {
                     val bit = when (source.axis) {
@@ -3762,6 +4045,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
                 else -> half(if (source.axis == StickAxis.X) v.x else v.y, source.half)
             }
+            // A direction's outer zone: that direction pressed, the stick past its outer ring.
+            if (!source.outer) plain
+            else if (v != null && v.outer && source.half != AxisHalf.FULL && plain >= PRESS_THRESHOLD) 1f else 0f
         }
         // Upgraded to surface inputs when the workspace loads (Bindings.upgradeSwipes).
         is InputSource.TouchSwipe -> 0f
@@ -3778,7 +4064,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         is InputSource.Finger -> fingerValue(source)
         is InputSource.TouchStickDiagonal -> {
             val v = touchSticks[source.id]
-            if (v != null && v.dirs and (DIR_DIAGONAL shl source.diagonal.ordinal) != 0) v.mag else 0f
+            val on = v != null && v.dirs and (DIR_DIAGONAL shl source.diagonal.ordinal) != 0
+            when {
+                !on -> 0f
+                !source.outer -> v!!.mag
+                v!!.outer && v.mag >= PRESS_THRESHOLD -> 1f
+                else -> 0f
+            }
         }
     }
 
@@ -3804,10 +4096,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      */
     private fun axisValue(dev: Dev, s: InputSource.Axis): Float {
         val a = s.axis
-        // The device's own sticks: on a pad with its right stick on RX / RY, Z / RZ are triggers.
-        val rx = dev.device?.rightStickRx == true
-        val layout = if (rx) STICKS_RX else STICKS
-        val stick = if (a in 0 until AXIS_SLOTS) (if (rx) axisStickRx else axisStick)[a] else null
+        // A pad with its right stick on RX / RY has it on Z / RZ here too ([Dev.setAxis]).
+        val layout = STICKS
+        val stick = if (a in 0 until AXIS_SLOTS) axisStick[a] else null
+        // A flick stick turns the mouse itself ([flickPad]): its mappings see it at rest.
+        if (stick?.flick == true) return 0f
         return when (s.stage) {
             AxisStage.NONE -> if (stick == null) half(dev.axis(a), s.half) else stickValue(dev, s, stick, layout)
             AxisStage.OUTER -> stickValue(dev, s, stick ?: DEFAULT_STICK, layout)
@@ -3924,12 +4217,17 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
         /** Android axis ids are 0..47 (MotionEvent.AXIS_GENERIC_16). */
         private const val AXIS_SLOTS = 64
+
+        /** Key codes whose taps queue ([Dev.setKey]): every Android key and the mouse's ([com.oleroma.gyrophone.core.model.AndroidKey.MOUSE_WHEEL_UP]...). */
+        private const val QUEUED_TAP_CODES = 1024
+
+        /** Taps of one key waiting behind the one showing: a wheel flick's notches, kept within reason. */
+        private const val MAX_QUEUED_TAPS = 8
         private val DEFAULT_STICK = StickTuning()
         private val DEFAULT_TRIGGER = TriggerTuning()
 
-        /** A pad's physical sticks: right stick on Z / RZ ([PhysicalSticks.sticks]) or on RX / RY ([PhysicalSticks.sticksRx]). */
+        /** A pad's physical sticks ([PhysicalSticks.sticks]; a right stick on RX / RY is put on Z / RZ, [Dev.setAxis]). */
         private val STICKS = StickLayout(PhysicalSticks.sticks)
-        private val STICKS_RX = StickLayout(PhysicalSticks.sticksRx)
 
         private const val MAX_BUTTON_FINGERS = 10
 

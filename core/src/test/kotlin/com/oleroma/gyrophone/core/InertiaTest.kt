@@ -122,4 +122,19 @@ class InertiaTest {
         val r = m.route(0f, 0f, 0f, 0.005f, listOf(stickX), 0)
         assertEquals(0f, r.pad[GamepadAxis.LX.ordinal])
     }
+
+    @Test
+    fun aResetAskedFromAnotherThreadStopsTheGlideAtTheNextSample() {
+        val routes = Bindings.gyroMouseMappings()
+        val m = GyroMouse(GyroSettings(inertia = true))
+        repeat(20) { m.route(0f, 0f, -1f, 0.005f, routes, MappingEngine.ALL_GYRO) }
+        m.route(0f, 0f, 0f, 0.005f, routes, 0)
+        assertTrue(m.coasting)
+        m.requestReset()
+        // Nothing is reset until the sampling thread's next sample, which starts from nothing.
+        assertTrue(!m.coasting)
+        var off = 0
+        repeat(100) { off += m.route(0f, 0f, 0f, 0.005f, routes, 0).dx }
+        assertEquals(0, off)
+    }
 }

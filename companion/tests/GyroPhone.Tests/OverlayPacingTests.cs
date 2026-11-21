@@ -101,4 +101,13 @@ public class OverlayPacingTests
         Differs(c => c.PadSticks[2] = 0.3f);
         Differs(c => c.PadR2Pull = 0.5f);
     }
+
+    [Fact]
+    public void APacerGoesSlowASecondAfterTheLastBusyTick()
+    {
+        Assert.True(OverlayPacing.Busy(10_000, 10_000 - OverlayPacing.IdleAfterMs + 1));
+        Assert.False(OverlayPacing.Busy(10_000, 10_000 - OverlayPacing.IdleAfterMs));
+        // A window never busy (just opened) doesn't hold the pacer fast.
+        Assert.False(OverlayPacing.Busy(10_000, 0));
+    }
 }

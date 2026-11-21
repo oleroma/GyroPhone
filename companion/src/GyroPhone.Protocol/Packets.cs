@@ -77,7 +77,19 @@ public readonly record struct PressTime(uint StateTimeUs, uint EventTimeUs);
 /// second's end, low 32 bits of the phone's µs clock (as STATE's). Times in µs.
 /// </summary>
 public readonly record struct PhoneStats(uint TimeUs, ushort States, ushort Packets, ushort Failed, ushort SlowSends,
-    uint SendTotalUs, uint SendMaxUs, uint WakeLateMaxUs, uint StateGapMaxUs, uint PhoneTxPackets);
+    uint SendTotalUs, uint SendMaxUs, uint WakeLateMaxUs, uint StateGapMaxUs, uint PhoneTxPackets,
+    int RttMinUs = -1, int RttTypUs = -1, int DriftPpb = 0, ushort Pings = 0, PhoneSetup Setup = default);
+
+/// <summary>
+/// The phone's side of the setup in PHONE_STATS: what can shift link results unnoticed. <see cref="BatteryPct"/> and
+/// <see cref="Thermal"/> 255 = unknown; <see cref="TempDeciC"/> short.MinValue = unknown; <see cref="UsbVendor"/>/<see cref="UsbProduct"/>
+/// the USB network adapter on the phone (0 none). Flags: 1 charging, 2 battery saver, 4 USB network adapter, 8 Doze.
+/// </summary>
+public readonly record struct PhoneSetup(byte BatteryPct, byte Flags, short TempDeciC, byte Thermal, byte WifiStandard,
+    ushort UsbVendor, ushort UsbProduct, ushort WifiWidthMhz)
+{
+    public const byte Charging = 1, BatterySaver = 2, UsbNet = 4, Doze = 8;
+}
 
 /// <summary>
 /// One input held on the PC while the phone listens (CAPTURED): a key by HID usage, a mouse button (0 left, 1 right,

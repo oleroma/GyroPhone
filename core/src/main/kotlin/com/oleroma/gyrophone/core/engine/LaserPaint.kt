@@ -1,6 +1,7 @@
 package com.oleroma.gyrophone.core.engine
 
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.asin
 import kotlin.math.atan2
@@ -47,23 +48,33 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         private set
 
     /**
-     * The rows (j) changed since the last [takeChanged]: [changedFrom] .. [changedTo], none while
-     * [changedFrom] > [changedTo]. The UI copies only those rows into its pictures of the map.
+     * The patch changed since the last [takeChanged]: rows (j) [changedFrom] .. [changedTo] and, within them,
+     * columns (i) [changedColFrom] .. [changedColTo]; none while [changedFrom] > [changedTo]. The UI copies only that
+     * patch into its pictures of the map. Paint across the seam behind (longitude ±180°) or over a pole counts as
+     * every column.
      */
     var changedFrom = 0
         private set
     var changedTo = height - 1
         private set
+    var changedColFrom = 0
+        private set
+    var changedColTo = width - 1
+        private set
 
-    /** Forgets the changed rows (the UI took them up). */
+    /** Forgets the changed patch (the UI took it up). */
     fun takeChanged() {
         changedFrom = Int.MAX_VALUE
         changedTo = -1
+        changedColFrom = Int.MAX_VALUE
+        changedColTo = -1
     }
 
-    private fun changed(j0: Int, j1: Int) {
+    private fun changed(j0: Int, j1: Int, i0: Int = 0, i1: Int = width - 1) {
         if (j0 < changedFrom) changedFrom = j0
         if (j1 > changedTo) changedTo = j1
+        if (i0 < changedColFrom) changedColFrom = i0
+        if (i1 > changedColTo) changedColTo = i1
     }
 
     // The current line's own part of each texel it reached (its strongest stamp there), and which line
@@ -173,10 +184,19 @@ class LaserPaint(val width: Int = WIDTH, val height: Int = HEIGHT) {
         val lonC = atan2(cx.toDouble(), -cz.toDouble())
         val j0 = floor((PI / 2 - (latC + span)) / PI * height).toInt().coerceIn(0, height - 1)
         val j1 = floor((PI / 2 - (latC - span)) / PI * height).toInt().coerceIn(0, height - 1)
-        changed(j0, j1)
         val cosSpan = cos(span)
         val sinLatC = sin(latC)
         val cosLatC = cos(latC)
+        // The cap's columns: its widest reach in longitude is asin(sin(span) / cos φc), while it holds no pole.
+        var ci0 = 0
+        var ci1 = width - 1
+        if (abs(latC) + span < PI / 2 - 1e-3) {
+            val dl = asin((sin(span) / cosLatC).coerceIn(0.0, 1.0)) + 1e-3
+            val a0 = floor((lonC - dl + PI) / (2 * PI) * width).toInt()
+            val a1 = floor((lonC + dl + PI) / (2 * PI) * width).toInt()
+            if (a0 >= 0 && a1 < width) { ci0 = a0; ci1 = a1 }
+        }
+        changed(j0, j1, ci0, ci1)
         val reachF = brush.reach
         // Within the same line, a stamp this far along from the last one at a texel is the same pass over it.
         val samePass = (Math.toDegrees((brush.reach * 2).toDouble()) / ALONG_UNIT).toInt() + SAME_PASS_EXTRA

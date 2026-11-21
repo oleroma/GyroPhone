@@ -10,7 +10,8 @@ namespace GyroPhone.Windows;
 /// its install.cmd). The driver's device interface takes a PLUG, then each 64-byte input report, then
 /// an UNPLUG; closing the handle unplugs too, so a crashed companion leaves no pad behind. The control
 /// codes and protocol version match driver/src/gyropad_ioctl.h. Submit runs under the engine lock, Plug and
-/// Unplug on its pad thread.
+/// Unplug on its pad thread. A pad gone underneath (driver reinstalled or disabled) makes Submit throw and
+/// <see cref="Plugged"/> false; the engine has the pad thread plug a new one, never Submit.
 /// </summary>
 public sealed class DualSensePadSink : IDisposable
 {
@@ -18,12 +19,16 @@ public sealed class DualSensePadSink : IDisposable
     private const uint ProtocolVersion = 1;
     private const uint IoctlVersion = 0x222000, IoctlPlug = 0x222004, IoctlUnplug = 0x222008, IoctlSubmit = 0x22200C;
     private const uint PadDualSense = 1;
-    private const long ReplugGapMs = 1000;
+    // Win32 errors that mean the pad or the driver's device is gone, not a passing failure. Access denied on a
+    // handle that worked is a device being removed (delete pending).
+    private const int ErrorFileNotFound = 2, ErrorAccessDenied = 5, ErrorInvalidHandle = 6, ErrorBadCommand = 22,
+        ErrorDevNotExist = 55, ErrorNoSuchDevice = 433, ErrorDeviceNotConnected = 1167, ErrorDeviceRemoved = 1617;
 
     private readonly Action<string>? _log;
     private readonly byte[] _report = new byte[DualSenseReport.Size];
     private SafeFileHandle? _handle;
-    private long _replugAtMs = -ReplugGapMs;
+    /// <summary>The pad went away underneath: the handle is kept for the next Plug or Unplug to close.</summary>
+    private bool _lost;
 
     private DualSensePadSink(Action<string>? log) => _log = log;
 
@@ -36,25 +41,32 @@ public sealed class DualSensePadSink : IDisposable
         return new DualSensePadSink(log);
     }
 
-    public bool Plugged => _handle != null;
+    public bool Plugged => _handle != null && !_lost;
 
     public bool Plug()
     {
-        if (_handle != null) return true;
+        if (Plugged) return true;
+        Unplug(); // closes a pad lost underneath
         try
         {
             string path = FindDevice() ?? throw new IOException("the GyroPhone pad driver is not installed");
             var h = CreateFileW(path, GenericRead | GenericWrite, FileShareRead | FileShareWrite, 0, OpenExisting, 0, 0);
-            if (h.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
-            Span<byte> buf = stackalloc byte[8];
-            if (Control(h, IoctlVersion, [], buf) != 4 || BitConverter.ToUInt32(buf) != ProtocolVersion)
+            // Closed on every failure below, so a refused plug leaves no handle holding the device.
+            try
+            {
+                if (h.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                Span<byte> buf = stackalloc byte[8];
+                if (Control(h, IoctlVersion, [], buf) != 4 || BitConverter.ToUInt32(buf) != ProtocolVersion)
+                    throw new IOException("the GyroPhone pad driver is a different version; run its install.cmd again");
+                BitConverter.TryWriteBytes(buf, ProtocolVersion);
+                BitConverter.TryWriteBytes(buf[4..], PadDualSense);
+                Control(h, IoctlPlug, buf, []);
+            }
+            catch
             {
                 h.Dispose();
-                throw new IOException("the GyroPhone pad driver is a different version; run its install.cmd again");
+                throw;
             }
-            BitConverter.TryWriteBytes(buf, ProtocolVersion);
-            BitConverter.TryWriteBytes(buf[4..], PadDualSense);
-            Control(h, IoctlPlug, buf, []);
             _handle = h;
             return true;
         }
@@ -69,6 +81,7 @@ public sealed class DualSensePadSink : IDisposable
     {
         var h = _handle;
         _handle = null;
+        _lost = false;
         if (h == null) return;
         try
         {
@@ -84,30 +97,23 @@ public sealed class DualSensePadSink : IDisposable
     public void Submit(in Ds4Frame f, in Ds4Motion m)
     {
         var h = _handle;
-        if (h == null) return;
+        if (h == null || _lost) return;
         DualSenseReport.Build(_report, f, m);
         try
         {
             Control(h, IoctlSubmit, _report, []);
         }
-        catch (Win32Exception)
+        catch (Win32Exception e) when (IsGone(e.NativeErrorCode))
         {
-            // The pad went away underneath (driver reinstalled or disabled): plug a new one, and fail so
-            // the engine sends the frame again.
-            Replug();
+            // Plugging a new one blocks in the driver, so it is left to the engine's pad thread.
+            _lost = true;
+            _log?.Invoke("DualSense pad was unplugged underneath");
             throw;
         }
     }
 
-    private void Replug()
-    {
-        long now = Environment.TickCount64;
-        if (now - _replugAtMs < ReplugGapMs) return;
-        _replugAtMs = now;
-        _log?.Invoke("DualSense pad was unplugged underneath; plugging it again");
-        Unplug();
-        Plug();
-    }
+    private static bool IsGone(int error) => error is ErrorFileNotFound or ErrorAccessDenied or ErrorInvalidHandle
+        or ErrorBadCommand or ErrorDevNotExist or ErrorNoSuchDevice or ErrorDeviceNotConnected or ErrorDeviceRemoved;
 
     public void Dispose() => Unplug();
 

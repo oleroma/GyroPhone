@@ -55,10 +55,11 @@ class GyroMathVectorsTest {
         linear: BooleanArray = BooleanArray(3),
         routes: List<Route> = MOUSE,
         accel: List<GyroCurve> = List(3) { GyroCurve.OFF },
+        space: IntArray = IntArray(3),
     ) = GyroMath.Config(
         sens, inertia, glideMs, linear, routes,
         Array(3) { accel[it].flat() }, BooleanArray(3) { !accel[it].isOff && accel[it].axisSpeed },
-        BooleanArray(3) { !accel[it].isOff && accel[it].smooth },
+        BooleanArray(3) { !accel[it].isOff && accel[it].smooth }, space,
     )
 
     /** [n] steps of motion from [rnd] around [base] deg/s (± [spread]) over [dt] with [axes]. */
@@ -186,7 +187,47 @@ class GyroMathVectorsTest {
                 Step(r(), r(), r(), (1 + rnd.nextInt(3)) / 1000f, ALL)
             }
         }
+        add("smoothing-uneven-samples", cfg(sens = floatArrayOf(16f, 30f, 45f)), 0f, 8f, 22) { rnd ->
+            List(60) {
+                fun r() = (rnd.nextFloat() * 2f - 1f) * (if (rnd.nextInt(5) == 0) 20f else 3f)
+                Step(r(), r(), r(), floatArrayOf(0.0002f, 0.001f, 0.0011f, 0.005f, 0.02f, 0f)[rnd.nextInt(6)], ALL)
+            }
+        }
+        add("filters-at-high-sensitivity", cfg(
+            sens = floatArrayOf(80f, 120f, 160f),
+            routes = listOf(Route(2, Route.MOUSE_X, -2f), Route(1, Route.MOUSE_Y, 0.5f), Route(0, Route.MOUSE_X, 1f)),
+        ), 2f, 6f, 23) { rnd -> walk(rnd, 40, floatArrayOf(0.5f, -1f, 2f), 4f, 0.00105f) }
         return list
+    }
+
+    /** Gyro space cases: a sample, a space and an up ([GyroSpaces.inSpace]). */
+    private fun spaces(): String {
+        val rnd = Random(31)
+        val sb = StringBuilder("[\n")
+        val n = 64
+        for (i in 0 until n) {
+            fun r() = (rnd.nextFloat() * 2f - 1f) * 300f
+            val yaw = r(); val pitch = r(); val roll = r()
+            val space = i % 3
+            // Every fourth: the right edge near straight up or down (World's blend); one in sixteen: no up.
+            var ux: Float; var uy: Float; var uz: Float
+            if (i % 16 == 15) { ux = 0f; uy = 0f; uz = 0f } else {
+                ux = rnd.nextFloat() * 2f - 1f; uy = rnd.nextFloat() * 2f - 1f; uz = rnd.nextFloat() * 2f - 1f
+                if (i % 4 == 1) { ux = (if (rnd.nextBoolean()) 1f else -1f) * (8f + rnd.nextFloat() * 2f); }
+                val l = kotlin.math.sqrt(ux * ux + uy * uy + uz * uz)
+                ux /= l; uy /= l; uz /= l
+            }
+            val o = FloatArray(3)
+            GyroSpaces.inSpace(yaw, pitch, roll, space, ux, uy, uz, o)
+            val inp = floatArrayOf(yaw, pitch, roll); val up = floatArrayOf(ux, uy, uz)
+            sb.append("  {\"in\": ").append(floats(inp)).append(", \"inBits\": ").append(bits(inp))
+            sb.append(", \"space\": ").append(space)
+            sb.append(", \"up\": ").append(floats(up)).append(", \"upBits\": ").append(bits(up))
+            sb.append(", \"out\": ").append(floats(o)).append(", \"outBits\": ").append(bits(o))
+            sb.append(if (i < n - 1) "},\n" else "}\n")
+        }
+        sb.append(" ]")
+        return sb.toString()
     }
 
     // ---- writing ----
@@ -238,6 +279,7 @@ class GyroMathVectorsTest {
             sb.append(if (ci < cs.size - 1) "  },\n" else "  }\n")
         }
         sb.append(" ],\n")
+        sb.append(" \"spaces\": ").append(spaces()).append(",\n")
         sb.append(" \"tail\": ").append(tail()).append("\n")
         sb.append("}\n")
         return sb.toString()
@@ -258,7 +300,10 @@ class GyroMathVectorsTest {
             t += (dt * 1e6f).toLong()
             ns += 1_000_000L
             fun r() = (rnd.nextFloat() * 2f - 1f) * 300f
-            feed.add(r(), r(), r(), dt, i and 7, t)
+            val up = floatArrayOf(rnd.nextFloat() * 2f - 1f, rnd.nextFloat() * 2f - 1f, rnd.nextFloat() * 2f - 1f)
+            val l = kotlin.math.sqrt(up[0] * up[0] + up[1] * up[1] + up[2] * up[2])
+            for (k in 0 until 3) up[k] /= l
+            feed.add(r(), r(), r(), dt, i and 7, t, if (i == 9) null else up)
         }
         feed.still()
         ns += 1_000_000L; t += 40_000L
@@ -271,6 +316,7 @@ class GyroMathVectorsTest {
                 Route(0, Route.HWHEEL, 1f), Route(1, Route.PAD + 3, 1.5f),
             ),
             accel = listOf(GyroCurve.STRONG, GyroCurve.OFF, GyroCurve.LIGHT.copy(axisSpeed = true, smooth = true)),
+            space = intArrayOf(GyroSpaces.WORLD, GyroSpaces.LOCAL, GyroSpaces.PLAYER),
         )
         feed.setConfig(cfg, 1.5f, 4f)
         val offset = -123_456_789L
@@ -289,7 +335,9 @@ class GyroMathVectorsTest {
             val o = PcGyroFeed.SAMPLES_OFFSET + j * PcGyroFeed.SAMPLE_SIZE
             sb.append("   {\"dtUs\": ").append(b.getU16(o)).append(", \"yaw\": ").append(b.getI16(o + 2))
             sb.append(", \"pitch\": ").append(b.getI16(o + 4)).append(", \"roll\": ").append(b.getI16(o + 6))
-            sb.append(", \"axes\": ").append(b.getU8(o + 8)).append(if (j < n - 1) "},\n" else "}\n")
+            sb.append(", \"axes\": ").append(b.getU8(o + 8))
+            sb.append(", \"up\": [").append(b.getI16(o + 9)).append(", ").append(b.getI16(o + 11)).append(", ").append(b.getI16(o + 13)).append("]")
+            sb.append(if (j < n - 1) "},\n" else "}\n")
         }
         sb.append("  ],\n")
         sb.append("  \"totals\": [")
@@ -313,7 +361,8 @@ class GyroMathVectorsTest {
             val pts = (0 until (head and 0x0F)).joinToString(", ") { j -> "${b.getU16(o + 1 + j * 4)}, ${b.getU16(o + 3 + j * 4)}" }
             "{\"axisSpeed\": ${head and PcGyroFeed.CURVE_AXIS_SPEED != 0}, \"smooth\": ${head and PcGyroFeed.CURVE_SMOOTH != 0}, \"q\": [$pts]}"
         })
-        sb.append("]}\n")
+        val sp = b.getU8(c + PcGyroFeed.SPACES_OFFSET)
+        sb.append("], \"space\": [").append((0 until 3).joinToString(", ") { ((sp shr (2 * it)) and 3).toString() }).append("]}\n")
         sb.append(" }")
         return sb.toString()
     }

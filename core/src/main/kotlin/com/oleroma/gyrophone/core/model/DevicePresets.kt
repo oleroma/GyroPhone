@@ -176,6 +176,11 @@ data class StickTuning(
     val outerRing: Float = 0.85f,
     val pieX: Float = 135f,
     val pieY: Float = 135f,
+    /**
+     * Flick stick ([com.oleroma.gyrophone.core.engine.FlickStick]): the stick turns the camera
+     * (mouse) the way it points, by the game's full turn; its own mappings do nothing then.
+     */
+    val flick: Boolean = false,
 ) {
     companion object {
         const val MIN_PIE = 30f
@@ -198,11 +203,8 @@ object PhysicalSticks {
         "rs" to (AndroidAxis.Z to AndroidAxis.RZ),
     )
 
-    /** [sticks] on a pad whose right stick is RX / RY ([rightStickOnRx]); its Z / RZ are then triggers. */
-    val sticksRx: Map<String, Pair<Int, Int>> = linkedMapOf(
-        "ls" to (AndroidAxis.X to AndroidAxis.Y),
-        "rs" to (AndroidAxis.RX to AndroidAxis.RY),
-    )
+    /** [axis] is one of a stick's ([sticks]). */
+    fun isStickAxis(axis: Int): Boolean = sticks.values.any { (x, y) -> axis == x || axis == y }
 
     /**
      * Whether a pad puts its right stick on RX / RY ([has]: it reports that axis). Pads on
@@ -215,6 +217,23 @@ object PhysicalSticks {
             (!has(AndroidAxis.RX) || !has(AndroidAxis.RY) || triggers)
         return !zStick && has(AndroidAxis.RX) && has(AndroidAxis.RY)
     }
+
+    /**
+     * Axis [axis] of a pad as the mappings and the controller drawing have it. On a pad whose right
+     * stick is RX / RY ([rx], [rightStickOnRx]) that stick is Z / RZ, and its own Z / RZ (its
+     * triggers) are LTRIGGER / RTRIGGER ([canonicalValue]). Other axes and pads keep theirs.
+     */
+    fun canonicalAxis(axis: Int, rx: Boolean): Int = if (!rx) axis else when (axis) {
+        AndroidAxis.RX -> AndroidAxis.Z
+        AndroidAxis.RY -> AndroidAxis.RZ
+        AndroidAxis.Z -> AndroidAxis.LTRIGGER
+        AndroidAxis.RZ -> AndroidAxis.RTRIGGER
+        else -> axis
+    }
+
+    /** [value] of [axis] as its [canonicalAxis]'s: a trigger on a centred Z / RZ (at rest -1) as 0..1. */
+    fun canonicalValue(axis: Int, value: Float, rx: Boolean): Float =
+        if (rx && (axis == AndroidAxis.Z || axis == AndroidAxis.RZ)) ((value + 1f) * 0.5f).coerceIn(0f, 1f) else value
 
     /** Trigger id to the axes its pull may come as. */
     val triggers: Map<String, Pair<Int, Int>> = linkedMapOf(
@@ -258,6 +277,31 @@ object DevicePresets {
             press.sources.map { m.copy(source = it) }
         }.distinct()
         return p.copy(controller = fixed)
+    }
+
+    /**
+     * [p] with its controller's old any-direction Outer mappings ([AxisStage.OUTER] on a whole stick
+     * axis, a card no longer shown) as the same mapping in each of that stick's four directions'
+     * outer zones; [p] itself when it has none.
+     */
+    fun foldOuterAny(p: DevicePreset): DevicePreset {
+        fun any(s: InputSource) = s is InputSource.Axis && s.stage == AxisStage.OUTER && s.half == AxisHalf.FULL
+        if (p.controller.none { any(it.source) }) return p
+        val folded = p.controller.flatMap { m ->
+            val s = m.source as? InputSource.Axis
+            if (s == null || !any(s)) return@flatMap listOf(m)
+            val (x, y) = PhysicalSticks.sticks.values.firstOrNull { (a, b) -> s.axis == a || s.axis == b } ?: (s.axis to -1)
+            listOf(x to AxisHalf.NEGATIVE, x to AxisHalf.POSITIVE, y to AxisHalf.NEGATIVE, y to AxisHalf.POSITIVE)
+                .filter { it.first >= 0 }
+                .map { (a, h) -> m.copy(source = InputSource.Axis(a, h, AxisStage.OUTER)) }
+        }.distinct()
+        return p.copy(controller = folded)
+    }
+
+    /** [set] with every device preset's [foldOuterAny]; [set] itself when none has any. */
+    fun foldOuterAny(set: Profile): Profile {
+        val presets = set.devicePresets.map(::foldOuterAny)
+        return if (presets.indices.all { presets[it] === set.devicePresets[it] }) set else set.copy(devicePresets = presets)
     }
 
     /** What a device does with nothing remapped: [standard]'s mappings of that device. */
@@ -434,10 +478,12 @@ object DevicePresets {
         return if (phone === p.phone) p else p.copy(phone = phone)
     }
 
-    /** Every key of a keyboard to the same key on the PC. */
+    /**
+     * Every key of a keyboard to the same key on the PC: the drawn keys, then the keys the drawing
+     * has no place for (media and volume keys and the like).
+     */
     fun standardKeyboard(): List<Mapping> =
-        PhysicalLayouts.keyboardRows.flatten().mapNotNull { k ->
-            val code = k.code ?: return@mapNotNull null
+        (PhysicalLayouts.keyboardRows.flatten().mapNotNull { it.code } + AndroidKeyToHid.keyCodes).mapNotNull { code ->
             AndroidKeyToHid.usage(code)?.let { Mapping(InputSource.Key(code), OutputTarget.Key(it)) }
         }.distinct()
 
@@ -465,6 +511,25 @@ object DevicePresets {
             devicePresets = if (i < 0) set.devicePresets + preset
             else set.devicePresets.mapIndexed { k, p -> if (k == i) preset else p },
         )
+    }
+
+    /**
+     * [p] with mapping set [set] gone from device preset [presetId]: its mappings on
+     * every device, the Layer actions to it and its held buttons' settings in it ([HeldButton.gyro]).
+     * Left as it is while another workspace pinning that preset still has a layer with that id.
+     */
+    fun dropSet(p: Profile, presetId: String?, set: Int): Profile {
+        val id = presetId ?: return p
+        val preset = p.devicePresets.firstOrNull { it.id == id } ?: return p
+        if (p.workspaces.any { w -> w.devicePreset == id && w.sets.any { it.id == set } }) return p
+        val next = PhysicalDevice.entries.fold(preset) { d, dev -> d.withMappings(dev, Bindings.dropSet(d.mappings(dev), set)) }
+        // A held button left with no settings and no gyro mappings of its own goes ([DevicePreset.withHeld]).
+        val held = next.held.mapNotNull { h ->
+            if (h.gyro.none { it.set == set }) h
+            else h.copy(gyro = h.gyro.filterNot { it.set == set }).takeIf { it.gyro.isNotEmpty() || next.motionMapped(it.id) }
+        }
+        val dropped = next.copy(held = held)
+        return if (dropped == preset) p else put(p, dropped)
     }
 
     /** [set] without preset [id]; the workspaces that pinned it pin none. */
@@ -501,6 +566,10 @@ object PhysicalLayouts {
         }
     }
 
+    /**
+     * A stick's cards: its axes, its directions (each with its outer zone after a separator,
+     * [Bindings.stickOuter], no card of its own) and its Click.
+     */
     private fun stickInputs(x: Int, y: Int, click: Int) = listOf(
         BindableInput("X axis", listOf(InputSource.Axis(x)), analog = true),
         BindableInput("Y axis", listOf(InputSource.Axis(y)), analog = true),
@@ -508,11 +577,6 @@ object PhysicalLayouts {
         BindableInput("Right", listOf(InputSource.Axis(x, AxisHalf.POSITIVE))),
         BindableInput("Up", listOf(InputSource.Axis(y, AxisHalf.NEGATIVE))),
         BindableInput("Down", listOf(InputSource.Axis(y, AxisHalf.POSITIVE))),
-        BindableInput("Outer", listOf(InputSource.Axis(x, stage = AxisStage.OUTER))),
-        BindableInput("Outer left", listOf(InputSource.Axis(x, AxisHalf.NEGATIVE, AxisStage.OUTER))),
-        BindableInput("Outer right", listOf(InputSource.Axis(x, AxisHalf.POSITIVE, AxisStage.OUTER))),
-        BindableInput("Outer up", listOf(InputSource.Axis(y, AxisHalf.NEGATIVE, AxisStage.OUTER))),
-        BindableInput("Outer down", listOf(InputSource.Axis(y, AxisHalf.POSITIVE, AxisStage.OUTER))),
     ) + buttonInputs(listOf(click), "Click").let { b -> b.map { if (it.label == "Click") it else it.copy(label = "Click " + it.label.lowercase()) } }
 
     /** A D-pad direction: its key (with gestures) and the hat axis half some pads report instead. */

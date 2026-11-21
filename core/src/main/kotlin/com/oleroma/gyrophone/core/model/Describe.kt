@@ -24,8 +24,8 @@ object Describe {
             AxisStage.FULL_PULL -> " full pull"
         }
         is InputSource.Touch -> "Touch ${s.id}"
-        is InputSource.TouchStick -> "Touch stick ${s.id} ${s.axis}" + half(s.half)
-        is InputSource.TouchStickDiagonal -> "Touch stick ${s.id} ${s.diagonal.label}"
+        is InputSource.TouchStick -> "Touch stick ${s.id} ${s.axis}" + half(s.half) + if (s.outer) " outer" else ""
+        is InputSource.TouchStickDiagonal -> "Touch stick ${s.id} ${s.diagonal.label}" + if (s.outer) " outer" else ""
         is InputSource.TouchSwipe -> "Swipe on ${s.id} ${s.axis}" + half(s.half)
         is InputSource.TouchRelease -> "Touch ${s.id} release"
         is InputSource.TouchDoubleTap -> "Touch ${s.id} double tap"
@@ -88,6 +88,7 @@ object Describe {
         is OutputTarget.SetOrientation -> "Set orientation" + (if (t.granular) ", granular" else "") +
             " (the way you hold the phone now becomes the base for the gyro, the displays and the PC overlays)"
         OutputTarget.ClearDisplays -> "Clear displays (pointers on the pad and the PC lose their paint and trail)"
+        is OutputTarget.Calibrate -> "Calibrate gyro (counts down ${t.countdownS} s to lay the phone still, then measures its drift for ${t.measureS} s)"
         OutputTarget.NoOutput -> "Nothing (blocks the layer below)"
         is OutputTarget.Off -> "Nothing instead of the inherited " + shortTarget(t.of)
         is OutputTarget.GyroSens -> gyroSens(t)
@@ -102,13 +103,14 @@ object Describe {
         } + " (how far you tilt for full)"
     }
 
-    /** "Gyro sensitivity" or "Gyro sensitivity, yaw". */
+    /** "Gyro sensitivity", "Gyro sensitivity, yaw" or a named one's name ("Aim, gyro sensitivity"). */
     fun gyroSens(t: OutputTarget.GyroSens): String =
-        "Gyro sensitivity" + if (t.axis == MotionAxis.NONE) "" else ", " + t.axis.label.lowercase()
+        if (t.named > 0) NamedSens.nameOf(t.named, false) + ", gyro sensitivity"
+        else "Gyro sensitivity" + if (t.axis == MotionAxis.NONE) "" else ", " + t.axis.label.lowercase()
 
-    /** "Touch sensitivity" or "Touch sensitivity, Move X". */
+    /** "Touch sensitivity", "Touch sensitivity, Move X" or a named one's name ("Scope, touch sensitivity"). */
     fun touchSens(t: OutputTarget.TouchSens): String =
-        "Touch sensitivity" + when (t.axis) {
+        if (t.named > 0) NamedSens.nameOf(t.named, true) + ", touch sensitivity" else "Touch sensitivity" + when (t.axis) {
             null -> ""
             StickAxis.X -> ", Move X"
             StickAxis.Y -> ", Move Y"
@@ -122,11 +124,11 @@ object Describe {
     )
 
     /**
-     * The "Other" picker group: (Let go), Black screen, Set orientation, Clear displays, Previous
+     * The "Other" picker group: (Let go), Black screen, Clear displays, Previous
      * / Next workspace and Fullscreen.
      */
     val otherTargets: List<OutputTarget> = listOf(
-        OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.SetOrientation(), OutputTarget.ClearDisplays,
+        OutputTarget.LetGo, OutputTarget.BlackScreen, OutputTarget.ClearDisplays,
         OutputTarget.PreviousWorkspace, OutputTarget.NextWorkspace, OutputTarget.Fullscreen,
     )
 
@@ -223,11 +225,12 @@ object Describe {
         OutputTarget.Fullscreen -> "Fullscreen"
         is OutputTarget.SetOrientation -> if (t.granular) "Set orientation (granular)" else "Set orientation"
         OutputTarget.ClearDisplays -> "Clear displays"
+        is OutputTarget.Calibrate -> "Calibrate"
 
         OutputTarget.NoOutput -> "Nothing"
         is OutputTarget.Off -> "Nothing (" + shortTarget(t.of) + ")"
-        is OutputTarget.GyroSens -> "Sens" + if (t.axis == MotionAxis.NONE) "" else " " + t.axis.label.lowercase()
-        is OutputTarget.TouchSens -> "Touch sens" + when (t.axis) {
+        is OutputTarget.GyroSens -> if (t.named > 0) NamedSens.nameOf(t.named, false) else "Sens" + if (t.axis == MotionAxis.NONE) "" else " " + t.axis.label.lowercase()
+        is OutputTarget.TouchSens -> if (t.named > 0) NamedSens.nameOf(t.named, true) else "Touch sens" + when (t.axis) {
             null -> ""
             StickAxis.X -> " X"
             StickAxis.Y -> " Y"
@@ -276,11 +279,13 @@ object Describe {
         },
         "Gyro" to listOf(OutputTarget.GyroPause) +
             MotionAxis.shown.map { OutputTarget.GyroPauseAxis(it) } +
-            OutputTarget.GyroToggle + OutputTarget.GyroSens() +
-            MotionAxis.shown.map { OutputTarget.GyroSens(it) } +
+            OutputTarget.GyroToggle + OutputTarget.Calibrate() + OutputTarget.SetOrientation() +
             OutputTarget.GyroGlide() + MotionAxis.shown.map { OutputTarget.GyroGlide(it) } +
             listOf(OutputTarget.TiltRange(), OutputTarget.TiltRange(StickAxis.X), OutputTarget.TiltRange(StickAxis.Y)),
-        "Touch" to listOf(OutputTarget.TouchSens(), OutputTarget.TouchSens(StickAxis.X), OutputTarget.TouchSens(StickAxis.Y), OutputTarget.TapTime),
+        "Touch" to listOf(OutputTarget.TapTime),
+        // Every sensitivity a slider can set: the gyro's and the touchpad's (the workspace's named ones join them in the library).
+        "Sensitivity" to listOf(OutputTarget.GyroSens()) + MotionAxis.shown.map { OutputTarget.GyroSens(it) } +
+            listOf(OutputTarget.TouchSens(), OutputTarget.TouchSens(StickAxis.X), OutputTarget.TouchSens(StickAxis.Y)),
         "Phone" to listOf(
             OutputTarget.Haptic(held = false),
             OutputTarget.Haptic(held = true),

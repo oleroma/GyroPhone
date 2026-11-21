@@ -27,6 +27,18 @@ class ProfileStore(context: Context) {
     private val dir = File(context.filesDir, "profiles").apply { mkdirs() }
     private val prefs = context.getSharedPreferences("gyrophone", Context.MODE_PRIVATE)
 
+    /** Automatic backups of the saved files ([SettingsBackups]). */
+    val backups = SettingsBackups(context.filesDir)
+
+    init {
+        // The first start of another build: keep the files as the last one left them, before anything reads or saves them.
+        val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode }.getOrDefault(0L)
+        if (prefs.getLong(KEY_BACKUP_VERSION, -1L) != version) {
+            backups.take(SettingsBackups.UPDATE)
+            prefs.edit().putLong(KEY_BACKUP_VERSION, version).apply()
+        }
+    }
+
     /** The file each listed user profile was read from, by profile id. */
     private val files = HashMap<String, File>()
 
@@ -85,6 +97,7 @@ class ProfileStore(context: Context) {
             if (!bak.exists() && file.exists()) file.copyTo(bak)
         }
         replaceFile(file, ProfileJson.encode(profile))
+        backups.takeIfDue()
     }
 
     /**
@@ -175,10 +188,13 @@ class ProfileStore(context: Context) {
 
     private val libraryFile = File(context.filesDir, "button_library.json")
 
-    /** The button library (empty if none saved, or if the file cannot be read: it is then left alone). */
+    /**
+     * The button library (empty if none saved, or if the file cannot be read: it is then left alone).
+     * Items this build can't read are left out; the file keeps them, as saving over it is refused.
+     */
     @Synchronized fun buttonLibrary(): List<LibraryButton> =
         if (!libraryFile.exists()) emptyList()
-        else ButtonLibrary.decode(libraryFile.readText()).orEmpty()
+        else ButtonLibrary.decodeLenient(libraryFile.readText()).orEmpty()
 
     /** Saves the button library; refuses to replace a file that exists but cannot be read. */
     @Synchronized fun saveButtonLibrary(buttons: List<LibraryButton>) {
@@ -188,10 +204,13 @@ class ProfileStore(context: Context) {
 
     private val presetFile = File(context.filesDir, "mapping_presets.json")
 
-    /** The chip and card presets of the mapping editor (empty if none saved, or unreadable: the file is then left alone). */
+    /**
+     * The chip and card presets of the mapping editor (empty if none saved, or unreadable: the file
+     * is then left alone). Presets this build can't read are left out, as in [buttonLibrary].
+     */
     @Synchronized fun mappingPresets(): List<MappingPreset> =
         if (!presetFile.exists()) emptyList()
-        else MappingPresets.decode(presetFile.readText()).orEmpty()
+        else MappingPresets.decodeLenient(presetFile.readText()).orEmpty()
 
     /** Saves the mapping editor's presets; refuses to replace a file that exists but cannot be read. */
     @Synchronized fun saveMappingPresets(presets: List<MappingPreset>) {
@@ -234,5 +253,6 @@ class ProfileStore(context: Context) {
         private const val KEY_MAPPING_MIGRATION = "mapping_migration"
         private const val KEY_OWN_MAPPINGS = "own_mappings"
         private const val KEY_TRIGGER_RESET = "trigger_reset"
+        private const val KEY_BACKUP_VERSION = "backup_version"
     }
 }
