@@ -43,7 +43,7 @@ Otherwise it stops, saving CPU and battery. Ratchets, toggles and the other gyro
 - With GP's drift correction, the drift it measured is subtracted (with Android's, nothing is).
 - The sample goes to the debug trace, then first to the input: either to the PC (in PC gyro mode, see [Controllers](phone-controllers.md)) or to `GyroMouse.route`, which turns it into mouse counts, wheel or stick deflection in the engine, then tilt and the PC DualShock 4's motion. Only then does it go to the gyro displays and parallax edge (with the other camera moves since the last sample, counted by the sender and applied here), the rest detector and the PC overlay feed, so display work never delays the sample's input.
 
-The measured rate is shown in App › About and the debug panel (`core/.../sensor/GyroRateWindow.kt`).
+The measured rate is shown in App › About (`core/.../sensor/GyroRateWindow.kt`).
 
 ## Drift correction
 

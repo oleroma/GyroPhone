@@ -108,7 +108,7 @@ Displays that hold their pose to gravity run the accelerometer; ones that hold h
 
 Drawing: the displays are drawn again only when what they show changed: a pose display once its shown pose moved by about 0.05° (so sensor noise on a still phone draws nothing), a graph's or pointer's data, the live gyro axes, a held ratchet, a trackball's lit axes, fades and aim easing, and for a moment after (so ghost trails catch up). The parallax edge is drawn again once it moved a quarter pixel (or turned a hundredth of a degree, or its tint changed). The parallax edge is drawn with the displays, by the same renderer on its "gp-displays" thread over them (`GyroDisplaysLayer` with an edge), so nothing gyro-driven draws on the screen thread that takes touches and controller keys. The displays (with the edge) and each touch overlay (touches and trails, swipe lines, move rulers, position ruler) are drawn on layers of their own, so one redrawing leaves the others alone. A convex ball shape's filled faces go to the GPU as one batch of triangles (`drawFrontFaces`), not one path per face. Under the black screen none of them draws ([Volume rocker and black screen](phone-volume-black-screen.md)).
 
-## Debug panel
+## Log dot and Diagnostics
 
 **Log dot** (`ui/LogOnDot.kt`): a small red dot in the pad's top left corner (just inside the screen's rounded corner, from the display's own corner radius) while Diagnostics is on, on the phone or, while connected, on the PC (HOST_STATUS flags2 `PC_LOGGING`), switched by hand or by an agent (`tools/gp-log.sh`). It is still and redraws only when Diagnostics is switched; hidden under the black screen.
 

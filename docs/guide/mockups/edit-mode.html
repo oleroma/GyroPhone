@@ -1,0 +1,33 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const s = phone(st, 'land');
+// Edit mode: every control at least 50 % opaque, the selected one amber (PadScreen.kt SELECTED_COLOR).
+drawControls(s, LAYOUTS.wasd, 900, 412, { state: { lmb: 'selected' } });
+drawControls(s, LAYOUTS.nav, 900, 412);
+// The floating menu, one row in landscape: ⠿ | ↶ ↷ | strip (⚙ lock Done Cancel Select Configure Map Add + Add preset ★ Snap Devices).
+const m = el(s, `<div class="menu" style="left:120px;top:110px;width:660px">
+  <div class="row"><div class="dots">⠿</div><div class="fix"><span class="ic">${ICON.undo}</span><span class="ic">${ICON.redo}</span></div>
+  <div class="strip" style="flex:1"><span class="ic">${ICON.tune}</span><span class="ic">${ICON.lockOpen}</span>
+  <span class="b fill">Done</span><span class="b">Cancel</span><span class="b">Select</span><span class="b amber">Configure</span><span class="b amber">Map</span>
+  <span class="b">Add +</span><span class="b">Add preset ★</span><span class="b fill">Snap: on</span><span class="b">Devices: WASD</span><div class="shade"></div></div></div>
+  <div class="grip"></div></div>`);
+m.querySelector('.ic svg').style.color = '#fff';
+const q = sel => m.querySelectorAll(sel);
+const T = (n, e, tx, ty, dx = 0, dy = 0) => { const [x, y] = at(st, e, dx, dy); tag(st, n, x, y, tx ?? x, ty); };
+const edge = e => -boxOf(st, e).h / 2 + 3;
+T(1, m.querySelector('.dots'), null, 22, 0, -8);
+T(2, q('.fix .ic')[0], null, 22, 6, edge(q('.fix .ic')[0]));
+T(3, q('.strip .ic')[0], null, 22, 0, edge(q('.strip .ic')[0]));
+T(4, q('.strip .ic')[1], null, 22, 0, edge(q('.strip .ic')[1]));
+const b = q('.b');
+T(5, b[0], null, 22, 0, edge(b[0]));
+T(6, b[3], null, 22, 0, edge(b[3]));
+T(7, b[4], null, 22, -20, edge(b[4]));
+T(8, b[5], null, 22, 0, edge(b[5]));
+T(9, b[6], null, 22, 0, edge(b[6]));
+T(10, m.querySelector('.shade'), null, 22, 0, -12);
+T(11, ctl(s, 'lmb'), null, st.offsetHeight - 26, 0, 40);
+T(12, m.querySelector('.grip'), null, st.offsetHeight - 26, 2, 2);
+</script></body></html>

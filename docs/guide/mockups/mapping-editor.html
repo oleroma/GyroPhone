@@ -1,0 +1,38 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const s = phone(st, 'land');
+// ControlMappingScreen.kt in landscape: one thin top row (label, layer chips, Sort, Reset all, Clear all, + Preset, Settings, Undo, Redo, Done);
+// action cards over the library of outputs, with a divider to drag between them.
+const p = el(s, `<div class="page" style="padding-left:34px;display:flex;flex-direction:column">
+ <div class="mtop"><span class="lbl">LMB</span><span class="setchip on">Base</span><span class="tb">+ Layer</span><span class="tb">Sort ▾</span><span class="tb">↺ Reset all</span><span class="tb">✕ Clear all</span><span class="tb">+ ◯ Preset</span><span class="tb">⚙ Settings</span><span class="tb">↶ Undo</span><span class="tb">↷ Redo</span><span class="done">Done</span></div>
+ <div style="padding:8px 12px 0;flex:1;overflow:hidden">
+  <div style="display:flex;gap:6px;margin-bottom:8px"><span class="setchip on">✓ 1 finger</span><span class="setchip">2 fingers</span><span class="setchip">3 fingers</span><span class="setchip">4 fingers</span><span class="setchip">Gyro</span></div>
+  <div class="acard sel"><div class="hd"><span class="t">Touch</span><span class="buzz">Buzz</span><span class="h">⠿</span></div>
+   <div class="crow"><span class="mchip">Mouse L</span><span class="mchip"><small>Long press ·</small> Key R</span></div>
+   <div class="timing">Long press: from 300 ms</div></div>
+  <div class="acard"><div class="hd"><span class="g">⚙</span><span class="t">Move</span><span class="h">✕</span><span class="h">⠿</span></div>
+   <div class="crow"><span class="mchip inh">Mouse X <small>Workspace</small></span><span class="mchip inh">Mouse Y <small>Workspace</small></span></div></div>
+ </div>
+ <div class="divider"></div>
+ <div style="height:128px;background:var(--m3-surface)">
+  <div class="search" style="margin:0 12px 4px;height:34px"><span>⌕</span><span>Search outputs</span></div>
+  <div class="ltabs"><span>Recent</span><span>Presets</span><span class="on">Keyboard</span><span>Mouse</span><span>Gamepad</span><span>Gyro</span><span>Sensitivity</span><span>Touch</span><span>Phone</span><span>Layers</span><span>Other</span></div>
+  <div style="padding:8px 12px"><span class="lchip">⌨ Press a key</span><span class="lchip">Esc</span><span class="lchip">Tab</span><span class="lchip">Space</span><span class="lchip">Shift</span><span class="lchip">Ctrl</span><span class="lchip mapped">R</span><span class="lchip">E</span><span class="lchip">F</span><span class="lchip">Q</span><span class="lchip">1</span><span class="lchip">2</span></div>
+ </div></div>`);
+const q = (sel, i = 0) => p.querySelectorAll(sel)[i];
+const T = (n, e, tx, ty, dx = 0, dy = 0) => { const [x, y] = at(st, e, dx, dy); tag(st, n, x, y, tx ?? x, ty); };
+const edge = e => -boxOf(st, e).h / 2 + 3;
+T(1, q('.lbl'), null, 22, 0, edge(q('.lbl')));
+T(2, q('.setchip'), null, 22, 0, edge(q('.setchip')));
+T(3, q('.mtop .tb', 5), null, 22, 0, edge(q('.mtop .tb', 5)));
+T(4, q('.done'), null, 22, 0, edge(q('.done')));
+badge(st, 5, q('.acard .t'), 'r', -150);
+badge(st, 6, q('.mchip', 1), 'r', 4);
+badge(st, 7, q('.buzz'), 'l', 4);
+badge(st, 8, q('.mchip.inh', 1), 'r', 4);
+const dv = q('.divider'); T(9, dv, st.offsetWidth - 30, boxOf(st, dv).cy + 60, 0, 0);
+T(10, q('.ltabs span', 2), null, st.offsetHeight - 26, 0, 14);
+T(11, q('.lchip', 0), null, st.offsetHeight - 26, 0, 14);
+</script></body></html>
