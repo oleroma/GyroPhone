@@ -31,6 +31,30 @@ public sealed class SettingsAndStatsTests : IDisposable
     }
 
     [Fact]
+    public void StartsAndSavesKeepBackups()
+    {
+        var store = new SettingsStore(Path.Combine(_dir, "settings.json"));
+        var s = store.Load("PC");
+        Assert.Single(Directory.GetFiles(store.BackupDir)); // the first save (the defaults) was due
+        s.OutputMode = OutputMode.DualShock4;
+        store.Save(s);
+        Assert.Single(Directory.GetFiles(store.BackupDir)); // not 10 minutes later
+        new SettingsStore(store.Path).Load("PC");
+        var files = Directory.GetFiles(store.BackupDir);
+        Assert.Equal(2, files.Length); // a start keeps the file as the last run left it
+        Assert.Contains(files, f => File.ReadAllText(f).Contains("\"DualShock4\""));
+        new SettingsStore(store.Path).Load("PC");
+        Assert.Equal(2, Directory.GetFiles(store.BackupDir).Length); // unchanged since: none added
+        for (int i = 0; i < SettingsStore.BackupsKept + 5; i++)
+        {
+            s.HostName = "PC " + i;
+            store.Save(s);
+            store.TakeBackup(onlyIfChanged: true, null);
+        }
+        Assert.Equal(SettingsStore.BackupsKept, Directory.GetFiles(store.BackupDir).Length);
+    }
+
+    [Fact]
     public void SnapshotCarriesThePhoneAddress()
     {
         var h = new Harness();

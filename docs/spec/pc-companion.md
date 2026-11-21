@@ -171,6 +171,7 @@ Finds out why phone packets get lost or held up, without anyone playing: `tools/
 
 | Path | What |
 |---|---|
+| `%APPDATA%\GyroPhone\backups\` | Automatic copies of settings.json, `settings-<time>.json`, the newest 20 (`SettingsStore.TakeBackup`): one at each start when the file changed since the newest copy (so before an update's first save too), and after a save when the last copy is 10 minutes old. To bring one back, close the companion and copy it over settings.json. |
 | `%APPDATA%\GyroPhone\settings.json` | The input process's `HostSettings`: host id and name, output mode, Start with Windows, USB direct, code-paired phones (pairing keys wrapped with DPAPI), Diagnostics. Written atomically off the rx thread. (Overlay fields left in it by older builds are no longer read.) |
 | `%APPDATA%\GyroPhone\companion.json` | The companion's `HostSettings`: overlay windows, presets, shortcuts, Fade when phone rests, tray click. |
 | `%APPDATA%\GyroPhone\host.key`, `host.pub` | This PC's static P-256 key (the private scalar wrapped with DPAPI). |

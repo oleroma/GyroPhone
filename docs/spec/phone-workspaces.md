@@ -76,6 +76,8 @@ All on the phone, in the app's private storage (`data/ProfileStore.kt`):
 
 The app has `allowBackup="false"`.
 
+**Automatic backups** (`data/SettingsBackups.kt`, App › Backup › Automatic backups): raw copies of the saved files (every profile `*.json`, `button_library.json`, `mapping_presets.json`) in a folder of their own under `files/backups/<time ms>-<reason>`, so a file this build can't fully read is kept whole too. Taken on the first start of another build (`ProfileStore` init, by the app's version code, before anything reads or saves), before Import everything and before a restore, and after a save on the profile writer thread when the newest one is 10 minutes old. The newest 20 are kept. Each row shows its time and why it was taken, with **Restore**: it asks, then works like Import everything with that backup's workspace set (the one with the stored id), button library and presets (a backup of now is taken first, so a restore can be undone).
+
 ## Migrations
 
 Old configs load without losing anything set by hand; each migration keeps a backup of the set as it was beside it.

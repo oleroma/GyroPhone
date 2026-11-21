@@ -620,11 +620,17 @@ data class Mapping(
      * null = the default ([SetValue.defaultPerDp]).
      */
     val perDp: Float? = null,
+    /**
+     * Buzz: the phone ticks as this chip presses (and lets go, by the haptic edge), with its
+     * button's haptic feel ([TouchControl.haptics]) or else the workspace's. The mapping editor's
+     * card Buzz switch sets it on every chip of the card.
+     */
+    val buzz: Boolean = false,
 ) {
     // The engine looks mappings up in hash maps on every snapshot: the hash of all its parts is
     // worked out once, as it never changes. Equal mappings still have equal hashes.
     @Transient
-    private val hash: Int = java.util.Objects.hash(source, target, set, options, range, perDp)
+    private val hash: Int = java.util.Objects.hash(source, target, set, options, range, perDp, buzz)
 
     /**
      * A value chip on a Position or Move input with How Toggle keeps its value once its input lets

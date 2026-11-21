@@ -27,6 +27,18 @@ class ProfileStore(context: Context) {
     private val dir = File(context.filesDir, "profiles").apply { mkdirs() }
     private val prefs = context.getSharedPreferences("gyrophone", Context.MODE_PRIVATE)
 
+    /** Automatic backups of the saved files ([SettingsBackups]). */
+    val backups = SettingsBackups(context.filesDir)
+
+    init {
+        // The first start of another build: keep the files as the last one left them, before anything reads or saves them.
+        val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode }.getOrDefault(0L)
+        if (prefs.getLong(KEY_BACKUP_VERSION, -1L) != version) {
+            backups.take(SettingsBackups.UPDATE)
+            prefs.edit().putLong(KEY_BACKUP_VERSION, version).apply()
+        }
+    }
+
     /** The file each listed user profile was read from, by profile id. */
     private val files = HashMap<String, File>()
 
@@ -85,6 +97,7 @@ class ProfileStore(context: Context) {
             if (!bak.exists() && file.exists()) file.copyTo(bak)
         }
         replaceFile(file, ProfileJson.encode(profile))
+        backups.takeIfDue()
     }
 
     /**
@@ -240,5 +253,6 @@ class ProfileStore(context: Context) {
         private const val KEY_MAPPING_MIGRATION = "mapping_migration"
         private const val KEY_OWN_MAPPINGS = "own_mappings"
         private const val KEY_TRIGGER_RESET = "trigger_reset"
+        private const val KEY_BACKUP_VERSION = "backup_version"
     }
 }
