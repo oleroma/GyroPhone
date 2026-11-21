@@ -18,7 +18,7 @@
 .dsw span{padding:7px 14px;font-size:14px;font-weight:500;color:var(--m3-on-variant)}
 .dsw span.on{background:var(--m3-secondary-container);color:var(--m3-on-secondary-container)}
 .pop{position:absolute;background:#2B2930;border-radius:10px;padding:8px 12px;font-size:12px;line-height:17px;color:#E6E0E9;box-shadow:0 4px 12px rgba(0,0,0,.5);white-space:nowrap}
-.pop b{color:#D0BCFF;font-weight:500}
+.pop{background:#2B2930;border-radius:12px;padding:8px 12px;font-size:14px;line-height:20px}.pop .w{display:inline-block;width:78px;font-size:12px;color:#CAC4D0}
 </style></head><body>
 <div class="stage pad-callouts" id="st"></div>
 <script>
@@ -32,31 +32,57 @@ const p = el(s, `<div class="page" style="padding-left:34px">
   <span style="flex:1"></span><span style="font-size:11px;color:var(--m3-on-variant)">Tap: what it does · Hold: edit · Hold and drag: swap</span></div>
 </div>`);
 const b = p.querySelector('.board');
-el(b, `<div class="hand" style="left:70px"></div>`);
-el(b, `<div class="hand" style="left:630px"></div>`);
-el(b, `<div class="ph"></div>`);
-// x, y, w, h, label, round, count (0 = does only itself)
-const K = (id, x, y, w, h, label, round, n = 0) => el(b, `<div class="c${round ? ' r' : ''}${w > 2.4 * h ? ' w' : ''}${n ? ' m' : ''}" data-id="${id}" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px">${label}${n ? `<span class="n">↪ ${n}</span>` : ''}</div>`);
-K('lt', 90, 6, 160, 22, 'LT', false, 1); K('lb', 90, 32, 160, 20, 'LB', false);
-K('rt', 650, 6, 160, 22, 'RT', false); K('rb', 650, 32, 160, 20, 'RB', false, 2);
-K('ls', 125, 80, 70, 70, 'LS', true);
-K('du', 148, 162, 24, 24, '', false); K('dd', 148, 212, 24, 24, '', false); K('dl', 123, 187, 24, 24, '', false); K('dr', 173, 187, 24, 24, '', false);
-K('y', 708, 74, 34, 34, '', true); K('x', 674, 106, 34, 34, '', true); K('b', 742, 106, 34, 34, '', true, 1); K('a', 708, 138, 34, 34, '', true, 1);
-K('rs', 705, 190, 70, 70, 'RS', true);
-K('view', 246, 70, 30, 22, '⧉', false); K('menu', 624, 70, 30, 22, '≡', false);
-K('home', 433, 250, 34, 34, '⌂', true);
-K('p1', 30, 200, 34, 60, 'L4', false); K('p2', 836, 200, 34, 60, 'R4', false, 1);
+// PhysicalLayouts.handles(HANDLES_PHONE) and HandlesView: all sizes in handle heights (u), the box 3 x 1.52 u,
+// as large as fits the board (8 dp padding), centred.
+const BW = 866 - 16, BH = 306 - 16, H = 1.52, W = 3.0;
+const w = Math.min(BW, BH * W / H), h = w * H / W, u = h / H;
+const box = el(b, `<div style="position:absolute;left:${8 + (BW - w) / 2}px;top:${8 + (BH - h) / 2}px;width:${w}px;height:${h}px"></div>`);
+const hTop = 0.36 * u, hw = 0.5 * u;
+const body = '#211F26', edge = '#49454F';
+el(box, `<svg width="${w}" height="${h}" style="position:absolute;left:0;top:0">
+ <path d="${handle(0, true)}" fill="${body}" stroke="${edge}" stroke-width="1.5"/>
+ <path d="${handle(w - hw, false)}" fill="${body}" stroke="${edge}" stroke-width="1.5"/>
+ <rect x="${hw}" y="${hTop}" width="${w - 2 * hw}" height="${u}" rx="${0.11 * u}" fill="${body}" stroke="${edge}" stroke-width="1.5"/>
+ <rect x="${hw + 0.04 * u}" y="${hTop + 0.04 * u}" width="${w - 2 * hw - 0.08 * u}" height="${u - 0.08 * u}" rx="${0.08 * u}" fill="#0F0D13"/></svg>`);
+function handle(x0, outerLeft) {
+  const ro = 0.12 * u, ri = 0.015 * u, [rl, rr] = outerLeft ? [ro, ri] : [ri, ro], x1 = x0 + hw, y0 = hTop, y1 = hTop + u;
+  return `M${x0 + rl},${y0} H${x1 - rr} A${rr},${rr} 0 0 1 ${x1},${y0 + rr} V${y1 - rr} A${rr},${rr} 0 0 1 ${x1 - rr},${y1} H${x0 + rl} A${rl},${rl} 0 0 1 ${x0},${y1 - rl} V${y0 + rl} A${rl},${rl} 0 0 1 ${x0 + rl},${y0} Z`;
+}
+const left = 0.25, right = W - 0.25, t = 0.36, stick = 0.27, key = 0.125, gap = 0.125, bar = 0.46, barH = 0.13, small = 0.12, paddle = 0.2;
+const bottom = t + 1 + 0.03 + 0.06;
+const ICONS = { view: '⧉', menu: '≡', home: '⌂' };
+// id, x, y, w, h (handle heights), label, round, remaps (0 = does only itself)
+const K = (id, x, y, cw, ch, label, round, n = 0) => {
+  const px = x * u - cw * u / 2, py = y * u - ch * u / 2, wide = cw > 2.4 * ch;
+  return el(box, `<div class="c${round ? ' r' : ''}${n ? ' m' : ''}${wide ? ' w' : ''}" data-id="${id}" style="left:${px}px;top:${py}px;width:${cw * u}px;height:${ch * u}px"><span class="in" style="display:flex;flex-direction:${wide ? 'row' : 'column'};align-items:center;gap:${wide ? 6 : 0}px">${label}${n ? `<span class="n">↪ ${n}</span>` : ''}</span></div>`);
+};
+K('lt', left, 0.02 + barH / 2, bar, barH, 'LT', false, 1);
+K('lb', left, 0.02 + barH * 1.5 + 0.04, bar, barH, 'LB', false);
+K('rt', right, 0.02 + barH / 2, bar, barH, 'RT', false);
+K('rb', right, 0.02 + barH * 1.5 + 0.04, bar, barH, 'RB', false, 2);
+K('ls', left, t + 0.38, stick, stick, 'LS', true);
+K('up', left, t + 0.76 - gap, key, key, '', false); K('down', left, t + 0.76 + gap, key, key, '', false);
+K('left', left - gap, t + 0.76, key, key, '', false); K('right', left + gap, t + 0.76, key, key, '', false);
+K('y', right, t + 0.38 - gap, key, key, '', true); K('a', right, t + 0.38 + gap, key, key, '', true, 1);
+K('x', right - gap, t + 0.38, key, key, '', true); K('b', right + gap, t + 0.38, key, key, '', true, 1);
+K('rs', right, t + 0.76, stick, stick, 'RS', true);
+K('view', 0.5 - 0.09, t + 0.1, small, small, ICONS.view, true); K('menu', W - 0.5 + 0.09, t + 0.1, small, small, ICONS.menu, true);
+K('p3', left - 0.115, bottom, paddle, 0.12, 'P3', false); K('p4', left + 0.115, bottom, paddle, 0.12, 'P4', false);
+K('p2', right - 0.115, bottom, paddle, 0.12, 'P2', false); K('p1', right + 0.115, bottom, paddle, 0.12, 'P1', false, 1);
+K('home', W / 2, bottom, small, small, ICONS.home, true);
+// ControlFace: content laid out at full size, then shrunk (never grown) to fit 70 % (round) or 86 % of the control.
+box.querySelectorAll('.c').forEach(c => { const i = c.querySelector('.in'), room = c.classList.contains('r') ? 0.7 : 0.86;
+  const k = Math.min(1, c.clientWidth * room / i.offsetWidth, c.clientHeight * room / i.offsetHeight); i.style.transform = `scale(${k})`; });
 const q = id => b.querySelector(`[data-id="${id}"]`);
 q('a').classList.add('sel');
-const pop = el(b, `<div class="pop" style="left:560px;top:190px"><b>Tap</b> · Space<br><b>Aim · Tap</b> · Mouse right</div>`);
-pop.style.left = '520px'; pop.style.top = '150px';
-const [ax, ay] = at(st, q('a')); const [bx, by] = at(st, q('b'));
+{ const r = q('a'); const x = parseFloat(r.style.left) + parseFloat(r.style.width) + 8 + parseFloat(box.style.left), y = parseFloat(r.style.top) + parseFloat(box.style.top);
+  el(b, `<div class="pop" style="left:${x}px;top:${y}px"><div><span class="w">Press</span>Key Space</div><div><span class="w">Aim · Press</span>Mouse right</div></div>`); }
 const T = (n, e, tx, ty, dx = 0, dy = 0) => { const [x, y] = at(st, e, dx, dy); tag(st, n, x, y, tx ?? x, ty); };
 T(1, p.querySelectorAll('.ptab')[1], null, 22, 0, -14);
 T(2, p.querySelectorAll('.ptab')[2], null, 22, 0, -14);
 badge(st, 3, q('rb'), 'r', 4);
 badge(st, 4, q('ls'), 'l', 4);
-badge(st, 5, q('a'), 'br', 2);
+badge(st, 5, q('a'), 'bl', 2);
 T(6, p.querySelector('.dsw'), null, st.offsetHeight - 26, 0, 14);
 T(7, p.querySelector('.bbar .tb'), null, st.offsetHeight - 26, 0, 14);
 </script></body></html>
