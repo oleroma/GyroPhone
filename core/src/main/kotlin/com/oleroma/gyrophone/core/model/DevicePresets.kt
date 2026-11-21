@@ -176,6 +176,11 @@ data class StickTuning(
     val outerRing: Float = 0.85f,
     val pieX: Float = 135f,
     val pieY: Float = 135f,
+    /**
+     * Flick stick ([com.oleroma.gyrophone.core.engine.FlickStick]): the stick turns the camera
+     * (mouse) the way it points, by the game's full turn; its own mappings do nothing then.
+     */
+    val flick: Boolean = false,
 ) {
     companion object {
         const val MIN_PIE = 30f

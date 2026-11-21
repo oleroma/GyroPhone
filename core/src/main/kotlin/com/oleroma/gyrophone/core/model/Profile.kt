@@ -189,6 +189,11 @@ data class TouchControl(
      * chips after the separator, [InputSource.TouchStick.outer]), such as Shift to sprint.
      */
     val outerRing: Float = DEFAULT_OUTER_RING,
+    /**
+     * STICK: flick stick ([com.oleroma.gyrophone.core.engine.FlickStick]): it turns the camera
+     * (mouse) the way it points, by the game's full turn; its own mappings do nothing then.
+     */
+    val flick: Boolean = false,
     /** BUTTON or STICK: how its haptic ticks and Buzz chips feel; null = the workspace's ([Workspace.haptics]). */
     val haptics: HapticFeel? = null,
     /** BUTTON or STICK: when its ticks and Buzz chips play; null = the workspace's ([Workspace.hapticEdge]). */

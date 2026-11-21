@@ -383,7 +383,7 @@ internal fun touchControlSettings(
     val items = heldCategories.orEmpty() + hapticCategory + when {
         surface != null -> listOf(surfaceCategory(runtime, "Swipes", surface, key, zones, touchpad = false))
         control.kind == TouchKind.STICK -> listOf(
-            category(runtime, "stick", "Stick", "Deadzone and directions", defaultOpen = true) { StickSettings(control) { c -> update { c } } },
+            category(runtime, "stick", "Stick", "Deadzone and directions", defaultOpen = true) { StickSettings(control, ws.gyro.gameCountsPer360 > 0f) { c -> update { c } } },
         )
         else -> emptyList()
     }
@@ -465,6 +465,11 @@ private fun TouchStickOuterSettings(control: TouchControl, key: String, update: 
         OUTER_HINT + " Counted past the deadzone. The whole stick: every direction's outer zone uses it.",
     ) { v -> update { it.copy(outerRing = v / 100) } }
 }
+
+internal const val FLICK_HINT =
+    "Push the stick out and the camera turns at once to face that way (up is straight ahead, down behind); " +
+        "turn the stick round while it stays out and the camera turns with it. Let go and nothing moves, so the gyro keeps the fine aim. " +
+        "Its own mappings do nothing while it is on."
 
 private const val OUTER_HINT =
     "Chips after a direction's separator fire while that direction is pressed and the stick is pushed past this, " +
@@ -902,6 +907,10 @@ private fun StickTuningSettings(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         NotSearching { StickPiePicture(live ?: t, runtime.stickWatch, right = id == "rs", only) }
+        OverrideSwitch(
+            "Flick stick", FLICK_HINT + " Uses the full turn of the game set in the workspace's Gyro settings; without it the stick does nothing.",
+            t.flick, t.flick != d.flick, { set { it.copy(flick = d.flick) } },
+        ) { on -> set { it.copy(flick = on) } }
         OverrideSlider(
             key + "inner", "Inner deadzone %.0f%%", t.inner * 100, 0f..40f, 1f, t.inner != d.inner,
             { set { it.copy(inner = d.inner) } },
