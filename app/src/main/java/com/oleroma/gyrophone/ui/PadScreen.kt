@@ -488,6 +488,12 @@ fun PadScreen(
     /** The pad's top-left in the window, to turn a drop from the edit menu into a place on the pad. */
     var padOrigin by remember { mutableStateOf(Offset.Zero) }
 
+    val firstStart by runtime.firstStart.collectAsStateWithLifecycle()
+    if (firstStart && !hidden) FirstStartDialog(
+        onConnection = { runtime.firstStartDone(); onOpenMenu(PadMenuPage.Connection) },
+        onDone = { runtime.firstStartDone() },
+    )
+
     /** Something being dragged out of the edit menu: its label, where the finger is (window), and whether it is out on the pad. */
     var dropping by remember { mutableStateOf<Triple<String, Offset, Boolean>?>(null) }
     // Edit mode: where a tap on overlapping controls was (and when), for the "Double tap to open editor" hint.
@@ -3969,3 +3975,29 @@ private fun fadeAlpha(c: TouchControl, ws: Workspace, touched: () -> Boolean): S
 
 /** The pad's background (the gyro displays' layer paints it too: [GyroDisplaysLayer]). */
 val PAD_BACKGROUND = Color(0xFF101318)
+
+/**
+ * The first-start card of a new install: the three steps to play, the Connection page one tap
+ * away. Closed (either button), it never shows again.
+ */
+@Composable
+private fun FirstStartDialog(onConnection: () -> Unit, onDone: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("Welcome to GP") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("1. On your Windows PC, install the GP companion: GyroPhoneCompanion.exe from github.com/oleroma/GyroPhone/releases. It gives the fastest link, a few milliseconds.")
+                Text("2. In the companion's tray menu choose Pair new phone… Then open Connection here, tap Scan QR code and point the camera at its code.")
+                Text("3. That's it: the phone connects by itself from now on. The workspaces at the top (← →) come with gyro mouse and touchpad ready.")
+                Text(
+                    "Hold the phone and play: the gyro moves the mouse. Settings and the Connection page show tips when something could be faster.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onConnection) { Text("Open Connection") } },
+        dismissButton = { TextButton(onClick = onDone) { Text("Got it") } },
+    )
+}

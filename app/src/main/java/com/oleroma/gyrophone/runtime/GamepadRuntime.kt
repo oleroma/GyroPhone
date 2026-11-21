@@ -183,10 +183,32 @@ class GamepadRuntime(context: Context) {
     /** The controller's sticks for a stick's settings picture, only while one is open. */
     val stickWatch = StickWatch()
 
+    /** This is the app's first install (not an update of one from before): what a new user gets differs. */
+    private val freshInstall: Boolean = runCatching {
+        appContext.packageManager.getPackageInfo(appContext.packageName, 0).let { it.firstInstallTime == it.lastUpdateTime }
+    }.getOrDefault(false)
+
     private val _transport = MutableStateFlow(
         prefs.getString(KEY_TRANSPORT, null)?.let { name -> TransportKind.entries.firstOrNull { it.name == name } }
-            ?: TransportKind.BLUETOOTH,
+            ?: run {
+                // A new install starts on Wi-Fi (the companion: a few ms); Bluetooth HID's 30-90 Hz is too slow to aim with.
+                // An install from before keeps Bluetooth, which it had without choosing, so its link doesn't change under it.
+                val k = if (freshInstall) TransportKind.WIFI else TransportKind.BLUETOOTH
+                prefs.edit().putString(KEY_TRANSPORT, k.name).apply()
+                k
+            },
     )
+
+    private val _firstStart = MutableStateFlow(freshInstall && !prefs.getBoolean(KEY_FIRST_START_DONE, false))
+
+    /** The first-start card shows on the pad: a new install, until the person closes it. */
+    val firstStart: StateFlow<Boolean> = _firstStart
+
+    /** The first-start card was closed: it never shows again. */
+    fun firstStartDone() {
+        _firstStart.value = false
+        prefs.edit().putBoolean(KEY_FIRST_START_DONE, true).apply()
+    }
 
     /** Which link carries input to the PC. Only one link runs at a time. */
     val transport: StateFlow<TransportKind> = _transport
@@ -2036,6 +2058,7 @@ class GamepadRuntime(context: Context) {
         /** A capped direct channel is tried again on a return to the app only this long after it was found capped. */
         private const val DIRECT_RETRY_MS = 10 * 60_000L
         private const val KEY_TRANSPORT = "transport"
+        private const val KEY_FIRST_START_DONE = "first_start_done"
         private const val KEY_ORIENTATION = "screen_orientation"
         private const val KEY_PAD_ONLY_INPUT = "pad_only_input"
         private const val KEY_PAD_ONLY_HARDWARE = "pad_only_hardware"
