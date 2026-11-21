@@ -43,7 +43,7 @@ public class LogFileTests
     }
 
     [Fact]
-    public void AFetchSavesThePhonesFileAfterANotYet()
+    public async Task AFetchSavesThePhonesFileAfterANotYet()
     {
         var key = Key;
         const uint sid = 7;
@@ -87,8 +87,8 @@ public class LogFileTests
         var lines = new List<string>();
         try
         {
-            var path = PhoneLogFetch.Fetch(new LogFileKey(sid, key, "127.0.0.1"), folder, lines.Add, port, waitMs: 5_000);
-            phone.Wait(5_000);
+            var path = await Task.Run(() => PhoneLogFetch.Fetch(new LogFileKey(sid, key, "127.0.0.1"), folder, lines.Add, port, waitMs: 5_000));
+            await phone.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.NotNull(path);
             Assert.Equal("phone-20261121-211736.txt", Path.GetFileName(path));
             Assert.Equal(text, File.ReadAllText(path!));
