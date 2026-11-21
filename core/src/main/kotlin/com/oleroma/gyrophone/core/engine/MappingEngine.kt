@@ -2768,13 +2768,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for ((m, v) in hapticNow) {
             when (val t = m.target) {
                 is OutputTarget.Haptic -> {
-                    val feel = t.feel ?: eff.haptics
+                    val feel = t.feel ?: feelOf(m)
                     if (t.held) {
                         if (held == null || feel.strength * v > held.strength * level) {
                             held = feel; level = v
                         }
                     } else if (v >= PRESS_THRESHOLD && (hapticWas[m] ?: 0f) < PRESS_THRESHOLD &&
-                        (t.edge ?: eff.hapticEdge) != HapticEdge.RELEASE
+                        (t.edge ?: edgeOf(m)) != HapticEdge.RELEASE
                     ) {
                         hapticTicks.add(feel)
                     }
@@ -2786,19 +2786,23 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                         OutputTarget.HapticStep.MAX_STEP_PERCENT
                     )
                     val step = (v * 100f / pct + 1e-3f).toInt()
-                    if (step != (hapticSteps.put(m, step) ?: 0)) hapticTicks.add(t.feel ?: eff.haptics)
+                    if (step != (hapticSteps.put(m, step) ?: 0)) hapticTicks.add(t.feel ?: feelOf(m))
                 }
 
-                else -> Unit
+                // A Buzz chip ([Mapping.buzz]): a tick as it presses, like a haptic tick of its own.
+                else -> if (v >= PRESS_THRESHOLD && (hapticWas[m] ?: 0f) < PRESS_THRESHOLD && edgeOf(m) != HapticEdge.RELEASE) {
+                    hapticTicks.add(feelOf(m))
+                }
             }
         }
         // Ticks on release that dropped under half since the last snapshot (gone from hapticNow when at rest).
         for ((m, was) in hapticWas) {
             val t = m.target
-            if (t is OutputTarget.Haptic && !t.held && was >= PRESS_THRESHOLD &&
-                (hapticNow[m] ?: 0f) < PRESS_THRESHOLD && (t.edge ?: eff.hapticEdge) != HapticEdge.PRESS
-            ) {
-                hapticTicks.add(t.feel ?: eff.haptics)
+            if (was < PRESS_THRESHOLD || (hapticNow[m] ?: 0f) >= PRESS_THRESHOLD) continue
+            if (t is OutputTarget.Haptic && !t.held && (t.edge ?: edgeOf(m)) != HapticEdge.PRESS) {
+                hapticTicks.add(t.feel ?: feelOf(m))
+            } else if (m.buzz && !Describe.isHaptic(t) && edgeOf(m) != HapticEdge.PRESS) {
+                hapticTicks.add(feelOf(m))
             }
         }
         // Per-step ones back at 0 since the last snapshot tick on the way down too.
@@ -2807,7 +2811,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             while (it.hasNext()) {
                 val e = it.next()
                 if (e.key !in hapticNow) {
-                    if (e.value != 0) hapticTicks.add((e.key.target as OutputTarget.HapticStep).feel ?: eff.haptics)
+                    if (e.value != 0) hapticTicks.add((e.key.target as OutputTarget.HapticStep).feel ?: feelOf(e.key))
                     it.remove()
                 }
             }
@@ -2817,6 +2821,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         hapticLevel = level
         val w = hapticWas; hapticWas = hapticNow; hapticNow = w
     }
+
+    /** The haptic feel of [m]'s touch control ([TouchControl.haptics]), else the workspace's. */
+    private fun feelOf(m: Mapping): HapticFeel =
+        MappingProfiles.touchId(m.source)?.let { controlsById[it]?.haptics } ?: eff.haptics
+
+    /** When [m]'s ticks play: its touch control's ([TouchControl.hapticEdge]), else the workspace's. */
+    private fun edgeOf(m: Mapping): HapticEdge =
+        MappingProfiles.touchId(m.source)?.let { controlsById[it]?.hapticEdge } ?: eff.hapticEdge
 
     /** Adds one source group's outputs; its stick axes sum, then merge by largest deflection. */
     private fun accumulate(ms: List<Mapping>, dev: Dev?) {
@@ -2847,6 +2859,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 // A swipe direction's own outputs are not another input for its latch.
                 if (latchChip(m.source)) stickies.add(null, m.target)
                 sameSeen(m, dev, now)
+            }
+            // A Buzz chip ticks as it presses: watched like a haptic tick ([collectHaptics]).
+            if (m.buzz) {
+                val a = min(1f, abs(v))
+                if (a > HAPTIC_MIN_LEVEL) hapticNow[m] = max(a, hapticNow[m] ?: 0f)
             }
             when (val t = m.target) {
                 is OutputTarget.Pad -> if (v >= PRESS_THRESHOLD) when (t.button) {

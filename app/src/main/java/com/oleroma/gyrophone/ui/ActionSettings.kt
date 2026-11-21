@@ -374,7 +374,13 @@ internal fun touchControlSettings(
             },
         )
     }
-    val items = heldCategories.orEmpty() + when {
+    // Its own haptic feel and edge, over the workspace's: for its haptic chips and Buzz cards.
+    val hapticCategory = if (control.kind == TouchKind.BUTTON || control.kind == TouchKind.STICK) listOf(
+        category(runtime, "buttonHaptics", "Haptics", "How its buzzes feel and when they play", prefKey = "button.Haptics") {
+            ButtonHaptics(runtime, control, ws, update)
+        },
+    ) else emptyList()
+    val items = heldCategories.orEmpty() + hapticCategory + when {
         surface != null -> listOf(surfaceCategory(runtime, "Swipes", surface, key, zones, touchpad = false))
         control.kind == TouchKind.STICK -> listOf(
             category(runtime, "stick", "Stick", "Deadzone and directions", defaultOpen = true) { StickSettings(control) { c -> update { c } } },
@@ -422,6 +428,31 @@ internal fun touchControlSettings(
             if (control.kind == TouchKind.STICK && Bindings.stickOuter(input) != null) ui { TouchStickOuterSettings(control, key, update) } else null
         },
     )
+}
+
+/** A button's or stick's own haptic Feel and Ticks play, each over the workspace's until reset. */
+@Composable
+private fun ButtonHaptics(runtime: GamepadRuntime, control: TouchControl, ws: Workspace, update: ((TouchControl) -> TouchControl) -> Unit) {
+    val feel = control.haptics ?: ws.haptics
+    OverrideRow(
+        "Feel", control.haptics != null, { update { it.copy(haptics = null) } },
+        hint = "How this control's haptic chips and Buzz cards feel. Unset, it follows the workspace's Haptics feel. " +
+            "They only play while a PC is connected.",
+    ) {
+        HapticFeelEditor(
+            feel,
+            held = false,
+            onChange = { f -> update { it.copy(haptics = f) } },
+            onTry = { runtime.previewHaptic(feel, false) },
+        )
+    }
+    OverrideRow(
+        "Ticks play", control.hapticEdge != null, { update { it.copy(hapticEdge = null) } },
+        hint = "When its ticks and Buzz cards play: as a chip presses, lets go, or both. Unset, it follows the workspace (" +
+            ws.hapticEdge.label + ").",
+    ) {
+        HapticEdgeChips(control.hapticEdge ?: ws.hapticEdge, onSelect = { e -> if (e != null) update { it.copy(hapticEdge = e) } })
+    }
 }
 
 /** A touch stick's outer zone: how far it is pushed for its directions' chips after the separator. */

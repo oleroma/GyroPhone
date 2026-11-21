@@ -189,6 +189,10 @@ data class TouchControl(
      * chips after the separator, [InputSource.TouchStick.outer]), such as Shift to sprint.
      */
     val outerRing: Float = DEFAULT_OUTER_RING,
+    /** BUTTON or STICK: how its haptic ticks and Buzz chips feel; null = the workspace's ([Workspace.haptics]). */
+    val haptics: HapticFeel? = null,
+    /** BUTTON or STICK: when its ticks and Buzz chips play; null = the workspace's ([Workspace.hapticEdge]). */
+    val hapticEdge: HapticEdge? = null,
 ) {
     /** Finger position input [axis]'s settings. */
     fun fingerOf(axis: FingerAxis): FingerAxisSettings = fingers.fingerOf(axis)

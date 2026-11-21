@@ -29,6 +29,7 @@ data class PresetChip(
     val options: MapOptions? = null,
     val range: AxisRange? = null,
     val perDp: Float? = null,
+    val buzz: Boolean = false,
 )
 
 /**
@@ -117,7 +118,7 @@ object MappingPresets {
         keepFingers: Boolean = false,
     ): List<PresetChip> = inputs.flatMap { input ->
         Bindings.entries(mappings, input).map { e ->
-            PresetChip(slot(input.sources.first(), index(input), keepFingers), e.target, e.options, e.range, e.perDp)
+            PresetChip(slot(input.sources.first(), index(input), keepFingers), e.target, e.options, e.range, e.perDp, e.buzz)
         }
     }.distinct()
 
@@ -141,7 +142,7 @@ object MappingPresets {
         for ((s, list) in chips.groupBy { it.slot }) {
             val input = bySlot[s] ?: continue
             val now = Bindings.entries(out, input)
-            val add = list.map { Bindings.Entry(it.target, it.options, it.range, it.perDp) }
+            val add = list.map { Bindings.Entry(it.target, it.options, it.range, it.perDp, it.buzz) }
                 .filter { e -> now.none { it.target == e.target && it.shape == e.shape } }
             if (add.isNotEmpty()) out = Bindings.setEntries(out, input, now + add)
         }

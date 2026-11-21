@@ -158,6 +158,19 @@ object Bindings {
     fun isTriggerOf(input: BindableInput): Boolean =
         input.sources.firstOrNull()?.let { Triggers.of(it) != Trigger.HOLD } == true
 
+    /** [inputs] (a card's) have chips that do something, and every one of them buzzes ([Mapping.buzz]). */
+    fun buzzes(mappings: List<Mapping>, inputs: List<BindableInput>): Boolean {
+        val own = mappings.filter { m -> !m.target.nothing && !Describe.isHaptic(m.target) && inputs.any { belongs(m, it) } }
+        return own.isNotEmpty() && own.all { it.buzz }
+    }
+
+    /** [mappings] with every chip of [inputs] (a card's) buzzing or not ([Mapping.buzz]). */
+    fun setBuzz(mappings: List<Mapping>, inputs: List<BindableInput>, on: Boolean): List<Mapping> =
+        mappings.map { m ->
+            val fits = !m.target.nothing && !Describe.isHaptic(m.target) && inputs.any { belongs(m, it) }
+            if (fits && m.buzz != on) m.copy(buzz = on) else m
+        }
+
     /**
      * Replaces every mapping whose source is one of input.sources with sources x targets. Keeps
      * other mappings and their order; new ones go where the first removed one was, else at the end.
@@ -173,8 +186,9 @@ object Bindings {
         val kept = mappings.filterNot { belongs(it, input) }
         val ranges = mappings.filter { belongs(it, input) && it.range != null }.associate { it.target to it.range }
         val sets = mappings.filter { belongs(it, input) && it.perDp != null }.associate { it.target to it }
+        val buzzes = mappings.filter { belongs(it, input) && it.buzz }.mapTo(HashSet()) { it.target }
         val added = input.sources.flatMap { s ->
-            targets.distinct().map { Mapping(s, it, options = options(it), range = ranges[it], perDp = sets[it]?.perDp) }
+            targets.distinct().map { Mapping(s, it, options = options(it), range = ranges[it], perDp = sets[it]?.perDp, buzz = it in buzzes) }
         }
         val at = if (first < 0) kept.size else first
         return kept.subList(0, at) + added + kept.subList(at, kept.size)
@@ -189,13 +203,14 @@ object Bindings {
         val options: MapOptions?,
         val range: AxisRange? = null,
         val perDp: Float? = null,
+        val buzz: Boolean = false,
     ) {
         val shape: Pair<How, Int> get() = (options ?: MapOptions()).shape
     }
 
     /** [input]'s chips in order, an exact duplicate (same target and How) left out. */
     fun entries(mappings: List<Mapping>, input: BindableInput): List<Entry> =
-        mappings.filter { belongs(it, input) }.map { Entry(it.target, it.options, it.range, it.perDp) }.distinctBy { it.target to it.shape }
+        mappings.filter { belongs(it, input) }.map { Entry(it.target, it.options, it.range, it.perDp, it.buzz) }.distinctBy { it.target to it.shape }
 
     /** The [n]th (from 0) of [input]'s chips of [target]; null = none. */
     fun entry(mappings: List<Mapping>, input: BindableInput, target: OutputTarget, n: Int): Entry? =
@@ -206,7 +221,7 @@ object Bindings {
         val first = mappings.indexOfFirst { belongs(it, input) }
         val kept = mappings.filterNot { belongs(it, input) }
         val list = entries.distinctBy { it.target to it.shape }
-        val added = input.sources.flatMap { s -> list.map { Mapping(s, it.target, options = it.options, range = it.range, perDp = it.perDp) } }
+        val added = input.sources.flatMap { s -> list.map { Mapping(s, it.target, options = it.options, range = it.range, perDp = it.perDp, buzz = it.buzz) } }
         val at = if (first < 0) kept.size else first
         return kept.subList(0, at) + added + kept.subList(at, kept.size)
     }
