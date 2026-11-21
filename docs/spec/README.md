@@ -88,5 +88,3 @@ These came up in design talks and are not in the code. They are listed so nobody
 - Bluetooth LE HID as a transport.
 - Picking the overlay GPU by the overlay's screen on hybrid-graphics laptops.
 - Caching overlay shapes per frame.
-- Haptics settings per button (only per workspace and per haptic mapping today).
-- Profile import, export and sharing.
