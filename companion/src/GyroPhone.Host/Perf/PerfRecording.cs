@@ -113,9 +113,51 @@ public sealed record PerfRun(
     public string SetupChanges { get; init; } = "";
     /// <summary>Set when the floor differs clearly from the last run on the same setup (<see cref="FloorBook"/>).</summary>
     public string FloorWarning { get; init; } = "";
+    /// <summary>The game the play tags went by (<see cref="PlayTags"/>), "" none; guessed when the FPS overlay didn't name it.</summary>
+    public string PlayGame { get; init; } = "";
+    public bool PlayGameGuessed { get; init; }
+    /// <summary>The link over the seconds tagged play (the game in front, input moving), game (in front, still) and the rest; null none.</summary>
+    public PlaySlice? Playing { get; init; }
+    public PlaySlice? GameStill { get; init; }
+    public PlaySlice? Other { get; init; }
 
     /// <summary>Jumps per minute of the game in front.</summary>
     public double JumpsPerMin => GameSeconds > 0 ? Jumps * 60 / GameSeconds : 0;
+}
+
+/// <summary>The link numbers over some of a record's seconds (<see cref="PlayTags"/>): the same as the record's own, counted only there.</summary>
+public sealed record PlaySlice(int Seconds, long Packets, int Lost, int Late, double MaxLateMs, int Gaps, int Releases, int Late3,
+    double OverP50Ms, double OverP99Ms, double OverP999Ms, int HeldAir, int HeldPc, int HeldPhone, double RttTypMs, double CpuPct);
+
+/// <summary>
+/// Tags each second of a record so a game session can be told from the rest: <c>play</c> when the game is in front
+/// and the input moves (most packets moved the mouse or a stick), <c>game</c> when it's in front and still,
+/// <c>move</c> when the input moves with another program in front, <c>-</c> otherwise.
+/// </summary>
+public static class PlayTags
+{
+    public const string Play = "play", Game = "game", Move = "move", None = "-";
+
+    /// <summary>Most packets moved the mouse or a stick (the same "moving" as the over-the-floor split).</summary>
+    public static bool Moving(LinkSecond l) => l.Rx > 0 && l.Moving * 2 >= l.Rx;
+
+    /// <summary>Never the game: the desktop and its shell, GyroPhone itself.</summary>
+    private static bool NotAGame(string name, string? self) =>
+        name is "explorer" or "dwm" or "Idle" or "ShellExperienceHost" or "SearchHost" or "StartMenuExperienceHost" or "LockApp" ||
+        name.StartsWith("GyroPhone", StringComparison.OrdinalIgnoreCase) ||
+        (!string.IsNullOrEmpty(self) && string.Equals(name, self, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The program in front for most of the moving seconds, or null: the game when the FPS overlay didn't name it.</summary>
+    public static string? Guess(IEnumerable<(string? Front, bool Moving)> seconds, string? self) =>
+        seconds.Where(x => x.Moving && !string.IsNullOrEmpty(x.Front) && !NotAGame(x.Front!, self))
+            .GroupBy(x => x.Front!, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(g => g.Count()).Select(g => g.Key).FirstOrDefault();
+
+    public static string Of(string? front, bool moving, string? game)
+    {
+        bool inGame = !string.IsNullOrEmpty(game) && string.Equals(front, game, StringComparison.OrdinalIgnoreCase);
+        return inGame ? (moving ? Play : Game) : moving ? Move : None;
+    }
 }
 
 /// <summary>
@@ -150,6 +192,8 @@ public sealed class PerfRecording
         public LoadSample? Load;
         /// <summary>The busy programs that second (<see cref="PcBusy"/>), or null.</summary>
         public string? Busy, BusyTop;
+        /// <summary>The program in front (the game when the FPS overlay knows it), or null.</summary>
+        public string? Front;
     }
 
     public PerfRecording(string name, string link, long startUs, DateTime start, int seconds)
@@ -224,6 +268,7 @@ public sealed class PerfRecording
         {
             var s = SecondAt(atUs);
             s.Load = load;
+            s.Front = front;
             var busy = PcBusy.Of(load, Game.Length > 0 ? Game : front, Self);
             s.Busy = busy?.Text;
             s.BusyTop = busy?.Top;
@@ -318,6 +363,34 @@ public sealed class PerfRecording
         };
     }
 
+    /// <summary>The link numbers over <paramref name="link"/>'s seconds, with the PC's average CPU over <paramref name="loads"/> (−1 none).</summary>
+    public static PlaySlice Slice(IReadOnlyList<LinkSecond> link, IReadOnlyList<LoadSample> loads)
+    {
+        var all = new long[OverFloor.Buckets];
+        foreach (var l in link)
+            if (l.Over != null) OverFloor.Add(all, l.Over);
+        var rttTyp = link.Where(l => l.RttTypMs > 0).Select(l => (double)l.RttTypMs).ToList();
+        return new PlaySlice(link.Count, link.Sum(l => (long)l.Rx), link.Sum(l => l.Lost), link.Sum(l => l.Late),
+            link.Count > 0 ? link.Max(l => l.MaxLateMs) : 0, link.Sum(l => l.Gaps), link.Sum(l => l.Releases), link.Sum(l => l.Late3),
+            OverFloor.Pct(all, 0.5), OverFloor.Pct(all, 0.99), OverFloor.Pct(all, 0.999),
+            link.Sum(l => l.Air), link.Sum(l => l.Pc), link.Sum(l => l.Phone), Median(rttTyp), loads.Count > 0 ? loads.Average(l => l.CpuPct) : -1);
+    }
+
+    /// <summary>One line of a <see cref="PlaySlice"/> for the record's text.</summary>
+    private static string SliceLine(string what, PlaySlice p)
+    {
+        var c = CultureInfo.InvariantCulture;
+        var sb = new StringBuilder();
+        sb.Append(c, $"  {what} {p.Seconds} s: lost {p.Lost}, late {p.Late} (worst {p.MaxLateMs:0} ms), phone pauses {p.Gaps}, let go {p.Releases}");
+        if (p.OverP50Ms >= 0)
+            sb.Append(c, $"; over the floor {Ms2(p.OverP50Ms)} / {Ms2(p.OverP99Ms)} / {Ms2(p.OverP999Ms)} ms, 3-15 ms over {p.Late3} of {p.Packets} packets");
+        if (p.Late > 0 && p.HeldAir + p.HeldPc + p.HeldPhone > 0)
+            sb.Append(c, $"; held up on the way {p.HeldAir}, inside the PC {p.HeldPc}, phone paused {p.HeldPhone}");
+        if (p.RttTypMs > 0) sb.Append(c, $"; round trip typical {Ms2(p.RttTypMs)} ms");
+        if (p.CpuPct >= 0) sb.Append(c, $"; PC CPU {p.CpuPct:0}%");
+        return sb.ToString();
+    }
+
     /// <summary>A phone number for the burst table, "-" when the phone sent none.</summary>
     private static string Ms(float v, string format) => v < 0 ? "-" : v.ToString(format, CultureInfo.InvariantCulture);
 
@@ -370,11 +443,42 @@ public sealed class PerfRecording
                 hasPhone ? phone.Max(p => p.GapMaxMs) : -1, phone.Sum(p => p.Failed));
             run = WithLinkNumbers(run, link, phone);
 
+            // Play tags: which seconds were the game session, and the link over each kind.
+            bool MovingAt(long k) => linkBySecond.TryGetValue(k, out var ls) && PlayTags.Moving(ls);
+            string? FrontAt(long k) => _seconds.TryGetValue(k, out var fs) ? fs.Front : null;
+            bool guessed = Game.Length == 0;
+            string? game = guessed ? PlayTags.Guess(linkBySecond.Keys.Select(k => (FrontAt(k), MovingAt(k))), Self) : Game;
+            var tags = new Dictionary<long, string>();
+            foreach (var k in linkBySecond.Keys.Concat(_seconds.Keys).Distinct()) tags[k] = PlayTags.Of(FrontAt(k), MovingAt(k), game);
+            PlaySlice? SliceOf(Func<string, bool> pick)
+            {
+                var keys = linkBySecond.Keys.Where(k => pick(tags[k])).ToList();
+                if (keys.Count == 0) return null;
+                var loadsIn = keys.Where(k => _seconds.TryGetValue(k, out var fs) && fs.Load != null).Select(k => _seconds[k].Load!.Value).ToList();
+                return Slice(keys.Select(k => linkBySecond[k]).ToList(), loadsIn);
+            }
+            run = run with
+            {
+                PlayGame = game ?? "",
+                PlayGameGuessed = game != null && guessed,
+                Playing = SliceOf(t => t == PlayTags.Play),
+                GameStill = SliceOf(t => t == PlayTags.Game),
+                Other = SliceOf(t => t is PlayTags.Move or PlayTags.None),
+            };
+
             var sb = new StringBuilder();
             var c = CultureInfo.InvariantCulture;
             sb.AppendLine(c, $"GyroPhone link test '{Name}', {Start:yyyy-MM-dd HH:mm:ss}, {run.Seconds:0} s");
             sb.AppendLine(c, $"path: {(path.Length > 0 ? path : Link)}");
             sb.AppendLine(c, $"link: lost {run.Lost}, late {run.Late} (worst {run.MaxLateMs:0} ms), phone pauses {run.Gaps}, let go {run.Releases}, trouble bursts {bursts.Count}");
+            if (game == null) sb.AppendLine("play tags: no game found (no program other than the desktop and GyroPhone was in front while the input moved)");
+            else
+            {
+                sb.AppendLine(c, $"play tags: game {game} " + (guessed ? "(a guess: in front most while the input moved; the FPS overlay names it for sure)" : "(the FPS overlay's)"));
+                if (run.Playing != null) sb.AppendLine(SliceLine("playing (game in front, input moving)", run.Playing));
+                if (run.GameStill != null) sb.AppendLine(SliceLine("game in front, input still", run.GameStill));
+                if (run.Other != null) sb.AppendLine(SliceLine("everything else", run.Other));
+            }
             if (run.FloorMs >= 0 || run.OverP50Ms >= 0)
                 sb.AppendLine(c, $"link split: floor (half the best round trip) {Ms2(run.FloorMs)} ms, round trip typical {Ms2(run.RttTypMs)} ms; " +
                     $"over the floor, every packet: {Ms2(run.OverP50Ms)} / {Ms2(run.OverP99Ms)} / {Ms2(run.OverP999Ms)} ms (middle / slowest 1% / 0.1%), " +
@@ -413,8 +517,9 @@ public sealed class PerfRecording
             sb.AppendLine("Per second. fps: while the game was in front, with the FPS overlay on (a second it was in front only partly has few frames).");
             if (hasPhone)
                 sb.AppendLine("phone: STATEs and packets it sent, failed and slow (2 ms+) sends, longest send, how late its send thread woke, longest gap between STATEs, packets the whole phone sent.");
+            sb.AppendLine("tag: play = the game in front and the input moving, game = in front and still, move = moving with another program in front.");
             sb.AppendLine("over: over the floor, middle / slowest 1%, ms. l3: packets 3-15 ms over. hand: slowest hand-off, ms; slow: over 2 ms. stall: the PC stall watch's latest wake, ms.");
-            sb.AppendLine("  s  :ss |   rx lost late maxlate_ms gaps rel  lat_ms p99_ms jitter  floor over50 over99  l3  hand slow stall |" +
+            sb.AppendLine("  s  :ss  tag |   rx lost late maxlate_ms gaps rel  lat_ms p99_ms jitter  floor over50 over99  l3  hand slow stall |" +
                 (hasPhone ? " states  pkts fail slow send_ms wake_ms gap_ms  ph_tx |" : "") + "  frames   fps  worst_ms jumps |  cpu  dpc  int core_drv | busy");
             long last = Math.Max(_seconds.Count > 0 ? _seconds.Keys.Max() : 0, linkBySecond.Count > 0 ? linkBySecond.Keys.Max() : 0);
             for (long k = 0; k <= last; k++)
@@ -422,7 +527,7 @@ public sealed class PerfRecording
                 _seconds.TryGetValue(k, out var s);
                 bool hasLink = linkBySecond.TryGetValue(k, out var l);
                 if (s == null && !hasLink) continue;
-                sb.Append(c, $"{k,3}  :{Start.AddSeconds(k):ss} | ");
+                sb.Append(c, $"{k,3}  :{Start.AddSeconds(k):ss} {(tags.TryGetValue(k, out var tag) ? tag : PlayTags.None),4} | ");
                 if (hasLink)
                 {
                     sb.Append(c, $"{l.Rx,4} {l.Lost,4} {l.Late,4} {l.MaxLateMs,10:0} {l.Gaps,4} {l.Releases,3} ");

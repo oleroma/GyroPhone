@@ -327,4 +327,48 @@ public class PcBusyTests
         Assert.Contains("WARNING: the PC was busy", text);
         Assert.Contains("java 30%", text);
     }
+
+    [Fact]
+    public void PlayTagsSplitTheGameSessionFromTheRest()
+    {
+        var r = new PerfRecording("Router", "Wi-Fi", 0, DateTime.Now, 0) { Self = "GyroPhoneCompanion" };
+        string[] front = ["Game", "Game", "chrome", "Game", "explorer"];
+        for (int i = 0; i < front.Length; i++) r.AddLoad(new LoadSample(50 + i * 10, 1, 1, 5), i * 1_000_000 + 500_000, front[i]);
+        LinkSecond S(int i, int moving, int late) => new LinkSecond((i + 1) * 1_000_000L, 400, 0, late, late > 0 ? 20 : 0, 0, 0) { Moving = moving };
+        var link = new List<LinkSecond> { S(0, 400, 5), S(1, 0, 2), S(2, 400, 1), S(3, 300, 0), S(4, 400, 0) };
+        var (run, text) = r.Finish(5_000_000, link);
+        Assert.Equal("Game", run.PlayGame);
+        Assert.True(run.PlayGameGuessed);
+        Assert.Equal(2, run.Playing!.Seconds);
+        Assert.Equal(5, run.Playing.Late);
+        Assert.Equal(1, run.GameStill!.Seconds);
+        Assert.Equal(2, run.GameStill.Late);
+        Assert.Equal(2, run.Other!.Seconds);
+        Assert.Equal(1, run.Other.Late);
+        Assert.Equal(65, run.Playing.CpuPct, 3);
+        Assert.Contains("play tags: game Game (a guess", text);
+        Assert.Contains("playing (game in front, input moving) 2 s: lost 0, late 5", text);
+        Assert.Contains("play |", text);
+        Assert.Contains("move |", text);
+        Assert.Contains("<td>late 5 ", PerfReport.Html([run]));
+    }
+
+    [Fact]
+    public void PlayTagsUseTheFpsOverlaysGameAndFindNoneWithoutOne()
+    {
+        var r = new PerfRecording("Router", "Wi-Fi", 0, DateTime.Now, 0) { Game = "RealGame" };
+        r.AddLoad(new LoadSample(50, 1, 1, 5), 500_000, "chrome");
+        var link = new List<LinkSecond> { new(1_000_000, 400, 0, 0, 0, 0, 0) { Moving = 400 } };
+        var (run, text) = r.Finish(1_000_000, link);
+        Assert.Equal("RealGame", run.PlayGame);
+        Assert.False(run.PlayGameGuessed);
+        Assert.Null(run.Playing);
+        Assert.Contains("(the FPS overlay's)", text);
+
+        var idle = new PerfRecording("Router", "Wi-Fi", 0, DateTime.Now, 0) { Self = "GyroPhoneCompanion" };
+        idle.AddLoad(new LoadSample(50, 1, 1, 5), 500_000, "GyroPhoneCompanion");
+        var (run2, text2) = idle.Finish(1_000_000, link);
+        Assert.Equal("", run2.PlayGame);
+        Assert.Contains("play tags: no game found", text2);
+    }
 }
