@@ -9,13 +9,20 @@
   3. Signs this driver package with it: a copy in %ProgramData%\GyroPhone\input-driver.
   4. Creates the "GyroPhone virtual mouse and keyboard" device (Root\GyroPhoneInput) if it isn't there yet and puts
      the driver on it.
+  5. Lets only the Windows user who ran install.cmd (besides System and administrators) open the device: what
+     it sends reaches elevated windows and the UAC prompt, so other users' programs must not drive it.
 
   Test signing stays off: Windows checks the code signature of kernel drivers only, and this one runs
   in user mode (UMDF) on Windows' own Virtual HID Framework. uninstall.cmd undoes all of it.
 #>
+param(
+    # The user who ran install.cmd, found before the admin prompt (whose account may be another one).
+    [string]$UserSid = ''
+)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
-Assert-Admin -Script $PSCommandPath
+if (-not $UserSid) { $UserSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
+Assert-Admin -Script $PSCommandPath -Arguments @('-UserSid', $UserSid)
 
 try {
     $source = $PSScriptRoot
@@ -88,6 +95,12 @@ try {
     Write-Step 'Installing the driver on it...'
     $reboot = [GpSetup]::InstallDriver($GpHardwareId, $inf)
     $devices = @(Get-GpDevices)
+    # 5. Only this user (plus System and administrators) may open it; the INF alone lets in nobody else.
+    $user = New-Object Security.Principal.SecurityIdentifier($UserSid)  # throws on anything that isn't a SID
+    $sddl = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;$($user.Value))"
+    $who = try { $user.Translate([Security.Principal.NTAccount]).Value } catch { $user.Value }
+    foreach ($d in $devices) { [GpSetup]::SetSecurity($d.InstanceId, $sddl) }
+    Write-Step "  only $who (and administrators) may use it."
     # An update only takes effect once the device restarts: Windows keeps the old driver running till then.
     if (-not $reboot) {
         foreach ($d in $devices) {

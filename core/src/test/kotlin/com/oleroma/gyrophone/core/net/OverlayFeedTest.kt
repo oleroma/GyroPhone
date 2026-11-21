@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.core.net
 import com.oleroma.gyrophone.core.model.AndroidKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** OVERLAY / OVERLAY_LAYOUT bytes; the same hex is decoded by the companion's OverlayTests. */
@@ -16,6 +17,53 @@ class OverlayFeedTest {
         assertEquals(180, Wire.sizeOf(PacketType.OVERLAY))
         assertEquals(228, Wire.sizeOf(PacketType.OVERLAY_LAYOUT))
         assertEquals(true, PacketType.isPhoneToHost(PacketType.OVERLAY_LAYOUT))
+    }
+
+    @Test fun aBigFramesBlobLeavesOutWholeRecordsAndCountsWhatItHolds() {
+        val n = 100
+        val index = (0 until n).associate { "b$it" to it }
+        val text = "x".repeat(40)
+        val marks = (0 until n).map { i ->
+            OverlayMark("b$i", inside = false, row = false, set = false, lines = List(3) { OverlayLine(text, OverlayLine.PLAIN) }, bars = emptyList())
+        }
+        val keys = OverlayKeys.NONE.copy(
+            keys = List(30) { OverlayKey(0, OverlayKey.HELD, "key $it ${"n".repeat(20)}", "target ${"t".repeat(20)}") },
+            touch = List(20) { OverlayTouchKey("b$it", 0, "touch ${"t".repeat(20)}") },
+        )
+        val blob = OverlayFeed.encodeFrames(OverlayFrames(10f, 2f, 0, marks), 7, index, keys)
+        assertTrue(blob.size <= OverlayFeed.PIECE_DATA * OverlayFeed.MAX_FRAME_PIECES)
+        // Walk it as the PC does: every count matches the records there, and the blob ends right after them.
+        fun u8(at: Int) = blob[at].toInt() and 0xFF
+        val markCount = u8(11)
+        var p = 12
+        repeat(markCount) {
+            val lines = u8(p + 2); p += 3
+            repeat(lines) { p += 2 + u8(p + 1) }
+            p += 1 + u8(p) * 5
+        }
+        assertEquals(OverlayFeed.KEYS_SECTION, u8(p))
+        p += 1 + 2 + 10 + 4
+        val keyCount = u8(p); p++
+        repeat(keyCount) { p += 2; p += 1 + u8(p); p += 1 + u8(p) }
+        val touchCount = u8(p); p++
+        repeat(touchCount) { p += 2; p += 1 + u8(p) }
+        assertEquals(blob.size, p)
+        // The Keys table goes whole here; the marks take what is left.
+        assertEquals(30, keyCount)
+        assertEquals(20, touchCount)
+        assertTrue(markCount in 1 until n)
+    }
+
+    @Test fun aKeysTableTooBigForTheBlobKeepsWholeKeys() {
+        val keys = OverlayKeys.NONE.copy(keys = List(96) { OverlayKey(0, OverlayKey.HELD, "n".repeat(60), "t".repeat(60)) })
+        val blob = OverlayFeed.encodeFrames(OverlayFrames.NONE, 7, emptyMap(), keys)
+        assertTrue(blob.size <= OverlayFeed.PIECE_DATA * OverlayFeed.MAX_FRAME_PIECES)
+        val keyCountAt = 12 + 1 + 2 + 10 + 4
+        val keyCount = blob[keyCountAt].toInt() and 0xFF
+        assertTrue(keyCount in 1 until 96)
+        // Each key is 2 + 61 + 61 bytes, then the touch key count (0).
+        assertEquals(keyCountAt + 1 + keyCount * 124 + 1, blob.size)
+        assertEquals(0, blob.last().toInt())
     }
 
     @Test fun samplesAddUpToTheFrameThatFollows() {
@@ -49,6 +97,50 @@ class OverlayFeedTest {
         val out = ByteArray(Wire.OVERLAY_LAYOUT_PLAIN)
         assertEquals(Wire.OVERLAY_LAYOUT_PLAIN, OverlayFeed.encodeLayoutPiece(out, 0, 7, blob, 0))
         assertEquals("0700000119$LAYOUT_BLOB" + "00".repeat(200 - 5 - 25), out.hex())
+    }
+
+    @Test fun framesBlob() {
+        val f = OverlayFeed()
+        assertEquals(-1, f.framesVersion())
+        f.setLayout(layout)
+        val frames = OverlayFrames(
+            34.5f, 2.75f, 0xFF00BCD4.toInt(),
+            listOf(
+                OverlayMark("a", inside = true, row = false, set = true,
+                    lines = listOf(OverlayLine("W", OverlayLine.PLAIN), OverlayLine("Crouch on", OverlayLine.ON)),
+                    bars = listOf(OverlayBar(0, 0.5f, 10))),
+                // Not in the layout: left out.
+                OverlayMark("gone", false, false, false, listOf(OverlayLine("X", OverlayLine.PLAIN)), emptyList()),
+                OverlayMark("", false, false, false, listOf(OverlayLine("Hold", OverlayLine.PLAIN)), emptyList()),
+            ),
+        )
+        f.setFrames(frames)
+        val v = f.framesVersion()
+        val (version, blob) = f.framesSnapshot()!!
+        assertEquals(v, version)
+        assertEquals(FRAMES_BLOB, blob.hex())
+        // The same frames again: no new version. A new layout: a new one (the controls' places may move).
+        f.setFrames(frames.copy())
+        assertEquals(v, f.framesVersion())
+        f.setLayout(layout.copy(workspace = "Other"))
+        assertEquals(v + 1, f.framesVersion())
+        val out = ByteArray(Wire.OVERLAY_FRAMES_PLAIN)
+        assertEquals(Wire.OVERLAY_FRAMES_PLAIN, OverlayFeed.encodeFramesPiece(out, 0, 3, blob, 0))
+        assertEquals(3, out.getU16(0))
+        assertEquals(blob.size, out.getU8(4))
+        assertEquals(228, Wire.sizeOf(PacketType.OVERLAY_FRAMES))
+        assertEquals(true, PacketType.isPhoneToHost(PacketType.OVERLAY_FRAMES))
+    }
+
+    @Test fun litControlsReplaceTouchedOnes() {
+        val f = OverlayFeed()
+        f.setLayout(layout.copy(controls = layout.controls + layout.controls[0].copy(id = "b")))
+        val o = ByteArray(Wire.OVERLAY_PLAIN)
+        f.encodeFrame(o, 0, 0, setOf("a"), emptySet())
+        assertEquals(1, o.getU8(56))
+        f.uiLit = setOf("b")
+        f.encodeFrame(o, 0, 0, setOf("a"), emptySet())
+        assertEquals(2, o.getU8(56))
     }
 
     @Test fun bigLayoutSplitsIntoPieces() {
@@ -227,6 +319,7 @@ class OverlayFeedTest {
 
     companion object {
         const val LAYOUT_BLOB = "0160093804044d61696e000100010008001033036606800141"
+        const val FRAMES_BLOB = "01010059011301d4bc00ff02000502000157010943726f756368206f6e010000800a00ff00010004486f6c6400"
         const val FRAME = "040302010000803f000000bf0000803ee803000000200000000000000180030101003b010080004000000000000000000000000000000000" +
             "0100000000000000000000000000000000000000000000000000000000000000007fc1ff0000ff0000ff0000ff0000ff0000ff0000ff0000" +
             "0000803f00000000000000c0" + "000000400000000000000000" + "00000000000000000000000000000000"

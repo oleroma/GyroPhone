@@ -5,13 +5,15 @@
 #   tools/gp-log.sh phone save        save the kept minutes on the phone and the PC
 #   tools/gp-log.sh phone keep N      keep the last N minutes on the phone (1-30)
 #   tools/gp-log.sh phone status      what is on, and the phone's newest events
+#   tools/gp-log.sh phone workspace [name]   the active (or named) workspace's settings, as an export file
+#   tools/gp-log.sh phone everything  every workspace, the Defaults, presets and library, as an export file
 #   tools/gp-log.sh pc on|off         the same switch, from the PC
 #   tools/gp-log.sh pc save           save both sides (the PC's becomes a record in Performance › Results)
 #   tools/gp-log.sh pc keep N         keep the last N minutes on the PC (1-30)
 # The phone goes over adb (dumpsys); the PC over a loopback LOG_CTL packet the companion takes only from this PC.
 set -euo pipefail
 export MSYS_NO_PATHCONV=1
-usage() { sed -n '2,10p' "$0" >&2; exit 2; }
+usage() { sed -n '2,12p' "$0" >&2; exit 2; }
 side="${1:-}"; shift || true
 minutes() { [[ "${1:-}" =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 30 )) || usage; }
 
@@ -21,6 +23,11 @@ case "$side" in
       on|off|save) arg="$1" ;;
       keep) minutes "${2:-}"; arg="keep $2" ;;
       status) arg="" ;;
+      workspace|everything)
+        # Printed whole (not cut at the saves list).
+        # dumpsys wraps it in its own header and indents it: keep the JSON from its first brace, dedented.
+        adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService "$@" | tr -d '\r' | sed -n '/^ *[{n]/,$p' | sed 's/^    //'
+        exit 0 ;;
       *) usage ;;
     esac
     # shellcheck disable=SC2086

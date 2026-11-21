@@ -112,4 +112,20 @@ class DebugTraceTest {
         t.drain()
         assertEquals(listOf("pad A down"), texts(t))
     }
+
+    @Test fun drainingFromSeveralThreadsKeepsTheOrder() {
+        val t = trace(capacity = 40_000)
+        val down = HidState(gamepad = GamepadState(buttons = 1 shl GamepadButton.A.bit))
+        val up = HidState()
+        val pairs = 5_000
+        repeat(pairs) { t.queueOutput(down); t.queueOutput(up) }
+        val start = java.util.concurrent.CountDownLatch(1)
+        val threads = List(4) { Thread { start.await(); t.drain() } }
+        threads.forEach { it.start() }
+        start.countDown()
+        threads.forEach { it.join() }
+        val lines = t.latest(pairs * 2 + 1).map { it.text }
+        assertEquals(pairs * 2, lines.size)
+        lines.forEachIndexed { i, line -> assertEquals("line $i", if (i % 2 == 0) "pad A down" else "pad A up", line) }
+    }
 }

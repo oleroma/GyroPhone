@@ -19,7 +19,7 @@ internal sealed class OverlaysPage : Page
     private bool _refreshing;
 
     // Top
-    private readonly CheckBox _edit, _hideAll;
+    private readonly CheckBox _edit, _hideAll, _behindAll;
     private readonly Button _levelAll;
 
     // Left
@@ -52,13 +52,17 @@ internal sealed class OverlaysPage : Page
 
     // Window
     private readonly CheckBox _shown;
+    private readonly CheckBox _behind;
     private readonly Seg<OverlayBackground> _background;
     private readonly SliderRow _opacity;
     private readonly Seg<OverlayQuality> _quality;
     private readonly Seg<int> _fps;
 
     // Look
-    private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook, _ringLook, _graphLook;
+    private readonly Border _phoneLook, _shapeLook, _diskLook, _laserLook, _ringLook, _graphLook, _keysLook;
+    private readonly SliderRow _keysFade;
+    private readonly CheckBox _keysTransparent;
+    private readonly List<(string Id, RadioButton Chip)> _keysShown = [];
     private readonly Seg<int> _graphRange, _graphSeconds;
     private readonly CheckBox _laserAxon, _laserSphereTurns, _laserGrid, _laserAxes, _laserGimbal, _laserDraw, _laserClearOnRatchet, _laserSnakeClearOnRatchet;
     private readonly CheckBox _laserPerspective, _laserSnake, _laserOutline;
@@ -120,7 +124,7 @@ internal sealed class OverlaysPage : Page
     private readonly CheckBox _gunLowered, _gunScope;
     private readonly SliderRow _gunHipPull, _gunHipRecover;
     private readonly CheckBox _muzzleFlash, _laserSpread, _laserBloom, _laserShotDraw;
-    private readonly SliderRow _gunSpread;
+    private readonly SliderRow _gunSpread, _flashSize;
     private readonly Seg<int> _hitLook;
     private readonly CheckBox _laserFireOnly;
     private readonly CheckBox[] _tbEase = new CheckBox[3];
@@ -166,10 +170,14 @@ internal sealed class OverlaysPage : Page
         _hideAll = Parts.Toggle("Hide all", () => _app.SetOverlaysHidden(!_app.OverlaysHidden));
         _hideAll.ToolTip = "Closes every overlay window; each keeps its own Show for when this is off.";
         _hideAll.Margin = new Thickness(0, 0, 24, 0);
+        _behindAll = Parts.Toggle("All behind", () => { if (!_refreshing) _app.SwitchAllBehind(); });
+        _behindAll.ToolTip = "Turns Behind other windows on for every overlay (off for all when every one has it): the game covers them, OBS Window Capture still records them.";
+        _behindAll.Margin = new Thickness(0, 0, 24, 0);
         _levelAll = Parts.Button("Level all", app.LevelAll, glyph: "");
         _levelAll.ToolTip = "Held the way it is now, every overlay shows the phone face-on.";
         global.Children.Add(_edit);
         global.Children.Add(_hideAll);
+        global.Children.Add(_behindAll);
         global.Children.Add(_levelAll);
         DockPanel.SetDock(global, Dock.Right);
         top.Children.Insert(0, global);
@@ -284,6 +292,9 @@ internal sealed class OverlaysPage : Page
         var (show, sb) = Parts.Card();
         _shown = Parts.Toggle("Show this overlay", () => { if (Picked is { } id) _app.SetOverlayShown(id, !(_app.OverlayOf(id)?.Shown ?? false)); });
         sb.Children.Add(_shown);
+        _behind = Parts.Toggle("Behind other windows", () => Change(o => o.BehindWindows = !o.BehindWindows),
+            "For recording: the game covers it, so you don't see it while playing, but OBS Window Capture still records it (capture method \"Windows 10 (1903 and up)\"). Edit brings it to the front to place it.");
+        sb.Children.Add(_behind);
         _windowTab.Children.Add(show);
         var (bg, bb) = Parts.Card("Background");
         _background = new Seg<OverlayBackground>(b => Change(o => o.Background = b), false,
@@ -369,6 +380,34 @@ internal sealed class OverlaysPage : Page
         gb.Children.Add(Parts.Text("Yaw, pitch and roll speed; shaded while a ratchet is held.", "Hint"));
         _graphLook = graph;
         _lookTab.Children.Add(graph);
+
+        var (keysCard, kyb) = Parts.Card("Keys");
+        kyb.Children.Add(Parts.Text("The keys of the controller attached to the phone that are pressed now and what they send, as \"A = Space\", and what the touch buttons you press send, as \"Space\". A new press takes the top free row and stays there while held; let go, its row fades out and leaves a gap the next press fills, so nothing moves. Each stick that sends something has its own row on top: a plus with its keys lit as you push it, or a dot where it points when it moves the mouse or a gamepad stick. Rows that don't fit the window aren't shown: make it taller in Edit.", "Hint"));
+        _keysFade = new SliderRow("Fade out", 0, 2000, 50, v => v <= 0 ? "At once" : $"{v / 1000:0.##} s", v => Change(o => o.KeysFadeMs = (int)v));
+        kyb.Children.Add(_keysFade.View);
+        _keysTransparent = Parts.Toggle("Transparent background", () => Change(o => o.KeysTransparent = !o.KeysTransparent), "No panel behind the rows: only the keys show over the game.");
+        kyb.Children.Add(_keysTransparent);
+        kyb.Children.Add(Parts.Text("Always shown"));
+        kyb.Children.Add(Parts.Text("These stay on top, dim until they fire; the others show only while they fire.", "Hint"));
+        var shownWrap = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+        foreach (int ci in GyroPhone.Protocol.OverlayControls.Order)
+        {
+            string id = GyroPhone.Protocol.OverlayControls.Ids[ci];
+            // Its own group: each chip is on or off by itself.
+            var chip = new RadioButton { Content = GyroPhone.Protocol.OverlayControls.Names[ci], GroupName = "keysShown-" + id, Style = Parts.Style("Chip") };
+            chip.Click += (_, _) => Change(o =>
+            {
+                var l = new List<string>(o.KeysShown);
+                if (!l.Remove(id)) l.Add(id);
+                o.KeysShown = l;
+            });
+            chip.Click += (_, _) => Parts.SetChecked(chip, Picked is { } p && _app.OverlayOf(p)?.KeysShown.Contains(id) == true);
+            shownWrap.Children.Add(chip);
+            _keysShown.Add((id, chip));
+        }
+        kyb.Children.Add(shownWrap);
+        _keysLook = keysCard;
+        _lookTab.Children.Add(keysCard);
 
         var (laser, lb) = Parts.Card("Pointer");
         lb.Children.Add(Parts.Text("A see-through sphere seen from above and to the side. The laser at its centre aims along the phone's roll axis (out of its top edge, into the screen at rest) onto the inside; the tick at the dot shows which way the phone's screen faces. The beam dims while a ratchet is held.", "Hint"));
@@ -456,6 +495,9 @@ internal sealed class OverlaysPage : Page
         _fireOptions.Children.Add(_kickOptions);
         _muzzleFlash = Parts.Toggle("Muzzle flash", () => Change(o => o.MuzzleFlash = !o.MuzzleFlash), "Each shot a flash in time with the kick: white, cooling to the Flash colour (yellow), then Flash end (orange). The crosshair glows and takes those colours, then its own again; the gun's muzzle blasts flame as wide as its muzzle and as long as its calibre (pistol shortest, shotgun and sniper longest).");
         _fireOptions.Children.Add(_muzzleFlash);
+        _flashSize = new SliderRow("Flash size (this gun)", GyroPhone.Host.Settings.OverlaySettings.FlashSizeMin, GyroPhone.Host.Settings.OverlaySettings.FlashSizeMax, 0.05, v => $"{v * 100:0}%", v => Change(o => (o.GunFlash ??= [])[o.Gun().Key] = (float)v));
+        _flashSize.View.Margin = new Thickness(20, 0, 0, 0);
+        _fireOptions.Children.Add(_flashSize.View);
         _shootsLikeTitle = Parts.Text("Shoots like", "Sub");
         _fireOptions.Children.Add(_shootsLikeTitle);
         _shootsLike = new Seg<int>(k => Change(o => o.LaserGun = k), true, [.. GyroPhone.Host.Guns.All.Select((g, i) => (g.Name, i))]);
@@ -905,6 +947,7 @@ internal sealed class OverlaysPage : Page
             }
             Parts.SetChecked(_edit, _app.OverlayEdit);
             Parts.SetChecked(_hideAll, _app.OverlaysHidden);
+            Parts.SetChecked(_behindAll, _app.AllBehind);
             var rf = _app.RestFade;
             Parts.SetChecked(_restOn, rf.On);
             Parts.Show(_restOptions, rf.On);
@@ -919,6 +962,7 @@ internal sealed class OverlaysPage : Page
                 : "Phone now: no data (show an overlay with the phone connected)";
             _edit.ToolTip = "Drag the overlay windows to move and resize them. Click where they overlap to pick the next one." + Keys(OverlayAction.Edit);
             _hideAll.ToolTip = "Closes every overlay window; each keeps its own Show for when this is off." + Keys(OverlayAction.HideAll);
+            _behindAll.ToolTip = "Turns Behind other windows on for every overlay (off for all when every one has it): the game covers them, OBS Window Capture still records them." + Keys(OverlayAction.BehindAll);
             _levelAll.ToolTip = "Held the way it is now, every overlay shows the phone face-on." + Keys(OverlayAction.LevelAll);
             foreach (var s in _shortcuts) s.Refresh();
             var picked = Picked == null ? null : _app.OverlayOf(Picked);
@@ -995,6 +1039,7 @@ internal sealed class OverlaysPage : Page
         _labelHint.Text = o.Label.Length == 0 ? _app.OverlayName(o) : "";
         Parts.Show(_labelHint, _label.Text.Length == 0);
         Parts.SetChecked(_shown, o.Shown);
+        Parts.SetChecked(_behind, o.BehindWindows);
         _background.Set(o.Background);
         _opacity.Set(MathF.Round(o.Opacity * 100f));
         _quality.Set(o.Quality);
@@ -1005,6 +1050,10 @@ internal sealed class OverlaysPage : Page
         Parts.Show(_diskLook, o.Kind == OverlayKind.Disk);
         Parts.Show(_ringLook, o.Kind == OverlayKind.Ring);
         Parts.Show(_graphLook, o.Kind == OverlayKind.Graph);
+        Parts.Show(_keysLook, o.Kind == OverlayKind.Keys);
+        _keysFade.Set(o.KeysFadeMs);
+        _keysTransparent.IsChecked = o.KeysTransparent;
+        foreach (var (id, chip) in _keysShown) Parts.SetChecked(chip, o.KeysShown.Contains(id));
         _graphRange.Set(o.GraphRange);
         _graphSeconds.Set(o.GraphSeconds);
         bool laser = o.Kind == OverlayKind.Laser;
@@ -1065,6 +1114,8 @@ internal sealed class OverlaysPage : Page
         _kickLines.Set(o.CrosshairKickLinesOnly);
         Parts.Show(_muzzleFlash, kicks);
         Parts.SetChecked(_muzzleFlash, o.MuzzleFlash);
+        Parts.Show(_flashSize.View, o.LaserRifle && o.MuzzleFlash);
+        _flashSize.Set(o.FlashOf(o.Gun()));
         Parts.Show(_shootsLikeTitle, !kicks && o.LaserDraw);
         Parts.Show(_shootsLike.View, !kicks && o.LaserDraw);
         Parts.SetChecked(_laserSpread, o.LaserSpread);

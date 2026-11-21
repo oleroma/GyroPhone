@@ -50,11 +50,12 @@ public static class PerfReport
             h2 { font-size: 16px; margin: 28px 0 8px; }
             .run { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
             .run .meta { color: var(--dim); font-size: 13px; }
+            .run .meta.warn { color: var(--warn); }
             .run pre { margin: 8px 0 0; overflow-x: auto; font: 12px/1.4 ui-monospace, Consolas, monospace; }
             summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-top: 8px; }
             </style></head><body><main>
             <h1>GyroPhone link tests</h1>
-            <p class="sub">Each record of the Performance page, newest first. The best value in each column is in colour. Lost: phone packets lost. Late: held up more than 15 ms, with the worst delay. Pauses: the phone sent nothing for a while during input. Let go: held keys let go because the phone went silent. Bursts: stretches of link trouble. Latency: phone to PC, typical · slowest 1%. Frames only with the FPS overlay on. Busy: seconds other programs used 20% of the PC or more.</p>
+            <p class="sub">Each record of the Performance page, newest first. The best value in each column is in colour. Lost: phone packets lost. Late: held up more than 15 ms, with the worst delay. Pauses: the phone sent nothing for a while during input. Let go: held keys let go because the phone went silent. Bursts: stretches of link trouble. Floor: half the best round trip, the fastest the link went. Over the floor: how much slower than the fastest packets every packet of the run came, middle · slowest 1% (needs no clock guess, the number to compare). Latency: phone to PC one way, typical · slowest 1% (depends on a clock guess). Hand-offs: per 10,000 packets that took over 2 ms from arrival to Windows, and the slowest. Held up: late packets that waited on the way · inside the PC · on the phone (needs Diagnostics' stall watch). ⚠: the floor moved on the same setup. Frames only with the FPS overlay on. Busy: seconds other programs used 20% of the PC or more.</p>
             """);
         if (runs.Count == 0)
         {
@@ -66,13 +67,17 @@ public static class PerfReport
         double bestFps = withFrames.Count > 0 ? withFrames.Max(r => r.AvgFps) : 0, bestLow = withFrames.Count > 0 ? withFrames.Max(r => r.Low1Fps) : 0;
         double bestJumps = withFrames.Count > 0 ? withFrames.Min(r => r.JumpsPerMin) : 0;
         int bestLost = runs.Min(r => r.Lost), bestLate = runs.Min(r => r.Late), bestGaps = runs.Min(r => r.Gaps), bestBursts = runs.Min(r => r.Bursts);
+        var over = runs.Where(r => r.OverP99Ms >= 0).ToList();
+        double bestOver = over.Count > 0 ? over.Min(r => r.OverP99Ms) : 0;
+        var hand = runs.Where(r => r.HandOffMaxMs >= 0 && r.Packets > 0).ToList();
+        double bestHand = hand.Count > 0 ? hand.Min(SlowPer10k) : 0;
         var lat = runs.Where(r => r.LatP50Ms >= 0).ToList();
         double bestLat = lat.Count > 0 ? lat.Min(Lat) : 0;
         bool many = runs.Count > 1;
         string Td(string text, bool best = false, string? cls = null) =>
             $"<td{(best && many ? " class=\"best\"" : cls != null ? $" class=\"{cls}\"" : "")}>{E(text)}</td>";
 
-        sb.Append("<div class=\"wrap\"><table><thead><tr><th>Name</th><th>When</th><th>Path</th><th>Lost</th><th>Late</th><th>Pauses</th><th>Let go</th><th>Bursts</th><th>Latency</th><th>Jitter</th><th>Avg fps</th><th>1% low</th><th>Jumps/min</th><th>Worst frame</th><th>CPU</th><th>Driver</th></tr></thead><tbody>\n");
+        sb.Append("<div class=\"wrap\"><table><thead><tr><th>Name</th><th>When</th><th>Path</th><th>Lost</th><th>Late</th><th>Pauses</th><th>Let go</th><th>Bursts</th><th>Floor</th><th>Over the floor</th><th>Hand-offs</th><th>Held up</th><th>Latency</th><th>Jitter</th><th>Avg fps</th><th>1% low</th><th>Jumps/min</th><th>Worst frame</th><th>CPU</th><th>Driver</th></tr></thead><tbody>\n");
         for (int i = 0; i < runs.Count; i++)
         {
             var r = runs[i];
@@ -85,6 +90,12 @@ public static class PerfReport
               .Append(Td(r.Gaps.ToString(ci), r.Gaps <= bestGaps))
               .Append(Td(r.Releases.ToString(ci)))
               .Append(Td(r.Bursts.ToString(ci), r.Bursts <= bestBursts))
+              .Append(Td(r.FloorMs >= 0 ? string.Format(ci, "{0:0.00} ms{1}", r.FloorMs, r.FloorWarning.Length > 0 ? " ⚠" : "") : "–",
+                  cls: r.FloorWarning.Length > 0 ? "warn" : null))
+              .Append(Td(r.OverP99Ms >= 0 ? string.Format(ci, "{0:0.00} · {1:0.00} ms", r.OverP50Ms, r.OverP99Ms) : "–", r.OverP99Ms >= 0 && r.OverP99Ms <= bestOver))
+              .Append(Td(r.HandOffMaxMs >= 0 && r.Packets > 0 ? string.Format(ci, "{0:0.0} · ≤{1:0.0} ms", SlowPer10k(r), r.HandOffMaxMs) : "–",
+                  r.HandOffMaxMs >= 0 && r.Packets > 0 && SlowPer10k(r) <= bestHand))
+              .Append(Td(r.Late > 0 && r.HeldAir + r.HeldPc + r.HeldPhone > 0 ? string.Format(ci, "{0} · {1} · {2}", r.HeldAir, r.HeldPc, r.HeldPhone) : "–"))
               .Append(Td(r.LatP50Ms >= 0 ? string.Format(ci, "{0:0.0} · {1:0.0} ms", r.LatP50Ms, r.LatP99Ms) : "–", r.LatP50Ms >= 0 && Lat(r) <= bestLat))
               .Append(Td(r.LatP50Ms >= 0 ? string.Format(ci, "{0:0.0} ms", r.JitterMs) : "–"))
               .Append(Td(fr ? r.AvgFps.ToString("0", ci) : "–", fr && r.AvgFps >= bestFps))
@@ -102,6 +113,8 @@ public static class PerfReport
             var r = runs[i];
             sb.Append(ci, $"<div class=\"run\" id=\"run{i}\"><div><b>{E(r.Name)}</b></div>")
               .Append(ci, $"<div class=\"meta\">{E(r.Start.ToString("yyyy-MM-dd HH:mm:ss", ci))} · {r.Seconds:0} s · {E(PathOf(r))}</div>\n");
+            if (r.FloorWarning.Length > 0) sb.Append("<div class=\"meta warn\">⚠ ").Append(E(r.FloorWarning)).Append("</div>\n");
+            if (r.Setup.Length > 0) sb.Append("<div class=\"meta\">Setup: ").Append(E(r.Setup)).Append("</div>\n");
             string? text = TextOf(r);
             if (text != null)
                 sb.Append("<details><summary>Second by second</summary><pre>").Append(E(text.TrimEnd())).Append("</pre></details>\n");
@@ -110,6 +123,8 @@ public static class PerfReport
         sb.Append("</main></body></html>\n");
         return sb.ToString();
     }
+
+    private static double SlowPer10k(PerfRun r) => r.Packets > 0 ? r.SlowHandOffs * 10_000.0 / r.Packets : 0;
 
     private static double Lat(PerfRun r) => r.LatP99Ms >= 0 ? r.LatP99Ms : r.LatP50Ms;
 

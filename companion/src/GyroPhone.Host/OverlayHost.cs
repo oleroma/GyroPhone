@@ -17,8 +17,8 @@ namespace GyroPhone.Host;
 /// </summary>
 public sealed class OverlayHost
 {
-    /// <summary>What the overlays ask of the phone: on (the phone sends OVERLAY), compass readings, each gyro sample.</summary>
-    public delegate void TellInput(bool on, bool compass, bool samples);
+    /// <summary>What the overlays ask of the phone: on (the phone sends OVERLAY), compass readings, each gyro sample, its pad's keys (a Keys overlay).</summary>
+    public delegate void TellInput(bool on, bool compass, bool samples, bool keys);
 
     private readonly object _gate = new();
     private readonly HostSettings _ui;
@@ -41,7 +41,7 @@ public sealed class OverlayHost
         _region = region;
         _clock = clock ?? StopwatchClock.Instance;
         _tellInput = tellInput;
-        _worker = new OverlayWorker(region.Overlays, _view, SaveLevel, wake);
+        _worker = new OverlayWorker(region.Overlays, _view, SaveLevel, wake, _clock);
         Push();
     }
 
@@ -56,6 +56,13 @@ public sealed class OverlayHost
 
     /// <summary>Does the waiting overlay work now, on the caller's thread (tests, without <see cref="Start"/>).</summary>
     public void Pump() => _worker.Pump();
+
+    /// <summary>Called on the overlay thread after something new was published for the windows (wakes an idle pacer).</summary>
+    public Action? Published
+    {
+        get => _worker.Published;
+        set => _worker.Published = value;
+    }
 
     /// <summary>A companion attaching to a running input process: drop what its ring holds and start again.</summary>
     public void StartAgain() => _worker.SkipWaiting();
@@ -131,6 +138,7 @@ public sealed class OverlayHost
             // As the phone's new displays: the ring small, the graph wide and low.
             if (kind == OverlayKind.Ring) o.Width = o.Height = 120;
             else if (kind == OverlayKind.Graph) (o.Width, o.Height) = (420, 115);
+            else if (kind == OverlayKind.Keys) (o.Width, o.Height) = (240, 220);
             else if (kind != OverlayKind.Phone) o.Width = o.Height = 260;
             _ui.Overlays.Add(o);
             Changed();
@@ -287,16 +295,22 @@ public sealed class OverlayHost
         Ask();
     }
 
-    // Under _gate: hands the overlay thread a copy of the overlay settings.
+    // Under _gate: hands the overlay thread a copy of the overlay settings, and the windows their own copy.
     private void Push()
     {
         var copies = new List<OverlaySettings>(_ui.Overlays.Count);
-        foreach (var o in _ui.Overlays)
+        var shown = new OverlaySettings[_ui.Overlays.Count];
+        for (int i = 0; i < _ui.Overlays.Count; i++)
         {
+            var o = _ui.Overlays[i];
             var c = o.Copy();
             c.Id = o.Id;
             copies.Add(c);
+            var w = o.Copy();
+            w.Id = o.Id;
+            shown[i] = w;
         }
+        Volatile.Write(ref _windowSettings, shown);
         var fade = new OverlayRestFade();
         fade.CopyFrom(_ui.OverlayRestFade);
         _worker.SetSettings(copies, fade);
@@ -306,17 +320,18 @@ public sealed class OverlayHost
     // Under _gate: tells the input process what the overlays ask of the phone, when that changed.
     private void Ask()
     {
-        bool compass = false, samples = false;
+        bool compass = false, samples = false, keys = false;
         foreach (var o in _ui.Overlays)
         {
             if (!o.Shown) continue;
             compass |= o.NeedsCompass;
             samples |= o.WantsSamples;
+            keys |= o.Kind == OverlayKind.Keys;
         }
-        int asks = (_on ? 1 : 0) | (_on && compass ? 2 : 0) | (_on && samples ? 4 : 0);
+        int asks = (_on ? 1 : 0) | (_on && compass ? 2 : 0) | (_on && samples ? 4 : 0) | (_on && keys ? 8 : 0);
         if (asks == _askedAsks) return;
         _askedAsks = asks;
-        _tellInput(_on, _on && compass, _on && samples);
+        _tellInput(_on, _on && compass, _on && samples, _on && keys);
     }
 
     /// <summary>What Level or Set orientation changed in overlay <paramref name="id"/> (gp-overlay): saved.</summary>
@@ -337,6 +352,19 @@ public sealed class OverlayHost
     // what the windows read, every frame, from any thread, without a lock
     // =====================================================================================
 
+    private OverlaySettings[] _windowSettings = [];
+
+    /// <summary>
+    /// Overlay window <paramref name="id"/>'s settings, or null when there is none: a copy, never changed, that a
+    /// settings change replaces (so a window's draw thread can read it while the settings change).
+    /// </summary>
+    public OverlaySettings? WindowSettings(string id)
+    {
+        foreach (var o in Volatile.Read(ref _windowSettings))
+            if (o.Id == id) return o;
+        return null;
+    }
+
     /// <summary>A phone is connected (the input process says).</summary>
     public bool Connected => _region.Held.Connected;
 
@@ -354,6 +382,9 @@ public sealed class OverlayHost
     }
 
     public long OverlaySnapshot(OverlayFrame into, out OverlayLayout? layout) => OverlaySnapshot(into, null, out layout);
+
+    /// <summary>The newest button frames and bars from the pad (drawn on the phone overlay's screen), or null before they came.</summary>
+    public OverlayMarks? OverlayMarks => _view.Marks;
 
     /// <summary>
     /// A window whose handles show the PC controller: its buttons, triggers and sticks in place of the

@@ -327,8 +327,8 @@ internal static class LaserDrawing
             long step = shotAt;
             float Rnd(int i) => Math.Abs(((step * 7919L + i * 104729L) ^ (step >> 3)) % 1000L) / 1000f;
             var fireCol = Color.FromArgb(GyroPhone.Host.MuzzleFlash.Color(flashMs, flashHot, flashEnd, flashEnd & 0x00FFFFFF));
-            // Bursts out at once, then shrinks back as it cools.
-            float grow = 0.55f + 0.45f * MathF.Sqrt(gl);
+            // Bursts out at once, then shrinks back as it cools; scaled by the gun's Flash size.
+            float grow = (0.55f + 0.45f * MathF.Sqrt(gl)) * s.FlashOf(gun);
             float width = gun.Bore * gun.Fit * 2.4f * r * grow;
             // One flame from the muzzle along gun direction (dx, dy, dz), len long, w wide at its widest.
             void Flame(float dx, float dy, float dz, float len, float w, Color col)

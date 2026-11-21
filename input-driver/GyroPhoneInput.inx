@@ -42,8 +42,9 @@ AddReg=GyroPhoneInput_HW_AddReg
 ; Windows' VHF below our driver, in its user-mode flavour.
 HKR,,"LowerFilters",0x00010000,"vhf"
 HKR,,VhfMode,0x00010001,0x1
-; System and administrators: full access. Signed-in users (the companion): read and write.
-HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;BU)"
+; System and administrators: full access. Nobody else: install.ps1 then adds read and write for the one
+; user who installed it (the companion's), since what this device sends reaches elevated windows and UAC.
+HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)"
 
 [GyroPhoneInput_Install.NT.Services]
 ; The reflector service, from Windows' own wudfrd.inf (as in Microsoft's UMDF 2 samples).

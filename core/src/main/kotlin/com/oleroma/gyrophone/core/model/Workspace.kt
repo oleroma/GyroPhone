@@ -83,6 +83,18 @@ data class Workspace(
     val padFingers: List<FingerAxisSettings> = emptyList(),
     /** Sensitivities kept by sliders ([SliderOverride]), over its settings in effect; the newest of each sensitivity only. */
     val sliders: List<SliderOverride> = emptyList(),
+    /**
+     * Its named sensitivities ([NamedSens]): made in the mapping editor's library as needed, set by
+     * slider chips ([OutputTarget.GyroSens.named], [OutputTarget.TouchSens.named]) and followed by
+     * sensitivity rows ([SensLink]).
+     */
+    val namedSens: List<NamedSens> = emptyList(),
+    /**
+     * The highest [NamedSens.id] it ever gave (0: none recorded): a new one takes a higher id, so a
+     * deleted one's id is never given again, and a link or chip left pointing at it (a device
+     * preset's, a library button's, one brought back by Undo) never follows a new one.
+     */
+    val namedSensLastId: Int = 0,
 ) {
     /**
      * Some gyro mapping may be measured against gravity (World or Player space): the workspace's,
@@ -90,7 +102,17 @@ data class Workspace(
      */
     val gyroSpaced: Boolean get() {
         fun ButtonGyro.spaced() = MotionAxis.shown.any { a -> ownSpace(a).let { it != null && it != GyroSpace.LOCAL } }
-        return gyro.anySpaced || sets.any { it.settings?.gyro?.anySpaced == true } ||
+        // A layer's settings hold every value in effect when it was edited, but only its own keys
+        // apply: an axis space it owns (the Gyro space itself is never a layer's).
+        fun MappingSet.spaced(): Boolean {
+            val g = settings?.gyro ?: return false
+            val own = WorkspaceDefaults.layerOwn(this)
+            return MotionAxis.shown.any { a ->
+                val key = GyroSettings.spaceProp(a)?.let(WorkspaceDefaults::gyroKey)
+                key != null && key in own && g.ownSpace(a).let { it != null && it != GyroSpace.LOCAL }
+            }
+        }
+        return gyro.anySpaced || sets.any { it.spaced() } ||
             touchControls.any { c -> c.gyro.any { it.spaced() } } || heldButtons.any { b -> b.gyro.any { it.spaced() } }
     }
 

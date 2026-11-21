@@ -61,6 +61,13 @@ and the certificate, unless the pad driver still uses it.
 - **Anti-cheat** might dislike a self-signed driver. The worst realistic case is a game refusing
   to run while the device is there; turn **Use input driver** off, or uninstall.
 - **Your PC trusts the certificate** (see the pad driver's README).
+- **Who can use it.** What the device sends reaches elevated windows and the UAC prompt, like your
+  own keyboard. So `install.cmd` lets only the Windows user who ran it (plus System and
+  administrators) open the device; other users of the PC, and programs in their sessions, can't.
+  Programs running as you still can, and through it they too could reach an elevated window or
+  the UAC prompt; the driver can't tell them from the companion. Install it only if you accept that. Another user who wants it runs
+  `install.cmd` themselves (it then belongs to them). If Windows reinstalls the driver by itself,
+  run `install.cmd` again to give it back to you.
 - **Bugs** in the driver can't crash Windows: it runs in user mode. The worst case is the mouse and
   keyboard disappearing; the companion then goes back to SendInput.
 

@@ -115,7 +115,8 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         }
         // The camera's turn: the live gyro axes' share (other camera moves come through [camera]).
         fun cameraTurn() {
-            if (dtSeconds == 0f || axes == 0) return
+            // Turning by the mouse counts, the live gyro's come through [camera] as every other move's.
+            if (dtSeconds == 0f || axes == 0 || d.turnsByCounts) return
             if (d.turnsWith == TurnsWith.CAMERA) {
                 // As the game's camera: the axis on mouse X turns it right, the one on mouse Y up; no roll.
                 fun deg(code: Int): Float {
@@ -216,7 +217,22 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     fun shownFrom(pq: FloatArray, out: FloatArray) {
         val d = display
         // Following the camera it turns by Spin (or as far as the game's camera): no turn amount on top.
-        shownMatrix(pq, restIn(d), if (d.followsCamera) 1f else d.motionScale, out)
+        shownMatrix(pq, shownRest(d), if (d.followsCamera) 1f else d.motionScale, out)
+    }
+
+    /** [restIn] of a display and [realWorld], kept whole so a reader on any thread sees one set. */
+    private class ShownRest(val display: GyroDisplay, val realWorld: Boolean, val rest: FloatArray?)
+
+    @Volatile private var shownRestCache: ShownRest? = null
+
+    /** [restIn] for [shownFrom], made again only when the display or [realWorld] changed (it runs for every pose). */
+    private fun shownRest(d: GyroDisplay): FloatArray? {
+        val real = realWorld
+        val c = shownRestCache
+        if (c != null && c.display === d && c.realWorld == real) return c.rest
+        val rest = if (real) null else d.restNow
+        shownRestCache = ShownRest(d, real, rest)
+        return rest
     }
 
     /**
@@ -260,19 +276,33 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
 
     /**
      * Mouse counts [dx], [dy] sent by anything but the live gyro ([MappingEngine.cameraSink]), on
-     * the pump's thread. One that follows the camera ([GyroDisplay.followsCamera]) turns as the gyro turn that would send them would turn it:
+     * the thread that [feed]s it (never the pump's: the history and the turn's scratch have one writer). One that follows the camera ([GyroDisplay.followsCamera]) turns as the gyro turn that would send them would turn it:
      * about the gyro axis [routes] map to that mouse axis (roll for X, pitch for Y when none does),
-     * at [gyro]'s sensitivity of that axis. The pose takes turns from both threads.
+     * at [gyro]'s sensitivity of that axis.
      */
     fun camera(dx: Int, dy: Int, routes: List<Mapping>, gyro: GyroSettings) {
         cameraPose(dx, dy, routes, gyro)
         if (laser != null) record()
     }
 
+    private val cameraDeg = FloatArray(3)
+
     private fun cameraPose(dx: Int, dy: Int, routes: List<Mapping>, gyro: GyroSettings) {
         val d = display
         if (!d.followsCamera) return
-        val deg = cameraDegrees(dx, dy, routes, gyro)
+        if (d.turnsByCounts) {
+            // As far as the game's camera turns for these counts: slower while aiming, as the game does.
+            val g = degPerCount(gyro) * (if (aiming) d.aimSens.coerceIn(AIM_SENS_MIN, 1f) else 1f)
+            if (d.turnsWith == TurnsWith.CAMERA) {
+                // Sideways counts turn it right, up and down ones up (the counts' Y is down +); no roll.
+                pose.cameraTurn(dx * g, -dy * g)
+            } else {
+                val deg = cameraCounts(dx, dy, routes, gyro, g, cameraDeg)
+                trackballTurn(d, deg[0], deg[1], deg[2], 1f)
+            }
+            return
+        }
+        val deg = cameraDegrees(dx, dy, routes, gyro, cameraDeg)
         if (d.turnsWith == TurnsWith.CAMERA) {
             // As the game's camera: sideways counts turn it right, up and down ones up; no roll.
             fun turn(code: Int): Float {
@@ -323,8 +353,11 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     private val activeAt = LongArray(3) { Long.MIN_VALUE / 2 }
 
     /** The trackball axes (bit 0 yaw, 1 pitch, 2 roll) the gyro turned in the last [ACTIVE_NS], to light them up. */
-    fun trackballActive(nowNs: Long = System.nanoTime()): Int =
-        (0..2).fold(0) { acc, i -> if (nowNs - activeAt[i] < ACTIVE_NS) acc or (1 shl i) else acc }
+    fun trackballActive(nowNs: Long = System.nanoTime()): Int {
+        var acc = 0
+        for (i in 0..2) if (nowNs - activeAt[i] < ACTIVE_NS) acc = acc or (1 shl i)
+        return acc
+    }
 
     /** Per trackball axis: seconds since the phone stopped (or since the ratchet press), easing on a held ratchet. */
     private val axisCalm = FloatArray(3)
@@ -338,7 +371,10 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
      * [pitch], [roll] deg/s) stopped; each by its own delay and speed.
      */
     private fun trackballEase(d: GyroDisplay, dt: Float, pressed: Boolean, held: Boolean, yaw: Float, pitch: Float, roll: Float) {
-        if (d.trackballEase.none { it.on }) {
+        val ease = d.trackballEase
+        var anyOn = false
+        for (i in ease.indices) if (ease[i].on) anyOn = true
+        if (!anyOn) {
             axisEasing.fill(false)
             return
         }
@@ -384,8 +420,12 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
     }
 
     /** Bits 0, 1, 2: which trackball axes (up, right, through the screen) [m] ([GyroDisplay.trackballAxes]) has [flag] on. */
-    private fun trackballBits(m: Int, flag: Int): Int =
-        (0..2).fold(0) { acc, i -> if (m shr (8 * i) and flag != 0) acc or (1 shl i) else acc }
+    private fun trackballBits(m: Int, flag: Int): Int {
+        // A plain loop: it runs every gyro sample and must not allocate.
+        var acc = 0
+        for (i in 0..2) if (m shr (8 * i) and flag != 0) acc = acc or (1 shl i)
+        return acc
+    }
 
     /** Axis [i]'s turn (0 up, 1 right, 2 through the screen) by axis mapping [m] ([GyroDisplay.trackballAxes]) of gyro turns [yaw], [pitch], [roll]. */
     private fun about(m: Int, i: Int, yaw: Float, pitch: Float, roll: Float): Float {
@@ -394,9 +434,9 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
         return if (code and 0x80 != 0) -v else v
     }
 
-    /** How far it turns per degree the phone turns on [a]: as far as the game's camera (RWS), or Spin times. */
-    private fun cameraSpeed(d: GyroDisplay, gyro: GyroSettings?, a: MotionAxis): Float =
-        if (!d.trackballRws) d.trackballSpin else gyro?.let { it.rwsOf(it.sensitivityOf(a)) } ?: 1f
+    /** How far it turns per degree the phone turns on [a] when not turning by the counts ([GyroDisplay.turnsByCounts]): Spin times. */
+    @Suppress("UNUSED_PARAMETER")
+    private fun cameraSpeed(d: GyroDisplay, gyro: GyroSettings?, a: MotionAxis): Float = d.trackballSpin
 
     /**
      * The compass ([GyroDisplay.needsCompass]) takes the way the phone faces now as heading 0 (the
@@ -460,8 +500,12 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
          * the gyro axis [routes] map to that mouse axis (roll for X, pitch for Y when none does), at
          * [gyro]'s sensitivity of that axis.
          */
-        fun cameraDegrees(dx: Int, dy: Int, routes: List<Mapping>, gyro: GyroSettings): FloatArray {
-            val deg = FloatArray(3)
+        fun cameraDegrees(dx: Int, dy: Int, routes: List<Mapping>, gyro: GyroSettings): FloatArray =
+            cameraDegrees(dx, dy, routes, gyro, FloatArray(3))
+
+        /** [cameraDegrees] into [deg] (3 long, overwritten), so nothing is made per call. */
+        fun cameraDegrees(dx: Int, dy: Int, routes: List<Mapping>, gyro: GyroSettings, deg: FloatArray): FloatArray {
+            deg[0] = 0f; deg[1] = 0f; deg[2] = 0f
             fun add(n: Int, motion: MouseMotion, fallback: MotionAxis) {
                 if (n == 0) return
                 val m = routes.firstOrNull { it.source is InputSource.Gyro && (it.target as? OutputTarget.MouseAxis)?.motion == motion }
@@ -480,6 +524,46 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
             add(-dy, MouseMotion.MOVE_Y, MotionAxis.PITCH)
             return deg
         }
+
+        /**
+         * The game camera's turn (degrees, into [deg]: yaw, pitch, roll) for mouse counts [dx], [dy] at
+         * [degPerCount] game degrees per count, about the gyro axis [routes] map to that mouse axis (roll
+         * for X, pitch for Y when none does), the way that axis turns to send them.
+         */
+        fun cameraCounts(dx: Int, dy: Int, routes: List<Mapping>, gyro: GyroSettings, degPerCount: Float, deg: FloatArray): FloatArray {
+            deg[0] = 0f; deg[1] = 0f; deg[2] = 0f
+            fun add(n: Int, motion: MouseMotion, fallback: MotionAxis) {
+                if (n == 0) return
+                val m = routes.firstOrNull { it.source is InputSource.Gyro && (it.target as? OutputTarget.MouseAxis)?.motion == motion }
+                val a = (m?.source as? InputSource.Gyro)?.axis ?: fallback
+                val i = when (a) {
+                    MotionAxis.YAW -> 0
+                    MotionAxis.PITCH -> 1
+                    MotionAxis.ROLL -> 2
+                    else -> return
+                }
+                val perDeg = gyro.sensitivityOf(a) * ((m?.target as? OutputTarget.MouseAxis)?.scale ?: 1f)
+                if (perDeg != 0f) deg[i] += n * degPerCount * (if (perDeg < 0f) -1f else 1f)
+            }
+            add(dx, MouseMotion.MOVE_X, MotionAxis.ROLL)
+            // The gyro's Y is up +, the counts' down +.
+            add(-dy, MouseMotion.MOVE_Y, MotionAxis.PITCH)
+            return deg
+        }
+
+        /**
+         * Game camera degrees per mouse count: from the game's turn ([GyroSettings.gameCountsPer360])
+         * of [gyro] when known, else as far as the phone at its shared sensitivity (an axis with its
+         * own higher sensitivity turns further, as the game's camera would).
+         */
+        fun degPerCount(gyro: GyroSettings): Float {
+            if (gyro.gameCountsPer360 > 0f) return 360f / gyro.gameCountsPer360
+            val s = abs(gyro.sensitivity)
+            return if (s > 0f) 1f / s else 1f / GyroSettings.DEFAULT_SENSITIVITY
+        }
+
+        /** The lowest Aim sens ([GyroDisplay.aimSens]). */
+        const val AIM_SENS_MIN = 0.1f
 
         private val CAMERA_AXES = arrayOf(MotionAxis.YAW, MotionAxis.PITCH, MotionAxis.ROLL)
 

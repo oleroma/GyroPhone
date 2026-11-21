@@ -2,6 +2,7 @@ package com.oleroma.gyrophone.runtime
 
 import android.content.Context
 import com.oleroma.gyrophone.core.debug.DebugTrace
+import com.oleroma.gyrophone.core.debug.FlightRing
 import com.oleroma.gyrophone.link.LinkState
 import com.oleroma.gyrophone.link.LinkStats
 import kotlinx.coroutines.CoroutineScope
@@ -51,6 +52,10 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
 
     private var job: Job? = null
     private var worker: Thread? = null
+    private val setupReader = PhoneSetupReader(context)
+    /** The setup line last logged, and the parts of it whose change is logged as an event. */
+    @Volatile private var setupLine: String? = null
+    private var setupKey: String? = null
 
     /** Applies the stored switch; called once the runtime is wired. */
     fun init() {
@@ -73,7 +78,12 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         val m = minutes.coerceIn(MIN_KEEP, MAX_KEEP)
         prefs.edit().putInt(KEY_KEEP, m).apply()
         _keepMinutes.value = m
+        // The per-packet record is sized for the minutes kept.
+        if (trace != null && runtime.wifi.flight?.minutes != m) runtime.wifi.flight = newFlight(m)
     }
+
+    /** A per-packet record for [minutes] (up to tens of MB: null when the memory isn't there). */
+    private fun newFlight(minutes: Int) = runCatching { FlightRing(minutes) }.getOrNull()
 
     @Synchronized
     private fun turnOn() {
@@ -83,6 +93,8 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         trace = t
         runtime.engine.trace = t
         runtime.wifi.debugTrace = true
+        runtime.wifi.gyroTiming = t.gyroTiming
+        runtime.wifi.flight = newFlight(_keepMinutes.value)
         runtime.ratchetTiming.enabled = true
         job = scope.launch {
             var last: String? = null
@@ -101,11 +113,29 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
                     val now = System.nanoTime()
                     if (now >= nextSecond) {
                         nextSecond = now + 1_000_000_000L
-                        t.secondTick(if (runtime.linkState.value is LinkState.Connected) linkLine(runtime.linkStats()) else null)
+                        readSetup(t)
+                        val connected = runtime.linkState.value is LinkState.Connected
+                        t.secondTick(if (connected) linkLine(runtime.linkStats()) + (runtime.wifi.clockLine()?.let { " · $it" } ?: "") else null)
                     }
                 }
             } catch (_: InterruptedException) {
             }
+        }
+    }
+
+    /**
+     * The phone's setup (battery, charger, heat, USB network adapter, Wi-Fi standard), once a second on this thread:
+     * handed to PHONE_STATS, and logged as a "setup" event when something other than the battery level and
+     * temperature changes, so a run's setup changes are in the record.
+     */
+    private fun readSetup(t: DebugTrace) {
+        val (setup, line) = runCatching { setupReader.read(runtime.wifi.wifiGenerationNow()) }.getOrNull() ?: return
+        runtime.wifi.setPhoneSetup(setup)
+        setupLine = line
+        val key = "${setup.flags} ${setup.thermal} ${setup.usbVendor}:${setup.usbProduct} ${setup.wifiStandard}"
+        if (key != setupKey) {
+            t.note((if (setupKey == null) "setup: " else "setup changed: ") + line)
+            setupKey = key
         }
     }
 
@@ -115,7 +145,11 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         worker?.interrupt(); worker = null
         runtime.engine.trace = null
         runtime.wifi.debugTrace = false
+        runtime.wifi.gyroTiming = null
+        runtime.wifi.flight = null
         runtime.ratchetTiming.enabled = false
+        runtime.wifi.setPhoneSetup(com.oleroma.gyrophone.core.net.PhoneSetup.UNKNOWN)
+        setupKey = null
         trace = null
     }
 
@@ -130,12 +164,22 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         val connected = runtime.linkState.value is LinkState.Connected
         if (!fromPc && connected) runtime.wifi.requestDebugSave()
         dir.mkdirs()
-        val name = "phone-" + SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) + ".txt"
-        val f = File(dir, name)
+        val stamp = "phone-" + SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val f = File(dir, "$stamp.txt")
         val pcSide = if (fromPc) "the PC asked for this save" else "pc asked to save its side: " + if (connected) "yes" else "no"
         f.writeText(t.save("phone", header() + listOf("kept: ${_keepMinutes.value} min", pcSide), _keepMinutes.value * 60_000_000_000L))
+        // The per-packet record beside it (tools/diag/gpdiag.py flight), the newest 5 of those.
+        runtime.wifi.flight?.let { fl ->
+            runCatching {
+                val now = android.os.SystemClock.elapsedRealtimeNanos() / 1000
+                File(dir, "$stamp-flight.bin").outputStream().buffered(1 shl 16).use {
+                    fl.write(it, now - _keepMinutes.value * 60_000_000L, now, System.currentTimeMillis())
+                }
+            }
+            dir.listFiles { x -> x.name.endsWith("-flight.bin") }?.sortedByDescending { it.name }?.drop(MAX_FLIGHTS)?.forEach { it.delete() }
+        }
         // Keep the newest 20 saves.
-        dir.listFiles()?.sortedByDescending { it.name }?.drop(MAX_FILES)?.forEach { it.delete() }
+        dir.listFiles { x -> x.name.endsWith(".txt") }?.sortedByDescending { it.name }?.drop(MAX_FILES)?.forEach { it.delete() }
         return f
     }
 
@@ -146,9 +190,30 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
 
     /**
      * What `adb shell dumpsys activity service com.oleroma.gyrophone/.service.GamepadService` prints.
-     * Args: `on`, `off`, `save`, `keep <minutes>`, `events <n>` (tools/gp-log.sh wraps them).
+     * Args: `on`, `off`, `save`, `keep <minutes>`, `events <n>` (tools/gp-log.sh wraps them);
+     * `workspace [name]` prints the active (or named) workspace as an export file, `everything`
+     * the whole set, as saved; `gyroprobe` measures how old each gyro sensor's samples arrive (`sensor/GyroAgeProbe.kt`,
+     * about a second per sensor, run with `dumpsys -t 30`): only when asked, on the dumpsys binder thread, never on an input path.
      */
     fun dump(args: Array<out String>): String = buildString {
+        if (args.firstOrNull() == "workspace") {
+            val stored = runtime.activeProfile.value
+            val name = args.drop(1).joinToString(" ")
+            val id = if (name.isEmpty()) stored.workspaces.getOrNull(runtime.workspaceIndex.value)?.id
+            else stored.workspaces.firstOrNull { it.name.equals(name, ignoreCase = true) }?.id
+            append(id?.let { runtime.exportWorkspace(it) } ?: "no workspace \"$name\"")
+            return@buildString
+        }
+        if (args.firstOrNull() == "everything") {
+            append(runtime.exportEverything())
+            return@buildString
+        }
+        if (args.firstOrNull() == "gyroprobe") {
+            // A measurement asked for over adb only: about a second per gyro sensor, on this dumpsys thread.
+            val sm = appContext.getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
+            append(com.oleroma.gyrophone.sensor.GyroAgeProbe.run(sm))
+            return@buildString
+        }
         if ("on" in args) setEnabled(true)
         if ("off" in args) setEnabled(false)
         args.indexOf("keep").takeIf { it >= 0 }?.let { i -> args.getOrNull(i + 1)?.toIntOrNull()?.let { setKeepMinutes(it) } }
@@ -174,12 +239,14 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
     private fun header(): List<String> = buildList {
         add("transport: ${runtime.transport.value.name.lowercase()} · ${describe(runtime.linkState.value)}")
         add("connection: " + if (runtime.transport.value == com.oleroma.gyrophone.link.TransportKind.WIFI) runtime.wifi.connectionLine() else "Bluetooth")
-        add("link: " + linkLine(runtime.linkStats()))
+        add("link: " + linkLine(runtime.linkStats()) + (runtime.wifi.clockLine()?.let { " · $it" } ?: ""))
+        add("setup: " + (setupLine ?: runCatching { setupReader.read(runtime.wifi.wifiGenerationNow()).second }.getOrDefault("unknown")))
         val g = runtime.gyroInfo.value
         add("gyro: ${g.source} · ${g.rateHz} Hz · " + if (g.active) "moving the mouse" else "idle")
         val p = runtime.activeProfile.value
         add("workspace: " + (p.workspaces.getOrNull(runtime.workspaceIndex.value)?.name ?: "?"))
         add("controllers: " + runtime.controllers.value.joinToString { it.name }.ifEmpty { "none" })
+        addAll(runtime.usbPads.status())
         val touchFeedback = runCatching {
             android.provider.Settings.System.getInt(appContext.contentResolver, android.provider.Settings.System.HAPTIC_FEEDBACK_ENABLED, 1)
         }.getOrNull()
@@ -199,6 +266,7 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         const val DEFAULT_KEEP = 3
         private const val DRAIN_MS = 50L
         private const val MAX_FILES = 20
+        private const val MAX_FLIGHTS = 5
 
         fun describe(s: LinkState): String = when (s) {
             LinkState.Off -> "off"
@@ -214,9 +282,11 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
             append("sent ${s.sentPerSecond}/s")
             if (s.failedPerSecond > 0) append(", failed ${s.failedPerSecond}/s")
             s.hostRxPerSecond?.let { append(" · PC got $it/s") }
-            s.lossPercent?.let { append(" · loss ${"%.1f".format(it)}%") }
-            if (s.latP50Ms != null && s.latP99Ms != null) append(" · latency ${"%.1f".format(s.latP50Ms)} / ${"%.1f".format(s.latP99Ms)} ms (p50/p99)")
-            s.rttMs?.let { append(" · round trip ${"%.1f".format(it)} ms") }
+            // Dot decimals whatever the phone's language: scripts read these lines.
+            fun f1(v: Float) = String.format(Locale.US, "%.1f", v)
+            s.lossPercent?.let { append(" · loss ${f1(it)}%") }
+            if (s.latP50Ms != null && s.latP99Ms != null) append(" · latency ${f1(s.latP50Ms)} / ${f1(s.latP99Ms)} ms (p50/p99)")
+            s.rttMs?.let { append(" · round trip ${f1(it)} ms") }
             if (s.usb) append(if (s.hotspot) " · phone hotspot" else if (s.ethernet) " · Ethernet" else if (s.usbDirect) " · USB direct" else " · USB tethering")
             else if (s.band != null && s.band != 0) append(" · ${s.band} GHz")
             s.rssi?.let { if (!s.usb) append(" $it dBm") }

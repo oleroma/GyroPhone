@@ -1,0 +1,3 @@
+# Everything cargo makes goes in the repo's gitignored build/ folder.
+[build]
+target-dir = "../../build/rust"

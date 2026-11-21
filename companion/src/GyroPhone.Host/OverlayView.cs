@@ -17,6 +17,7 @@ internal sealed class OverlayView
     private readonly OverlayFrame _frame = new();
     private long _rxUs = long.MinValue;
     private OverlayLayout? _layout;
+    private OverlayMarks? _marks;
     private long _busyUs = long.MinValue, _silentSinceUs = long.MinValue;
     private float _liveDps = float.NaN;
     private long _liveAtUs = long.MinValue;
@@ -37,7 +38,7 @@ internal sealed class OverlayView
     // ---- written by OverlayWorker ----
 
     /// <summary>The newest OVERLAY (<paramref name="rxUs"/> long.MinValue: none), layout, rest state and every window's pose.</summary>
-    public void PublishOverlay(OverlayFrame f, long rxUs, OverlayLayout? layout, OverlayRest rest,
+    public void PublishOverlay(OverlayFrame f, long rxUs, OverlayLayout? layout, OverlayMarks? marks, OverlayRest rest,
         Dictionary<string, OverlayPose> poses, List<OverlaySettings> overlays)
     {
         Span<long> active = stackalloc long[3];
@@ -47,6 +48,7 @@ internal sealed class OverlayView
             if (rxUs != long.MinValue) f.CopyTo(_frame);
             _rxUs = rxUs;
             _layout = layout;
+            _marks = marks;
             _busyUs = rest.BusyUs;
             _silentSinceUs = rest.SilentSinceUs;
             _liveDps = rest.LiveDpsRaw;
@@ -119,6 +121,21 @@ internal sealed class OverlayView
                 into.PoseActive = 0;
             }
             return rx;
+        }
+    }
+
+    /// <summary>The newest button frames and bars from the pad (<see cref="OverlayMarks"/>), or null before they came.</summary>
+    public OverlayMarks? Marks
+    {
+        get
+        {
+            while (true)
+            {
+                int s = _overlaySeq.ReadBegin();
+                var m = _marks;
+                if (_overlaySeq.ReadRetry(s)) continue;
+                return m;
+            }
         }
     }
 

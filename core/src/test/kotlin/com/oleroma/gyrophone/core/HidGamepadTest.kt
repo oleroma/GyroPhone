@@ -121,4 +121,61 @@ class HidGamepadTest {
         assertEquals(listOf(97 to false), r.keys)
         assertEquals(0f, r.axis(AndroidAxis.X), 0f)
     }
+
+    /** A DualShock 4's USB layout, shortened: X Y Z Rz, hat, 14 buttons, analog triggers on Rx / Ry. */
+    private val ds4 = bytes(
+        0x05, 0x01, 0x09, 0x05, 0xA1, 0x01,
+        0x85, 0x01,
+        0x09, 0x30, 0x09, 0x31, 0x09, 0x32, 0x09, 0x35, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x04, 0x81, 0x02,
+        0x09, 0x39, 0x15, 0x00, 0x25, 0x07, 0x75, 0x04, 0x95, 0x01, 0x81, 0x42,
+        0x05, 0x09, 0x19, 0x01, 0x29, 0x0E, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x0E, 0x81, 0x02,
+        0x75, 0x06, 0x95, 0x01, 0x81, 0x03,
+        0x05, 0x01, 0x09, 0x33, 0x09, 0x34, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x02, 0x81, 0x02,
+        0xC0,
+    )
+
+    @Test fun aRemappedPadDoesNotMatchAndroid() {
+        val g = HidGamepad(ds4)
+        assertTrue(g.usable)
+        // What Android lists for it (hid-sony / hid-playstation and Vendor_054c_*.kl).
+        val keys = setOf(96, 97, 99, 100, 102, 103, 104, 105, 109, 108, 110, 106, 107, 4)
+        val axes = setOf(
+            AndroidAxis.X, AndroidAxis.Y, AndroidAxis.Z, AndroidAxis.RZ,
+            AndroidAxis.LTRIGGER, AndroidAxis.RTRIGGER, AndroidAxis.HAT_X, AndroidAxis.HAT_Y,
+        )
+        assertFalse(g.matchesAndroid(keys, axes))
+    }
+
+    @Test fun aGenericPadMatchesAndroid() {
+        val g = HidGamepad(pad)
+        // Generic.kl: accelerator / brake are GAS / BRAKE; keys outside the compared ones (BACK, volume) don't count.
+        val keys = setOf(96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 109, 108, 110, 106, 107, 4, 24, 25)
+        val axes = setOf(
+            AndroidAxis.X, AndroidAxis.Y, AndroidAxis.Z, AndroidAxis.RZ,
+            AndroidAxis.GAS, AndroidAxis.BRAKE, AndroidAxis.HAT_X, AndroidAxis.HAT_Y,
+        )
+        assertTrue(g.matchesAndroid(keys, axes))
+        assertFalse(g.matchesAndroid(keys - 98, axes))
+        assertFalse(g.matchesAndroid(keys, axes + AndroidAxis.RX))
+    }
+
+    @Test fun arrayButtons() {
+        // A game pad whose buttons 1-4 come as an array of two 8-bit slots (0 = none).
+        val d = bytes(
+            0x05, 0x01, 0x09, 0x05, 0xA1, 0x01,
+            0x05, 0x09, 0x19, 0x01, 0x29, 0x04, 0x15, 0x01, 0x25, 0x04, 0x75, 0x08, 0x95, 0x02, 0x81, 0x00,
+            0xC0,
+        )
+        val g = HidGamepad(d)
+        assertEquals(setOf(96, 97, 98, 99), g.keys)
+        val r = Rec()
+        g.decode(bytes(0x02, 0x04), 2, r)
+        assertEquals(listOf(97 to true, 99 to true), r.keys)
+        r.keys.clear()
+        g.decode(bytes(0x01, 0x04), 2, r)
+        assertEquals(listOf(97 to false, 96 to true), r.keys)
+        r.keys.clear()
+        g.decode(bytes(0x00, 0x00), 2, r)
+        assertEquals(listOf(96 to false, 99 to false), r.keys)
+    }
 }

@@ -57,6 +57,8 @@ internal static class Gpu3D
         public ID3D11Buffer? Segs, Tris;
         public ID3D11ShaderResourceView? SegView, TriView;
         public int SegCount, TriCorners;
+        /// <summary>How far the line pieces reach from the middle (the longest end point).</summary>
+        public float SegExtent;
 
         public void Dispose()
         {
@@ -348,7 +350,7 @@ internal static class Gpu3D
         public ID3D11SamplerState Smooth = null!;
         public ID3D11BlendState Max = null!, Over = null!;
         public ID3D11DepthStencilState DepthWrite = null!, DepthTest = null!, DepthOff = null!;
-        public ID3D11RasterizerState Raster = null!;
+        public ID3D11RasterizerState Raster = null!, RasterCut = null!;
         public ID3D11Buffer Cb = null!;
         public readonly Dictionary<string, Geo> Geos = [];
 
@@ -360,7 +362,7 @@ internal static class Gpu3D
             LinePs?.Dispose(); FacePs?.Dispose(); DiskPs?.Dispose(); CopyPs?.Dispose(); FlatPs?.Dispose(); PanelPs?.Dispose();
             Smooth?.Dispose();
             Max?.Dispose(); Over?.Dispose(); DepthWrite?.Dispose(); DepthTest?.Dispose(); DepthOff?.Dispose();
-            Raster?.Dispose(); Cb?.Dispose();
+            Raster?.Dispose(); RasterCut?.Dispose(); Cb?.Dispose();
         }
     }
 
@@ -620,6 +622,10 @@ internal static class Gpu3D
                     geo.Segs = Upload<Seg>(d3d, CollectionsMarshal.AsSpan(b.Segs));
                     geo.SegView = d3d.CreateShaderResourceView(geo.Segs, new ShaderResourceViewDescription(geo.Segs, Format.Unknown, 0, (uint)b.Segs.Count));
                     geo.SegCount = b.Segs.Count;
+                    float reach = 0f;
+                    foreach (var sg in b.Segs)
+                        reach = MathF.Max(reach, MathF.Max(new Vector3(sg.A.X, sg.A.Y, sg.A.Z).Length(), new Vector3(sg.B.X, sg.B.Y, sg.B.Z).Length()));
+                    geo.SegExtent = reach;
                 }
                 if (b.Corners.Count > 0)
                 {
@@ -680,6 +686,12 @@ internal static class Gpu3D
             _d.TwoSided = twoSided ? 1f : 0f;
             Push();
             ctx.PSSetShaderResource(4, null!);
+            // The pieces and the copy over the picture only where the layer can reach, not the whole window
+            // (the copy runs once per sample of every pixel it covers).
+            var cut = Reach(geo, m, _d.Centre, r, width);
+            if (cut.Right <= cut.Left || cut.Bottom <= cut.Top) return;
+            ctx.RSSetState(_kit.RasterCut);
+            ctx.RSSetScissorRect(cut);
             ctx.ClearRenderTargetView(_s.ScratchView!, new Color4(0f, 0f, 0f, 0f));
             ctx.OMSetRenderTargets(_s.ScratchView!, depthTest ? _s.Depth : null);
             ctx.OMSetDepthStencilState(depthTest ? _kit.DepthTest : _kit.DepthOff, 0);
@@ -699,6 +711,30 @@ internal static class Gpu3D
             ctx.PSSetShaderResource(4, _s.ScratchRead!);
             ctx.Draw(3, 0);
             ctx.PSSetShaderResource(4, null!);
+            ctx.RSSetState(_kit.Raster);
+        }
+
+        /// <summary>
+        /// The pixels (left, top, right, bottom) a line layer of <paramref name="geo"/> can touch: its reach turned by
+        /// <paramref name="m"/> (each row's length bounds that axis), enlarged by the perspective, plus the line's box.
+        /// </summary>
+        private Vortice.RawRect Reach(Geo geo, float[]? m, Vector2 centre, float r, float width)
+        {
+            float e = geo.SegExtent;
+            float rx = e, ry = e, rz = e;
+            if (m != null)
+            {
+                rx *= new Vector3(m[0], m[1], m[2]).Length();
+                ry *= new Vector3(m[3], m[4], m[5]).Length();
+                rz *= new Vector3(m[6], m[7], m[8]).Length();
+            }
+            float k = _d.Persp > 0f ? _d.Persp / (_d.Persp - MathF.Min(rz, _d.Persp - 0.5f)) : 1f;
+            float pad = width / 2f + 3f;
+            float hx = rx * r * k + pad, hy = ry * r * k + pad;
+            if (!float.IsFinite(hx) || !float.IsFinite(hy)) return new Vortice.RawRect(0, 0, _s.W, _s.H);
+            return new Vortice.RawRect(
+                Math.Clamp((int)MathF.Floor(centre.X - hx), 0, _s.W), Math.Clamp((int)MathF.Floor(centre.Y - hy), 0, _s.H),
+                Math.Clamp((int)MathF.Ceiling(centre.X + hx), 0, _s.W), Math.Clamp((int)MathF.Ceiling(centre.Y + hy), 0, _s.H));
         }
 
         /// <summary>
@@ -896,6 +932,7 @@ internal static class Gpu3D
             kit.DepthTest = d3d.CreateDepthStencilState(new DepthStencilDescription(true, DepthWriteMask.Zero, ComparisonFunction.LessEqual));
             kit.DepthOff = d3d.CreateDepthStencilState(new DepthStencilDescription(false, DepthWriteMask.Zero, ComparisonFunction.Always));
             kit.Raster = d3d.CreateRasterizerState(new RasterizerDescription(CullMode.None, FillMode.Solid));
+            kit.RasterCut = d3d.CreateRasterizerState(new RasterizerDescription(CullMode.None, FillMode.Solid) { ScissorEnable = true });
             kit.Cb = d3d.CreateBuffer(new BufferDescription((uint)Marshal.SizeOf<DrawData>(), BindFlags.ConstantBuffer));
             return kit;
         }

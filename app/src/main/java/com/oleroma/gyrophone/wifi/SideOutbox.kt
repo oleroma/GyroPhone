@@ -15,7 +15,8 @@ import java.util.concurrent.locks.LockSupport
 /**
  * Builds the phone-to-PC packets that aren't input on their own thread ("gp-side"), so the send
  * thread ([WifiPump]) never spends time on them: the PC phone overlay's OVERLAY about 60 times a
- * second and its layout's OVERLAY_LAYOUT pieces when it changes or every [LAYOUT_REPEAT_NS];
+ * second, its layout's OVERLAY_LAYOUT pieces when it changes or every [LAYOUT_REPEAT_NS] and the pad's
+ * button frames' OVERLAY_FRAMES pieces when they change (at most with each OVERLAY) or every [FRAMES_REPEAT_NS];
  * LINK_INFO once a second and when asked ([requestLinkInfo]); and "Press a key"'s CAPTURE. Reading
  * the presses for the overlay takes the engine's lock, LINK_INFO reads the Wi-Fi state and
  * allocates: here none of it can hold up a STATE. The finished plaintexts wait in [take] for the
@@ -73,6 +74,12 @@ internal class SideOutbox(
     private var layoutVersion = 0
     /** The next layout piece to queue; -1 when no round is under way. */
     private var layoutPiece = -1
+    private var framesSentVersion = -1
+    private var framesSentNs = 0L
+    private var framesBlob: ByteArray? = null
+    private var framesVersion = 0
+    /** The next frames piece to queue; -1 when no round is under way. */
+    private var framesPiece = -1
     private var lastLinkInfoNs = 0L
     private var captureSentOn = false
     private var captureNs = 0L
@@ -81,7 +88,10 @@ internal class SideOutbox(
     fun start() {
         if (running) return
         running = true
-        thread = Thread({ loop() }, "gp-side").apply { start() }
+        // Set before it runs, so a [wake] from now on reaches it (it parks with no time limit while not sending).
+        val t = Thread({ loop() }, "gp-side")
+        thread = t
+        t.start()
     }
 
     fun stop() {
@@ -135,7 +145,8 @@ internal class SideOutbox(
         Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY)
         while (running) {
             if (!sending) {
-                LockSupport.parkNanos(IDLE_PARK_NS)
+                // Nothing is built without a session: [sending] turning on and [stop] wake it.
+                LockSupport.park()
                 continue
             }
             val now = System.nanoTime()
@@ -144,6 +155,8 @@ internal class SideOutbox(
                 nextOverlayNs = now
                 layoutSentVersion = -1
                 layoutPiece = -1
+                framesSentVersion = -1
+                framesPiece = -1
                 lastLinkInfoNs = now
                 linkInfoDue = false
                 captureSentOn = false
@@ -162,6 +175,8 @@ internal class SideOutbox(
             if (ov == null) {
                 layoutSentVersion = -1
                 layoutPiece = -1
+                framesSentVersion = -1
+                framesPiece = -1
             } else {
                 if (now >= nextOverlayNs) {
                     nextOverlayNs = if (now - nextOverlayNs > OVERLAY_NS) now + OVERLAY_NS else nextOverlayNs + OVERLAY_NS
@@ -213,8 +228,16 @@ internal class SideOutbox(
         else -> Long.MAX_VALUE
     }
 
-    /** Queues one OVERLAY and any layout pieces due; true if something was queued. */
+    /** Queues one OVERLAY and any layout and frames pieces due; true if something was queued. */
     private fun buildOverlay(ov: OverlayFeed, now: Long): Boolean {
+        var queued = buildFrame(ov, now)
+        // The frames name the layout's controls: they follow once the layout is out.
+        if (layoutPiece < 0 && buildFrames(ov, now)) queued = true
+        return queued
+    }
+
+    /** Queues one OVERLAY and any layout pieces due; true if something was queued. */
+    private fun buildFrame(ov: OverlayFeed, now: Long): Boolean {
         var queued = false
         // A frame still waiting means the pump is behind (busy with input): skip this one. The motion
         // stays in the feed and the next frame's running totals carry it.
@@ -253,16 +276,44 @@ internal class SideOutbox(
         return queued
     }
 
+    /** Queues the frames' pieces when they changed or are due again; true if something was queued. */
+    private fun buildFrames(ov: OverlayFeed, now: Long): Boolean {
+        if (framesPiece < 0) {
+            val v = ov.framesVersion()
+            if (v < 0 || v == framesSentVersion && now - framesSentNs < FRAMES_REPEAT_NS) return false
+            val (version, blob) = ov.framesSnapshot() ?: return false
+            framesVersion = version
+            framesBlob = blob
+            framesPiece = 0
+        }
+        val blob = framesBlob ?: return false
+        val count = OverlayFeed.pieceCount(blob)
+        var queued = false
+        while (framesPiece < count) {
+            val piece = framesPiece
+            if (!queue({ p -> OverlayFeed.encodeFramesPiece(p.plain, 0, framesVersion, blob, piece) }, PacketType.OVERLAY_FRAMES)) return queued
+            queued = true
+            framesPiece++
+        }
+        framesSentVersion = framesVersion
+        framesSentNs = now
+        framesPiece = -1
+        framesBlob = null
+        return queued
+    }
+
     private companion object {
         const val POOL = 16
         const val SECOND_NS = 1_000_000_000L
         /** OVERLAY about 60 times a second. */
         const val OVERLAY_NS = 16_666_667L
         const val LAYOUT_REPEAT_NS = 2 * SECOND_NS
+        /** The frames again every second: a lost piece shows stale values no longer than that. */
+        const val FRAMES_REPEAT_NS = SECOND_NS
         const val CAPTURE_RESEND_NS = Wire.CAPTURE_RESEND_MS * 1_000_000L
         /** The gap between the CAPTUREs that say "off" (three, so one lost doesn't keep the PC listening for 3 s). */
         const val CAPTURE_OFF_GAP_NS = 100_000_000L
-        /** How often it looks again with nothing due (no session, or the overlay off). */
+        /** How often it looks again with nothing due (the overlay off). */
         const val IDLE_PARK_NS = 50_000_000L
         const val STOP_JOIN_MS = 500L
         val CAPTURE_ON = CaptureListen(CaptureFlags.ON)

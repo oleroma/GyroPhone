@@ -99,7 +99,7 @@ public class ZeroAllocationTests
         };
         engine.AttachSender(sender);
         // The companion's overlay side on its own thread, as in the companion (here in the same process).
-        var overlays = new OverlayHost(settings, engine.Shared, new AutoResetEvent(false), (on, c, s) => engine.SetOverlay(on, c, s));
+        var overlays = new OverlayHost(settings, engine.Shared, new AutoResetEvent(false), (on, c, s, k) => engine.SetOverlay(on, c, s, k));
         engine.OverlayWake = overlays.Signal;
         overlays.Start();
 

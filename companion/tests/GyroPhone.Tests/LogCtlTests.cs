@@ -41,6 +41,25 @@ public class LogCtlTests
     }
 
     [Fact]
+    public void ASwitchFromADatagramIsToldOffTheReceiveThread()
+    {
+        using var h = new Harness();
+        var told = new System.Collections.Concurrent.BlockingCollection<(bool On, int Thread)>();
+        h.Engine.DiagnosticsChanged = on => told.Add((on, Environment.CurrentManagedThreadId));
+        h.Engine.OnDatagram(Ctl(Wire.LogCtlDiagnostics, 1), Loopback, h.Clock.NowUs);
+        Assert.True(told.TryTake(out var first, 5000));
+        Assert.True(first.On);
+        // gp-rx (here the test's thread) never starts or stops the probe's thread under the engine lock.
+        Assert.NotEqual(Environment.CurrentManagedThreadId, first.Thread);
+
+        // Switched on the PC (no lock held): told at once, on the caller's thread.
+        h.Engine.SetDiagnostics(false);
+        Assert.True(told.TryTake(out var second, 0));
+        Assert.Equal((false, Environment.CurrentManagedThreadId), second);
+        Assert.False(told.TryTake(out _, 200));
+    }
+
+    [Fact]
     public void FromAnotherMachineItIsDropped()
     {
         using var h = new Harness();

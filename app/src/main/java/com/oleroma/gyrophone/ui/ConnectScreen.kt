@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.ui
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.compose.foundation.horizontalScroll
@@ -25,12 +26,9 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -42,6 +40,7 @@ import com.oleroma.gyrophone.hid.ReportPump
 import com.oleroma.gyrophone.link.TransportKind
 import com.oleroma.gyrophone.service.GamepadService
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flow
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import com.oleroma.gyrophone.sensor.DirectChannelGyroSource
 
@@ -61,10 +60,10 @@ fun ConnectScreen(runtime: GamepadRuntime, onRetry: () -> Unit) {
     val gyroPoll by runtime.gyroPollHz.collectAsStateWithLifecycle()
     val gyroPollUsed by runtime.gyroPollUsed.collectAsStateWithLifecycle()
     val pcControllerGyro by runtime.pcControllerGyro.collectAsStateWithLifecycle()
-    var stats by remember { mutableStateOf(runtime.linkStats()) }
-    LaunchedEffect(transport) {
-        while (true) { stats = runtime.linkStats(); delay(1000) }
-    }
+    // Polled only while the app is on screen (at least STARTED), not with the screen off.
+    val stats by remember(transport) {
+        flow { while (true) { emit(runtime.linkStats()); delay(1000) } }
+    }.collectAsStateWithLifecycle(remember { runtime.linkStats() })
     val tips = rememberSetupTips(runtime)
     val retry by rememberUpdatedState(onRetry)
     val wifi = transport == TransportKind.WIFI
@@ -215,10 +214,25 @@ private fun BluetoothPanel(runtime: GamepadRuntime, onRetry: () -> Unit) {
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
-                context.startActivity(
-                    Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE)
-                        .putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120),
-                )
+                // The system's discoverable request is guarded by these permissions: without them
+                // startActivity throws, so ask for them instead.
+                val granted = listOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE)
+                    .all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+                if (!granted) {
+                    note(context, "Allow Bluetooth for GyroPhone first")
+                    onRetry()
+                } else {
+                    try {
+                        context.startActivity(
+                            Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE)
+                                .putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120),
+                        )
+                    } catch (_: SecurityException) {
+                        note(context, "Allow Bluetooth for GyroPhone first")
+                    } catch (_: ActivityNotFoundException) {
+                        note(context, "This phone can't make itself discoverable")
+                    }
+                }
             }) { Text("Make discoverable") }
             if (state is HidDeviceManager.State.Connected) {
                 OutlinedButton(onClick = { runtime.hid.disconnect() }) { Text("Disconnect") }

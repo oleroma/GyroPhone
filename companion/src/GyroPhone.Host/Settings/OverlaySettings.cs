@@ -72,6 +72,11 @@ public enum OverlayKind
     Ring,
     /// <summary>Scrolling yaw, pitch and roll speed, shaded while a ratchet is held.</summary>
     Graph,
+    /// <summary>
+    /// The attached controller's keys pressed now and what they send ("A → Space"), each in a row that stays put while
+    /// held and fades out when let go, with a row for each stick that sends something.
+    /// </summary>
+    Keys,
 }
 
 public enum OverlayShape
@@ -116,6 +121,11 @@ public sealed class OverlaySettings
     public string Label { get; set; } = "";
     public bool Shown { get; set; }
     public OverlayBackground Background { get; set; } = OverlayBackground.Transparent;
+    /// <summary>
+    /// Kept behind every other window (outside Edit), so a game covers it: it's not seen while playing,
+    /// but OBS Window Capture (the "Windows 10 (1903 and up)" method) still records it.
+    /// </summary>
+    public bool BehindWindows { get; set; }
     /// <summary>Turns are shown this many times larger (0.5..3).</summary>
     public float MotionScale { get; set; } = 1f;
     /// <summary>Window place and size; X, Y = -1 until placed.</summary>
@@ -291,6 +301,13 @@ public sealed class OverlaySettings
     /// muzzle blasts a forward plume and side jets, as wide as its muzzle and as long as its calibre.
     /// </summary>
     public bool MuzzleFlash { get; set; } = true;
+    /// <summary>Each gun's own muzzle flash size (the Gun look's blast, 1 = as wide as its muzzle and as long as its calibre), by its key, where changed.</summary>
+    public Dictionary<string, float> GunFlash { get; set; } = [];
+    /// <summary>The muzzle flash size slider's range.</summary>
+    public const float FlashSizeMin = 0.25f, FlashSizeMax = 3f;
+
+    /// <summary><paramref name="gun"/>'s muzzle flash size (<see cref="FlashSizeMin"/> .. <see cref="FlashSizeMax"/>): its own setting or 100%.</summary>
+    public float FlashOf(Guns.Gun gun) => Math.Clamp(GunFlash != null && GunFlash.TryGetValue(gun.Key, out var v) ? v : 1f, FlashSizeMin, FlashSizeMax);
     /// <summary>
     /// Crosshair and gun, Simulate spread: each Fire display shot lands off the aim point, a random way, by up to the gun's
     /// spread (<see cref="SpreadOf"/>); the crosshair and gun kick toward it. With LaserBloom shots fired in a row widen it up to
@@ -357,9 +374,18 @@ public sealed class OverlaySettings
     [JsonIgnore]
     public bool WantsSamples => FollowsSamples || Kind == OverlayKind.Graph;
 
-    /// <summary>It turns with the phone (the FPS overlay, Ratchet ring and Speed graph don't).</summary>
+    /// <summary>It turns with the phone (the FPS overlay, Ratchet ring, Speed graph and Keys overlay don't).</summary>
     [JsonIgnore]
-    public bool Turns => Kind is not (OverlayKind.Fps or OverlayKind.Ring or OverlayKind.Graph);
+    public bool Turns => Kind is not (OverlayKind.Fps or OverlayKind.Ring or OverlayKind.Graph or OverlayKind.Keys);
+
+    /// <summary>Keys overlay: how long a let-go key's row takes to fade out, ms (0 = gone at once; up to 2000).</summary>
+    public int KeysFadeMs { get; set; } = 400;
+
+    /// <summary>Keys: the controls always shown on top (GyroPhone.Protocol.OverlayControls.Ids), lit while they fire; others show only while they fire.</summary>
+    public List<string> KeysShown { get; set; } = ["ls", "rs"];
+
+    /// <summary>Keys: no panel behind the rows, only the text over the game.</summary>
+    public bool KeysTransparent { get; set; }
 
     /// <summary>The Snake's zip back as LaserTrace.Add takes it, or null when off.</summary>
     [JsonIgnore]
@@ -582,6 +608,7 @@ public sealed class OverlaySettings
         OverlayKind.Fps => FpsColors,
         OverlayKind.Ring => RingColors,
         OverlayKind.Graph => GraphColors,
+        OverlayKind.Keys => KeysColors,
         _ => shape switch
         {
             null => ShapeColors,
@@ -600,6 +627,7 @@ public sealed class OverlaySettings
         OverlayKind.Fps => "FPS",
         OverlayKind.Ring => "Ratchet ring",
         OverlayKind.Graph => "Speed graph",
+        OverlayKind.Keys => "Keys",
         _ => "Bubble disk",
     };
 
@@ -698,6 +726,15 @@ public sealed class OverlaySettings
         new("text", "Numbers", 0xFFFFFFFF),
         new("line", "Frame times", 0xFF7CC4FF),
         new("jump", "Jumps", 0xFFFF5A5A),
+        new("panel", "Panel", 0x99000000),
+    ];
+
+    private static readonly OverlayColor[] KeysColors =
+    [
+        new("name", "Controller keys", 0xFFFFFFFF),
+        new("target", "What they send", 0xFF7CC4FF),
+        new("on", "Toggles on", 0xFF8FE39A),
+        new("dim", "Sticks at rest", 0x66FFFFFF),
         new("panel", "Panel", 0x99000000),
     ];
 

@@ -41,27 +41,36 @@ class DebugTrace(
     class Event(val nanos: Long, val kind: Kind, val text: String)
 
     // ---- the input paths' queue ----------------------------------------------------------------
+    // Lock-free for the writers (several input threads, one drainer): a writer claims a slot by moving [qTail]
+    // on, fills it and then publishes it in [qSeq]; the drainer reads only published slots. No writer ever waits
+    // for the drainer, which runs at the lowest priority (a lock shared with it could hold up the send thread
+    // whenever Android paused it while it held the lock).
 
-    private val qLock = Any()
     private val qNanos = LongArray(QUEUE)
     private val qKind = arrayOfNulls<Kind>(QUEUE)
     private val qRef = arrayOfNulls<Any>(QUEUE)
     private val qA = IntArray(QUEUE)
     private val qB = IntArray(QUEUE)
-    private var qHead = 0
-    private var qCount = 0
+    /** Per slot: the claim number + 1 once its fields are written. */
+    private val qSeq = java.util.concurrent.atomic.AtomicLongArray(QUEUE)
+    private val qTail = java.util.concurrent.atomic.AtomicLong()
+    @Volatile private var qHead = 0L
 
     /** Queued events dropped because the queue was full (the diagnostics thread fell behind). */
     @Volatile var dropped = 0L
         private set
+    private val droppedCount = java.util.concurrent.atomic.AtomicLong()
 
     private fun enqueue(kind: Kind?, ref: Any, a: Int, b: Int, nanos: Long) {
-        synchronized(qLock) {
-            if (qCount == QUEUE) { dropped++; return }
-            val i = (qHead + qCount) % QUEUE
-            qNanos[i] = nanos; qKind[i] = kind; qRef[i] = ref; qA[i] = a; qB[i] = b
-            qCount++
+        var t: Long
+        while (true) {
+            t = qTail.get()
+            if (t - qHead >= QUEUE) { dropped = droppedCount.incrementAndGet(); return }
+            if (qTail.compareAndSet(t, t + 1)) break
         }
+        val i = (t % QUEUE).toInt()
+        qNanos[i] = nanos; qKind[i] = kind; qRef[i] = ref; qA[i] = a; qB[i] = b
+        qSeq.lazySet(i, t + 1)
     }
 
     /** From an input path: a line made later by [text], on the diagnostics thread, stamped with now. */
@@ -70,18 +79,25 @@ class DebugTrace(
     /** From the send path: one engine snapshot, compared with the one before on the diagnostics thread ([output]). */
     fun queueOutput(s: HidState, gyroDx: Int = 0, gyroDy: Int = 0) = enqueue(null, s, gyroDx, gyroDy, clock())
 
+    // One drainer at a time (the diagnostics thread, a save, a dump): two would each take an entry and
+    // could process them out of order, and [output] diffs each snapshot against the one before.
+    // Never taken by the input paths.
+    private val drainLock = Any()
+
     /** Turns the queued events into lines, oldest first; the diagnostics thread calls it a few times a second. */
     fun drain() {
+        synchronized(drainLock) { drainLocked() }
+    }
+
+    private fun drainLocked() {
         while (true) {
-            val nanos: Long; val kind: Kind?; val ref: Any?; val a: Int; val b: Int
-            synchronized(qLock) {
-                if (qCount == 0) return
-                val i = qHead
-                nanos = qNanos[i]; kind = qKind[i]; ref = qRef[i]; a = qA[i]; b = qB[i]
-                qRef[i] = null
-                qHead = (qHead + 1) % QUEUE
-                qCount--
-            }
+            val h = qHead
+            val i = (h % QUEUE).toInt()
+            // Not written yet (or nothing queued): the rest waits for the next drain.
+            if (qSeq.get(i) != h + 1) return
+            val nanos = qNanos[i]; val kind = qKind[i]; val ref = qRef[i]; val a = qA[i]; val b = qB[i]
+            qRef[i] = null
+            qHead = h + 1
             @Suppress("UNCHECKED_CAST")
             if (kind == null) output(ref as HidState, a, b, nanos)
             else add(kind, runCatching { (ref as () -> String)() }.getOrElse { "(line failed: ${it.javaClass.simpleName})" }, nanos)
@@ -243,6 +259,9 @@ class DebugTrace(
     @Volatile var gyroPerSecond = 0
         private set
 
+    /** How old gyro samples are when they come, and how long until their packet has left (in the link line). */
+    val gyroTiming = GyroTiming()
+
     /** One gyro sample: only counted (for the link line's gyro rate). On the gyro path: no lock, no allocation. */
     fun gyroSample() {
         gyroSamples.incrementAndGet()
@@ -254,7 +273,10 @@ class DebugTrace(
         snapshotsPerSecond = outSnapshots; outSnapshots = 0
         gyroPerSecond = gyroSamples.getAndSet(0)
         if (outDx != 0 || outDy != 0 || outWheel != 0 || outHWheel != 0) flushMotion(clock())
-        if (linkLine != null) add(Kind.LINK, linkLine + " · snapshots $snapshotsPerSecond/s · gyro $gyroPerSecond/s")
+        if (linkLine != null) {
+            val timing = gyroTiming.line(clock())
+            add(Kind.LINK, linkLine + " · snapshots $snapshotsPerSecond/s · gyro $gyroPerSecond/s" + if (timing != null) " · $timing" else "")
+        }
     }
 
     // ---- saving -----------------------------------------------------------------------------

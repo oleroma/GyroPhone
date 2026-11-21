@@ -81,6 +81,39 @@ public sealed record PerfRun(
     double PhoneGapMaxMs = -1,
     int PhoneFailed = 0)
 {
+    /// <summary>Half the best round trip, ms (the middle of the run's seconds; −1 unknown): the fastest the link went.</summary>
+    public double FloorMs { get; init; } = -1;
+    /// <summary>The phone's typical round trip, ms (middle of the run's seconds; −1 unknown).</summary>
+    public double RttTypMs { get; init; } = -1;
+    /// <summary>Over the floor for every packet of the run pooled: middle, slowest 1%, slowest 0.1%, ms (−1 unknown). Needs no clock sync.</summary>
+    public double OverP50Ms { get; init; } = -1;
+    public double OverP99Ms { get; init; } = -1;
+    public double OverP999Ms { get; init; } = -1;
+    /// <summary>The same for seconds with movement (most packets moved the mouse or a stick) and still seconds.</summary>
+    public double MovingOverP99Ms { get; init; } = -1;
+    public double StillOverP99Ms { get; init; } = -1;
+    /// <summary>Packets in the run, and those 3 to 15 ms over the floor.</summary>
+    public long Packets { get; init; }
+    public int Late3 { get; init; }
+    /// <summary>Hand-offs to Windows: the slowest, ms; how many took over 2 ms; gp-rx's longest wait for the engine lock, ms.</summary>
+    public double HandOffMaxMs { get; init; } = -1;
+    public int SlowHandOffs { get; init; }
+    public double LockWaitMaxMs { get; init; } = -1;
+    /// <summary>The PC stall watch: its latest wake, ms (−1 not running), and wakes 2 ms or more late.</summary>
+    public double StallMaxMs { get; init; } = -1;
+    public int Stalls { get; init; }
+    /// <summary>Late packets by where they waited: on the way, inside the PC, the phone paused.</summary>
+    public int HeldAir { get; init; }
+    public int HeldPc { get; init; }
+    public int HeldPhone { get; init; }
+    /// <summary>Latencies that came out below zero (a wrong clock offset).</summary>
+    public int NegLat { get; init; }
+    /// <summary>The setup at Save (<see cref="SetupSnapshot"/>), and its changes during the run ("20:31:05 pc wifi ch 48 → ch 100").</summary>
+    public string Setup { get; init; } = "";
+    public string SetupChanges { get; init; } = "";
+    /// <summary>Set when the floor differs clearly from the last run on the same setup (<see cref="FloorBook"/>).</summary>
+    public string FloorWarning { get; init; } = "";
+
     /// <summary>Jumps per minute of the game in front.</summary>
     public double JumpsPerMin => GameSeconds > 0 ? Jumps * 60 / GameSeconds : 0;
 }
@@ -236,6 +269,55 @@ public sealed class PerfRecording
         return list;
     }
 
+    private static string Col(float v, string format, int width) => (v < 0 ? "-" : v.ToString(format, CultureInfo.InvariantCulture)).PadLeft(width);
+
+    private static string Ms2(double v) => v < 0 ? "-" : v.ToString("0.00", CultureInfo.InvariantCulture);
+
+    private static string Per10k(long n, long of) => of <= 0 ? "-" : (n * 10_000.0 / of).ToString("0.0", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The run's link numbers from its seconds: the floor's middle, every packet's over-the-floor pooled (and split into
+    /// seconds with movement and still ones), hand-offs, the stall watch and where late packets waited.
+    /// </summary>
+    public static PerfRun WithLinkNumbers(PerfRun run, IReadOnlyList<LinkSecond> link, IReadOnlyList<PhoneSecond> phone)
+    {
+        var all = new long[OverFloor.Buckets];
+        var moving = new long[OverFloor.Buckets];
+        var still = new long[OverFloor.Buckets];
+        foreach (var l in link)
+        {
+            if (l.Over == null) continue;
+            OverFloor.Add(all, l.Over);
+            OverFloor.Add(l.Moving * 2 >= Math.Max(1, l.Rx) ? moving : still, l.Over);
+        }
+        var floors = link.Where(l => l.FloorMs > 0).Select(l => (double)l.FloorMs).ToList();
+        var rttTyp = link.Where(l => l.RttTypMs > 0).Select(l => (double)l.RttTypMs).ToList();
+        if (rttTyp.Count == 0) rttTyp = phone.Where(p => p.RttTypMs > 0).Select(p => (double)p.RttTypMs).ToList();
+        bool hand = link.Any(l => l.HandOffMaxMs > 0);
+        var stall = link.Where(l => l.StallMaxMs >= 0).ToList();
+        return run with
+        {
+            FloorMs = Median(floors),
+            RttTypMs = Median(rttTyp),
+            OverP50Ms = OverFloor.Pct(all, 0.5),
+            OverP99Ms = OverFloor.Pct(all, 0.99),
+            OverP999Ms = OverFloor.Pct(all, 0.999),
+            MovingOverP99Ms = OverFloor.Pct(moving, 0.99),
+            StillOverP99Ms = OverFloor.Pct(still, 0.99),
+            Packets = link.Sum(l => (long)l.Rx),
+            Late3 = link.Sum(l => l.Late3),
+            HandOffMaxMs = hand ? link.Max(l => l.HandOffMaxMs) : -1,
+            SlowHandOffs = link.Sum(l => l.SlowHandOffs),
+            LockWaitMaxMs = hand ? link.Max(l => l.LockWaitMs) : -1,
+            StallMaxMs = stall.Count > 0 ? stall.Max(l => l.StallMaxMs) : -1,
+            Stalls = stall.Sum(l => l.Stalls),
+            HeldAir = link.Sum(l => l.Air),
+            HeldPc = link.Sum(l => l.Pc),
+            HeldPhone = link.Sum(l => l.Phone),
+            NegLat = link.Sum(l => l.NegLat),
+        };
+    }
+
     /// <summary>A phone number for the burst table, "-" when the phone sent none.</summary>
     private static string Ms(float v, string format) => v < 0 ? "-" : v.ToString(format, CultureInfo.InvariantCulture);
 
@@ -272,7 +354,8 @@ public sealed class PerfRecording
                     if (ps.Count > 0)
                         bursts[i] = b with { PhoneGapMs = ps.Max(p => p.GapMaxMs), PhoneWakeMs = ps.Max(p => p.WakeLateMs), PhoneSendMs = ps.Max(p => p.SendMaxMs) };
                 }
-            var p50 = link.Where(l => l.LatP50Ms >= 0).Select(l => (double)l.LatP50Ms).ToList();
+            // The middle latency weighted by packets, so a still second (50 packets) counts less than a moving one (1000).
+            var p50 = link.Where(l => l.LatP50Ms >= 0).SelectMany(l => Enumerable.Repeat((double)l.LatP50Ms, Math.Clamp(l.Rx / 50, 1, 40))).ToList();
             var p99 = link.Where(l => l.LatP99Ms >= 0).Select(l => (double)l.LatP99Ms).ToList();
             double jitter = link.Count > 0 ? link.Average(l => l.JitterMs) : 0;
             string path = string.Join(" → ", _paths);
@@ -285,14 +368,26 @@ public sealed class PerfRecording
                 null, path, Median(p50), Median(p99), jitter, bursts.Count, frames, busySeconds.Count, busyTop, null,
                 hasPhone ? phone.Max(p => p.SendMaxMs) : -1, hasPhone ? phone.Max(p => p.WakeLateMs) : -1,
                 hasPhone ? phone.Max(p => p.GapMaxMs) : -1, phone.Sum(p => p.Failed));
+            run = WithLinkNumbers(run, link, phone);
 
             var sb = new StringBuilder();
             var c = CultureInfo.InvariantCulture;
             sb.AppendLine(c, $"GyroPhone link test '{Name}', {Start:yyyy-MM-dd HH:mm:ss}, {run.Seconds:0} s");
             sb.AppendLine(c, $"path: {(path.Length > 0 ? path : Link)}");
             sb.AppendLine(c, $"link: lost {run.Lost}, late {run.Late} (worst {run.MaxLateMs:0} ms), phone pauses {run.Gaps}, let go {run.Releases}, trouble bursts {bursts.Count}");
+            if (run.FloorMs >= 0 || run.OverP50Ms >= 0)
+                sb.AppendLine(c, $"link split: floor (half the best round trip) {Ms2(run.FloorMs)} ms, round trip typical {Ms2(run.RttTypMs)} ms; " +
+                    $"over the floor, every packet: {Ms2(run.OverP50Ms)} / {Ms2(run.OverP99Ms)} / {Ms2(run.OverP999Ms)} ms (middle / slowest 1% / 0.1%), " +
+                    $"slowest 1% moving {Ms2(run.MovingOverP99Ms)} ms, still {Ms2(run.StillOverP99Ms)} ms; 3-15 ms over: {run.Late3} of {run.Packets} packets");
             if (run.LatP50Ms >= 0)
-                sb.AppendLine(c, $"latency: typical {run.LatP50Ms:0.0} ms, slowest 1% {run.LatP99Ms:0.0} ms, jitter {run.JitterMs:0.0} ms");
+                sb.Append(c, $"latency (one way, needs the clock guess): typical {run.LatP50Ms:0.0} ms, slowest 1% {run.LatP99Ms:0.0} ms, jitter {run.JitterMs:0.0} ms")
+                  .AppendLine(run.NegLat > 0 ? $", {run.NegLat} below zero (the clock guess was off)" : "");
+            if (run.HandOffMaxMs >= 0)
+                sb.AppendLine(c, $"hand-off to Windows: slowest {run.HandOffMaxMs:0.0} ms, over 2 ms {run.SlowHandOffs} ({Per10k(run.SlowHandOffs, run.Packets)} per 10k packets), longest engine lock wait {run.LockWaitMaxMs:0.0} ms");
+            if (run.Late > 0)
+                sb.AppendLine(c, $"late packets held up: on the way {run.HeldAir}, inside the PC {run.HeldPc}, phone paused {run.HeldPhone}");
+            if (run.StallMaxMs >= 0)
+                sb.AppendLine(c, $"PC stall watch: latest wake {run.StallMaxMs:0.0} ms, {run.Stalls} wakes 2 ms or more late");
             if (frames)
                 sb.AppendLine(c, $"game {Game}, in front {run.GameSeconds:0} s: avg {run.AvgFps:0.0} fps, 1% low {run.Low1Fps:0.0} fps, " +
                     $"jumps {run.Jumps} ({run.JumpsPerMin:0.0}/min), worst frame {run.WorstMs:0.0} ms");
@@ -318,7 +413,8 @@ public sealed class PerfRecording
             sb.AppendLine("Per second. fps: while the game was in front, with the FPS overlay on (a second it was in front only partly has few frames).");
             if (hasPhone)
                 sb.AppendLine("phone: STATEs and packets it sent, failed and slow (2 ms+) sends, longest send, how late its send thread woke, longest gap between STATEs, packets the whole phone sent.");
-            sb.AppendLine("  s  :ss |   rx lost late maxlate_ms gaps rel  lat_ms p99_ms jitter |" +
+            sb.AppendLine("over: over the floor, middle / slowest 1%, ms. l3: packets 3-15 ms over. hand: slowest hand-off, ms; slow: over 2 ms. stall: the PC stall watch's latest wake, ms.");
+            sb.AppendLine("  s  :ss |   rx lost late maxlate_ms gaps rel  lat_ms p99_ms jitter  floor over50 over99  l3  hand slow stall |" +
                 (hasPhone ? " states  pkts fail slow send_ms wake_ms gap_ms  ph_tx |" : "") + "  frames   fps  worst_ms jumps |  cpu  dpc  int core_drv | busy");
             long last = Math.Max(_seconds.Count > 0 ? _seconds.Keys.Max() : 0, linkBySecond.Count > 0 ? linkBySecond.Keys.Max() : 0);
             for (long k = 0; k <= last; k++)
@@ -332,9 +428,11 @@ public sealed class PerfRecording
                     sb.Append(c, $"{l.Rx,4} {l.Lost,4} {l.Late,4} {l.MaxLateMs,10:0} {l.Gaps,4} {l.Releases,3} ");
                     sb.Append(l.LatP50Ms >= 0 ? l.LatP50Ms.ToString("0.0", c).PadLeft(7) : "      -").Append(' ');
                     sb.Append(l.LatP99Ms >= 0 ? l.LatP99Ms.ToString("0.0", c).PadLeft(6) : "     -").Append(' ');
-                    sb.Append(l.JitterMs.ToString("0.0", c).PadLeft(6));
+                    sb.Append(l.JitterMs.ToString("0.0", c).PadLeft(6)).Append(' ');
+                    sb.Append(Col(l.FloorMs, "0.00", 6)).Append(' ').Append(Col(l.OverP50Ms, "0.0", 6)).Append(' ').Append(Col(l.OverP99Ms, "0.0", 6));
+                    sb.Append(c, $" {l.Late3,3} ").Append(Col(l.HandOffMaxMs, "0.0", 5)).Append(c, $" {l.SlowHandOffs,4} ").Append(Col(l.StallMaxMs, "0.0", 5));
                 }
-                else sb.Append("   -    -    -          -    -   -       -      -      -");
+                else sb.Append("   -    -    -          -    -   -       -      -      -      -      -      -   -     -    -     -");
                 sb.Append(" | ");
                 if (hasPhone)
                 {

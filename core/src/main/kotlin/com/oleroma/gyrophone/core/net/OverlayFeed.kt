@@ -1,6 +1,8 @@
 package com.oleroma.gyrophone.core.net
 
 import com.oleroma.gyrophone.core.model.AndroidKey
+import com.oleroma.gyrophone.core.model.StickTuning
+import com.oleroma.gyrophone.core.model.TriggerTuning
 import kotlin.math.roundToInt
 
 /** One control as the PC's phone overlay draws it. Centre and size are fractions of the pad area. */
@@ -38,6 +40,44 @@ data class OverlayLayout(
 )
 
 /**
+ * What the pad shows over its buttons ([com.oleroma.gyrophone.ui.ValueBars] on the phone), for the PC's
+ * phone overlay to show the same: each button's frame (its mappings active now, its Toggles on or off,
+ * its sliders' values) and its Position bars. [textPx] is the frames' text size and [dp] one dp, both in
+ * pad pixels, so the PC draws them the size the pad does; [barColor] the bars' colour (ARGB).
+ */
+data class OverlayFrames(val textPx: Float, val dp: Float, val barColor: Int, val marks: List<OverlayMark>) {
+    companion object {
+        val NONE = OverlayFrames(0f, 1f, 0, emptyList())
+    }
+}
+
+/**
+ * One button's frame and bars ([id] "": the workspace touchpad, the whole pad area): the frame sits in the
+ * button's middle in place of its label ([inside]; its lines on one [row]), else outside it by its top-right
+ * corner; [set]: a sliders icon in its top-left corner (a Toggle value chip on it).
+ */
+data class OverlayMark(
+    val id: String,
+    val inside: Boolean,
+    val row: Boolean,
+    val set: Boolean,
+    val lines: List<OverlayLine>,
+    val bars: List<OverlayBar>,
+)
+
+/** One line of a frame, [color] [OverlayLine.PLAIN], [OverlayLine.ON] (a Toggle on, green) or [OverlayLine.OFF] (grey). */
+data class OverlayLine(val text: String, val color: Int) {
+    companion object {
+        const val PLAIN = 0
+        const val ON = 1
+        const val OFF = 2
+    }
+}
+
+/** A Position bar: [axis] the [com.oleroma.gyrophone.core.model.FingerAxis] ordinal, [value] 0..1, [steps] its Snap steps (0 = none). */
+data class OverlayBar(val axis: Int, val value: Float, val steps: Int)
+
+/**
  * The data of the PC's phone overlay, gathered while the PC asks for it ([wanted], from
  * HOST_STATUS [HostStatusFlags.OVERLAY]). The pad screen sets the layout, fingers and stick knobs;
  * the sensor threads add the phone's motion ([gyro], [up], [north]); the Wi-Fi pump encodes
@@ -71,6 +111,21 @@ data class OverlayLayout(
  * height px; str8 workspace; str8 layer; u8 control count; per control u8 kind, u8 flags (1 =
  * round), i16 x, y, w, h (× [COORD_SCALE] of the pad area's width / height), u8 opacity (0..255),
  * str8 label. str8 = u8 byte length + UTF-8.
+ *
+ * OVERLAY_FRAMES plaintext (200 bytes, [encodeFramesPiece]): u16 frames version; u8 piece index; u8 piece
+ * count; u8 length; then [PIECE_DATA] bytes of the frames blob, sent when they change (at most with each
+ * OVERLAY) and every second. The blob ([encodeFrames]): u8 format (1); u16 the layout version it is for;
+ * u16 text size (pad px × 10); u16 one dp (pad px × 100); u32 the bars' colour (ARGB); u8 mark count; per mark u8 control index (0xFF
+ * the touchpad), u8 flags (1 inside, 2 on one row, 4 sliders icon), u8 line count, per line u8 colour
+ * ([OverlayLine.PLAIN], [OverlayLine.ON], [OverlayLine.OFF]) and str8 text, u8 bar count, per bar u8 axis
+ * (X, Y, distance, angle), u16 value (0..65535 = 0..1), u16 Snap steps (0 none). Then, only while the PC has a Keys
+ * overlay open ([keysWanted]; older PCs stop at the marks), the attached pad's table ([OverlayKeys]), which changes
+ * only with the workspace, the set in use or the controller: u8 [KEYS_SECTION]; u16 tap time (ms); per stick (left,
+ * right) u8 inner, u8 outer, u8 Outer ring (0..255 = 0..1), u8 Left/Right pie, u8 Up/Down pie (degrees); per trigger
+ * (left, right) u8 Press, u8 Full pull (0..255 = 0..1); u8 key count, per key u8 [OverlayKey.input], u8
+ * [OverlayKey.flags], str8 name, str8 what it sends; u8 touch key count, per touch key u8 control index, u8 flags (as a
+ * key's), str8 what it sends ([OverlayTouchKey]). The PC works out what is pressed from the OVERLAY's pad fields and
+ * its pressed and latched bitmaps.
  *
  * Totals ([FLAG_TOTALS], only while HOST_STATUS has [HostStatusFlags.OVERLAY_TOTALS]; older PCs get
  * the per-frame form above): the yaw, pitch, roll and the camera degrees are running totals since
@@ -118,6 +173,12 @@ class OverlayFeed {
     /** Controls the pad screen itself holds (workspace corners, touched sticks): lit with the engine's pressed ones. */
     @Volatile var uiHeld: Set<String> = emptySet()
 
+    /**
+     * The controls the pad lights now (one of their mappings is active), in place of the engine's touched ones;
+     * null while the pad doesn't say (edit mode, hidden): the touched ones light then.
+     */
+    @Volatile var uiLit: Set<String>? = null
+
     /** The gyro moves the mouse now. */
     @Volatile var gyroActive = false
 
@@ -132,6 +193,11 @@ class OverlayFeed {
     private val fingerXY = FloatArray(MAX_FINGERS * 2)
     private var fingerCount = 0
     private val sticks = LinkedHashMap<String, FloatArray>()
+    private var frames: OverlayFrames? = null
+    private var keys: OverlayKeys? = null
+    private var framesVersion = 0
+    /** [frames] encoded for the layout now; null: encoded again at the next [framesSnapshot]. */
+    private var framesBlob: ByteArray? = null
 
     // Each gyro sample's turn since the last OVERLAY_SAMPLES (under lock, while [samplesWanted]): yaw, pitch, roll
     // (degrees) and seconds; the last takes on any over [MAX_SAMPLES].
@@ -277,15 +343,81 @@ class OverlayFeed {
         }
     }
 
-    /** Sets the layout shown; a different one gets a new version. */
+    /**
+     * Sets the layout shown; a different one gets a new version. The comparing and encoding run outside [lock], which
+     * the gyro thread and the controller's events take: only the results are put in place under it.
+     */
     fun setLayout(l: OverlayLayout) {
+        if (l == synchronized(lock) { layout }) return
+        val b = encodeLayout(l)
+        val idx = l.controls.take(MAX_CONTROLS).withIndex().associate { (i, c) -> c.id to i }
         synchronized(lock) {
-            if (l == layout) return
             layout = l
             version = (version + 1) and 0xFFFF
-            blob = encodeLayout(l)
-            index = l.controls.take(MAX_CONTROLS).withIndex().associate { (i, c) -> c.id to i }
+            blob = b
+            index = idx
+            // The frames name controls by their place in the layout: sent again for the new one.
+            if (frames != null) {
+                framesBlob = null
+                framesVersion = (framesVersion + 1) and 0xFFFF
+            }
         }
+    }
+
+    /** Sets what the pad shows over its buttons ([OverlayFrames.NONE]: nothing); a change gets a new version. */
+    fun setFrames(f: OverlayFrames) {
+        if (f == synchronized(lock) { frames }) return // compared outside the lock, as in setLayout
+        synchronized(lock) {
+            frames = f
+            framesBlob = null
+            framesVersion = (framesVersion + 1) and 0xFFFF
+        }
+    }
+
+    /**
+     * The PC has a Keys overlay open (TEST_MODE [TestModeFlags.OVERLAY_KEYS]): the attached pad's table ([setKeys])
+     * goes with the frames. Off: it leaves the frames.
+     */
+    @Volatile var keysWanted = false
+        set(v) {
+            field = v
+            if (!v) setKeys(null)
+        }
+
+    /** Sets the Keys overlay's table (null: none, the frames go without it); a change gets a new frames version. */
+    fun setKeys(k: OverlayKeys?) {
+        if (k == synchronized(lock) { keys }) return // compared outside the lock, as in setLayout
+        synchronized(lock) {
+            keys = k
+            framesBlob = null
+            framesVersion = (framesVersion + 1) and 0xFFFF
+        }
+    }
+
+    /** The frames version now, or -1 with neither frames nor keys set; read without allocating before a [framesSnapshot]. */
+    fun framesVersion(): Int = synchronized(lock) { if (frames == null && keys == null) -1 else framesVersion }
+
+    /**
+     * The frames version and blob now (for the layout now), for one round of OVERLAY_FRAMES pieces. A new blob is
+     * encoded outside [lock] (the gyro thread and the controller's events take it) from what was set then.
+     */
+    fun framesSnapshot(): Pair<Int, ByteArray>? {
+        val f: OverlayFrames?
+        val k: OverlayKeys?
+        val fv: Int
+        val lv: Int
+        val idx: Map<String, Int>
+        synchronized(lock) {
+            if (frames == null && keys == null) return null
+            framesBlob?.let { return framesVersion to it }
+            f = frames; k = keys; fv = framesVersion; lv = version; idx = index
+        }
+        val b = encodeFrames(f ?: OverlayFrames.NONE, lv, idx, k)
+        synchronized(lock) {
+            // Kept for the next rounds only while nothing changed meanwhile.
+            if (framesBlob == null && framesVersion == fv && version == lv && frames === f && keys === k) framesBlob = b
+        }
+        return fv to b
     }
 
     /** Fingers on the screen now, as x, y pairs (fractions of the pad area); only the first [MAX_FINGERS]. */
@@ -404,7 +536,7 @@ class OverlayFeed {
                     out[at + (i shr 3)] = (out[at + (i shr 3)].toInt() or (1 shl (i and 7))).toByte()
                 }
             }
-            bits(pressed, off + 56)
+            bits(uiLit ?: pressed, off + 56)
             bits(uiHeld, off + 56)
             bits(latched, off + 72)
             var n = 0
@@ -530,6 +662,15 @@ class OverlayFeed {
         private const val TIME_WRAP = 0.65536
         private const val NAME_MAX = 48
         private const val LABEL_MAX = 32
+        /** A frame line's most UTF-8 bytes, and a frame's most lines. */
+        private const val LINE_MAX = 64
+        private const val MAX_LINES = 12
+        /** Marks the Keys overlay's part of a frames blob, after the marks. */
+        const val KEYS_SECTION = 0x4B
+        /** The most mappings the Keys overlay's table is sent. */
+        const val MAX_KEYS = 96
+        /** A frames blob fits this many OVERLAY_FRAMES pieces (whole records are left out to fit). */
+        const val MAX_FRAME_PIECES = 16
 
         /** [d] degrees as the same angle in -180..180. */
         private fun wrap(d: Double): Double {
@@ -566,6 +707,116 @@ class OverlayFeed {
             }
             val b = out.toByteArray()
             return if (b.size <= PIECE_DATA * MAX_PIECES) b else b.copyOf(PIECE_DATA * MAX_PIECES)
+        }
+
+        /**
+         * The frames blob (see the class comment) for layout [layoutVersion], whose controls are at [index], with [keys]
+         * after them. It fits [MAX_FRAME_PIECES] pieces: whole records are left out once the next would not fit (the
+         * Keys overlay's table first, as it is open only while asked for), and the counts say what is there.
+         */
+        fun encodeFrames(f: OverlayFrames, layoutVersion: Int, index: Map<String, Int>, keys: OverlayKeys? = null): ByteArray {
+            val limit = PIECE_DATA * MAX_FRAME_PIECES
+            val keyBytes = keys?.let { encodeKeysSection(it, index, limit - FRAMES_HEAD) }
+            val out = Blob()
+            fun u8(v: Int) = out.write(v and 0xFF)
+            fun u16(v: Int) { u8(v); u8(v shr 8) }
+            u8(FORMAT)
+            u16(layoutVersion)
+            u16((f.textPx * 10f).roundToInt().coerceIn(0, 0xFFFF))
+            u16((f.dp * 100f).roundToInt().coerceIn(0, 0xFFFF))
+            u16(f.barColor); u16(f.barColor ushr 16)
+            val marks = f.marks.filter { it.id.isEmpty() || it.id in index }.take(MAX_CONTROLS)
+            val countAt = out.size()
+            u8(0)
+            val markLimit = limit - (keyBytes?.size ?: 0)
+            var n = 0
+            for (m in marks) {
+                val at = out.size()
+                u8(if (m.id.isEmpty()) NO_CONTROL else index.getValue(m.id))
+                u8((if (m.inside) 1 else 0) or (if (m.row) 2 else 0) or (if (m.set) 4 else 0))
+                val lines = m.lines.take(MAX_LINES)
+                u8(lines.size)
+                for (l in lines) {
+                    u8(l.color)
+                    val b = WireCodec.utf8Truncated(l.text, LINE_MAX)
+                    u8(b.size); out.write(b)
+                }
+                val bars = m.bars.take(4)
+                u8(bars.size)
+                for (b in bars) {
+                    u8(b.axis)
+                    u16(unit16(b.value))
+                    u16(b.steps.coerceIn(0, 0xFFFF))
+                }
+                if (out.size() > markLimit) { out.cut(at); break }
+                n++
+            }
+            out.patch(countAt, n)
+            if (keyBytes != null) out.write(keyBytes)
+            return out.toByteArray()
+        }
+
+        /** The frames blob's bytes before its marks, with the mark count. */
+        private const val FRAMES_HEAD = 12
+
+        /** The Keys overlay's section of a frames blob, in at most [budget] bytes (whole keys and touch keys only), or null when even its head does not fit. */
+        private fun encodeKeysSection(keys: OverlayKeys, index: Map<String, Int>, budget: Int): ByteArray? {
+            val out = Blob()
+            fun u8(v: Int) = out.write(v and 0xFF)
+            fun u16(v: Int) { u8(v); u8(v shr 8) }
+            fun str(t: String) {
+                val b = WireCodec.utf8Truncated(t, LINE_MAX)
+                u8(b.size); out.write(b)
+            }
+            fun unit(v: Float) = u8((v.coerceIn(0f, 1f) * 255f).roundToInt())
+            u8(KEYS_SECTION)
+            u16(keys.tapMs.coerceIn(0, 0xFFFF))
+            for (i in 0 until 2) {
+                val t = keys.sticks.getOrElse(i) { StickTuning() }
+                unit(t.inner); unit(t.outer); unit(t.outerRing)
+                u8(t.pieX.roundToInt().coerceIn(0, 255)); u8(t.pieY.roundToInt().coerceIn(0, 255))
+            }
+            for (i in 0 until 2) {
+                val t = keys.triggers.getOrElse(i) { TriggerTuning() }
+                unit(t.press); unit(t.full)
+            }
+            // The key count, then the touch key count after the keys.
+            if (out.size() + 2 > budget) return null
+            val keyCountAt = out.size()
+            u8(0)
+            var n = 0
+            for (k in keys.keys.take(MAX_KEYS)) {
+                val at = out.size()
+                u8(k.input); u8(k.flags)
+                str(k.name); str(k.target)
+                if (out.size() + 1 > budget) { out.cut(at); break }
+                n++
+            }
+            out.patch(keyCountAt, n)
+            val touchCountAt = out.size()
+            u8(0)
+            n = 0
+            for (t in keys.touch.filter { it.id in index }.take(MAX_KEYS)) {
+                val at = out.size()
+                u8(index.getValue(t.id)); u8(t.flags)
+                str(t.target)
+                if (out.size() > budget) { out.cut(at); break }
+                n++
+            }
+            out.patch(touchCountAt, n)
+            return out.toByteArray()
+        }
+
+        /** A byte stream whose end can be cut back and whose earlier bytes can be patched (counts written before their records). */
+        private class Blob : java.io.ByteArrayOutputStream() {
+            fun cut(size: Int) { count = size }
+            fun patch(at: Int, v: Int) { buf[at] = v.toByte() }
+        }
+
+        /** Encodes OVERLAY_FRAMES piece [piece] of [blob] (frames [version]) into [out] at [off]; returns its length. */
+        fun encodeFramesPiece(out: ByteArray, off: Int, version: Int, blob: ByteArray, piece: Int): Int {
+            encodeLayoutPiece(out, off, version, blob, piece)
+            return Wire.OVERLAY_FRAMES_PLAIN
         }
 
         /** Pieces [blob] takes. */

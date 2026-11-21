@@ -55,6 +55,26 @@ class EngineDevicesTest {
         assertEquals(0, e.snapshot().gamepad.buttons)
     }
 
+    @Test fun severalTapsBetweenSnapshotsEachShow() {
+        // A mouse wheel's notches mapped to a button: three notches between two snapshots are three presses.
+        val e = engine(key(AndroidKey.BUTTON_A, OutputTarget.Pad(GamepadButton.A)))
+        e.snapshot()
+        repeat(3) {
+            e.setKey(xbox, AndroidKey.BUTTON_A, true)
+            e.setKey(xbox, AndroidKey.BUTTON_A, false)
+        }
+        val shown = (0 until 8).map { e.snapshot().gamepad.buttons }
+        assertEquals(listOf(A, 0, A, 0, A, 0, 0, 0), shown)
+        // A reset drops queued taps too.
+        repeat(3) {
+            e.setKey(xbox, AndroidKey.BUTTON_A, true)
+            e.setKey(xbox, AndroidKey.BUTTON_A, false)
+        }
+        e.reset()
+        assertEquals(0, e.snapshot().gamepad.buttons)
+        assertEquals(0, e.snapshot().gamepad.buttons)
+    }
+
     @Test fun releaseAndRepressBetweenSnapshotsShowsTheGap() {
         val e = engine(key(AndroidKey.BUTTON_A, OutputTarget.Pad(GamepadButton.A)))
         e.setKey(xbox, AndroidKey.BUTTON_A, true)

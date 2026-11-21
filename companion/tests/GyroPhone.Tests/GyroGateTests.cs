@@ -31,9 +31,9 @@ public class GyroGateTests
     [Fact]
     public void SizesAndRoundTrip()
     {
-        Assert.Equal(285, PcGyroTail.Size);
-        Assert.Equal(355, Wire.StateGyroPlain);
-        Assert.Equal(383, PacketType.Size(PacketType.StateGyro));
+        Assert.Equal(334, PcGyroTail.Size);
+        Assert.Equal(404, Wire.StateGyroPlain);
+        Assert.Equal(432, PacketType.Size(PacketType.StateGyro));
         Assert.True(PacketType.Size(PacketType.StateGyro) <= Wire.MaxDatagram);
         Assert.Equal(16, WelcomeFlags.PcGyro);
         Assert.Equal(40, Wire.PadGyroPlain);
@@ -47,20 +47,25 @@ public class GyroGateTests
         t.Config.Inertia[0] = true; t.Config.Linear[2] = true;
         t.Config.Routes.Add(new GyroMath.Route(2, GyroMath.Route.MouseX, -1f));
         t.Config.Routes.Add(new GyroMath.Route(1, GyroMath.Route.Pad + 3, 0.5f));
+        t.Up[3 + 2] = 16384; t.Up[0] = -16384;
+        t.Config.Space[0] = 1; t.Config.Space[2] = 2;
         t.Tightening = 2.5f; t.Smoothing = 8f;
         var b = new byte[PcGyroTail.Size];
         t.Encode(b);
-        // Layout: flags, n, seq, time, then sample 1 at 8 + 9, totals at 80, config at 104, routes at 138.
+        // Layout: flags, n, seq, time, then sample 1 at 8 + 15, totals at 128, config at 152, routes at 186,
+        // the spaces byte last.
         Assert.Equal(3, b[0]);
         Assert.Equal(2, b[1]);
         Assert.Equal(0x98, b[4]);
-        Assert.Equal(0x50, b[8 + 9]); // 50000 = 0xC350
-        Assert.Equal(4, b[8 + 9 + 8]);
-        Assert.Equal(0x80, b[87]); // long.MinValue's top byte
-        Assert.Equal(1 | 32, b[128]);
-        Assert.Equal(2, b[129]);
-        Assert.Equal(2, b[138]);
-        Assert.Equal(GyroMath.Route.Pad + 3, b[145]);
+        Assert.Equal(0x50, b[8 + 15]); // 50000 = 0xC350
+        Assert.Equal(4, b[8 + 15 + 8]);
+        Assert.Equal(0x40, b[8 + 15 + 14]); // up z = 1: 16384 = 0x4000, high byte
+        Assert.Equal(0x80, b[135]); // long.MinValue's top byte
+        Assert.Equal(1 | 32, b[176]);
+        Assert.Equal(2, b[177]);
+        Assert.Equal(2, b[186]);
+        Assert.Equal(GyroMath.Route.Pad + 3, b[193]);
+        Assert.Equal(1 | 2 << 4, b[PcGyroTail.Size - 1]);
 
         var d = new PcGyroTail();
         d.Decode(b);
@@ -78,6 +83,8 @@ public class GyroGateTests
         Assert.Equal(t.Config.Inertia, d.Config.Inertia);
         Assert.Equal(t.Config.Linear, d.Config.Linear);
         Assert.Equal(t.Config.Routes, d.Config.Routes);
+        Assert.Equal(t.Up, d.Up);
+        Assert.Equal(t.Config.Space, d.Config.Space);
         Assert.Equal(2.5f, d.Tightening);
         Assert.Equal(8f, d.Smoothing);
 

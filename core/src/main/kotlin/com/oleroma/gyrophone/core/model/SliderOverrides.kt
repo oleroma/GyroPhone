@@ -6,8 +6,9 @@ import kotlinx.serialization.Serializable
  * A slider's kept setting ([Workspace.sliders]): a Toggle value chip ([Mapping.setValue]) to
  * Gyro or Touch sensitivity or Tap time [target] with no end let go at [value] (Gyro counts per
  * degree, Touch its sensitivity, Tap time ms), on button [by] ("" = the touchpad). It lies over the workspace's settings in
- * effect, a held button's included, until a newer one of the same sensitivity replaces it or it
- * is reset; the settings themselves never change.
+ * effect (under a held button's own), until a newer one of the same sensitivity replaces it or it
+ * is reset; the settings themselves never change. One of a named Gyro or Touch sens is that
+ * sensitivity's value.
  */
 @Serializable
 data class SliderOverride(val target: OutputTarget, val value: Float, val by: String = "")
@@ -15,7 +16,13 @@ data class SliderOverride(val target: OutputTarget, val value: Float, val by: St
 /** Slider overrides ([SliderOverride]): saving one, laying them over the settings, naming them. */
 object SliderOverrides {
     /** The workspace setting key chip target [t] drives. */
-    fun keyOf(t: OutputTarget): String? = when (t) {
+    fun keyOf(t: OutputTarget): String? = when {
+        t is OutputTarget.GyroSens && t.named > 0 -> "named.gyro.${t.named}"
+        t is OutputTarget.TouchSens && t.named > 0 -> "named.touch.${t.named}"
+        else -> keyOfSetting(t)
+    }
+
+    private fun keyOfSetting(t: OutputTarget): String? = when (t) {
         is OutputTarget.GyroSens -> WorkspaceDefaults.gyroKey(
             when (t.axis) {
                 MotionAxis.NONE -> "sensitivity"
@@ -45,13 +52,29 @@ object SliderOverrides {
 
     /** A new override of [new] replaces one of [old]: the same sensitivity, or every axis over one axis. */
     fun replaces(new: OutputTarget, old: OutputTarget): Boolean = when (new) {
-        is OutputTarget.GyroSens -> old is OutputTarget.GyroSens && (new.axis == MotionAxis.NONE || new.axis == old.axis)
-        is OutputTarget.TouchSens -> old is OutputTarget.TouchSens && (new.axis == null || new.axis == old.axis)
+        is OutputTarget.GyroSens -> old is OutputTarget.GyroSens && (
+            if (new.named > 0 || old.named > 0) new.named == old.named else new.axis == MotionAxis.NONE || new.axis == old.axis
+            )
+        is OutputTarget.TouchSens -> old is OutputTarget.TouchSens && (
+            if (new.named > 0 || old.named > 0) new.named == old.named else new.axis == null || new.axis == old.axis
+            )
         OutputTarget.TapTime -> old == OutputTarget.TapTime
         is OutputTarget.GyroGlide -> old is OutputTarget.GyroGlide && (new.axis == MotionAxis.NONE || new.axis == old.axis)
         is OutputTarget.TiltRange -> old is OutputTarget.TiltRange && (new.axis == null || new.axis == old.axis)
         else -> false
     }
+
+    /**
+     * [w]'s overrides that a chip still keeps: one kept by a touch control ([SliderOverride.by]) goes
+     * once none of that control's chips sets that setting (the chip was removed or now sets
+     * another). The touchpad's and controllers' ones stay.
+     */
+    fun live(w: Workspace): List<SliderOverride> = if (w.sliders.none { it.by.isNotEmpty() }) w.sliders else w.sliders.filter { o ->
+        o.by.isEmpty() || w.mappings.any { m -> m.target == o.target && MappingProfiles.touchId(m.source) == o.by }
+    }
+
+    /** [w] without overrides no chip keeps any more ([live]). */
+    fun pruned(w: Workspace): Workspace = live(w).let { if (it.size == w.sliders.size) w else w.copy(sliders = it) }
 
     /** [w] with chip [m]'s [value] as its slider override, replacing older ones of that sensitivity (newest wins). */
     fun put(w: Workspace, m: Mapping, value: Float): Workspace {
@@ -75,16 +98,12 @@ object SliderOverrides {
                 r = gyroValue(r, o.target, o.value); continue
             }
             val t = o.target as? OutputTarget.GyroSens ?: continue
+            if (t.named > 0) continue
             val v = o.value
-            r = when (t.axis) {
-                MotionAxis.NONE -> r.copy(
-                    sensitivity = v, yawSensitivity = null, pitchSensitivity = null, rollSensitivity = null,
-                    yawScale = null, pitchScale = null, rollScale = null,
-                )
-                MotionAxis.YAW -> r.copy(yawSensitivity = v, yawScale = null)
-                MotionAxis.PITCH -> r.copy(pitchSensitivity = v, pitchScale = null)
-                MotionAxis.ROLL -> r.copy(rollSensitivity = v, rollScale = null)
-            }
+            r = if (t.axis == MotionAxis.NONE) r.copy(
+                sensitivity = v, yawSensitivity = null, pitchSensitivity = null, rollSensitivity = null,
+                yawScale = null, pitchScale = null, rollScale = null, yawLink = null, pitchLink = null, rollLink = null,
+            ) else r.withSensitivity(t.axis, v)
         }
         return r
     }
@@ -115,15 +134,22 @@ object SliderOverrides {
         var r = t
         for (o in list) {
             val s = o.target as? OutputTarget.TouchSens ?: continue
+            if (s.named > 0) continue
             val v = o.value
             r = when (s.axis) {
-                null -> r.copy(sensitivity = v, moves = r.moves?.map { it.copy(sensitivity = null, scale = null) })
-                StickAxis.X -> r.withMove(MoveSlot.X1) { it.copy(sensitivity = v, scale = null) }
-                StickAxis.Y -> r.withMove(MoveSlot.Y1) { it.copy(sensitivity = v, scale = null) }
+                null -> r.copy(sensitivity = v, moves = r.moves?.map { it.copy(sensitivity = null, scale = null, link = null) })
+                StickAxis.X -> r.withMove(MoveSlot.X1) { it.copy(sensitivity = v, scale = null, link = null) }
+                StickAxis.Y -> r.withMove(MoveSlot.Y1) { it.copy(sensitivity = v, scale = null, link = null) }
             }
         }
         return r
     }
+
+    /** Named Gyro sens ([touch] false) or Touch sens [n]'s kept value in [list], or null when none set it. */
+    fun named(list: List<SliderOverride>, touch: Boolean, n: Int): Float? = list.lastOrNull { o ->
+        val t = o.target
+        if (touch) t is OutputTarget.TouchSens && t.named == n else t is OutputTarget.GyroSens && t.named == n
+    }?.value
 
     /** The Tap time (ms) of the Tap time override of [list], or null if it has none. */
     fun tapTime(list: List<SliderOverride>): Int? =

@@ -29,6 +29,14 @@ internal sealed class OverlayForm : Form
     private readonly Action<string, Point> _clicked;
     private readonly Action<string> _picked;
     private readonly FingerTrails _trails = new();
+    /// <summary>The Keys overlay's rows (Keys only), and whether they changed since the last picture.</summary>
+    private readonly KeysBoard _keys = new();
+    /// <summary>The Keys overlay: what the phone's controller fires, worked out from each OVERLAY and the phone's table.</summary>
+    private readonly OverlayKeysReader _keysReader = new();
+    /// <summary>The Keys overlay's Always shown (<see cref="OverlayControls.Mask"/>) and the list it was made from.</summary>
+    private int _keysShown;
+    private List<string>? _keysShownOf;
+    private bool _keysUndrawn;
     // The laser pointer's trail and paint; the phone's Clear displays presses last seen (-1 = none yet).
     private readonly LaserTrace _laser = new();
     private int _clearPresses = -1;
@@ -76,8 +84,13 @@ internal sealed class OverlayForm : Form
     private static int _directFailures;
     // This window makes its handle again to try the swap chain (it took the try).
     private bool _directTry;
-    // The window shows a swap chain (constant alpha + extended frame), not UpdateLayeredWindow pictures.
+    // The window shows a swap chain (constant alpha + extended frame, or a composition swap chain), not UpdateLayeredWindow pictures.
     private bool _direct;
+    // The composition swap chain (flip model, handed to the desktop compositor as is: no copy into the window's
+    // redirection surface) failed: windows show the older copy-model swap chain until this time (0 = none).
+    private static long _composedRetryAt;
+    // This window's handle was made without a redirection surface, for a composition swap chain.
+    private bool _composedHandle;
     private byte _directAlpha;
     // A swap-chain window starts fully see-through and shows once its first pictures are on screen:
     // shown at once, it flashed its empty (white) surface for a moment.
@@ -126,7 +139,8 @@ internal sealed class OverlayForm : Form
         _drawPicture = DrawPicture;
         _presentPicture = PresentPicture;
         var s = Settings ?? new OverlaySettings();
-        Text = $"{Program.AppName} {OverlaySettings.KindName(s.Kind).ToLowerInvariant()} overlay";
+        _kind = s.Kind;
+        Text = WindowTitle(_kind, "");
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         TopMost = true;
@@ -152,7 +166,14 @@ internal sealed class OverlayForm : Form
             // It stays off the taskbar anyway: ShowInTaskbar = false gives it a hidden owner window.
             cp.ExStyle |= WsExLayered | WsExNoActivate | WsExTopmost;
             cp.ExStyle &= ~WsExAppWindow;
+            // A window that will show a composition swap chain has no redirection surface: the compositor takes
+            // its pictures straight from the swap chain. Every other way to the screen needs that surface.
+            // Decided only as the handle is made: a later look at CreateParams (a style update) keeps it.
+            if (!IsHandleCreated) _composedHandle = ComposedWanted;
+            if (_composedHandle) cp.ExStyle |= WsExNoRedirectionBitmap;
             if (ClickThrough) cp.ExStyle |= WsExTransparent;
+            // Behind the other windows: not topmost (SettingsChanged also sends it to the bottom).
+            if (!OnTop) cp.ExStyle &= ~WsExTopmost;
             return cp;
         }
     }
@@ -165,24 +186,39 @@ internal sealed class OverlayForm : Form
     /// <summary>Its frame-rate cap (0: every screen refresh), in whole refreshes (<see cref="OverlayPacing.RefreshesPerPicture"/>).</summary>
     public int MaxFps => Settings?.MaxFps ?? 60;
 
+    /// <summary>When it last had a new phone frame, or something moving, fading or changed (TickCount64 ms; <see cref="OverlayPacing.Busy"/>).</summary>
+    public long BusyAt => Volatile.Read(ref _busyAt);
+    private long _busyAt;
+
     /// <summary>The refresh rate of the screen it is on (Hz), or 0 before it is known.</summary>
     public int ScreenHz => _screenHz;
 
-    /// <summary>This window's settings, or null once removed.</summary>
+    /// <summary>This window's settings (a copy no one changes, swapped on a change), or null once removed.</summary>
     // The base Form constructor reads CreateParams before this constructor has set _engine.
-    // A plain loop: looked up several times a frame, a lambda would be a new object each time.
-    private OverlaySettings? Settings
-    {
-        get
-        {
-            if (_engine == null) return null;
-            foreach (var o in _engine.Ui.Overlays)
-                if (o.Id == _id) return o;
-            return null;
-        }
-    }
+    private OverlaySettings? Settings => _engine?.WindowSettings(_id);
 
     private bool ClickThrough => !(_engine?.Ui.OverlayEdit ?? false);
+
+    /// <summary>Above every window; false while "Behind other windows" is on, except in Edit, where it comes up to be placed.</summary>
+    private bool OnTop => !(Settings?.BehindWindows ?? false) || !ClickThrough;
+
+    // The z-order last put on the window (null: not yet, for this handle).
+    private bool? _onTopApplied;
+
+    /// <summary>On top of everything, or at the bottom of the z-order behind every window; only when it changes.</summary>
+    private void ApplyZOrder()
+    {
+        if (!IsHandleCreated) return;
+        bool top = OnTop;
+        if (_onTopApplied == top) return;
+        _onTopApplied = top;
+        if (top) SetWindowPos(Handle, HwndTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+        else
+        {
+            SetWindowPos(Handle, HwndNoTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+            SetWindowPos(Handle, HwndBottom, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+        }
+    }
 
     /// <summary>The picked window in Edit (also picked in the main window's list): drawn with a solid frame.</summary>
     public bool Selected
@@ -208,10 +244,32 @@ internal sealed class OverlayForm : Form
         }
     }
 
+    /// <summary>
+    /// The window's title, which OBS Window Capture finds it by: the kind, then its own part
+    /// (its label, or a number when there are several of its kind; "" for a lone unlabelled one,
+    /// so the title stays as it was before labels were in it). Set by the tray only when it changes.
+    /// </summary>
+    public string WindowTitlePart
+    {
+        set
+        {
+            var t = WindowTitle(_kind, value);
+            if (Text != t) Text = t;
+        }
+    }
+
+    private readonly OverlayKind _kind;
+
+    private static string WindowTitle(OverlayKind kind, string part)
+    {
+        var t = $"{Program.AppName} {OverlaySettings.KindName(kind).ToLowerInvariant()} overlay";
+        return part.Length == 0 ? t : $"{t}: {part}";
+    }
+
     /// <summary>On top of the other overlay windows, without taking focus.</summary>
     public void BringUp()
     {
-        if (IsHandleCreated) SetWindowPos(Handle, HwndTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+        if (IsHandleCreated && OnTop) SetWindowPos(Handle, HwndTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
     }
 
     /// <summary>
@@ -230,6 +288,7 @@ internal sealed class OverlayForm : Form
         long ex = GetWindowLongPtr(Handle, GwlExStyle).ToInt64();
         long want = ClickThrough ? ex | WsExTransparent : ex & ~WsExTransparent;
         if (want != ex) SetWindowLongPtr(Handle, GwlExStyle, new IntPtr(want));
+        ApplyZOrder();
         _dirty = true;
     }
 
@@ -250,6 +309,8 @@ internal sealed class OverlayForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        _onTopApplied = null;
+        ApplyZOrder();
         lock (_renderLock)
         {
             _hwnd = Handle;
@@ -260,22 +321,43 @@ internal sealed class OverlayForm : Form
             _directTry = false;
             if (tryDirect)
             {
+                bool composed = _composedHandle &&
+                    (GetWindowLongPtr(Handle, GwlExStyle).ToInt64() & WsExNoRedirectionBitmap) != 0;
                 try
                 {
-                    // The layered window shows the swap chain's alpha: constant window alpha, frame over it all.
+                    // The window's constant alpha starts at 0 (shown once it has drawn, ScheduleReveal).
                     _directAlpha = 0;
                     _revealed = false;
                     if (!SetLayeredWindowAttributes(Handle, 0, 0, LwaAlpha)) throw new Win32Exception();
-                    var margins = new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
-                    int hr = DwmExtendFrameIntoClientArea(Handle, ref margins);
-                    if (hr < 0) throw new Win32Exception(hr);
-                    _gpuSurface = new GpuSurface(Handle, Width, Height);
+                    if (!composed)
+                    {
+                        // The copy-model swap chain's alpha reaches the screen through the frame, extended over it all.
+                        var margins = new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
+                        int hr = DwmExtendFrameIntoClientArea(Handle, ref margins);
+                        if (hr < 0) throw new Win32Exception(hr);
+                    }
+                    _gpuSurface = new GpuSurface(Handle, Width, Height, composed);
                     _direct = true;
+                    if (composed && Interlocked.Exchange(ref _composedRetryAt, 0) != 0)
+                        _log("overlay: the composition swap chain works again");
                     _wasDirect = true;
                     _uiOnly = false; // that was UpdateLayeredWindow's, which a swap chain doesn't use
                     if (Interlocked.Exchange(ref _directRetryAt, 0) != 0)
                         _log("overlay: showing straight from the graphics card works again");
                     Volatile.Write(ref _directFailures, 0);
+                }
+                catch (Exception ex) when (composed)
+                {
+                    // A window without a redirection surface can show nothing else: made again for the copy-model
+                    // swap chain (the others too, as they are next made), the composition one tried again in 10 minutes.
+                    Interlocked.Exchange(ref _composedRetryAt, Environment.TickCount64 + 10 * 60_000);
+                    _log($"overlay: the composition swap chain failed, using the copy-model one, trying again in 10 minutes: {ex.GetType().Name}: {ex.Message}");
+                    try { _gpuSurface?.Dispose(); } catch (Exception) { }
+                    _gpuSurface = null;
+                    _directTry = true;
+                    _recreating = true;
+                    try { BeginInvoke(RecreateHandle); } catch (Exception) { _recreating = false; }
+                    return;
                 }
                 catch (Exception ex)
                 {
@@ -309,6 +391,9 @@ internal sealed class OverlayForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        // Showing can lift it within its band: back to the bottom when it's kept behind.
+        _onTopApplied = null;
+        ApplyZOrder();
         ScheduleReveal();
     }
 
@@ -415,7 +500,7 @@ internal sealed class OverlayForm : Form
     }
 
     /// <summary>
-    /// In Edit, the wheel over a window (<see cref="OverlayWheel"/>) picks it and resizes it, keeping
+    /// In Edit, the wheel over a window (its own WM_MOUSEWHEEL, no hook) picks it and resizes it, keeping
     /// its shape and centre: 10% a notch (<paramref name="delta"/> 120), 2% with Shift held.
     /// </summary>
     public void ScaleBy(int delta, bool fine)
@@ -457,6 +542,11 @@ internal sealed class OverlayForm : Form
             case WmMouseActivate:
                 m.Result = new IntPtr(MaNoActivate);
                 return;
+            case WmMouseWheel when !ClickThrough:
+                // Windows sends the wheel to the window under the pointer ("Scroll inactive windows", on by default).
+                ScaleBy(unchecked((short)((long)m.WParam >> 16)), ((long)m.WParam & MkShift) != 0);
+                m.Result = IntPtr.Zero;
+                return;
             case WmNcHitTest when !ClickThrough:
                 var p = PointToClient(new Point(unchecked((short)(long)m.LParam), unchecked((short)((long)m.LParam >> 16))));
                 const int grip = 14;
@@ -494,7 +584,8 @@ internal sealed class OverlayForm : Form
         if (IsDisposed || _drawStop) return;
         if (_drawThread == null)
         {
-            _drawThread = new Thread(DrawLoop) { IsBackground = true, Name = $"overlay {_id}", Priority = ThreadPriority.Normal };
+            // Below the game's and the input's threads: on a busy PC the overlays drop frames first.
+            _drawThread = new Thread(DrawLoop) { IsBackground = true, Name = $"overlay {_id}", Priority = ThreadPriority.BelowNormal };
             _drawThread.Start();
         }
         _drawWake.Set();
@@ -581,6 +672,16 @@ internal sealed class OverlayForm : Form
     {
         // A new OVERLAY that shows something new, a new layout, or now and then for the status: draw again.
         long age = _engine.OverlaySnapshot(_scene.Frame, _id, out var layout);
+        var marks = Settings is { Kind: OverlayKind.Phone or OverlayKind.Keys } ? _engine.OverlayMarks : null;
+        // The Keys overlay's rows: new keys, or rows fading out, draw again.
+        // Kept until drawn: a frame-capped tick leaves it for the next one.
+        if (Settings is { Kind: OverlayKind.Keys } ks)
+        {
+            long t = Environment.TickCount64;
+            if (!ReferenceEquals(ks.KeysShown, _keysShownOf)) { _keysShownOf = ks.KeysShown; _keysShown = OverlayControls.Mask(ks.KeysShown); }
+            var view = _keysReader.Read(marks?.Keys, _scene.Frame, t, _keysShown);
+            if (_keys.Update(view, t, Math.Clamp(ks.KeysFadeMs, 0, 2000))) _keysUndrawn = true;
+        }
         bool fresh = age >= 0 && _scene.Frame.PhoneTimeUs != _lastTime;
         long now = Environment.TickCount64;
         if (now - _screenHzAt >= 2000)
@@ -629,8 +730,9 @@ internal sealed class OverlayForm : Form
             }
         }
         // A zip back runs on with the clock, not the gyro: with no new frame this tick it is fed the beam as it was.
-        if (_laser.ZipWants && _zipFedAt != now && _feedSettings is { Kind: OverlayKind.Laser } zs && Settings == zs && age >= 0)
+        if (_laser.ZipWants && _zipFedAt != now && _feedSettings is { Kind: OverlayKind.Laser } && Settings is { Kind: OverlayKind.Laser } zs && age >= 0)
         {
+            _feedSettings = zs;
             _feedNow = now;
             FeedBeam(LaserTrace.Beam(LaserDrawing.Aimed(OverlayRenderer.PoseMatrix(_scene.Frame, zs), zs)), now);
             _zipFedAt = now;
@@ -719,11 +821,16 @@ internal sealed class OverlayForm : Form
         bool shows = fresh && ShowsNew(age);
         if (fresh && !shows) _lastTime = _scene.Frame.PhoneTimeUs;
         bool changed = _dirty || shows || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
-            !ReferenceEquals(layout, _scene.Layout) || _trails.Fading(now) || laserFading ||
-            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser || GraphMoved();
+            !ReferenceEquals(layout, _scene.Layout) || !ReferenceEquals(marks, _scene.Marks) || _trails.Fading(now) || laserFading ||
+            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser || GraphMoved() || _keysUndrawn;
         // The FPS overlay shows nothing of the phone: it draws only on a change of its own settings, and 4 times a second.
-        if (Settings is { Kind: OverlayKind.Fps }) changed = _dirty || now - _lastDrawTicks >= FpsDrawing.EveryMs;
+        bool isFps = Settings is { Kind: OverlayKind.Fps };
+        if (isFps) changed = _dirty || now - _lastDrawTicks >= FpsDrawing.EveryMs;
+        // Busy keeps the pacer at the screen's rate; the FPS overlay's own 4 pictures a second don't.
+        if (_dirty || fresh || changed && !isFps) Volatile.Write(ref _busyAt, now);
         if (!changed && now - _lastDrawTicks < 500) return;
+        // The status every 500 ms: not while it shows no phone and still shows the same "Waiting for the phone".
+        if (!changed && !_drawnLive && !(_engine.Connected && age is >= 0 and < 1_500_000) && _engine.Connected == _scene.Connected) return;
         // Faded out by "Fade when phone rests": a few pictures a second at most. Any input or movement
         // ends the rest, and the next tick draws at once.
         if (rested && !_dirty && !laserFading && now - _lastDrawTicks < OverlayPacing.RestedFrameMs) return;
@@ -732,6 +839,7 @@ internal sealed class OverlayForm : Form
         if (fps > 0 && !_dirty && _clock.Elapsed.TotalMilliseconds - _lastDrawAt < OverlayPacing.MinGapMs(_screenHz, fps)) return;
         _scene.FrameAgeUs = age;
         _scene.Layout = layout;
+        _scene.Marks = marks;
         Render();
     }
 
@@ -743,11 +851,16 @@ internal sealed class OverlayForm : Form
     private bool ShowsNew(long age)
     {
         bool live = _engine.Connected && age is >= 0 and < 1_500_000;
+        // The Keys overlay shows only the controller's trigger pulls and sticks of the frame, not the phone.
+        if (Settings is { Kind: OverlayKind.Keys }) return live != _drawnLive || !SamePad(_scene.Frame, _drawnFrame);
         if (!live || !_drawnLive || !_scene.Frame.SameShown(_drawnFrame)) return true;
         var s = Settings;
         float scale = s == null || s.FollowsCamera ? 1f : Math.Clamp(s.MotionScale, 0.25f, 4f);
         return OverlayPacing.TurnShows(OverlayFrame.TurnBetween(_drawnFrame, _scene.Frame), _drawnSize, scale);
     }
+
+    private static bool SamePad(OverlayFrame a, OverlayFrame b) =>
+        a.PadFlags == b.PadFlags && a.PadL2Pull == b.PadL2Pull && a.PadR2Pull == b.PadR2Pull && a.PadSticks.AsSpan().SequenceEqual(b.PadSticks);
 
     /// <summary>The Speed graph got new speeds since it was drawn (it scrolls with them).</summary>
     private bool GraphMoved() => Settings is { Kind: OverlayKind.Graph } && _engine.OverlaySpeeds.Version != _drawnSpeeds;
@@ -768,8 +881,8 @@ internal sealed class OverlayForm : Form
     private bool StepRestFade(long now)
     {
         var rf = _engine.Ui.OverlayRestFade;
-        // The FPS overlay doesn't show the phone: it never fades with it.
-        bool resting = ClickThrough && Settings is not { Kind: OverlayKind.Fps } && _engine.OverlayResting(_id);
+        // The FPS and Keys overlays don't show the phone: they never fade with it.
+        bool resting = ClickThrough && Settings is not { Kind: OverlayKind.Fps or OverlayKind.Keys } && _engine.OverlayResting(_id);
         float target = resting ? Math.Clamp(rf.FadeTo, 0.05f, 1f) : 1f;
         float was = _restFade;
         long dtMs = _restFadeAt == 0 ? 0 : Math.Clamp(now - _restFadeAt, 0, 100);
@@ -778,6 +891,7 @@ internal sealed class OverlayForm : Form
         else _restFade = rf.FadeMs <= 0 ? target : Math.Max(target, _restFade - (1f - target) * dtMs / rf.FadeMs);
         bool fadedOut = resting && target < 1f && _restFade <= target + 1e-4f;
         if (Math.Abs(_restFade - was) < 1e-4f) return fadedOut;
+        Volatile.Write(ref _busyAt, now); // fading: smooth, at the screen's rate
         if (!_direct)
         {
             _dirty = true;
@@ -847,6 +961,8 @@ internal sealed class OverlayForm : Form
         _drawnFiring = _scene.Firing;
         _drawnLaser = LaserStamp();
         _scene.Speeds = Settings is { Kind: OverlayKind.Graph } ? _engine.OverlaySpeeds : null;
+        _scene.Keys = Settings is { Kind: OverlayKind.Keys } ? _keys : null;
+        _keysUndrawn = false;
         _drawnSpeeds = _scene.Speeds?.Version ?? 0;
         _scene.Arranging = !ClickThrough;
         _scene.Selected = _selected;
@@ -947,6 +1063,12 @@ internal sealed class OverlayForm : Form
 
     /// <summary>The swap chain failed lately: windows copy their pictures for now (see <see cref="_directRetryAt"/>).</summary>
     private static bool DirectBroken => Environment.TickCount64 < Volatile.Read(ref _directRetryAt);
+
+    /// <summary>
+    /// The next handle is made for a composition swap chain: a swap chain would be tried (as in OnHandleCreated) and the
+    /// composition one hasn't failed lately (<see cref="_composedRetryAt"/>).
+    /// </summary>
+    private bool ComposedWanted => !GpuOff && (_directTry || !DirectBroken) && Environment.TickCount64 >= Volatile.Read(ref _composedRetryAt);
 
     /// <summary>
     /// A copied window that has just drawn (so the graphics card works) tries the swap chain again once
@@ -1074,7 +1196,7 @@ internal sealed class OverlayForm : Form
             return;
         }
         double secs = (now - _statStart) / 1000.0;
-        string by = _gpuSurface == null ? "CPU" : _gpuSurface.Direct ? "GPU" : "GPU, copied";
+        string by = _gpuSurface == null ? "CPU" : _gpuSurface.Composed ? "GPU, composed" : _gpuSurface.Direct ? "GPU" : "GPU, copied";
         _stats = _statFrames == 0
             ? $"{_title} {Width}×{Height} ({by}): idle"
             : $"{_title} {Width}×{Height} ({by}): {_statSumMs / _statFrames:0.0} ms avg, {_statMaxMs:0.0} max, {_statFrames / secs:0} fps"
@@ -1188,16 +1310,19 @@ internal sealed class OverlayForm : Form
 
     private const int GwlExStyle = -20;
     private const int WsExLayered = 0x00080000;
+    private const int WsExNoRedirectionBitmap = 0x00200000;
     private const int WsExTransparent = 0x00000020;
     private const int WsExAppWindow = 0x00040000;
     private const int WsExNoActivate = 0x08000000;
     private const int WsExTopmost = 0x00000008;
     private const int WmNcHitTest = 0x0084;
     private const int WmMouseActivate = 0x0021;
+    private const int WmMouseWheel = 0x020A;
+    private const long MkShift = 0x0004;
     private const int MaNoActivate = 3;
     private const int HtClient = 1, HtLeft = 10, HtRight = 11, HtTop = 12, HtTopLeft = 13, HtTopRight = 14;
     private const int HtBottom = 15, HtBottomLeft = 16, HtBottomRight = 17;
-    private static readonly IntPtr HwndTopmost = new(-1);
+    private static readonly IntPtr HwndTopmost = new(-1), HwndNoTopmost = new(-2), HwndBottom = new(1);
     private const uint SwpNoSize = 0x1, SwpNoMove = 0x2, SwpNoActivate = 0x10;
     private const byte AcSrcOver = 0, AcSrcAlpha = 1;
     private const int UlwAlpha = 2;

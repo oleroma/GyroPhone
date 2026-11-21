@@ -16,11 +16,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -31,18 +28,22 @@ import com.oleroma.gyrophone.link.SetupTips
 import com.oleroma.gyrophone.link.TipFix
 import com.oleroma.gyrophone.runtime.GamepadRuntime
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flow
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /** The Setup tips now, read every 2 s while shown (the link's stats and the phone's power). */
 @Composable
 internal fun rememberSetupTips(runtime: GamepadRuntime): List<SetupTip> {
     val context = LocalContext.current
-    var tips by remember { mutableStateOf(emptyList<SetupTip>()) }
-    LaunchedEffect(runtime) {
-        while (true) {
-            tips = SetupTips.of(runtime.linkStats(), PhonePower.read(context))
-            delay(2000)
+    // Polled only while the app is on screen (at least STARTED), not with the screen off.
+    val tips by remember(runtime, context) {
+        flow {
+            while (true) {
+                emit(SetupTips.of(runtime.linkStats(), PhonePower.read(context)))
+                delay(2000)
+            }
         }
-    }
+    }.collectAsStateWithLifecycle(emptyList())
     return tips
 }
 

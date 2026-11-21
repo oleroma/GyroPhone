@@ -102,14 +102,16 @@ public class PressLatencyTests
     [Fact]
     public void PhoneStatsRoundTrip()
     {
-        var p = new PhoneStats(0x01020304, 500, 620, 1, 2, 3000, 2500, 7000, 150_000, 640);
+        var p = new PhoneStats(0x01020304, 500, 620, 1, 2, 3000, 2500, 7000, 150_000, 640,
+            1500, 1800, -40_000, 5, new PhoneSetup(80, PhoneSetup.Charging | PhoneSetup.UsbNet, 315, 1, 0, 0x0bda, 0x8153, 0));
         Span<byte> b = stackalloc byte[Wire.PhoneStatsPlain];
-        Assert.Equal(32, WireCodec.EncodePhoneStats(p, b));
+        Assert.Equal(64, WireCodec.EncodePhoneStats(p, b));
         // Same bytes as the phone's phoneStatsBytesMatchThePcs.
-        Assert.Equal("04030201f4016c0201000200b80b0000c4090000581b0000f049020080020000", Convert.ToHexString(b).ToLowerInvariant());
+        Assert.Equal("04030201f4016c0201000200b80b0000c4090000581b0000f049020080020000" +
+            "dc05000008070000c063ffff050050053b010100da0b53810000000000000000", Convert.ToHexString(b).ToLowerInvariant());
         Assert.Equal(p, WireCodec.DecodePhoneStats(b));
         Assert.True(PacketType.IsPhoneToHostSealed(PacketType.PhoneStats));
-        Assert.Equal(Wire.Header + 32 + Wire.GcmTag, PacketType.Size(PacketType.PhoneStats));
+        Assert.Equal(Wire.Header + 64 + Wire.GcmTag, PacketType.Size(PacketType.PhoneStats));
     }
 }
 

@@ -46,6 +46,8 @@ class PcGyroFeed {
     private val dtUs = IntArray(RING)
     private val rate = Array(RING) { IntArray(3) }
     private val sampleAxes = IntArray(RING)
+    // Per sample the world's up in the phone's frame, in 1/[UP_SCALE] (0, 0, 0: not known).
+    private val sampleUp = Array(RING) { IntArray(3) }
     private var next = 0
     private var count = 0
     private var seq = 0
@@ -68,8 +70,11 @@ class PcGyroFeed {
      * since the sample before it, with the phone's own gyro axes [axes] on
      * ([com.oleroma.gyrophone.core.engine.MappingEngine.gyroAxes]), measured at [timeUs] (phone clock,
      * microseconds). Each rate is rounded to 1/16 deg/s with the remainder carried to the next sample.
+     * The rates are the phone's own axes (turned for the screen and the base orientation, not yet
+     * in a gyro space): the PC measures them in each axis's space ([GyroMath.Config.space]) against
+     * [up], the world's up in the phone's frame (unit length; null: not known, so every space reads Local).
      */
-    fun add(yaw: Float, pitch: Float, roll: Float, dtSeconds: Float, axes: Int, timeUs: Long = clockUs()) {
+    fun add(yaw: Float, pitch: Float, roll: Float, dtSeconds: Float, axes: Int, timeUs: Long = clockUs(), up: FloatArray? = null) {
         synchronized(lock) {
             val nowNs = monoNs()
             // The first sample after a stop (or after none for a while) has no time before it.
@@ -82,6 +87,8 @@ class PcGyroFeed {
             r[0] = quantize(0, yaw); r[1] = quantize(1, pitch); r[2] = quantize(2, roll)
             for (k in 0 until 3) totals[k] += r[k].toLong() * dt
             sampleAxes[i] = axes and MAX_AXES
+            val u = sampleUp[i]
+            for (k in 0 until 3) u[k] = if (up == null || !up[k].isFinite()) 0 else (up[k] * UP_SCALE).roundToInt().coerceIn(-UP_MAX, UP_MAX)
             next = (i + 1) % RING
             if (count < RING) count++
             seq = (seq + 1) and 0xFFFF
@@ -130,11 +137,12 @@ class PcGyroFeed {
     @Volatile var held: List<Pair<Int, GyroMath.Config>> = emptyList()
 
     /**
-     * PAD_GYRO_SET plaintext for [held] entry [i] ([Wire.PAD_GYRO_SET_PLAIN]): u8 place, u8 0, then
+     * PAD_GYRO_SET plaintext for one [held] [entry] ([Wire.PAD_GYRO_SET_PLAIN]): u8 place, u8 0, then
      * the config block as in STATE_GYRO (its tightening and smoothing unused: the tail's count).
+     * The caller passes the entry from its own copy of [held], which the gyro thread may replace.
      */
-    fun encodeHeld(out: ByteArray, off: Int, i: Int): Int {
-        val (place, c) = held[i]
+    fun encodeHeld(out: ByteArray, off: Int, entry: Pair<Int, GyroMath.Config>): Int {
+        val (place, c) = entry
         out.putU8(off, place)
         out.putU8(off + 1, 0)
         encodeConfig(out, off + 2, c, 0f, 0f)
@@ -147,6 +155,7 @@ class PcGyroFeed {
             dtUs.fill(0)
             for (r in rate) r.fill(0)
             sampleAxes.fill(0)
+            for (u in sampleUp) u.fill(0)
             next = 0; count = 0; seq = 0; newestUs = 0L
             rem.fill(0f); totals.fill(0L)
             mayMove = false
@@ -157,8 +166,9 @@ class PcGyroFeed {
      * Writes the [TAIL_SIZE] bytes STATE_GYRO adds after STATE_HIRES at [off] (layout in
      * designs/pc-gyro-spec.md): u8 flags ([FLAG_MAY_MOVE], [FLAG_CLOCK]); u8 sample count; u16
      * newest seq; u32 newest sample time (us, plus [clockOffsetUs] when known, so in the PC's
-     * clock); [RING] × 9-byte samples oldest first (u16 dtUs, i16 × 3 rate in 1/16 deg/s, u8
-     * axes), unused zero; i64 × 3 running totals of rate × dtUs; then the config block.
+     * clock); [RING] × [SAMPLE_SIZE]-byte samples oldest first (u16 dtUs, i16 × 3 rate in 1/16
+     * deg/s, u8 axes, i16 × 3 up in 1/[UP_SCALE]), unused zero; i64 × 3 running totals of rate ×
+     * dtUs; then the config block.
      */
     fun encodeTail(out: ByteArray, off: Int, clockOffsetUs: Long?) {
         synchronized(lock) {
@@ -177,6 +187,8 @@ class PcGyroFeed {
                     out.putU16(o, dtUs[i])
                     out.putI16(o + 2, rate[i][0]); out.putI16(o + 4, rate[i][1]); out.putI16(o + 6, rate[i][2])
                     out.putU8(o + 8, sampleAxes[i])
+                    val u = sampleUp[i]
+                    out.putI16(o + 9, u[0]); out.putI16(o + 11, u[1]); out.putI16(o + 13, u[2])
                 } else {
                     out.fill(0, o, o + SAMPLE_SIZE)
                 }
@@ -188,8 +200,9 @@ class PcGyroFeed {
 
     /**
      * The config block: f32 × 3 sensitivity, f32 × 3 glide ms, u8 glide bits, u8 route count, f32
-     * tightening, f32 smoothing, [MAX_ROUTES] × (u8 axis, u8 target, f32 scale), then 3 × the
-     * axis's acceleration curve ([CURVES_OFFSET]).
+     * tightening, f32 smoothing, [MAX_ROUTES] × (u8 axis, u8 target, f32 scale), 3 × the
+     * axis's acceleration curve ([CURVES_OFFSET]), then u8 spaces ([SPACES_OFFSET]: 2 bits per axis,
+     * yaw in bits 0-1, a [com.oleroma.gyrophone.core.model.GyroSpace] ordinal).
      */
     private fun encodeConfig(out: ByteArray, off: Int, c: GyroMath.Config, tightening: Float, smoothing: Float) {
         var glide = 0
@@ -231,6 +244,9 @@ class PcGyroFeed {
                 }
             }
         }
+        var spaces = 0
+        for (k in 0 until 3) spaces = spaces or ((c.space[k] and 3) shl (2 * k))
+        out.putU8(off + SPACES_OFFSET, spaces)
     }
 
     private fun ByteArray.putF32(off: Int, v: Float) = putI32(off, v.toRawBits())
@@ -256,7 +272,7 @@ class PcGyroFeed {
     companion object {
         /** Samples each STATE_GYRO repeats. */
         const val RING = 8
-        const val SAMPLE_SIZE = 9
+        const val SAMPLE_SIZE = 15
         const val SAMPLES_OFFSET = 8
         const val TOTALS_OFFSET = SAMPLES_OFFSET + RING * SAMPLE_SIZE
         const val CONFIG_OFFSET = TOTALS_OFFSET + 3 * 8
@@ -268,9 +284,15 @@ class PcGyroFeed {
         const val CURVE_SIZE = 1 + GyroCurve.MAX_POINTS * 4
         const val CURVE_AXIS_SPEED = 0x80
         const val CURVE_SMOOTH = 0x40
-        const val CONFIG_SIZE = CURVES_OFFSET + 3 * CURVE_SIZE
+        /** The per-axis gyro spaces (u8, 2 bits each). */
+        const val SPACES_OFFSET = CURVES_OFFSET + 3 * CURVE_SIZE
+        const val CONFIG_SIZE = SPACES_OFFSET + 1
         /** Bytes STATE_GYRO adds after STATE_HIRES. */
         const val TAIL_SIZE = CONFIG_OFFSET + CONFIG_SIZE
+
+        /** The up vector goes out in 1/UP_SCALE (unit length: within ±[UP_MAX]). */
+        const val UP_SCALE = 16384f
+        const val UP_MAX = 32767
 
         /** Rates go out in 1/16 deg/s. */
         const val RATE_SCALE = 16f

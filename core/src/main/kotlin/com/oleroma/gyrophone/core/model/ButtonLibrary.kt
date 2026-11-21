@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.core.model
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 
 /**
  * A touch control saved to the button library, shared by every workspace: its look and size, and
@@ -35,9 +36,22 @@ object ButtonLibrary {
 
     fun encode(buttons: List<LibraryButton>): String = json.encodeToString(listSerializer, buttons)
 
-    /** Reads a saved list; unreadable text gives null (the caller keeps the file). */
+    /**
+     * Reads a saved list; unreadable text gives null (the caller keeps the file), and so does an
+     * item this build can't read (a newer build's action or input): [decodeLenient] reads the rest.
+     */
     fun decode(text: String): List<LibraryButton>? =
         runCatching { json.decodeFromString(listSerializer, text) }.getOrNull()
+
+    /**
+     * The items of a saved list this build can read, each unreadable one left out (a newer build's
+     * action or input); null when the text is no list at all. For showing them: saving over the
+     * file is still refused while [decode] can't read it whole, so those items aren't lost.
+     */
+    fun decodeLenient(text: String): List<LibraryButton>? {
+        val items = runCatching { json.parseToJsonElement(text) as? JsonArray }.getOrNull() ?: return null
+        return items.mapNotNull { runCatching { json.decodeFromJsonElement(LibraryButton.serializer(), it) }.getOrNull() }
+    }
 
     fun newId(taken: Collection<String>): String {
         var n = 1

@@ -94,6 +94,28 @@ public class GyroMathVectorTests
     }
 
     [Fact]
+    public void EverySpaceCaseMatchesTheKotlinMath()
+    {
+        var spaces = Root().GetProperty("spaces");
+        Assert.True(spaces.GetArrayLength() > 0);
+        int i = 0;
+        Span<float> o = stackalloc float[3];
+        foreach (var k in spaces.EnumerateArray())
+        {
+            var inp = Floats(k, "in");
+            var up = Floats(k, "up");
+            var want = Floats(k, "out");
+            GyroSpaces.InSpace(inp[0], inp[1], inp[2], k.GetProperty("space").GetInt32(), up[0], up[1], up[2], o);
+            for (int a = 0; a < 3; a++)
+            {
+                Assert.True(BitConverter.SingleToInt32Bits(want[a]) == BitConverter.SingleToInt32Bits(o[a]),
+                    $"space case {i} axis {a}: {o[a]:R}, Kotlin {want[a]:R}");
+            }
+            i++;
+        }
+    }
+
+    [Fact]
     public void TailVectorDecodesAndEncodesTheSame()
     {
         var root = Root();
@@ -141,6 +163,11 @@ public class GyroMathVectorTests
                         if (s.TryGetProperty("pitch", out var pi)) Assert.Equal(pi.GetInt32(), t.Rate[i * 3 + 1]);
                         if (s.TryGetProperty("roll", out var r)) Assert.Equal(r.GetInt32(), t.Rate[i * 3 + 2]);
                         if (s.TryGetProperty("axes", out var ax)) Assert.Equal(ax.GetInt32(), t.Axes[i]);
+                        if (s.TryGetProperty("up", out var up))
+                        {
+                            int k = 0;
+                            foreach (var u in up.EnumerateArray()) { Assert.Equal(u.GetInt32(), t.Up[i * 3 + k]); k++; }
+                        }
                         i++;
                     }
                     Assert.Equal(t.Count, i);
@@ -164,6 +191,8 @@ public class GyroMathVectorTests
                     var routes = c.GetProperty("routes").EnumerateArray()
                         .Select(r => new GyroMath.Route(r.GetProperty("axis").GetInt32(), r.GetProperty("target").GetInt32(), F(r, "scale")));
                     Assert.Equal(routes, t.Config.Routes);
+                    if (c.TryGetProperty("space", out var space))
+                        Assert.Equal(space.EnumerateArray().Select(v => v.GetInt32()), t.Config.Space);
                     if (c.TryGetProperty("curves", out var curves))
                     {
                         int a = 0;

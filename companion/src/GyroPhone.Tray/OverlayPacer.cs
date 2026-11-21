@@ -20,6 +20,11 @@ namespace GyroPhone.Tray;
 /// the screen: it sleeps through the refreshes it skips and waits for the screen's next one.
 /// The refresh rate is the fastest of the screens the open windows are on.
 /// </para>
+/// <para>
+/// While no window is busy (<see cref="OverlayPacing.Busy"/>: no new phone frame, nothing moving, fading or
+/// changed for a second, as with the phone off), it ticks only every <see cref="OverlayPacing.IdleTickMs"/>,
+/// and <see cref="Wake"/> (new phone data or settings) brings it back at once.
+/// </para>
 /// </summary>
 internal sealed class OverlayPacer : IDisposable
 {
@@ -28,17 +33,23 @@ internal sealed class OverlayPacer : IDisposable
     private readonly Func<int> _wantHz;
     // The fastest refresh rate of the screens the open windows are on (0: not known yet).
     private readonly Func<int> _screenHz;
+    // Whether any open window is busy (OverlayPacing.Busy).
+    private readonly Func<bool> _busy;
     private readonly Action<string> _log;
     private readonly ManualResetEventSlim _running = new(false);
+    private readonly AutoResetEvent _wake = new(false);
+    // Waiting out a slow tick: only then does Wake set the event (not a kernel call for every phone frame).
+    private volatile bool _idle;
     private readonly Thread _thread;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private volatile bool _stop;
 
-    public OverlayPacer(Action tick, Func<int> wantHz, Func<int> screenHz, Action<string> log)
+    public OverlayPacer(Action tick, Func<int> wantHz, Func<int> screenHz, Func<bool> busy, Action<string> log)
     {
         _tick = tick;
         _wantHz = wantHz;
         _screenHz = screenHz;
+        _busy = busy;
         _log = log;
         _thread = new Thread(Loop) { IsBackground = true, Name = "overlay pacer" };
         _thread.Start();
@@ -49,6 +60,12 @@ internal sealed class OverlayPacer : IDisposable
     {
         if (on) _running.Set();
         else _running.Reset();
+    }
+
+    /// <summary>Something new to draw (any thread): an idle pacer ticks now.</summary>
+    public void Wake()
+    {
+        if (_idle) _wake.Set();
     }
 
     private void Loop()
@@ -86,6 +103,17 @@ internal sealed class OverlayPacer : IDisposable
         {
             _running.Wait();
             if (_stop) return;
+            if (!_busy())
+            {
+                // Nothing moving: a slow tick, or at once when new data comes.
+                _idle = true;
+                _wake.WaitOne(OverlayPacing.IdleTickMs);
+                _idle = false;
+                if (_stop) return;
+                Tick();
+                lastPost = ended = _clock.Elapsed.TotalMilliseconds;
+                continue;
+            }
             // The refresh rate changes with the screens the windows are on and the display mode (a game's mode).
             int hz = ScreenHz();
             if (hz != refreshHz)
@@ -115,15 +143,20 @@ internal sealed class OverlayPacer : IDisposable
             if (wait > 0.2) Wait(timer, Math.Min(wait, 1000));
             if (_stop) return;
             lastPost = _clock.Elapsed.TotalMilliseconds;
-            try
-            {
-                _tick();
-            }
-            catch (Exception e)
-            {
-                _log($"overlay tick: {e.GetType().Name}: {e.Message}");
-            }
+            Tick();
             ended = _clock.Elapsed.TotalMilliseconds;
+        }
+    }
+
+    private void Tick()
+    {
+        try
+        {
+            _tick();
+        }
+        catch (Exception e)
+        {
+            _log($"overlay tick: {e.GetType().Name}: {e.Message}");
         }
     }
 
@@ -166,6 +199,7 @@ internal sealed class OverlayPacer : IDisposable
     {
         _stop = true;
         _running.Set();
+        _wake.Set();
     }
 
     private const uint CreateWaitableTimerHighResolution = 0x2;

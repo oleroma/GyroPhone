@@ -1,3 +1,4 @@
+using GyroPhone.Host.Abstractions;
 using GyroPhone.Host.Settings;
 using GyroPhone.Protocol;
 
@@ -28,6 +29,7 @@ internal sealed class OverlayWorker
     private readonly OverlayView _view;
     private readonly SaveLevel _saveLevel;
     private readonly EventWaitHandle _wake;
+    private readonly IClock _clock;
     // Level asked for by a window or a shortcut (the companion's own side, not through the inbox).
     private readonly System.Collections.Concurrent.ConcurrentQueue<string> _levels = new();
     private Thread? _thread;
@@ -38,6 +40,7 @@ internal sealed class OverlayWorker
     private readonly OverlayFrame _sub = new();
     private readonly OverlayTotals _totals = new();
     private readonly OverlayLayoutAssembler _layout = new();
+    private readonly OverlayMarksAssembler _marks = new();
     private readonly Dictionary<string, OverlayPose> _poses = [];
     private readonly OverlayRest _rest = new();
     // The phone's Level displays presses last seen (-1 = none yet: the first count levels nothing).
@@ -49,13 +52,18 @@ internal sealed class OverlayWorker
     private SettingsSet? _nextSettings;
 
     /// <summary>A worker for <paramref name="inbox"/>, woken by <paramref name="wake"/> (set by whoever puts something in).</summary>
-    public OverlayWorker(OverlayInbox inbox, OverlayView view, SaveLevel saveLevel, EventWaitHandle wake)
+    /// <param name="clock">The clock the resting fade reads (<see cref="OverlayHost"/>'s), so "silent since" marks match it.</param>
+    public OverlayWorker(OverlayInbox inbox, OverlayView view, SaveLevel saveLevel, EventWaitHandle wake, IClock clock)
     {
+        _clock = clock;
         _inbox = inbox;
         _view = view;
         _saveLevel = saveLevel;
         _wake = wake;
     }
+
+    /// <summary>Called on the overlay thread after it published something new (a frame, layout or settings).</summary>
+    public Action? Published { get; set; }
 
     /// <summary>The Speed graph overlays' yaw, pitch and roll speeds (fed while one is shown).</summary>
     public SpeedTrace Speeds { get; } = new();
@@ -132,7 +140,7 @@ internal sealed class OverlayWorker
             if (Interlocked.Exchange(ref _skip, 0) != 0)
             {
                 _inbox.SkipAll();
-                Clear(Environment.TickCount64 * 1000, layoutToo: true);
+                Clear(_clock.NowUs, layoutToo: true);
                 changed = true;
             }
             while (_levels.TryDequeue(out var level))
@@ -151,7 +159,7 @@ internal sealed class OverlayWorker
                 }
                 if (_inbox.ClearLost())
                 {
-                    Clear(Environment.TickCount64 * 1000, layoutToo: true);
+                    Clear(_clock.NowUs, layoutToo: true);
                     changed = true;
                 }
                 if (!_inbox.TryPeek(out var s)) break;
@@ -164,7 +172,11 @@ internal sealed class OverlayWorker
                     _inbox.Release();
                 }
             }
-            if (changed) Publish();
+            if (changed)
+            {
+                Publish();
+                Published?.Invoke();
+            }
         }
         finally
         {
@@ -190,11 +202,14 @@ internal sealed class OverlayWorker
             case OverlayInbox.Kind.Layout:
                 _layout.Add(plain);
                 return true;
+            case OverlayInbox.Kind.Frames:
+                return _marks.Add(plain);
             case OverlayInbox.Kind.TotalsReset:
                 _totals.Reset();
                 return true;
             case OverlayInbox.Kind.Renew:
                 _layout.Renew();
+                _marks.Renew();
                 foreach (var pose in _poses.Values) pose.ForgetPresses();
                 _levelPresses = -1;
                 return true;
@@ -213,7 +228,11 @@ internal sealed class OverlayWorker
         _poseKinds.Clear();
         _levelPresses = -1;
         _totals.Reset();
-        if (layoutToo) _layout.Reset();
+        if (layoutToo)
+        {
+            _layout.Reset();
+            _marks.Reset();
+        }
     }
 
     private bool OnOverlay(ReadOnlySpan<byte> plain, in OverlayInbox.Slot s)
@@ -323,5 +342,5 @@ internal sealed class OverlayWorker
         _saveLevel(o.Id, up, true, null);
     }
 
-    private void Publish() => _view.PublishOverlay(_frame, _rxUs, _layout.Layout, _rest, _poses, _settings.Overlays);
+    private void Publish() => _view.PublishOverlay(_frame, _rxUs, _layout.Layout, _marks.Marks, _rest, _poses, _settings.Overlays);
 }

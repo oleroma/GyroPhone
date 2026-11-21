@@ -16,16 +16,17 @@ import java.nio.ByteOrder
  */
 class DirectReportParser(private val eventCount: Int) {
 
-    data class Event(val token: Int, val type: Int, val counter: Long, val timestampNs: Long,
-                     val x: Float, val y: Float, val z: Float)
-
     private var lastCounter = 0L
 
-    // The ring the last call read and a view of it, and the list handed back: kept, so a poll
-    // that finds nothing new makes no objects.
+    // The ring the last call read and a view of it, and the samples handed back in primitive
+    // arrays: kept, so parsing makes no objects (the gyro thread runs it at the HAL rate).
     private var wrapped: ByteArray? = null
     private var bb: ByteBuffer = ByteBuffer.allocate(0)
-    private val fresh = ArrayList<Event>(eventCount)
+    private val counters = LongArray(eventCount)
+    private val times = LongArray(eventCount)
+    private val xs = FloatArray(eventCount)
+    private val ys = FloatArray(eventCount)
+    private val zs = FloatArray(eventCount)
 
     /** The slot after the newest event seen, where the HAL writes next; -1 before any. */
     var nextSlot = -1
@@ -34,13 +35,21 @@ class DirectReportParser(private val eventCount: Int) {
     /** The newest event's counter seen so far (0 before any). */
     val newestCounter: Long get() = lastCounter
 
+    /** Event [i] of the last [parse] (0 = oldest): its counter, timestamp (ns) and values. */
+    fun counter(i: Int): Long = counters[i]
+    fun timestampNs(i: Int): Long = times[i]
+    fun x(i: Int): Float = xs[i]
+    fun y(i: Int): Float = ys[i]
+    fun z(i: Int): Float = zs[i]
+
     /**
-     * Returns events newer than the previous call, oldest first. The list is reused by the next
-     * call, so read it before parsing again.
+     * Reads the events newer than the previous call and returns how many, oldest first through
+     * [counter], [timestampNs], [x], [y] and [z]. The next call reuses them, so read them before
+     * parsing again.
      */
-    fun parse(buffer: ByteArray, token: Int): List<Event> {
+    fun parse(buffer: ByteArray, token: Int): Int {
         val bb = view(buffer)
-        fresh.clear()
+        var n = 0
         var newestSlot = -1
         var newest = lastCounter
         for (i in 0 until eventCount) {
@@ -50,22 +59,25 @@ class DirectReportParser(private val eventCount: Int) {
             val counter = bb.getInt(base + 12).toLong() and 0xFFFFFFFFL
             if (counter <= lastCounter) continue
             if (counter > newest) { newest = counter; newestSlot = i }
-            fresh += Event(
-                token = token,
-                type = bb.getInt(base + 8),
-                counter = counter,
-                timestampNs = bb.getLong(base + 16),
-                x = bb.getFloat(base + 24),
-                y = bb.getFloat(base + 28),
-                z = bb.getFloat(base + 32),
-            )
+            // Insertion by counter: the ring is nearly in order (one wrap), so this is short.
+            var k = n
+            while (k > 0 && counters[k - 1] > counter) {
+                counters[k] = counters[k - 1]; times[k] = times[k - 1]
+                xs[k] = xs[k - 1]; ys[k] = ys[k - 1]; zs[k] = zs[k - 1]
+                k--
+            }
+            counters[k] = counter
+            times[k] = bb.getLong(base + 16)
+            xs[k] = bb.getFloat(base + 24)
+            ys[k] = bb.getFloat(base + 28)
+            zs[k] = bb.getFloat(base + 32)
+            n++
         }
-        if (fresh.size > 1) fresh.sortBy { it.counter }
-        if (fresh.isNotEmpty()) {
+        if (n > 0) {
             lastCounter = newest
             nextSlot = (newestSlot + 1) % eventCount
         }
-        return fresh
+        return n
     }
 
     /**

@@ -97,6 +97,9 @@ public static class CrosshairKick
     {
         private long _shotAt = -1;
 
+        /// <summary>When the last shot was (ms), kept for the auto fire beat after the kick is over.</summary>
+        private long _lastShotAt = long.MinValue / 2;
+
         /// <summary>When the last shot was (ms), until its kick and flash are over; −1 none.</summary>
         public long ShotAt => _shotAt;
         private float _from;
@@ -151,10 +154,10 @@ public static class CrosshairKick
             }
             float now = _shotAt < 0 ? 0f : rc.At(t - _shotAt, _from);
             if (firing && !_held) Shoot(t, now);
-            else if (firing && mode == Auto && t - _shotAt >= periodMs)
+            else if (firing && mode == Auto && t - _lastShotAt >= periodMs)
             {
                 // Keeps the beat; a long stall (a dropped frame or two) starts it again from now.
-                long at = _shotAt + periodMs;
+                long at = _lastShotAt + periodMs;
                 Shoot(t - at < periodMs ? at : t, now);
             }
             _held = firing;
@@ -187,6 +190,7 @@ public static class CrosshairKick
             TowardY = ty;
             Shots++;
             _shotAt = t;
+            _lastShotAt = t;
         }
     }
 }

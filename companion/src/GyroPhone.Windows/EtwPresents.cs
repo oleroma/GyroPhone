@@ -12,7 +12,9 @@ namespace GyroPhone.Windows;
 public sealed unsafe class EtwPresents : IDisposable
 {
     public const int ErrorAccessDenied = 5;
-    private const string SessionName = "GyroPhone frame watch";
+    // Per Windows user (like the helper's pipe and task): each signed-in user's watch is their own, and
+    // stopping a leftover one never ends another user's.
+    private static readonly string SessionName = "GyroPhone frame watch " + UserSid();
     private static readonly Guid Dxgi = new("CA11C036-0102-4A2D-A6AD-F03CFED5D3C9");
     private static readonly Guid D3D9 = new("783ACA0A-790E-4D7F-8451-AA850511C6B9");
     private const ushort DxgiPresentStart = 42, DxgiPresentMpoStart = 55, D3D9PresentStart = 1;
@@ -120,6 +122,12 @@ public sealed unsafe class EtwPresents : IDisposable
     }
 
     public void Dispose() => Stop();
+
+    private static string UserSid()
+    {
+        using var id = System.Security.Principal.WindowsIdentity.GetCurrent();
+        return id.User?.Value ?? "";
+    }
 
     [UnmanagedCallersOnly]
     private static void OnEvent(IntPtr record)
