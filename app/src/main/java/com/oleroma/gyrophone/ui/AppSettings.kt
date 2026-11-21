@@ -100,6 +100,61 @@ private fun DefaultsTab(runtime: GamepadRuntime) {
     }
 }
 
+/**
+ * The automatic backups ([com.oleroma.gyrophone.data.SettingsBackups]), newest first, each with
+ * Restore (asks first; what is there now is backed up before it is replaced).
+ */
+@Composable
+private fun AutoBackups(runtime: GamepadRuntime) {
+    val context = LocalContext.current
+    // Read again whenever the section is shown and after a restore.
+    var shown by remember { mutableIntStateOf(0) }
+    val list = remember(shown) { runtime.backups() }
+    var asking by remember { mutableStateOf<com.oleroma.gyrophone.data.SettingsBackups.Entry?>(null) }
+    val fmt = remember { java.text.SimpleDateFormat("EEE d MMM, HH:mm", java.util.Locale.getDefault()) }
+    Searchable("Automatic backups", "backup restore undo lost settings wiped automatic copy") {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Automatic backups", style = MaterialTheme.typography.labelLarge)
+            Text(
+                "GP keeps the last 20 copies of your setup by itself: one every 10 minutes while you change things, " +
+                    "and one before every update, import or restore. They stay on this phone.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (list.isEmpty()) Text("None yet.", style = MaterialTheme.typography.bodySmall)
+            for (e in list) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(fmt.format(java.util.Date(e.timeMs)), style = MaterialTheme.typography.bodyMedium)
+                        Text(e.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = { asking = e }) { Text("Restore") }
+                }
+            }
+        }
+    }
+    asking?.let { e ->
+        AlertDialog(
+            onDismissRequest = { asking = null },
+            title = { Text("Restore this backup?") },
+            text = {
+                Text(
+                    "Every workspace, the Defaults and the device presets go back to how they were on " + fmt.format(java.util.Date(e.timeMs)) +
+                        ". What you have now is backed up first, so you can come back to it.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    asking = null
+                    note(context, if (runtime.restoreBackup(e)) "Restored" else "That backup can't be read")
+                    shown++
+                }) { Text("Restore", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { asking = null }) { Text("Cancel") } },
+        )
+    }
+}
+
 /** The App tab: the whole app's options, as categories the person can reorder. */
 @Composable
 private fun AppTab(runtime: GamepadRuntime) {
@@ -448,6 +503,7 @@ private fun AppTab(runtime: GamepadRuntime) {
                     }
                 }
             }
+            AutoBackups(runtime)
         },
         category(runtime, "about", "About", "Version and gyro sensor") {
             Searchable("About", "version GyroPhone gyro rate sensor Hz", gyro.source) {

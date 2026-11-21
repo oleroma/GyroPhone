@@ -937,15 +937,21 @@ internal fun ControlMappingScreen(
     /** [edit] (a Sensitivity line's link, and the chips it moves) as one Undo step, like [workspaceStep]. */
     fun settingsStep(message: String, edit: () -> Unit) = workspaceStep(message, { it }, edit)
 
+    // Each shown card's inputs ([cardInputs], set once it exists below), so [change] keeps a Buzz card buzzing.
+    var cardGroups: () -> List<List<BindableInput>> = { emptyList() }
+
     /**
      * [next] is the edited set's view; undo keeps every set as it was. [controlBefore]: the control
      * before a preset changed its settings too (undo brings them back).
      */
-    fun change(next: List<Mapping>, message: String, controlBefore: TouchControl? = null) {
+    fun change(next: List<Mapping>, message: String, controlBefore: TouchControl? = null, keepBuzz: Boolean = true) {
         val prev = allMappings
+        // A card with Buzz on keeps it for the chips added to it ([toggleBuzz] turns it off).
+        val buzzed = if (!keepBuzz) next else cardGroups().filter { Bindings.buzzes(currentMappings, it) }
+            .fold(next) { m, c -> Bindings.setBuzz(m, c, true) }
         // A zone left empty closes up: the ones after it move down.
         // Mapping something to a cleared action replaces the clear.
-        val all = Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(next, currentSet)))
+        val all = Inheritance.tidy(Bindings.compactZones(Bindings.viewSet(buzzed, currentSet)))
         if (all == prev && controlBefore == null) return
         undo.add(UndoStep(prev, controlBefore))
         if (undo.size > MAX_UNDO) undo.removeAt(0)
@@ -1091,6 +1097,19 @@ internal fun ControlMappingScreen(
     /** Every input [card] shows chips of, on all its lines (the Swipe card's directions are one action). */
     fun cardInputs(card: BindableInput): List<BindableInput> =
         groupOf(card).flatMap(::lineInputs).distinctBy { it.sources }
+
+    cardGroups = { shownNow.map(::cardInputs) }
+
+    /** The card Buzz switch: every chip of [input]'s card ticks the phone as it presses ([Mapping.buzz]), or none does. */
+    fun toggleBuzz(input: BindableInput) {
+        val ins = cardInputs(input)
+        val on = !Bindings.buzzes(currentMappings, ins)
+        change(
+            Bindings.setBuzz(currentMappings, ins, on),
+            (if (on) "Buzz on for " else "Buzz off for ") + actionTitle(currentControl, input),
+            keepBuzz = false,
+        )
+    }
 
     /** Every input the cards show chips of: each card's Wheres and zones, on each trigger. */
     fun bulkInputs(): List<BindableInput> = inputs.filterNot(Bindings::isTriggerOf).flatMap(::lineInputs).distinctBy { it.sources }
@@ -1998,6 +2017,8 @@ internal fun ControlMappingScreen(
                         onHandleDrag = { at -> startCardDrag(input, at) },
                         sens = sensLine,
                         stickOuter = stickDir(input),
+                        buzz = if (own.any { !it.nothing && !Describe.isHaptic(it) }) Bindings.buzzes(view, all) else null,
+                        onBuzz = { toggleBuzz(input) },
                         onSavePreset = if (own.any { it != OutputTarget.NoOutput }) ({
                             val title = actionTitle(control, input)
                             askName("Save card preset", title) { name ->
@@ -2887,6 +2908,9 @@ private fun ActionCard(
     modifier: Modifier = Modifier,
     /** Saves the card as a card preset (its icon with a +, before ✕ and ↺); null = nothing to save. */
     onSavePreset: (() -> Unit)? = null,
+    /** The Buzz switch: every chip of the card ticks the phone as it presses; null = no switch (nothing of its own to buzz). */
+    buzz: Boolean? = null,
+    onBuzz: () -> Unit = {},
     /** A card of several labelled lines (the Swipe card's directions), each its own row; null = the one [row]. */
     lines: List<CardLine>? = null,
     /** A gyro axis card's Sensitivity line under its chips; null = none. */
@@ -2947,6 +2971,24 @@ private fun ActionCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                if (buzz != null) {
+                    Box(
+                        Modifier
+                            .height(28.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (buzz) colors.primary else Color.Transparent)
+                            .border(1.dp, if (buzz) colors.primary else colors.outlineVariant, RoundedCornerShape(14.dp))
+                            .clickable(onClick = onBuzz)
+                            .padding(horizontal = 10.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "Buzz",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (buzz) colors.onPrimary else colors.onSurfaceVariant,
+                        )
+                    }
+                }
                 if (onSavePreset != null) {
                     Row(
                         Modifier.height(32.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = onSavePreset).padding(horizontal = 6.dp),

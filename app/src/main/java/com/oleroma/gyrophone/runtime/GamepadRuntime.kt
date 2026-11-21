@@ -59,6 +59,7 @@ import com.oleroma.gyrophone.ui.PREF_ORDER
 import com.oleroma.gyrophone.ui.TouchVisuals
 import com.oleroma.gyrophone.ui.kindKey
 import com.oleroma.gyrophone.data.ProfileStore
+import com.oleroma.gyrophone.data.SettingsBackups
 import com.oleroma.gyrophone.core.net.ByeReason
 import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.Rumble
@@ -182,10 +183,32 @@ class GamepadRuntime(context: Context) {
     /** The controller's sticks for a stick's settings picture, only while one is open. */
     val stickWatch = StickWatch()
 
+    /** This is the app's first install (not an update of one from before): what a new user gets differs. */
+    private val freshInstall: Boolean = runCatching {
+        appContext.packageManager.getPackageInfo(appContext.packageName, 0).let { it.firstInstallTime == it.lastUpdateTime }
+    }.getOrDefault(false)
+
     private val _transport = MutableStateFlow(
         prefs.getString(KEY_TRANSPORT, null)?.let { name -> TransportKind.entries.firstOrNull { it.name == name } }
-            ?: TransportKind.BLUETOOTH,
+            ?: run {
+                // A new install starts on Wi-Fi (the companion: a few ms); Bluetooth HID's 30-90 Hz is too slow to aim with.
+                // An install from before keeps Bluetooth, which it had without choosing, so its link doesn't change under it.
+                val k = if (freshInstall) TransportKind.WIFI else TransportKind.BLUETOOTH
+                prefs.edit().putString(KEY_TRANSPORT, k.name).apply()
+                k
+            },
     )
+
+    private val _firstStart = MutableStateFlow(freshInstall && !prefs.getBoolean(KEY_FIRST_START_DONE, false))
+
+    /** The first-start card shows on the pad: a new install, until the person closes it. */
+    val firstStart: StateFlow<Boolean> = _firstStart
+
+    /** The first-start card was closed: it never shows again. */
+    fun firstStartDone() {
+        _firstStart.value = false
+        prefs.edit().putBoolean(KEY_FIRST_START_DONE, true).apply()
+    }
 
     /** Which link carries input to the PC. Only one link runs at a time. */
     val transport: StateFlow<TransportKind> = _transport
@@ -1531,7 +1554,8 @@ class GamepadRuntime(context: Context) {
      * set as it was is kept beside it first ("<file>.import-<time>.bak"). Its library buttons and
      * presets join the ones here (nothing here is lost).
      */
-    fun importEverything(r: ProfileExport.Read) {
+    fun importEverything(r: ProfileExport.Read, reason: String = SettingsBackups.IMPORT) {
+        store.backups.take(reason)
         store.backup(stored, "import-" + System.currentTimeMillis())
         val set = WorkspaceMappings.store(r.profile.copy(id = stored.id, name = stored.name))
         stored = set
@@ -1542,6 +1566,19 @@ class GamepadRuntime(context: Context) {
         store.saveButtonLibrary(_buttonLibrary.value)
         _mappingPresets.value = ProfileExport.merge(_mappingPresets.value, r.presets, { it.id }, { b, id -> b.copy(id = id) }, MappingPresets::newId)
         store.saveMappingPresets(_mappingPresets.value)
+    }
+
+    /** The automatic backups, newest first ([SettingsBackups]). */
+    fun backups(): List<SettingsBackups.Entry> = store.backups.list()
+
+    /**
+     * Brings back backup [e] like Import everything (a backup of now is taken first, so a restore
+     * can be undone by restoring that one). False when it holds no workspace set this app uses.
+     */
+    fun restoreBackup(e: SettingsBackups.Entry): Boolean {
+        val r = store.backups.read(e, stored.id) ?: return false
+        importEverything(r, SettingsBackups.RESTORE)
+        return true
     }
 
     /** Live value of a phone-side source (for highlighting pressed controls). */
@@ -2021,6 +2058,7 @@ class GamepadRuntime(context: Context) {
         /** A capped direct channel is tried again on a return to the app only this long after it was found capped. */
         private const val DIRECT_RETRY_MS = 10 * 60_000L
         private const val KEY_TRANSPORT = "transport"
+        private const val KEY_FIRST_START_DONE = "first_start_done"
         private const val KEY_ORIENTATION = "screen_orientation"
         private const val KEY_PAD_ONLY_INPUT = "pad_only_input"
         private const val KEY_PAD_ONLY_HARDWARE = "pad_only_hardware"

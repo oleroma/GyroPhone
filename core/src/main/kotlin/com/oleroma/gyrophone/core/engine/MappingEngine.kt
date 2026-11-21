@@ -132,6 +132,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** Per axis id: the tuning of the physical stick it is part of (null = raw), from the pinned preset ([Workspace.stickTunings]). */
     private val axisStick = arrayOfNulls<StickTuning>(AXIS_SLOTS)
 
+    /** Pad sticks with flick stick on ([StickTuning.flick]): id, X axis, Y axis. */
+    private var padFlicks: List<Triple<String, Int, Int>> = emptyList()
+    private var anyPadFlick = false
+
 
     /** Per axis id: the tuning of the physical trigger it is part of (null = the defaults). */
     private val axisTrigger = arrayOfNulls<TriggerTuning>(AXIS_SLOTS)
@@ -911,6 +915,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private class Dev(var device: PadDevice?) {
         /** Index into [padMappings]; -1 = not attached here (the device does nothing). */
         var pad = -1
+
+        /** Its flick sticks' states, by index into [padFlicks] (made on first use). */
+        val flicks = arrayOfNulls<FlickStick>(2)
         val keys = BitSet()
 
         /** Gestures of its keys that have gesture mappings, by key code (also in [tapList]). */
@@ -1161,7 +1168,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     private val touchSticks = HashMap<String, StickState>()
 
     /** Deadzone, zones and outer ring of a touch stick; [diagonalMapped] by [StickDiagonal] ordinal. */
-    private class StickCfg(val deadzone: Float, val zones: StickZones, val diagonalMapped: BooleanArray, val outerRing: Float)
+    private class StickCfg(
+        val deadzone: Float, val zones: StickZones, val diagonalMapped: BooleanArray, val outerRing: Float,
+        /** Flick stick ([TouchControl.flick]): it turns the mouse, its mappings see it centred. */
+        val flick: Boolean = false,
+    )
+
+    /** Touch flick sticks' states, by stick id (a pad's are its [Dev.flicks]). */
+    private val flicks = HashMap<String, FlickStick>()
 
     private var stickCfgs: Map<String, StickCfg> = emptyMap()
 
@@ -1644,6 +1658,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         physDown.clear()
         axisStick.fill(null); axisTrigger.fill(null)
         for ((id, axes) in PhysicalSticks.sticks) w.stickTunings[id]?.let { axisStick[axes.first] = it; axisStick[axes.second] = it }
+        padFlicks = PhysicalSticks.sticks.filter { (id, _) -> w.stickTunings[id]?.flick == true }.map { (id, axes) -> Triple(id, axes.first, axes.second) }
+        anyPadFlick = padFlicks.isNotEmpty()
+        for (d in deviceList) d.flicks.fill(null)
         for ((id, axes) in PhysicalSticks.triggers) w.triggerTunings[id]?.let { axisTrigger[axes.first] = it; axisTrigger[axes.second] = it }
         // A physical button's gyro mappings while held (its Motion tab) route with the touch buttons' ([gyroRoutes]).
         val physGyro = physGyroOf(w)
@@ -1711,9 +1728,10 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         stickCfgs = w.touchControls.filter { it.kind == TouchKind.STICK }.associate { c ->
             c.id to StickCfg(
                 c.deadzone.coerceIn(0f, TouchControl.MAX_DEADZONE), c.zones, BooleanArray(StickDiagonal.entries.size),
-                c.outerRing.coerceIn(TouchControl.MIN_OUTER_RING, 1f),
+                c.outerRing.coerceIn(TouchControl.MIN_OUTER_RING, 1f), c.flick,
             )
         }
+        flicks.clear()
         releaseHeld()
         for (d in deviceList) d.pad = resolvePad(d.device)
         layerSet = MappingSet.BASE; layerOverrides.clear(); layerHolds.clear(); backLayers = null
@@ -1808,6 +1826,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun setAxis(device: PadDevice, axis: Int, value: Float) {
         synchronized(lock) {
             firingEvents(clock()) { deviceFor(device).setAxis(axis, value) }
+            if (anyPadFlick) flickPad(deviceFor(device))
         }
         onChange?.run()
     }
@@ -1824,6 +1843,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val dev = deviceFor(device)
                 for (i in 0 until n) dev.setAxis(axes[i], values[i])
             }
+            if (anyPadFlick) flickPad(deviceFor(device))
         }
         onChange?.run()
     }
@@ -2144,6 +2164,30 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         onChange?.run()
     }
 
+    /** [dev]'s flick sticks moved (maybe): each turns the mouse by its tuning's travel. */
+    private fun flickPad(dev: Dev) {
+        for (i in padFlicks.indices) {
+            val (_, ax, ay) = padFlicks[i]
+            val t = axisStick[ax] ?: continue
+            val x = dev.axis(ax)
+            val y = dev.axis(ay)
+            val span = (t.outer - t.inner).coerceAtLeast(0.01f)
+            val push = ((hypot(x, y) - t.inner) / span).coerceIn(0f, 1f)
+            val f = dev.flicks[i] ?: FlickStick().also { dev.flicks[i] = it }
+            flickTurn(f, x, y, push)
+        }
+    }
+
+    /** Flick stick [f] at [x], [y], pushed [push]: its turn goes to the mouse at once, by the workspace's game turn. */
+    private fun flickTurn(f: FlickStick, x: Float, y: Float, push: Float) {
+        val deg = f.update(x, y, push)
+        if (deg == 0f) return
+        val per360 = eff.gyro.gameCountsPer360
+        // Without the game's full turn GP can't tell how far a degree is: the stick does nothing then.
+        if (per360 <= 0f) return
+        mouseDx += f.counts(deg, per360 / 360f)
+    }
+
     /** Touch stick deflection, each axis in -1..1 (Y positive = down, like the HID game pad). */
     fun setTouchStick(id: String, x: Float, y: Float) {
         synchronized(lock) {
@@ -2156,6 +2200,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val dz = cfg?.deadzone ?: 0f
                 if (dz > 0f) k = if (mag <= dz) 0f else min(1f, (mag - dz) / (1f - dz)) / mag
                 v.x = x * k; v.y = y * k; mag = min(1f, mag * k)
+                if (cfg?.flick == true) {
+                    // A flick stick turns the mouse now, with this event; its mappings see it at rest.
+                    flickTurn(flicks.getOrPut(id) { FlickStick() }, v.x, v.y, mag)
+                    v.x = 0f; v.y = 0f; mag = 0f
+                }
                 v.mag = mag
                 v.zoned = cfg != null && cfg.zones != StickZones.OVERLAP
                 v.dirs = if (!v.zoned || mag == 0f) 0 else zoneDirs(v.x, v.y, cfg!!)
@@ -2768,13 +2817,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         for ((m, v) in hapticNow) {
             when (val t = m.target) {
                 is OutputTarget.Haptic -> {
-                    val feel = t.feel ?: eff.haptics
+                    val feel = t.feel ?: feelOf(m)
                     if (t.held) {
                         if (held == null || feel.strength * v > held.strength * level) {
                             held = feel; level = v
                         }
                     } else if (v >= PRESS_THRESHOLD && (hapticWas[m] ?: 0f) < PRESS_THRESHOLD &&
-                        (t.edge ?: eff.hapticEdge) != HapticEdge.RELEASE
+                        (t.edge ?: edgeOf(m)) != HapticEdge.RELEASE
                     ) {
                         hapticTicks.add(feel)
                     }
@@ -2786,19 +2835,23 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                         OutputTarget.HapticStep.MAX_STEP_PERCENT
                     )
                     val step = (v * 100f / pct + 1e-3f).toInt()
-                    if (step != (hapticSteps.put(m, step) ?: 0)) hapticTicks.add(t.feel ?: eff.haptics)
+                    if (step != (hapticSteps.put(m, step) ?: 0)) hapticTicks.add(t.feel ?: feelOf(m))
                 }
 
-                else -> Unit
+                // A Buzz chip ([Mapping.buzz]): a tick as it presses, like a haptic tick of its own.
+                else -> if (v >= PRESS_THRESHOLD && (hapticWas[m] ?: 0f) < PRESS_THRESHOLD && edgeOf(m) != HapticEdge.RELEASE) {
+                    hapticTicks.add(feelOf(m))
+                }
             }
         }
         // Ticks on release that dropped under half since the last snapshot (gone from hapticNow when at rest).
         for ((m, was) in hapticWas) {
             val t = m.target
-            if (t is OutputTarget.Haptic && !t.held && was >= PRESS_THRESHOLD &&
-                (hapticNow[m] ?: 0f) < PRESS_THRESHOLD && (t.edge ?: eff.hapticEdge) != HapticEdge.PRESS
-            ) {
-                hapticTicks.add(t.feel ?: eff.haptics)
+            if (was < PRESS_THRESHOLD || (hapticNow[m] ?: 0f) >= PRESS_THRESHOLD) continue
+            if (t is OutputTarget.Haptic && !t.held && (t.edge ?: edgeOf(m)) != HapticEdge.PRESS) {
+                hapticTicks.add(t.feel ?: feelOf(m))
+            } else if (m.buzz && !Describe.isHaptic(t) && edgeOf(m) != HapticEdge.PRESS) {
+                hapticTicks.add(feelOf(m))
             }
         }
         // Per-step ones back at 0 since the last snapshot tick on the way down too.
@@ -2807,7 +2860,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             while (it.hasNext()) {
                 val e = it.next()
                 if (e.key !in hapticNow) {
-                    if (e.value != 0) hapticTicks.add((e.key.target as OutputTarget.HapticStep).feel ?: eff.haptics)
+                    if (e.value != 0) hapticTicks.add((e.key.target as OutputTarget.HapticStep).feel ?: feelOf(e.key))
                     it.remove()
                 }
             }
@@ -2817,6 +2870,14 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         hapticLevel = level
         val w = hapticWas; hapticWas = hapticNow; hapticNow = w
     }
+
+    /** The haptic feel of [m]'s touch control ([TouchControl.haptics]), else the workspace's. */
+    private fun feelOf(m: Mapping): HapticFeel =
+        MappingProfiles.touchId(m.source)?.let { controlsById[it]?.haptics } ?: eff.haptics
+
+    /** When [m]'s ticks play: its touch control's ([TouchControl.hapticEdge]), else the workspace's. */
+    private fun edgeOf(m: Mapping): HapticEdge =
+        MappingProfiles.touchId(m.source)?.let { controlsById[it]?.hapticEdge } ?: eff.hapticEdge
 
     /** Adds one source group's outputs; its stick axes sum, then merge by largest deflection. */
     private fun accumulate(ms: List<Mapping>, dev: Dev?) {
@@ -2847,6 +2908,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 // A swipe direction's own outputs are not another input for its latch.
                 if (latchChip(m.source)) stickies.add(null, m.target)
                 sameSeen(m, dev, now)
+            }
+            // A Buzz chip ticks as it presses: watched like a haptic tick ([collectHaptics]).
+            if (m.buzz) {
+                val a = min(1f, abs(v))
+                if (a > HAPTIC_MIN_LEVEL) hapticNow[m] = max(a, hapticNow[m] ?: 0f)
             }
             when (val t = m.target) {
                 is OutputTarget.Pad -> if (v >= PRESS_THRESHOLD) when (t.button) {
@@ -4033,6 +4099,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         // A pad with its right stick on RX / RY has it on Z / RZ here too ([Dev.setAxis]).
         val layout = STICKS
         val stick = if (a in 0 until AXIS_SLOTS) axisStick[a] else null
+        // A flick stick turns the mouse itself ([flickPad]): its mappings see it at rest.
+        if (stick?.flick == true) return 0f
         return when (s.stage) {
             AxisStage.NONE -> if (stick == null) half(dev.axis(a), s.half) else stickValue(dev, s, stick, layout)
             AxisStage.OUTER -> stickValue(dev, s, stick ?: DEFAULT_STICK, layout)

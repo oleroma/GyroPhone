@@ -374,10 +374,16 @@ internal fun touchControlSettings(
             },
         )
     }
-    val items = heldCategories.orEmpty() + when {
+    // Its own haptic feel and edge, over the workspace's: for its haptic chips and Buzz cards.
+    val hapticCategory = if (control.kind == TouchKind.BUTTON || control.kind == TouchKind.STICK) listOf(
+        category(runtime, "buttonHaptics", "Haptics", "How its buzzes feel and when they play", prefKey = "button.Haptics") {
+            ButtonHaptics(runtime, control, ws, update)
+        },
+    ) else emptyList()
+    val items = heldCategories.orEmpty() + hapticCategory + when {
         surface != null -> listOf(surfaceCategory(runtime, "Swipes", surface, key, zones, touchpad = false))
         control.kind == TouchKind.STICK -> listOf(
-            category(runtime, "stick", "Stick", "Deadzone and directions", defaultOpen = true) { StickSettings(control) { c -> update { c } } },
+            category(runtime, "stick", "Stick", "Deadzone and directions", defaultOpen = true) { StickSettings(control, ws.gyro.gameCountsPer360 > 0f) { c -> update { c } } },
         )
         else -> emptyList()
     }
@@ -424,6 +430,31 @@ internal fun touchControlSettings(
     )
 }
 
+/** A button's or stick's own haptic Feel and Ticks play, each over the workspace's until reset. */
+@Composable
+private fun ButtonHaptics(runtime: GamepadRuntime, control: TouchControl, ws: Workspace, update: ((TouchControl) -> TouchControl) -> Unit) {
+    val feel = control.haptics ?: ws.haptics
+    OverrideRow(
+        "Feel", control.haptics != null, { update { it.copy(haptics = null) } },
+        hint = "How this control's haptic chips and Buzz cards feel. Unset, it follows the workspace's Haptics feel. " +
+            "They only play while a PC is connected.",
+    ) {
+        HapticFeelEditor(
+            feel,
+            held = false,
+            onChange = { f -> update { it.copy(haptics = f) } },
+            onTry = { runtime.previewHaptic(feel, false) },
+        )
+    }
+    OverrideRow(
+        "Ticks play", control.hapticEdge != null, { update { it.copy(hapticEdge = null) } },
+        hint = "When its ticks and Buzz cards play: as a chip presses, lets go, or both. Unset, it follows the workspace (" +
+            ws.hapticEdge.label + ").",
+    ) {
+        HapticEdgeChips(control.hapticEdge ?: ws.hapticEdge, onSelect = { e -> if (e != null) update { it.copy(hapticEdge = e) } })
+    }
+}
+
 /** A touch stick's outer zone: how far it is pushed for its directions' chips after the separator. */
 @Composable
 private fun TouchStickOuterSettings(control: TouchControl, key: String, update: ((TouchControl) -> TouchControl) -> Unit) {
@@ -434,6 +465,11 @@ private fun TouchStickOuterSettings(control: TouchControl, key: String, update: 
         OUTER_HINT + " Counted past the deadzone. The whole stick: every direction's outer zone uses it.",
     ) { v -> update { it.copy(outerRing = v / 100) } }
 }
+
+internal const val FLICK_HINT =
+    "Push the stick out and the camera turns at once to face that way (up is straight ahead, down behind); " +
+        "turn the stick round while it stays out and the camera turns with it. Let go and nothing moves, so the gyro keeps the fine aim. " +
+        "Its own mappings do nothing while it is on."
 
 private const val OUTER_HINT =
     "Chips after a direction's separator fire while that direction is pressed and the stick is pushed past this, " +
@@ -871,6 +907,10 @@ private fun StickTuningSettings(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         NotSearching { StickPiePicture(live ?: t, runtime.stickWatch, right = id == "rs", only) }
+        OverrideSwitch(
+            "Flick stick", FLICK_HINT + " Uses the full turn of the game set in the workspace's Gyro settings; without it the stick does nothing.",
+            t.flick, t.flick != d.flick, { set { it.copy(flick = d.flick) } },
+        ) { on -> set { it.copy(flick = on) } }
         OverrideSlider(
             key + "inner", "Inner deadzone %.0f%%", t.inner * 100, 0f..40f, 1f, t.inner != d.inner,
             { set { it.copy(inner = d.inner) } },
