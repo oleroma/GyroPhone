@@ -1476,6 +1476,12 @@ impl HostEngine {
         g.state_changed();
     }
 
+    /// The live session's id, its Diagnostics file key and the phone's address, for the companion to fetch the phone's
+    /// save over TCP (LogFileWire); None without a session.
+    pub fn log_file_access(&self) -> Option<(u32, [u8; 16], IpAddr)> {
+        self.lock(Role::Ui).sessions.active().map(|a| (a.session_id, a.log_key(), a.endpoint().ip()))
+    }
+
     /// The connected phone's address as the PC sees it (loopback over the direct USB cable), or None.
     pub fn phone_address(&self) -> Option<IpAddr> {
         self.lock(Role::Ui).sessions.active().map(|a| a.endpoint().ip())

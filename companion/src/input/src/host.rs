@@ -1407,6 +1407,10 @@ impl InputControl for InputHost {
         self.engine.save_diagnostics();
     }
 
+    fn log_file_access(&self) -> Option<(u32, [u8; 16], std::net::IpAddr)> {
+        self.engine.log_file_access()
+    }
+
     fn set_press_key_listen(&self, on: bool) {
         self.engine.set_press_key_listen(on);
     }

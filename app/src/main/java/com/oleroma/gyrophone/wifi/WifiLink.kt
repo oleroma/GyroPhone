@@ -336,7 +336,8 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     private var session: PhoneSessionFlow? = null
     private var sessionHostId: String? = null
     private var sessionHostName = ""
-    private var live: LiveSession? = null
+    // Volatile: the Diagnostics file server reads it ([logFileKey]).
+    @Volatile private var live: LiveSession? = null
     private var pairFlow: PhonePairingFlow? = null
     private val clock = ClockSync()
     private val foundSeen = HashMap<String, Long>()
@@ -1502,6 +1503,16 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     var flight: com.oleroma.gyrophone.core.debug.FlightRing?
         get() = pump.flight
         set(v) { pump.flight = v }
+
+    /**
+     * Diagnostics file fetch ([com.oleroma.gyrophone.runtime.LogFileServer]): the log key of the live session when its id
+     * is [sessionId], or null (no session, or another one).
+     */
+    fun logFileKey(sessionId: Int): ByteArray? {
+        val s = live ?: return null
+        if (s.sessionId != sessionId) return null
+        return com.oleroma.gyrophone.core.net.LogFileWire.logKey(s.kPH, s.sessionId)
+    }
 
     /** Bumped by [requestDebugSave]; LINK_INFO carries its low bits so the PC saves when they change. */
     @Volatile private var debugSaves = 0

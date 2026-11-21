@@ -687,6 +687,8 @@ internal sealed class InputHost : IHostEvents, IPairPrompt, IInputControl, IDisp
         _engine.SaveDiagnostics();
     }
 
+    public LogFileKey? LogFileAccess() => _engine.LogFileAccess();
+
     public void SetPressKeyListen(bool on) => _engine.SetPressKeyListen(on);
 
     public void SetPressKeyNotice(bool on) => _engine.SetPressKeyNotice(on);
