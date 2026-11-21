@@ -38,6 +38,8 @@ public sealed class SettingsStore
     /// </summary>
     public HostSettings Load(string defaultHostName, Action<string>? log = null)
     {
+        // Each start (an update restarts it too) keeps the file as the last run left it, before anything saves over it.
+        TakeBackup(onlyIfChanged: true, log);
         if (File.Exists(Path))
         {
             var s = Read(Path, defaultHostName, log, LockedWaitMs, out bool corrupt);
@@ -135,6 +137,49 @@ public sealed class SettingsStore
             }
             if (File.Exists(Path)) File.Replace(tmp, Path, Path + ".bak");
             else File.Move(tmp, Path);
+            if (DateTime.UtcNow - _lastBackupUtc >= BackupEvery) TakeBackup(onlyIfChanged: true, null);
+        }
+    }
+
+    /// <summary>How many automatic backups are kept in <see cref="BackupDir"/>, newest first.</summary>
+    public const int BackupsKept = 20;
+
+    /// <summary>A save takes an automatic backup when the last one is this old.</summary>
+    public static readonly TimeSpan BackupEvery = TimeSpan.FromMinutes(10);
+
+    private DateTime _lastBackupUtc = DateTime.MinValue;
+
+    /// <summary>The automatic backups' folder: "backups" beside the settings file.</summary>
+    public string BackupDir => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(Path) ?? ".", "backups");
+
+    /// <summary>
+    /// Copies the settings file to <see cref="BackupDir"/> as settings-&lt;time&gt;.json (a copy the
+    /// same as the newest one is skipped when <paramref name="onlyIfChanged"/>), keeping the newest
+    /// <see cref="BackupsKept"/>. A failure only logs: a backup never stops a start or a save.
+    /// </summary>
+    public void TakeBackup(bool onlyIfChanged, Action<string>? log)
+    {
+        lock (_writeLock)
+        {
+            try
+            {
+                if (!File.Exists(Path)) return;
+                Directory.CreateDirectory(BackupDir);
+                var now = File.ReadAllBytes(Path);
+                var old = Directory.GetFiles(BackupDir, "settings-*.json").OrderByDescending(f => f, StringComparer.Ordinal).ToList();
+                _lastBackupUtc = DateTime.UtcNow;
+                if (onlyIfChanged && old.Count > 0 && File.ReadAllBytes(old[0]).AsSpan().SequenceEqual(now)) return;
+                var stamp = $"settings-{DateTime.Now:yyyyMMdd-HHmmss-fff}";
+                var name = System.IO.Path.Combine(BackupDir, stamp + ".json");
+                for (int n = 2; File.Exists(name); n++) name = System.IO.Path.Combine(BackupDir, $"{stamp}-{n}.json");
+                File.WriteAllBytes(name, now);
+                old.Insert(0, name);
+                foreach (var f in old.Skip(BackupsKept)) File.Delete(f);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                log?.Invoke($"settings backup failed: {e.GetType().Name}");
+            }
         }
     }
 }

@@ -59,6 +59,7 @@ import com.oleroma.gyrophone.ui.PREF_ORDER
 import com.oleroma.gyrophone.ui.TouchVisuals
 import com.oleroma.gyrophone.ui.kindKey
 import com.oleroma.gyrophone.data.ProfileStore
+import com.oleroma.gyrophone.data.SettingsBackups
 import com.oleroma.gyrophone.core.net.ByeReason
 import com.oleroma.gyrophone.core.net.PcGyroFeed
 import com.oleroma.gyrophone.core.net.Rumble
@@ -1531,7 +1532,8 @@ class GamepadRuntime(context: Context) {
      * set as it was is kept beside it first ("<file>.import-<time>.bak"). Its library buttons and
      * presets join the ones here (nothing here is lost).
      */
-    fun importEverything(r: ProfileExport.Read) {
+    fun importEverything(r: ProfileExport.Read, reason: String = SettingsBackups.IMPORT) {
+        store.backups.take(reason)
         store.backup(stored, "import-" + System.currentTimeMillis())
         val set = WorkspaceMappings.store(r.profile.copy(id = stored.id, name = stored.name))
         stored = set
@@ -1542,6 +1544,19 @@ class GamepadRuntime(context: Context) {
         store.saveButtonLibrary(_buttonLibrary.value)
         _mappingPresets.value = ProfileExport.merge(_mappingPresets.value, r.presets, { it.id }, { b, id -> b.copy(id = id) }, MappingPresets::newId)
         store.saveMappingPresets(_mappingPresets.value)
+    }
+
+    /** The automatic backups, newest first ([SettingsBackups]). */
+    fun backups(): List<SettingsBackups.Entry> = store.backups.list()
+
+    /**
+     * Brings back backup [e] like Import everything (a backup of now is taken first, so a restore
+     * can be undone by restoring that one). False when it holds no workspace set this app uses.
+     */
+    fun restoreBackup(e: SettingsBackups.Entry): Boolean {
+        val r = store.backups.read(e, stored.id) ?: return false
+        importEverything(r, SettingsBackups.RESTORE)
+        return true
     }
 
     /** Live value of a phone-side source (for highlighting pressed controls). */
