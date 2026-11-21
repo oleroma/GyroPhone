@@ -1396,6 +1396,8 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         int minutes = Set.DiagnosticsMinutes;
         string? path = SaveDebug(minutes);
+        // The phone's side at once, beside the rest (it waits for the phone, which saves at the same moment).
+        ThreadPool.QueueUserWorkItem(_ => FetchPhoneSave());
         try { _perf.Save(minutes, $"Diagnostics {DateTime.Now:HH:mm}"); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -1408,7 +1410,6 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             CopyFlight(path);
         }
         Post(Refresh);
-        FetchPhoneSave();
     }
 
     /// <summary>
@@ -1418,11 +1419,16 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     private void FetchPhoneSave()
     {
         LogFileKey? access = null;
-        try { access = In.LogFileAccess(); }
-        catch (Exception e) when (e is IOException or TimeoutException or InvalidOperationException)
+        // A phone that reconnects just then (a switch between Wi-Fi and the cable) gets a few seconds.
+        for (int i = 0; i < 10 && access == null; i++)
         {
-            _log.Write($"phone recording: not fetched ({e.GetType().Name})");
-            return;
+            if (i > 0) Thread.Sleep(1000);
+            try { access = In.LogFileAccess(); }
+            catch (Exception e) when (e is IOException or TimeoutException or InvalidOperationException)
+            {
+                _log.Write($"phone recording: not fetched ({e.GetType().Name})");
+                return;
+            }
         }
         if (access == null)
         {
