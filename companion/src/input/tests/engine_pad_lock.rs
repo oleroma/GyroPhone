@@ -426,6 +426,8 @@ fn a_slow_hand_off_names_who_held_the_lock() {
     h.engine.flush(h.now());
     ui.join().unwrap();
     release.join().unwrap();
+    // The rx thread leaves the input log's lines for the next other holder (their text is made off the input path).
+    h.engine.snapshot();
     let lines = h.hooks.recorder_lines();
     let slow: Vec<_> = lines.iter().filter(|l| l.contains("slow hand-off")).collect();
     assert_eq!(1, slow.len(), "{lines:?}");
@@ -443,6 +445,7 @@ fn a_slow_hand_off_names_the_time_in_send_input() {
     let clock = h.clock.clone();
     *h.key_mouse.on_inject.lock().unwrap() = Some(Box::new(move || clock.advance_ms(5)));
     state(&h, &mut phone, |f| f.mouse_total_x += 20);
+    h.engine.snapshot();
     let lines = h.hooks.recorder_lines();
     let slow: Vec<_> = lines.iter().filter(|l| l.contains("slow hand-off")).collect();
     assert_eq!(1, slow.len(), "{lines:?}");

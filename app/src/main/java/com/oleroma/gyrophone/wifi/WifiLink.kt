@@ -558,6 +558,19 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
         nextUsbCheckMs = 0L
     }
 
+    /** Diagnostics' setup reading for PHONE_STATS (from its own thread). */
+    fun setPhoneSetup(setup: com.oleroma.gyrophone.core.net.PhoneSetup) { pump.setup = setup }
+
+    /** The Wi-Fi standard now (4 to 7), 0 when unknown or the session runs over a cable. */
+    fun wifiGenerationNow(): Int = if (usbActive) 0 else binder.info.wifiGeneration ?: 0
+
+    /** For Diagnostics' link line: the clock sync's typical round trip and drift, or null before a ping came back. */
+    fun clockLine(): String? {
+        val typ = pump.clockRttTypUs
+        if (typ < 0) return null
+        return String.format(java.util.Locale.US, "round trip typical %.2f ms · clock drift %+.1f ppm", typ / 1000.0, pump.clockDriftPpb / 1000.0)
+    }
+
     override fun stats(): LinkStats {
         val info = if (usbActive) WifiRadioInfo() else binder.info
         val hs = hostStatus
@@ -1255,13 +1268,18 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
 
     private fun onPong(p: Pong) {
         val t4 = WifiPump.phoneUs()
-        if (clock.add(p.t1, p.t2, p.t3, t4)) {
-            clockOffsetUs = clock.offsetUs
-            rttMinUs = clock.rttMinUs
-            pump.requestLinkInfo()
-        }
-        // Every sample, not only a faster one: the best sample in the window changes as old ones leave it.
-        if (clock.hasSample) pump.clockOffsetUs = clock.offsetUs
+        val changed = clock.add(p.t1, p.t2, p.t3, t4)
+        if (!clock.hasSample) return
+        // Every sample: the offset follows the clocks' drift (ClockSync), so LINK_INFO, the PC gyro tail and
+        // PHONE_STATS always carry the current one; a big change is sent at once.
+        clockOffsetUs = clock.offsetUs
+        rttMinUs = clock.rttMinUs
+        pump.clockOffsetUs = clock.offsetUs
+        pump.clockRttMinUs = clock.rttMinUs
+        pump.clockRttTypUs = clock.rttTypUs
+        pump.clockDriftPpb = clock.driftPpb
+        pump.pongs++
+        if (changed) pump.requestLinkInfo()
     }
 
 
@@ -1479,6 +1497,11 @@ class WifiLink(context: Context, private val engine: MappingEngine) : OutputLink
     var gyroTiming: com.oleroma.gyrophone.core.debug.GyroTiming?
         get() = pump.gyroTiming
         set(v) { pump.gyroTiming = v }
+
+    /** Diagnostics' per-packet record of the STATEs sent (null while it is off). */
+    var flight: com.oleroma.gyrophone.core.debug.FlightRing?
+        get() = pump.flight
+        set(v) { pump.flight = v }
 
     /** Bumped by [requestDebugSave]; LINK_INFO carries its low bits so the PC saves when they change. */
     @Volatile private var debugSaves = 0

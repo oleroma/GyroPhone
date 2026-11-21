@@ -435,8 +435,83 @@ public sealed class HostEngine
             if (on == _diagApplied) return;
             _diagApplied = on;
             SetGcWatch(on);
+            SetStallWatch(on);
+            SetFlight(on);
             try { DiagnosticsChanged?.Invoke(on); }
             catch (Exception e) { _events.Log($"diagnostics notice failed: {e.GetType().Name}"); }
+        }
+    }
+
+    /// <summary>The exact sleep the PC stall watch uses (a high-resolution waitable timer on Windows); null: no stall watch.</summary>
+    public Func<ITickSleep>? StallSleep
+    {
+        get => _stallSleep;
+        set
+        {
+            _stallSleep = value;
+            bool on;
+            using (Lock(ByUi)) on = _settings.Diagnostics;
+            if (on) SetStallWatch(true);
+        }
+    }
+
+    private Func<ITickSleep>? _stallSleep;
+
+    /// <summary>
+    /// Diagnostics' per-packet record (<see cref="FlightRecorder"/>): made outside the engine lock, sized for the minutes
+    /// Diagnostics keeps, handed to the input log under the lock (a reference store), dropped when Diagnostics goes off.
+    /// </summary>
+    private void SetFlight(bool on)
+    {
+        FlightRecorder? f = null;
+        if (on)
+        {
+            int minutes;
+            using (Lock(ByUi)) minutes = _settings.DiagnosticsMinutes;
+            try { f = new FlightRecorder(minutes); }
+            catch (OutOfMemoryException) { _events.Log("flight record: not enough memory"); }
+        }
+        using (Lock(ByUi))
+        {
+            if (Recorder is { } r) r.Flight = f;
+        }
+    }
+
+    /// <summary>
+    /// Writes the per-packet record of the minutes Diagnostics keeps to flight-&lt;time&gt;.bin in <paramref name="folder"/>;
+    /// returns the path, or null without one. Any thread but gp-rx: the copy runs outside the engine lock.
+    /// </summary>
+    public string? SaveFlight(string folder)
+    {
+        FlightRecorder? f;
+        long now, from;
+        using (Lock(ByUi))
+        {
+            f = Recorder?.Flight;
+            now = _clock.NowUs;
+            from = now - _settings.DiagnosticsMinutes * 60_000_000L;
+        }
+        return f?.Save(folder, from, now);
+    }
+
+    private StallWatch? _stallWatch;
+
+    /// <summary>Diagnostics' PC stall watch (<see cref="StallWatch"/>): runs only while Diagnostics is on; outside the engine lock.</summary>
+    private void SetStallWatch(bool on)
+    {
+        if (_stallSleep is not { } sleep) return;
+        if (on)
+        {
+            _stallWatch ??= new StallWatch(sleep, () => _clock.NowUs);
+            _stallWatch.Start();
+        }
+        else
+        {
+            _stallWatch?.Stop();
+        }
+        using (Lock(ByUi))
+        {
+            if (Recorder is { } r) r.Stall = on ? _stallWatch : null;
         }
     }
 
@@ -458,6 +533,9 @@ public sealed class HostEngine
             if (minutes == _settings.DiagnosticsMinutes) return;
             _settings.DiagnosticsMinutes = minutes;
             _settingsDirty = true;
+            // The flight record is sized for the minutes kept: made again off the lock (this may be gp-rx).
+            if (_settings.Diagnostics && Recorder?.Flight is { } fl && fl.Minutes != minutes)
+                ThreadPool.UnsafeQueueUserWorkItem(_ => SetFlight(Volatile.Read(ref _diagApplied)), null);
         }
     }
 
@@ -542,6 +620,8 @@ public sealed class HostEngine
     private void Unlock()
     {
         bool outer = --_lockDepth == 0;
+        // gp-rx never makes the input log's text: the next other holder (the watchdog's tick at the latest) writes it.
+        bool input = _holder == ByInput;
         try
         {
             if (outer) PublishView();
@@ -550,7 +630,7 @@ public sealed class HostEngine
         {
             Monitor.Exit(_lock);
         }
-        if (outer) Recorder?.WritePending();
+        if (outer && !input) Recorder?.WritePending();
     }
 
     private readonly struct Scope(HostEngine engine) : IDisposable
@@ -1193,6 +1273,11 @@ public sealed class HostEngine
                     break;
                 }
             }
+        }
+        else if (frame && Rec is { } padRec)
+        {
+            // Only the virtual controller changed: time this hand-off too (controller-only play has slow ones as well).
+            padRec.PadHandOff(_pendingRecvUs, _clock.NowUs, _handOff);
         }
         if (frame && MeasuringButtons) _press.OnInjected(_pending.PhoneTimeUs, _clock.NowUs, ClockOffsetUs, _stats.LastLinkInfo != null);
         if (frame && _hasPendingSample)
@@ -1967,8 +2052,22 @@ public sealed class HostEngine
             uint age = unchecked((uint)(nowUs - ClockOffsetUs) - p.TimeUs);
             if (age < 10_000_000) at = nowUs - age;
         }
+        if (p.RttTypUs > 0) _stats.PhoneRttTypUs = p.RttTypUs;
         return new Perf.PhoneSecond(at, p.States, p.Packets, p.Failed, p.SlowSends, p.SendMaxUs / 1000f, p.WakeLateMaxUs / 1000f,
-            p.StateGapMaxUs / 1000f, p.PhoneTxPackets);
+            p.StateGapMaxUs / 1000f, p.PhoneTxPackets)
+        {
+            RttMinMs = p.RttMinUs >= 0 ? p.RttMinUs / 1000f : -1,
+            RttTypMs = p.RttTypUs >= 0 ? p.RttTypUs / 1000f : -1,
+            DriftPpm = p.DriftPpb / 1000f,
+            Pings = p.Pings,
+            Battery = p.Setup.BatteryPct,
+            SetupFlags = p.Setup.Flags,
+            TempDeciC = p.Setup.TempDeciC,
+            Thermal = p.Setup.Thermal,
+            UsbVendor = p.Setup.UsbVendor,
+            UsbProduct = p.Setup.UsbProduct,
+            WifiStandard = p.Setup.WifiStandard,
+        };
     }
 
     /// <summary>A Link test runs (<see cref="SetLinkTest"/>).</summary>

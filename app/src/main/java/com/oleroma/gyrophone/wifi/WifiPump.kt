@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.wifi
 import android.net.TrafficStats
 import android.os.Process
 import android.os.SystemClock
+import com.oleroma.gyrophone.core.debug.FlightRing
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.net.Bye
 import com.oleroma.gyrophone.core.net.ByeReason
@@ -14,6 +15,7 @@ import com.oleroma.gyrophone.core.net.MouseTotals
 import com.oleroma.gyrophone.core.net.OverlayFeed
 import com.oleroma.gyrophone.core.net.PacketType
 import com.oleroma.gyrophone.core.net.PcGyroFeed
+import com.oleroma.gyrophone.core.net.PhoneSetup
 import com.oleroma.gyrophone.core.net.PhoneStats
 import com.oleroma.gyrophone.core.net.PressStamp
 import com.oleroma.gyrophone.core.net.PressTime
@@ -90,6 +92,17 @@ class WifiPump(private val engine: MappingEngine) {
     /** The clock offset (host us - phone us, [com.oleroma.gyrophone.core.net.ClockSync]) of this session, or null before a clock sample. */
     @Volatile var clockOffsetUs: Long? = null
 
+    // The clock sync's round trips and drift, for PHONE_STATS (written by the receive thread).
+    @Volatile var clockRttMinUs = -1L
+    @Volatile var clockRttTypUs = -1L
+    @Volatile var clockDriftPpb = 0L
+    /** PONGs answered this session (receive thread only writes it). */
+    @Volatile var pongs = 0
+    private var pongsSent = 0
+
+    /** The phone's setup for PHONE_STATS (battery, USB adapter...), refreshed by Diagnostics' own thread. */
+    @Volatile var setup: PhoneSetup = PhoneSetup.UNKNOWN
+
     /** The PC runs a Link test (TEST_MODE): STATEs carry fake moving input at the full rate, marked LINK_TEST, instead of the engine's. */
     @Volatile var linkTest = false
     private var linkTestTick = 0
@@ -116,6 +129,12 @@ class WifiPump(private val engine: MappingEngine) {
 
     /** A Performance record runs on the PC (TEST_MODE PHONE_STATS): measure this side of the link and send PHONE_STATS each second. */
     @Volatile var phoneStats = false
+
+    /** Diagnostics' per-packet record (null while it is off): one entry per STATE sent, numbers only. */
+    @Volatile var flight: FlightRing? = null
+    // The last send's time (ns, measured only while [phoneStats]) and how late this pass woke, for [flight].
+    private var lastSendNs = 0L
+    private var passLateNs = 0L
 
     // PHONE_STATS, pump thread only, counted only while [phoneStats]: this second's sends, time in send, wake-ups and gaps.
     private var stPackets = 0
@@ -262,10 +281,12 @@ class WifiPump(private val engine: MappingEngine) {
                 idleDrainAt = now0 + IDLE_PARK_NS
             }
             val passStart = System.nanoTime()
+            passLateNs = 0L
             if (parkedUntil != 0L) {
                 // Woken early by input is fine; waking late means the thread wasn't run on time.
                 val late = passStart - parkedUntil
                 if (late > stWakeLateMaxNs) stWakeLateMaxNs = late
+                if (late > 0) passLateNs = late
                 parkedUntil = 0L
             }
             // Switch first: switchTo resets the gyro's samples, so the tail below starts from the new session's.
@@ -315,7 +336,17 @@ class WifiPump(private val engine: MappingEngine) {
                 val stateLen = WireCodec.encodeStatePlain(frame, plain, 0)
                 if (lastStateNs != 0L && now - lastStateNs > stGapMaxNs) stGapMaxNs = now - lastStateNs
                 lastStateNs = now
-                if (sendSealed(c, WireCodec.stateType(frame), stateLen)) sentCount++ else failedCount++
+                val ok = sendSealed(c, WireCodec.stateType(frame), stateLen)
+                if (ok) sentCount++ else failedCount++
+                val fl = flight
+                if (fl != null) {
+                    val sample = sampleAt != 0L && dirty
+                    val flags = (if (discrete) FlightRing.DISCRETE else 0) or
+                        (if (kind == SendScheduler.KEEPALIVE) FlightRing.KEEPALIVE else 0) or
+                        (if (!ok) FlightRing.FAILED else 0) or (if (sample) FlightRing.SAMPLE else 0)
+                    val age = if (sample) ((System.nanoTime() - sampleAt) / 1000).toInt() else -1
+                    fl.add(phoneUs(), seq, frame.phoneTimeUs, age, (lastSendNs / 1000).toInt(), (passLateNs / 1000).toInt(), flags)
+                }
                 // Only a STATE the sample changed: a keepalive carries nothing of it (a still phone's samples move nothing).
                 if (sampleAt != 0L && dirty) timing?.sent(sampleAt, System.nanoTime())
                 if (discrete && pressStamp.enabled) sendPressTime(c, frame.phoneTimeUs, now)
@@ -329,7 +360,8 @@ class WifiPump(private val engine: MappingEngine) {
             if (now >= nextPingNs) {
                 plain.putU64(0, phoneUs())
                 sendSealed(c, PacketType.PING, Wire.PING_PLAIN)
-                nextPingNs = now + SECOND_NS
+                // Diagnostics pings more often, so the clock sync and the round trip have more to go on.
+                nextPingNs = now + if (phoneStats) DIAG_PING_NS else SECOND_NS
             }
             // Each new gyro sample goes out at once; while still, every MOTION_KEEPALIVE_NS so a lost stop arrives.
             val mo = motion?.takeIf { it.wanted }
@@ -463,15 +495,28 @@ class WifiPump(private val engine: MappingEngine) {
         if ((seq.toLong() and 0xFFFF_FFFFL) >= Wire.REKEY_SEQ) c.rekeyRequested = true
         WireCodec.writeHeader(header, type, c.sessionId, seq)
         val len = ci.seal(header, src, plainLen, out)
-        if (direct?.sendDirect(c.hostAddr, out, 0, len) == true) return true
-        packet.setData(out, 0, len)
-        packet.socketAddress = c.hostAddr
         val measure = phoneStats
         val t0 = if (measure) System.nanoTime() else 0L
+        lastSendNs = 0L
+        val d = direct
+        if (d != null && d.sendDirect(c.hostAddr, out, 0, len)) {
+            // The direct USB cable: timed like a socket send.
+            if (measure) {
+                val dt = System.nanoTime() - t0
+                lastSendNs = dt
+                stPackets++; stSendNs += dt
+                if (dt > stSendMaxNs) stSendMaxNs = dt
+                if (dt >= SLOW_SEND_NS) stSlow++
+            }
+            return true
+        }
+        packet.setData(out, 0, len)
+        packet.socketAddress = c.hostAddr
         return try {
             s.send(packet)
             if (measure) {
                 val d = System.nanoTime() - t0
+                lastSendNs = d
                 stPackets++; stSendNs += d
                 if (d > stSendMaxNs) stSendMaxNs = d
                 if (d >= SLOW_SEND_NS) stSlow++
@@ -499,9 +544,17 @@ class WifiPump(private val engine: MappingEngine) {
         val tx = TrafficStats.getTotalTxPackets()
         val txDelta = if (lastTxPackets >= 0 && tx >= lastTxPackets) tx - lastTxPackets else 0L
         lastTxPackets = tx
+        val pg = pongs
+        val pingsNow = (pg - pongsSent).coerceAtLeast(0)
+        pongsSent = pg
         val p = PhoneStats(
             phoneUs().toInt(), sat16(states), sat16(stPackets), sat16(stFailed), sat16(stSlow),
             usOf(stSendNs), usOf(stSendMaxNs), usOf(stWakeLateMaxNs), usOf(stGapMaxNs), txDelta.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+            rttMinUs = clockRttMinUs.coerceIn(-1, Int.MAX_VALUE.toLong()).toInt(),
+            rttTypUs = clockRttTypUs.coerceIn(-1, Int.MAX_VALUE.toLong()).toInt(),
+            driftPpb = clockDriftPpb.coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt(),
+            pings = sat16(pingsNow),
+            setup = setup,
         )
         sendSealed(c, PacketType.PHONE_STATS, WireCodec.encodeSealedPlain(p, plain, 0))
     }
@@ -520,6 +573,8 @@ class WifiPump(private val engine: MappingEngine) {
         private const val BYE_SPACING_NS = 5_000_000L
         private const val STOP_JOIN_MS = 500L
         private const val MOTION_KEEPALIVE_NS = MotionFeed.KEEPALIVE_MS * 1_000_000L
+        /** Ping interval while Diagnostics runs (PHONE_STATS): five a second. */
+        private const val DIAG_PING_NS = 200_000_000L
         /** A send that took this long or more counts as slow in PHONE_STATS. */
         private const val SLOW_SEND_NS = 2_000_000L
 

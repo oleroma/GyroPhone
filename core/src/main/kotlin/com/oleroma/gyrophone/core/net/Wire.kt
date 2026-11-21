@@ -60,8 +60,13 @@ object Wire {
     const val MOTION_PLAIN = MotionFeed.SIZE
     /** PRESS_TIME: u32 STATE time, u32 input event time (both low 32 bits of the phone's elapsed-realtime µs). */
     const val PRESS_TIME_PLAIN = 8
-    /** PHONE_STATS: u32 time, u16 states, packets, failed, slow sends, u32 send total µs, send max µs, wake late max µs, STATE gap max µs, phone tx packets ([PhoneStats]). */
-    const val PHONE_STATS_PLAIN = 32
+    /**
+     * PHONE_STATS: u32 time, u16 states, packets, failed, slow sends, u32 send total µs, send max µs, wake late max µs,
+     * STATE gap max µs, phone tx packets; then (from 32) i32 best round trip µs, typical round trip µs, clock drift ppb,
+     * u16 pings; the setup: u8 battery %, flags, i16 battery temperature (0.1 °C), u8 thermal status, Wi-Fi standard,
+     * u16 USB network adapter vendor, product, Wi-Fi channel width MHz; 6 reserved bytes ([PhoneStats]).
+     */
+    const val PHONE_STATS_PLAIN = 64
     /** TEST_MODE: u8 [TestModeFlags], 3 reserved bytes. */
     const val TEST_MODE_PLAIN = 4
     /** CAPTURE: u8 [CaptureFlags], 3 reserved bytes. */
