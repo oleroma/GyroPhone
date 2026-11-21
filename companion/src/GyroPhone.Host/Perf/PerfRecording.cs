@@ -474,7 +474,8 @@ public sealed class PerfRecording
             if (game == null) sb.AppendLine("play tags: no game found (no program other than the desktop and GyroPhone was in front while the input moved)");
             else
             {
-                sb.AppendLine(c, $"play tags: game {game} " + (guessed ? "(a guess: in front most while the input moved; the FPS overlay names it for sure)" : "(the FPS overlay's)"));
+                sb.Append("play tags: game ").Append(game)
+                  .AppendLine(guessed ? " (a guess: in front most while the input moved; the FPS overlay names it for sure)" : " (the FPS overlay's)");
                 if (run.Playing != null) sb.AppendLine(SliceLine("playing (game in front, input moving)", run.Playing));
                 if (run.GameStill != null) sb.AppendLine(SliceLine("game in front, input still", run.GameStill));
                 if (run.Other != null) sb.AppendLine(SliceLine("everything else", run.Other));
