@@ -55,7 +55,7 @@ public static class PerfReport
             summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-top: 8px; }
             </style></head><body><main>
             <h1>GyroPhone link tests</h1>
-            <p class="sub">Each record of the Performance page, newest first. The best value in each column is in colour. Lost: phone packets lost. Late: held up more than 15 ms, with the worst delay. Pauses: the phone sent nothing for a while during input. Let go: held keys let go because the phone went silent. Bursts: stretches of link trouble. Floor: half the best round trip, the fastest the link went. Over the floor: how much slower than the fastest packets every packet of the run came, middle · slowest 1% (needs no clock guess, the number to compare). Latency: phone to PC one way, typical · slowest 1% (depends on a clock guess). Hand-offs: per 10,000 packets that took over 2 ms from arrival to Windows, and the slowest. Held up: late packets that waited on the way · inside the PC · on the phone (needs Diagnostics' stall watch). ⚠: the floor moved on the same setup. Frames only with the FPS overlay on. Busy: seconds other programs used 20% of the PC or more.</p>
+            <p class="sub">Each record of the Performance page, newest first. The best value in each column is in colour. Lost: phone packets lost. Late: held up more than 15 ms, with the worst delay. Pauses: the phone sent nothing for a while during input. Let go: held keys let go because the phone went silent. Bursts: stretches of link trouble. Floor: half the best round trip, the fastest the link went. Over the floor: how much slower than the fastest packets every packet of the run came, middle · slowest 1% (needs no clock guess, the number to compare). Latency: phone to PC one way, typical · slowest 1% (depends on a clock guess). Hand-offs: per 10,000 packets that took over 2 ms from arrival to Windows, and the slowest. Held up: late packets that waited on the way · inside the PC · on the phone (needs Diagnostics' stall watch), and "PC busy": ones that looked held up on the way in a second the whole PC's CPU was at 95% or more, so most likely waited in the PC. ⚠: the floor moved on the same setup. Frames only with the FPS overlay on. Busy: seconds other programs used 20% of the PC or more.</p>
             """);
         if (runs.Count == 0)
         {
@@ -95,7 +95,8 @@ public static class PerfReport
               .Append(Td(r.OverP99Ms >= 0 ? string.Format(ci, "{0:0.00} · {1:0.00} ms", r.OverP50Ms, r.OverP99Ms) : "–", r.OverP99Ms >= 0 && r.OverP99Ms <= bestOver))
               .Append(Td(r.HandOffMaxMs >= 0 && r.Packets > 0 ? string.Format(ci, "{0:0.0} · ≤{1:0.0} ms", SlowPer10k(r), r.HandOffMaxMs) : "–",
                   r.HandOffMaxMs >= 0 && r.Packets > 0 && SlowPer10k(r) <= bestHand))
-              .Append(Td(r.Late > 0 && r.HeldAir + r.HeldPc + r.HeldPhone > 0 ? string.Format(ci, "{0} · {1} · {2}", r.HeldAir, r.HeldPc, r.HeldPhone) : "–"))
+              .Append(Td(r.Late > 0 && r.HeldAir + r.HeldPc + r.HeldPhone + r.HeldPcBusy > 0
+                  ? string.Format(ci, "{0} · {1} · {2}", r.HeldAir, r.HeldPc, r.HeldPhone) + (r.HeldPcBusy > 0 ? string.Format(ci, " · PC busy {0}", r.HeldPcBusy) : "") : "–"))
               .Append(Td(r.LatP50Ms >= 0 ? string.Format(ci, "{0:0.0} · {1:0.0} ms", r.LatP50Ms, r.LatP99Ms) : "–", r.LatP50Ms >= 0 && Lat(r) <= bestLat))
               .Append(Td(r.LatP50Ms >= 0 ? string.Format(ci, "{0:0.0} ms", r.JitterMs) : "–"))
               .Append(Td(fr ? r.AvgFps.ToString("0", ci) : "–", fr && r.AvgFps >= bestFps))

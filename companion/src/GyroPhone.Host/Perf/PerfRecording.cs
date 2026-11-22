@@ -106,6 +106,15 @@ public sealed record PerfRun(
     public int HeldAir { get; init; }
     public int HeldPc { get; init; }
     public int HeldPhone { get; init; }
+    /// <summary>
+    /// Of the ones that waited "on the way", those in a second the whole PC's CPU was at <see cref="PcBusyCpuPct"/>% or more:
+    /// with the CPU pinned they most likely waited inside the PC (Windows' network work, the input program's
+    /// receive), which the stall watch, at above-normal priority, doesn't see. Not counted in <see cref="HeldAir"/>.
+    /// </summary>
+    public int HeldPcBusy { get; init; }
+
+    /// <summary>A late packet in a second the whole PC is this busy is put under <see cref="HeldPcBusy"/>, not on the way.</summary>
+    public const double PcBusyCpuPct = 95;
     /// <summary>Latencies that came out below zero (a wrong clock offset).</summary>
     public int NegLat { get; init; }
     /// <summary>The setup at Save (<see cref="SetupSnapshot"/>), and its changes during the run ("20:31:05 pc wifi ch 48 → ch 100").</summary>
@@ -369,6 +378,10 @@ public sealed class PerfRecording
                 hasPhone ? phone.Max(p => p.SendMaxMs) : -1, hasPhone ? phone.Max(p => p.WakeLateMs) : -1,
                 hasPhone ? phone.Max(p => p.GapMaxMs) : -1, phone.Sum(p => p.Failed));
             run = WithLinkNumbers(run, link, phone);
+            // "On the way" in a second the PC's CPU was pinned: most likely the PC, not the network.
+            int busyHeld = linkBySecond.Where(x => x.Value.Air > 0 && _seconds.TryGetValue(x.Key, out var ls) && ls.Load is { } ld && ld.CpuPct >= PerfRun.PcBusyCpuPct)
+                .Sum(x => x.Value.Air);
+            if (busyHeld > 0) run = run with { HeldAir = run.HeldAir - busyHeld, HeldPcBusy = busyHeld };
 
             var sb = new StringBuilder();
             var c = CultureInfo.InvariantCulture;
@@ -385,7 +398,11 @@ public sealed class PerfRecording
             if (run.HandOffMaxMs >= 0)
                 sb.AppendLine(c, $"hand-off to Windows: slowest {run.HandOffMaxMs:0.0} ms, over 2 ms {run.SlowHandOffs} ({Per10k(run.SlowHandOffs, run.Packets)} per 10k packets), longest engine lock wait {run.LockWaitMaxMs:0.0} ms");
             if (run.Late > 0)
-                sb.AppendLine(c, $"late packets held up: on the way {run.HeldAir}, inside the PC {run.HeldPc}, phone paused {run.HeldPhone}");
+            {
+                sb.Append(c, $"late packets held up: on the way {run.HeldAir}, inside the PC {run.HeldPc}, phone paused {run.HeldPhone}");
+                if (run.HeldPcBusy > 0) sb.Append(c, $", PC busy (CPU {PerfRun.PcBusyCpuPct:0}%+, most likely waited in the PC) {run.HeldPcBusy}");
+                sb.AppendLine();
+            }
             if (run.StallMaxMs >= 0)
                 sb.AppendLine(c, $"PC stall watch: latest wake {run.StallMaxMs:0.0} ms, {run.Stalls} wakes 2 ms or more late");
             if (frames)
