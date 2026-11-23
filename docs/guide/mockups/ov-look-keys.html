@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script><script src="ovlib.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const { tog, seg, chips, sl, sls, t, sub, hint, div, btn, pick, card, swatches } = ov, ind = ov.in;
+const T = s => w.querySelector(s + ' .tl') || w.querySelector(s);
+// Look tab of a Keys overlay (no Turning tab: it doesn't turn with the phone).
+const w = ovCol(st, 'Keys', ['Window', 'Look'], 'Look',
+  card('Keys', hint('The keys of the controller attached to the phone that are pressed now and what they send, as "A = Space", and what the touch buttons you press send, as "Space". A new press takes the top free row and stays there while held; let go, its row fades out and leaves a gap the next press fills, so nothing moves. Each stick that sends something has its own row on top: a plus with its keys lit as you push it, or a dot where it points when it moves the mouse or a gamepad stick. Rows that don\'t fit the window aren\'t shown: make it taller in Edit.')
+    + sl('Fade out', .2, '0.4 s', 'fade') + tog('Transparent background', 'No panel behind the rows: only the keys show over the game.', 0, 'tr')
+    + t('Always shown') + hint('These stay on top, dim until they fire; the others show only while they fire.')
+    + chips(['LS', 'RS', 'D-pad', 'A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'Select', 'Start', 'Home', 'Capture', 'LS click', 'RS click'], [0, 1], 'shown'))
+  + card('Colours', swatches([['Controller keys', argb(0xFFFFFFFF)], ['What they send', argb(0xFF7CC4FF)], ['Toggles on', argb(0xFF8FE39A)], ['Sticks at rest', argb(0x66FFFFFF)], ['Panel', argb(0x99000000)]]) + btn('Default colours', 'def', '↺')));
+marks(st, [[1, textBox(st, w.querySelector('#fade .v')), 'r'], [2, T('#tr'), 'r'], [3, w.querySelectorAll('#shown span')[11], 'r']]);
+</script></body></html>

@@ -27,9 +27,9 @@ Every settings page (`ui/SettingsLayout.kt`) has a low **search** field on top (
 | Gyro | Jitter cutoff (0–5 °/s), Smoothing below (0–10 °/s); **Slider cap**: the top of every gyro sensitivity slider and Gyro sensitivity range, in RWS for workspaces that know their game (1–50) and in counts per degree for the others (4–250) | both off; 10 RWS, 64 counts/° |
 | Gyro display | Parallax edge (Turn / Tilt); **Fade when phone rests**: the gyro displays on the pad (the kinds with a Level) fade while the phone lies within Flat within (10°) of the tilt each was last leveled at, turning slower than Still below (0.5 °/s, live speed shown), with no finger, key or controller stick in use, for Quiet for (3 s); they fade to Fade to (30 %) over Fade over (0.5 s) and come back at once. Same rules as the PC's overlays ([PC overlays](pc-overlays.md)); never in edit mode (`RestDetector`, `TouchVisuals.restFade`, `GyroDisplay.levelUp`) | parallax off; fade on |
 | Controllers | The attached game pads | |
-| Vibration | **Vibrate with game rumble**: the game's rumble on the PC's virtual controller (Xbox 360 or DualShock 4 output) vibrates the phone, as strong as the stronger motor, while a PC is connected; a haptic mapping's hold or tick plays over it. The two short buzzes and two beeps (notification volume, so silent mode mutes the beeps) when a Performance test record starts or ends on the PC play either way (`PhoneHaptics.rumble`, `buzz`) | on |
+| Vibration | **Vibrate with game rumble**: the game's rumble on the PC's virtual controller (Xbox 360 or DualShock 4 output) vibrates the phone, as strong as the stronger motor, while a PC is connected; a haptic mapping's hold or tick plays over it (`PhoneHaptics.rumble`). The protocol's notice buzz (RUMBLE pattern BUZZ, `PhoneHaptics.buzz`) would play either way, but nothing on the PC sends it any more: the timed Performance test record that used it is gone. The switch's hint on the phone still mentions it | on |
 | Performance | **Read USB controllers directly** ([Controllers](phone-controllers.md), on); **Diagnostics** (every log at once, on both sides; see [Pad UI](phone-pad-ui.md#diagnostics)), **Keep** 1–30 min, **Save** while on | Diagnostics off: nothing is measured or logged; Keep 3 min. While on the pad shows a red dot ([Pad UI](phone-pad-ui.md)); the phone also keeps a per-packet flight record (saved as `phone-<time>-flight.bin` beside the text save) and sends its setup (battery, charging, temperature, Wi-Fi, USB adapter) to the PC each second ([PC companion](pc-companion.md#diagnostics)) |
-| Backup | **Export everything**, **Import everything…** (asks first; see [Workspaces](phone-workspaces.md)) | — |
+| Backup | **Export everything**, **Import everything…** (asks first; see [Workspaces](phone-workspaces.md)); **Automatic backups**: the newest copies the app took by itself (on an update, before an import or restore, and every 10 minutes after a save), each with its time, why it was taken and **Restore** (asks first; see [Workspaces](phone-workspaces.md#storage)) | — |
 | About | Version, gyro source and measured rate | — |
 
 ### Defaults page
@@ -40,7 +40,7 @@ The Defaults' workspace settings (the same categories as a workspace's, below), 
 
 ## Workspace settings
 
-Opened by ⚙ in edit mode, the touchpad's Settings in its mapping editor, or the Settings menu (`ui/PadMenu.kt` `WorkspaceSettingsPage`, `ui/WorkspaceSettingsList.kt`). **Rename, Duplicate, Delete** (not the last) and **Copy mappings from…** sit fixed at the top, outside the scrolling list: in the title row in landscape, under the title in portrait (`WorkspaceTopBar`). Chips on top of the list pick **Base** or a layer: a layer's page shows only what a layer may set.
+Opened by the sliders icon in edit mode's menu or the touchpad's Settings in its mapping editor (`ui/PadMenu.kt` `WorkspaceSettingsPage`, `ui/WorkspaceSettingsList.kt`). **Rename, Duplicate, Delete** (not the last), **Copy mappings from…** and **Export** sit fixed at the top, outside the scrolling list: in the title row in landscape, under the title in portrait (`WorkspaceTopBar`). Chips on top of the list pick **Base** or a layer: a layer's page shows only what a layer may set.
 
 | Category | Contents | Defaults |
 |---|---|---|
@@ -54,11 +54,11 @@ Opened by ⚙ in edit mode, the touchpad's Settings in its mapping editor, or th
 
 ## A touch control's or controller button's settings
 
-The mapping editor's ⚙ Settings (`ui/ControlSettingsScreen.kt`, `ui/ActionSettings.kt`): **Look** (label, shape, layer, size), **Layers** (when the workspace has layers), **Press** (the button's How its chips follow; with Toggle also its **Initial state** On / Off and **Also ends on**, see [Mapping](phone-mapping.md#when-how-and-where)), **Gyro** and **Touchpad** (the gyro's sensitivity and acceleration and the touchpad cursor's speed while it is held), then **Swipes** for a button that swipes (the same groups as the workspace Touchpad, its own over the workspace's) or **Stick** for a stick. A controller button's ⚙ has the same Gyro and Touchpad tabs.
+The mapping editor's ⚙ Settings (`ui/ControlSettingsScreen.kt`, `ui/ActionSettings.kt`): **Look** (label, shape, layer, size), **Layers** (when the workspace has layers), **Press** (the button's How its chips follow; with Toggle also its **Initial state** On / Off and **Also ends on**, see [Mapping](phone-mapping.md#when-how-and-where)), **Gyro** and **Touchpad** (the gyro's sensitivity and acceleration and the touchpad cursor's speed while it is held), **Haptics** (its own Feel and Ticks play over the workspace's, for its haptic chips and Buzz cards), then **Swipes** for a button that swipes (the same groups as the workspace Touchpad, its own over the workspace's) or **Stick** for a stick (deadzone, zones, Outer ring and **Flick stick**, see [Mapping](phone-mapping.md#touch-controls)). A controller button's ⚙ has the same Gyro and Touchpad tabs; a controller stick's tuning has Flick stick at its top ([Controllers](phone-controllers.md#stick-and-trigger-tuning)).
 
 ## Connection page
 
-`ui/ConnectScreen.kt`. The top switch picks **Bluetooth** (default) or **Wi-Fi**.
+`ui/ConnectScreen.kt`. The top switch picks **Bluetooth** or **Wi-Fi** (Wi-Fi on a fresh install; an install from before that keeps what it had, see [Connection](phone-connection.md)).
 
 | Category | Contents | Default |
 |---|---|---|

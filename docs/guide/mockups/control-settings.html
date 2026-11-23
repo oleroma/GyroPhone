@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script>
+<style>.sc{height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--m3-outline);display:inline-flex;align-items:center;font-size:14px;font-weight:500}.sc.on{background:var(--m3-secondary-container);border-color:var(--m3-secondary-container);color:var(--m3-on-secondary-container)}.lr{display:flex;align-items:center;gap:8px}.lr b{width:52px;font-size:14px;font-weight:500}.ttl{width:220px;flex:none;padding-right:12px}.ttl .t{font-size:16px;font-weight:500}.ttl .s{font-size:12px;color:var(--m3-on-variant)}</style></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const s = phone(st, 'land');
+// ControlSettingsScreen.kt in SettingsDialog: title and subtitle, the fixed actions beside them in landscape, Mappings, Done;
+// then the search and category tabs (Look, Press, Gyro, Touchpad, Haptics, Swipes for a button) and Look's settings.
+const p = el(s, `<div class="page" style="padding-left:34px">
+ <div class="pbar" style="padding:4px 4px 2px 12px;border:0"><div class="ttl"><div class="t">LMB</div><div class="s">Touchpad button · lmb · settings</div></div>
+  <div style="flex:1;display:flex;gap:6px;align-items:center"><span class="btn outl" style="height:32px">Duplicate</span><span class="btn outl" id="save" style="height:32px">Save as preset</span><span class="tb" style="color:#F2B8B5">Delete</span></div>
+  <span class="btn outl" id="map">Mappings</span><span class="tb" id="done">Done</span></div>
+ <div class="search"><span>⌕</span><span>Search settings</span></div>
+ <div class="fchips"><span class="fchip on">Look</span><span class="fchip">Press</span><span class="fchip">Gyro</span><span class="fchip">Touchpad</span><span class="fchip">Haptics</span><span class="fchip">Swipes</span></div>
+ <div class="card" style="padding:10px 12px;display:flex;flex-direction:column;gap:6px">
+  <div class="lr"><b>Shape</b><span class="sc on">Circle</span><span class="sc">Square</span></div>
+  <div class="lr"><b>Layer</b><span class="sc on">Auto</span><span class="sc">Front</span><span class="sc">Back</span></div>
+  <div class="hint" style="margin:0">Where controls overlap, the smaller one (by its shortest side) is in front. Front / Back override that.</div>
+  <div class="set" style="padding:0"><div><div class="name">Shares touches</div><div class="hint" style="margin:0">Also works when a finger lands on a control in front of it, so both fire.</div></div><span class="sw"></span></div>
+  <div class="set" style="padding:0"><div><div class="name">Own opacity</div><div class="hint" style="margin:0">Off: the workspace's control opacity (100%).</div></div><span class="sw"></span></div>
+  <div class="set" style="padding:0"><div><div class="name">Fade when idle</div><div class="hint" style="margin:0">A few seconds after its last touch it fades, never fully: it stays visible. A touch brings it back at once.</div></div><span class="sw"></span></div>
+ </div></div>`);
+marks(st, [[1, p.querySelector('#save'), 't'], [2, p.querySelector('#map'), 't'], [3, p.querySelector('.fchip'), 'l']]);
+</script></body></html>

@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const s = phone(st, 'land');
+drawControls(s, LAYOUTS.controller, 900, 412);
+drawControls(s, LAYOUTS.nav, 900, 412);
+capsules(s, [['+', 'ws'], ['Controller ✎', 'wsOn'], ['WASD', 'ws'], ['Keyboard', 'ws'], ['Controller', 'devices'], ['App', 'app'], ['Defaults', 'defaults'], ['Connection', 'conn']], { left: 58, top: 8 });
+// PadScreen.kt FirstStartDialog (a new install only).
+el(s, '<div class="scrim"></div>');
+const d = el(s, `<div class="dialog" style="left:170px;top:26px;width:560px">
+ <h3>Welcome to GP</h3>
+ <p>1. On your Windows PC, install the GP companion: GyroPhoneCompanion.exe from github.com/oleroma/GyroPhone/releases. It gives the fastest link, a few milliseconds.</p>
+ <p>2. In the companion's tray menu choose Pair new phone… Then open Connection here, tap Scan QR code and point the camera at its code.</p>
+ <p>3. That's it: the phone connects by itself from now on. The workspaces at the top (← →) come with gyro mouse and touchpad ready.</p>
+ <p style="font-size:12px">Hold the phone and play: the gyro moves the mouse. Settings and the Connection page show tips when something could be faster.</p>
+ <div class="acts"><span class="btn text">Got it</span><span class="btn text">Open Connection</span></div></div>`);
+const b = d.querySelectorAll('.btn');
+marks(st, [[1, b[1], "b"], [2, b[0], "b"]]);
+</script></body></html>

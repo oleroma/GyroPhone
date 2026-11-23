@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script><script src="ovlib.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const { tog, seg, chips, sl, sls, t, sub, hint, div, btn, pick, card, swatches } = ov, ind = ov.in;
+const T = s => w.querySelector(s + ' .tl') || w.querySelector(s);
+// Colours tab of a Pointer overlay (OverlaySettings LaserColors); Smooth way colours shows while it paints or uses the crosshair.
+const L = [['Sphere', 0x332A3446], ['Grid', 0x66FFFFFF], ['Pitch axis (X, right)', 0xFFFF5A5A], ['Yaw axis (Y, up)', 0xFF5ADB6E], ['Roll axis (Z, along the beam)', 0xFF5AA8FF], ['Beam', 0xFFFF3B3B], ['Dot', 0xFFFFFFFF],
+  ['Moving right', 0xFFFF8080], ['Moving left', 0xFF008080], ['Moving up', 0xFF80FF80], ['Moving down', 0xFF800080], ['Moving toward you', 0xFF8080FF], ['Moving away', 0xFF808000], ['Paint outline', 0xB3000000],
+  ['Rifle', 0xFF5A616C], ['Fire', 0xFFFF4A3D], ['Fire behind', 0xFF8A1E18], ['Aim', 0xFF4AD8FF], ['Aim behind', 0xFF185A8A], ['Crosshair outline', 0xFF0E1116], ['Crosshair aiming', 0xFFFF2020], ['Flash', 0xFFFFE04A], ['Flash end', 0xFFFF7A1A]];
+const w = ovCol(st, 'Pointer', ['Window', 'Look', 'Paint', 'Snake', 'Colours', 'Turning'], 'Colours',
+  card('Colours', swatches(L.map(([n, c]) => [n, '#' + (c & 0xFFFFFF).toString(16).padStart(6, '0')])) + tog('Smooth way colours', 'Small shakes don\'t flicker the Moving colours.', 1, 'sm')
+    + hint('The Moving colours colour the crosshair, and with Colour by the way it moved the paint, by the way the beam moves (right, left, up, down, toward you, away, as the sphere\'s axes are when it isn\'t turned). A slant blends its ways\' colours, as a normal map does. The crosshair keeps the last way\'s colour when you stop. With Colour by where it is, the paint takes them by where on the sphere it lands: its right side Moving right\'s colour, and so on.')
+    + btn('Default colours', 'def', '↺')), 820);
+const sw = [...w.querySelectorAll('.ovsw span')];
+marks(st, [[1, sw[11], 'r'], [2, sw[20], 'r'], [3, T('#sm'), 'r'], [4, w.querySelector('#def'), 'r']]);
+</script></body></html>

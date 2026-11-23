@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const tog = (t, h, on) => `<div class="wtog"><i${on ? ' class="on"' : ''}></i><div class="tx"><span class="tl">${t}</span>${h ? `<div class="wsub">${h}</div>` : ''}</div></div>`;
+const q = s => w.querySelector(s), qa = s => [...w.querySelectorAll(s)];
+// SettingsPages.cs ConnectionPage: Wi-Fi checks, USB cable, This app. Each check: dot, name, state, fix button.
+const chk = (ok, n, s, fix, id) => `<div class="wchk"${id ? ` id="${id}"` : ''}><span class="dot" style="background:${ok ? '#6FD49A' : '#F2B84B'}"></span><span>${n}</span><span class="s">${s}</span>${fix ? `<span class="wbtn">${fix}</span>` : '<span></span>'}</div>`;
+const w = pcWin(st, 'Connection', `<h1>Connection</h1>
+ <div class="wcard"><div class="ct">Wi‑Fi</div>${chk(1, 'Network', 'Private or Domain: the phone can reach this PC.')}<div class="wdiv"></div>${chk(0, 'Firewall', 'No firewall rule: Windows may block the phone.', 'Allow…', 'fw')}</div>
+ <div class="wcard"><div class="ct">USB cable</div>${tog('Use the phone over the USB cable', 'Lowest latency: the phone talks to this app through the cable, no network. Needs USB debugging on the phone.')}<div class="wdiv"></div>${chk(1, 'USB tethering', 'Allowed: the phone works over a tethering cable.')}</div>
+ <div class="wcard"><div class="ct">This app</div>${chk(1, 'Server', 'Listening on UDP port 47800.')}<div class="wdiv"></div>${chk(0, 'Administrator', 'Not running as administrator.', 'Restart as administrator', 'adm')}
+  <div class="whint" style="margin-top:8px">Games that run as administrator only take input from an app that does too.</div></div>`, { width: 1060 });
+marks(st, [[1, q('#fw .wbtn'), 'r'], [2, q('.tl'), 'r'], [3, q('#adm .wbtn'), 'r']]);
+</script></body></html>

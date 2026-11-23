@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script><script src="ovlib.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const { tog, seg, chips, sl, sls, t, sub, hint, div, btn, pick, card, swatches } = ov, ind = ov.in;
+const T = s => w.querySelector(s + ' .tl') || w.querySelector(s);
+// "Fade when phone rests" in the Overlays page's left column (stacked slider rows), for every overlay.
+const w = el(st, '<div></div>');
+ovCol(w, '', [], '', '', 10).remove();
+const c = el(w, `<div class="win ovw" style="--w:330px"><div class="tbar">GyroPhone Companion</div><div class="main">${card('Fade when phone rests',
+  tog('Fade overlays', 'While the phone lies still at its Level with nothing pressed. Any touch or movement brings them back at once.', 1, 'on')
+  + sls('Flat within', 9 / 44, '10°', 'flat') + sls('Still below', .4 / 4.9, '0.5°/s', 'still') + hint('Phone now: 0.12°/s, still')
+  + sls('Quiet for', 2.5 / 29.5, '3.0 s', 'quiet') + sls('Fade to', 25 / 95, '30%', 'to') + sls('Fade over', .5 / 3, '0.5 s')
+  + tog('Also when the phone stops sending', 'Screen off, app closed or link stopped, for the quiet time.', 1, 'silent'))}</div></div>`);
+const T2 = s => c.querySelector(s + ' .tl') || c.querySelector(s);
+marks(st, [[1, T2('#on'), 'r'], [2, c.querySelector('#flat .hd .v'), 'r'], [3, c.querySelector('#still .hd .v'), 'r'], [4, c.querySelector('#quiet .hd .v'), 'r'], [5, c.querySelector('#to .hd .v'), 'r'], [6, c.querySelector('#silent i'), 'l']]);
+</script></body></html>

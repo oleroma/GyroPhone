@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script><script src="ovlib.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const { tog, seg, chips, sl, sls, t, sub, hint, div, btn, pick, card, swatches } = ov, ind = ov.in;
+const T = s => w.querySelector(s + ' .tl') || w.querySelector(s);
+// Window tab of a Phone overlay (OverlaysPage.cs "Window tab"), then Save as preset and Remove, under every tab.
+const w = ovCol(st, 'Phone', ['Window', 'Look', 'Turning'], 'Window',
+  card('', tog('Show this overlay', '', 1, 'show') + tog('Behind other windows', 'For recording: the game covers it, so you don\'t see it while playing, but OBS Window Capture still records it (capture method "Windows 10 (1903 and up)"). Edit brings it to the front to place it.', 0, 'behind'))
+  + card('Background', seg(['Transparent', 'Green', 'Dark'], 0, 'bg') + hint('Green is for an OBS chroma key.') + sl('Opacity', 1, '100%', 'op'))
+  + card('Drawing', t('Quality') + seg(['High', 'Balanced', 'Fast'], 0, 'q') + hint('High: smooth edges and text. Balanced: smooth edges, plain text. Fast: no smoothing, the quickest for big windows.')
+    + t('Frame rate') + seg(['Every screen refresh', 'About 60 fps', 'About 30 fps'], 1, 'fps') + hint('Every screen refresh is smoothest but costs more. About 60 and 30 draw every 2nd, 3rd… refresh, whichever is nearest (72 fps on a 144 Hz screen, 55 on 165 Hz), so the motion stays even. Draw times are in companion.log with Overlay timing log on, and in the Debug window (Performance page, Debug).'))
+  + btn('Save as preset', 'save', '☆') + '<div class="wrow"><span class="wbtn red" id="rm">Remove this overlay</span></div>');
+marks(st, [[1, T('#show'), 'r'], [2, T('#behind'), 'r'], [3, w.querySelector('#bg'), 'r'], [4, w.querySelector('#op .v'), 'r'], [5, w.querySelector('#q'), 'r'], [6, w.querySelector('#fps'), 'r'], [7, w.querySelector('#save'), 'r'], [8, w.querySelector('#rm'), 'r']]);
+</script></body></html>

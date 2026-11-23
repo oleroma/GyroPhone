@@ -1,0 +1,41 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script>
+<style>.dialog h3{font-size:22px;margin-bottom:10px}.dialog .h{font-size:14px;font-weight:500;margin:8px 0 6px;color:var(--m3-on-surface)}.dialog .fr{display:flex;flex-wrap:wrap;gap:6px}.dialog .fchip{height:32px}.dialog .hn{font-size:12px;line-height:16px;color:var(--m3-on-variant);margin-top:4px}.dialog .tbn{color:var(--m3-primary);font-size:14px;font-weight:500;padding:9px 0 3px}.dialog .acts{margin-top:10px}.sc{height:230px;overflow:hidden;position:relative}.sc .in{position:absolute;left:0;right:0}</style></head><body>
+<div class="stage pad-callouts" id="st" style="flex-direction:column"></div>
+<script>
+const st = document.getElementById('st');
+// MappingChipDialog.kt (an AlertDialog: title and Cancel/Done stay, the middle scrolls) for the Key R chip on
+// LMB's Touch card (Long press), in landscape. Top: opened; bottom: the same dialog scrolled to its end.
+const body = `<div class="h">Where</div><div class="fr" id="where"><span class="fchip on">Touch</span><span class="fchip">Inside</span><span class="fchip">Outside</span></div>
+ <div class="hn">A touch that starts on the button.</div>
+ <div class="h">When</div><div class="fr" id="when"><span class="fchip">On touch</span><span class="fchip">Tap</span><span class="fchip on">Long press</span><span class="fchip">Double tap</span><span class="fchip">Release</span></div>
+ <div class="hn">Starts at the long-press time (then it is no tap), ends when you let go.</div>
+ <div class="h">How</div><div class="fr" id="how"><span class="fchip on">Held</span><span class="fchip">Once</span><span class="fchip">Toggle</span><span class="fchip">Repeat</span></div>
+ <div class="hn">Follows the button's How (Held). Pick one to set its own.</div>
+ <div class="hn">Pressed for as long as it lasts.</div>
+ <div id="cyc"><div class="set" style="padding:8px 0 0"><div class="name">Cycle</div><span class="sw"></span></div>
+ <div class="hn">The mappings of this action with Cycle on take turns: each time it fires, the next one.</div></div>
+ <div class="tbn" id="adv">Advanced ▾</div>
+ <div class="tbn"><span style="display:inline-block;width:13px;height:6px;border-radius:3px;background:currentColor;margin-right:6px;vertical-align:middle"></span>Save as chip preset</div>
+ <div class="tbn" id="rm" style="color:#F2B8B5">Remove this mapping</div>`;
+function shot(scrolled) {
+  const s = phone(st, 'land');
+  el(s, `<div class="page" style="padding-left:34px"><div class="mtop" style="background:#211F26"><span class="lbl">LMB</span><span class="tb" style="font-size:18px">☺</span><span class="setchip on">Base</span><span class="tb">+ Layer</span><span class="tb">Sort ▾</span></div></div>`);
+  el(s, '<div class="scrim"></div>');
+  const d = el(s, `<div class="dialog" style="left:170px;top:14px;width:512px;padding:20px 24px 14px"><h3>Key R · Touch</h3>
+   <div class="sc"><div class="in">${body}</div></div><div class="acts"><span class="btn text">Cancel</span><span class="btn text">Done</span></div></div>`);
+  const sc = d.querySelector('.sc'), inn = d.querySelector('.in');
+  // Scrolled: the content starts at the first whole row that still lets the last row (Remove) show.
+  if (scrolled) { const rm = inn.querySelector('#rm'), need = rm.offsetTop + rm.offsetHeight + 2 - sc.offsetHeight;
+    const first = [...inn.children].find(e => e.offsetTop >= need);
+    inn.style.top = -first.offsetTop + 'px'; }
+  // Rows the bottom edge would cut are left out, so nothing shows half.
+  const b = sc.getBoundingClientRect();
+  inn.querySelectorAll('.h, .fr, .hn, .tbn, #cyc').forEach(e => { const r = e.getBoundingClientRect();
+    if (e.closest('#cyc') && e.id !== 'cyc') return;
+    if (r.bottom > b.bottom + 1) e.style.visibility = 'hidden'; });
+  return d;
+}
+const a = shot(false), b = shot(true);
+marks(st, [[1, a.querySelector('#where .fchip'), 'l'], [2, a.querySelector('#when .fchip'), 'l'], [3, a.querySelector('#how .fchip'), 'l'],
+  [4, b.querySelector('#adv'), 'l', { dx: -6 }], [5, b.querySelector('#rm'), 'l', { dx: -6 }]]);
+</script></body></html>

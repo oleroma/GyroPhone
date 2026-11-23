@@ -1,0 +1,49 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><style>.qr{width:180px;height:180px;background:#fff;padding:12px;border-radius:8px;display:grid;grid-template-columns:repeat(21,1fr)}.qr i{display:block}.step{display:flex;gap:10px;font-size:14px;margin:8px 0}.kv{font-size:14px;margin-top:6px}.kv span{display:inline-block;width:110px;color:#9aa3b2}.step b{width:24px;height:24px;border-radius:50%;background:#2F384B;display:flex;align-items:center;justify-content:center;font-size:12px;flex:none}</style></head><body>
+<div class="stage pad-callouts" id="st" style="align-items:center;flex-direction:column"></div>
+<script>
+const st = document.getElementById('st');
+// PairWindow.cs: "Pair a new phone", a QR code and three steps; code pairing below.
+const w = el(st, `<div class="win" style="width:560px"><div class="tbar">Pair new phone - GyroPhone Companion<span class="wc"><span>✕</span></span></div>
+ <div style="padding:22px 26px"><h1 style="font-size:24px;margin-bottom:14px">Pair a new phone</h1>
+ <div class="wcard" style="display:flex;gap:20px;align-items:center"><div class="qr" id="qr"></div>
+ <div><div style="font-size:16px;font-weight:600;margin-bottom:6px">Scan with the phone</div>
+  <div class="step"><b>1</b>Open GyroPhone and go to the Connect tab.</div>
+  <div class="step"><b>2</b>Choose Wi‑Fi and tap "Scan QR code".</div>
+  <div class="step"><b>3</b>Point the camera here. The phone connects by itself.</div></div></div>
+ <div class="wcard" style="margin-top:16px"><div class="ct">Or pair with a code</div><div class="wsub" style="margin:0">In the Connect tab tap this PC under "Found on this network". If it isn't listed, use "Enter PC address".</div>
+  <div class="kv"><span>PC name</span>DESKTOP-PC</div><div class="kv"><span>Address</span>192.168.1.20</div><div class="kv"><span>UDP port</span>47800</div>
+  <div class="wsub" style="margin:6px 0 0">Pairing is open for 1:52.</div></div>
+ </div></div>`);
+// A made-up QR-like pattern (not a real code).
+const qr = w.querySelector('#qr'); let seed = 7;
+for (let i = 0; i < 441; i++) { const x = i % 21, y = (i / 21) | 0; seed = (seed * 9301 + 49297) % 233280;
+  const finder = (x < 7 && y < 7) || (x > 13 && y < 7) || (x < 7 && y > 13);
+  const on = finder ? (Math.max(Math.abs((x % 14 > 6 ? x - 17 : x - 3)), Math.abs((y % 14 > 6 ? y - 17 : y - 3))) !== 2 && Math.max(Math.abs((x % 14 > 6 ? x - 17 : x - 3)), Math.abs((y % 14 > 6 ? y - 17 : y - 3))) <= 3) : seed / 233280 > .52;
+  qr.insertAdjacentHTML('beforeend', `<i style="background:${on ? '#000' : '#fff'}"></i>`); }
+// The phone's Connection page (ConnectScreen.kt, WifiPanel.kt) in landscape, as GP always is. The title row stays;
+// the search, tabs and the rest scroll (SearchableSettings), so the lower half is the same page scrolled down.
+const col = el(st, '<div style="display:flex;flex-direction:column;gap:28px"></div>');
+const sA = phone(col, 'land'), sB = phone(col, 'land');
+const pA = el(sA, `<div class="page" style="padding-left:34px">
+ <div class="pbar"><span class="tb">← Pad</span><span class="pt">Connection</span></div>
+ <div class="search"><span>⌕</span><span>Search settings</span></div>
+ <div class="fchips"><span class="fchip on">PC</span><span class="fchip">Key pairing</span><span class="fchip">Link quality</span><span class="fchip">Report rate</span><span class="fchip">Gyro rate</span><span class="fchip">PC controller</span></div>
+ <div class="hint" style="margin:0 16px 6px">Long press a tab to move it.</div>
+ <div class="card" style="min-height:330px"><div class="seg" style="margin:4px 0 12px"><span>Bluetooth</span><span class="on">✓ Wi-Fi</span></div>
+  <div style="font-size:14px;margin-bottom:10px">Looking for PCs running GyroPhone Companion…</div>
+  <div style="display:flex;align-items:center;gap:10px"><div class="hint" style="flex:1;margin:0">New PC? On the PC choose Pair new phone and scan its QR code.</div><span class="btn filled" id="scan">Scan QR code</span></div>
+  <div class="set" style="display:block"><div class="name" style="margin-top:4px">Paired PCs</div><div style="font-size:14px;margin-top:4px">None yet. Start GyroPhone Companion on the PC; it appears below.</div></div>
+ </div></div>`);
+const pB = el(sB, `<div class="page" style="padding-left:34px">
+ <div class="pbar"><span class="tb">← Pad</span><span class="pt">Connection</span></div>
+ <div class="card" style="border-top-left-radius:0;border-top-right-radius:0;margin-top:-2px">
+  <div class="set" style="display:block;border-top:none"><div class="name" style="margin-top:4px">Found on this network</div><div style="display:flex;align-items:center;margin-top:6px"><span style="flex:1">DESKTOP-PC<br><span class="hint">192.168.1.20</span></span><span class="btn filled" id="conn" style="height:34px">Connect</span></div></div>
+  <div class="set" style="display:block"><div class="name">Enter PC address</div><div style="display:flex;gap:8px;margin-top:6px"><div style="flex:1;height:44px;border:1px solid var(--m3-outline);border-radius:4px;padding:12px;color:var(--m3-on-variant);font-size:13px">e.g. 192.168.1.20</div><span class="btn outl" id="find">Find</span></div></div>
+ </div></div>`);
+{ const r = pA.querySelector('.fchips'), lim = r.getBoundingClientRect().right - 8;
+  r.querySelectorAll('.fchip').forEach(c => { if (c.getBoundingClientRect().right > lim) c.style.visibility = 'hidden'; }); }
+marks(st, [
+  [1, w.querySelector('#qr'), 'l'],
+  [2, pA.querySelector('.seg .on'), 'r'], [3, pA.querySelector('#scan'), 'r'], [4, pB.querySelector('#conn'), 'r'], [5, pB.querySelector('#find'), 'r'],
+]);
+</script></body></html>

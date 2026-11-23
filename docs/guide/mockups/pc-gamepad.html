@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const tog = (t, h, on) => `<div class="wtog"><i${on ? ' class="on"' : ''}></i><div class="tx"><span class="tl">${t}</span>${h ? `<div class="wsub">${h}</div>` : ''}</div></div>`;
+const q = s => w.querySelector(s), qa = s => [...w.querySelectorAll(s)];
+// SettingsPages.cs GamepadPage: Output, Input (Pause input), Driver.
+const w = pcWin(st, 'Gamepad', `<h1>Gamepad</h1>
+ <div class="wcard"><div class="ct">Output</div><div class="wseg"><span class="on">Xbox 360</span><span>DualShock 4</span><span>DualSense</span><span>Off</span></div>
+  <div class="whint">Games see an Xbox 360 controller: the widest support.</div></div>
+ <div class="wcard"><div class="ct">Input</div>${tog('Pause input', 'Nothing from the phone reaches the PC until you turn this off.')}</div>
+ <div class="wcard"><div class="ct">Driver</div><div style="font-size:14px;display:inline-flex;align-items:center;gap:8px;padding-right:9px" id="drv"><span style="width:10px;height:10px;border-radius:50%;background:#6FD49A"></span>ViGEmBus is installed and working.</div>
+  <div class="whint">The virtual gamepad needs the free ViGEmBus driver. Keyboard and mouse work without it.</div></div>`);
+marks(st, [[1, q('.wseg'), 'r'], [2, q('.tl'), 'r'], [3, q('#drv'), 'r']]);
+</script></body></html>

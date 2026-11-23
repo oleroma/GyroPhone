@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script>
+<style>.own{background:rgba(79,55,139,.5);border-radius:12px;padding:6px 8px;margin:0 -8px}.own .name{color:var(--m3-primary)}.rs{color:var(--m3-primary);font-size:13px;font-weight:500;white-space:nowrap}.kid{font-size:12px;color:#EFB8C8;margin-top:2px}.lband{display:flex;align-items:center;gap:8px;margin:0 12px 8px;padding:2px 10px;border-radius:12px;background:rgba(99,59,72,.45)}.lband b{color:#EFB8C8;font-size:14px;font-weight:500}.lband span{height:32px;padding:0 12px;border-radius:8px;display:flex;align-items:center;font-size:14px;border:1px solid rgba(239,184,200,.6);color:#FFD8E4}.lband span.on{background:#EFB8C8;color:#492532;border-color:transparent}.wact{display:flex;gap:8px;align-items:center}.wact .btn{height:32px;font-size:13px;padding:0 12px}</style></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const s = phone(st, 'land');
+// PadMenu.kt WorkspaceTopBar (fixed actions in the title row in landscape), the Layers band, category tabs, WorkspaceSettingsList.kt's Gyro.
+const p = el(s, `<div class="page" style="padding-left:34px">
+ <div class="pbar"><span class="tb">← Pad</span><span class="pt" style="margin-right:12px">Workspace settings</span>
+  <div class="wact"><span class="btn outl">Rename</span><span class="btn outl">Duplicate</span><span class="btn outl" style="color:#F2B8B5">Delete</span><span class="btn outl">Copy mappings from…</span><span class="btn outl">Export</span></div></div>
+ <div class="search"><span>⌕</span><span>Search settings</span></div>
+ <div class="lband"><b>Layers</b><span class="on">✓ Base</span><span>Aim</span></div>
+ <div class="fchips"><span class="fchip on">Gyro</span><span class="fchip">Touchpad</span><span class="fchip">Tilt &amp; shake</span><span class="fchip">Buttons</span><span class="fchip">Haptics</span><span class="fchip">Taps</span></div>
+ <div class="hint" style="margin:0 16px 2px">Each setting follows the Defaults (the Defaults pill) unless it is set here: those are highlighted, with ↺ to follow the Defaults again. Long press a tab to move it.</div>
+ <div class="rs" style="margin:0 12px;padding:6px 12px;display:inline-block">↺ Reset all to Defaults</div>
+ <div class="card" style="padding:8px 12px">
+  <div class="own"><div style="display:flex;align-items:center;gap:10px"><div class="name" style="flex:1">Gyro to mouse</div><span class="rs">↺ Reset</span></div>
+   <div style="display:flex;gap:8px;margin:4px 0 2px"><span class="fchip on">Ratchet disables</span><span class="fchip">Ratchet enables</span><span class="fchip">Gyro off</span></div>
+   <div style="display:flex;align-items:center"><div class="kid" style="flex:1">1 own: Aim <span style="color:var(--m3-on-variant)">Ratchet enables</span></div><span class="rs" style="color:#EFB8C8;font-size:12px;padding:0 8px">Reset children</span></div>
+   <div class="hint" style="margin-top:2px">Gyro moves the mouse; a ratchet pauses it while held. Map Ratchet to a touch button, the workspace's one-finger Hold or a controller button; Toggle gyro swaps the two modes.</div></div>
+ </div></div>`);
+const q = (sel, i = 0) => p.querySelectorAll(sel)[i];
+marks(st, [
+  [1, q('.wact'), 't'], [2, q('.lband span', 1), 'r', { dx: 0 }],
+  [3, q('.fchip', 0), 'l'], [4, q('.own .rs'), 'r', { dx: 10 }], [5, q('.kid'), 'l', { dx: -10 }],
+]);
+</script></body></html>

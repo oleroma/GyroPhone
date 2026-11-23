@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script><script src="ovlib.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const { tog, seg, chips, sl, sls, t, sub, hint, div, btn, pick, card, swatches } = ov, ind = ov.in;
+const T = s => w.querySelector(s + ' .tl') || w.querySelector(s);
+// Paint tab of a Pointer overlay with Draw mode on and the default Fire and Aim displays.
+const w = ovCol(st, 'Pointer', ['Window', 'Look', 'Paint', 'Snake', 'Colours', 'Turning'], 'Paint',
+  card('Paint', tog('Draw mode', 'The beam paints the inside of the sphere as you aim; the paint stays until you clear it.', 1, 'draw')
+    + ind(sl('Brush', 3 / 19, '4°', 'brush') + tog('Clear on ratchet', 'A ratchet press clears the paint (the Snake has its own).', 0, 'clr')
+      + hint('The paint uncovers the sphere\'s own colours where it lands (the Moving colours, laid on the sphere as a normal map: right pink, left teal, up light green, down purple), or with Colour by the way it moved, the colour of each sweep\'s direction. Shots take the Fire colours and aiming the Aim colours, each with its own brush and glow (Shots and aiming below). Nothing is painted while a ratchet is held. Turning Draw mode off clears the drawing. A Clear displays mapping on the phone (Other targets) clears every pointer at once.'))
+    + sub('Shots and aiming') + sl('Fire brush', 5 / 19, '6°', 'fb') + sl('Fire glow', .5, '150%')
+    + tog('Draw each shot', 'Each shot marks a hit where it lands, in the Fire colours, as wide as the Fire brush (a shotgun\'s pellets half that). Firing then paints no Fire line. Hits stay until you clear the drawing.', 0, 'shot')
+    + sl('Aim brush', 2 / 19, '3°') + sl('Aim glow', 1 / 6, '50%')
+    + sub('Colour by') + chips(['Where it is', 'The way it moved'], 0, 'by') + sub('Paint detail') + chips(['Low', 'Normal', 'High'], 1, 'detail')
+    + hint('How finely Draw mode\'s paint is kept: Low is lightest on the PC, High sharpest. Changing it clears the paint.')
+    + sl('Softness', .5, '50%') + sl('Glow', .5, '50%') + tog('Outline', 'A thin dark edge round the paint (its colour is Paint outline), so it shows on light backgrounds.', 0)
+    + sl('Facing shade', 0.5, '50%', 'pshade') + sl('Inside', 0.625, '70%') + hint("Facing shade darkens it where the sphere's surface turns away from you, so you see its roundness (0 off). Inside: how bright the far half is, seen from inside the sphere, next to the near half seen from outside.") + sub('Light') + sl('Light strength', 0.5, '50%') + chips(['Upper left', 'Above', 'Upper right', 'Front'], 0, 'pfrom') + sl('Shine', 0.3, '30%') + hint('A light fixed in the scene, shining from where you pick: it stays put while the sphere or the pointer turns. Light strength darkens what faces away from it (0 off); Shine adds a glossy highlight where it reflects toward you (0 none).')
+    + hint('Softness: how soft the paint\'s edge is (0 sharp); it shapes the paint as you lay it down, so changing it changes only new strokes. Where lines cross, the paint builds up and their colours blend. The Snake has its own look in the Snake tab.')
+    + sub('Paint and Snake') + sl('Line smoothing', 0, 'off', 'smooth') + tog('Paint only while firing or aiming', 'The beam alone leaves no trail; only shots and aiming draw.', 0, 'only')
+    + hint('Both follow the same line, so these set the paint and the Snake together. Line smoothing steadies the line against hand shake, strongly when you move slowly and hardly when you move fast, so it may trail a slow aim a little; the beam, dot and crosshair stay as they are.')
+    + btn('Clear', 'clear', '⌫')), 760);
+marks(st, [[1, T('#draw'), 'r'], [2, w.querySelector('#brush .v'), 'r'], [3, w.querySelector('#fb .v'), 'r'], [4, T('#shot'), 'r'], [5, w.querySelector('#by'), 'r'], [6, w.querySelector('#detail'), 'r'], [7, w.querySelector('#pfrom'), 'r'], [8, w.querySelector('#smooth .v'), 'r'], [9, T('#only'), 'r'], [10, w.querySelector('#clear'), 'r']]);
+</script></body></html>

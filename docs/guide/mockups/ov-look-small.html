@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script><script src="ovlib.js"></script></head><body>
+<div class="stage pad-callouts" id="st" style="flex-wrap:wrap;width:1460px"></div>
+<script>
+const st = document.getElementById('st');
+const { tog, seg, chips, sl, sls, t, sub, hint, div, btn, pick, card, swatches } = ov, ind = ov.in;
+const T = s => w.querySelector(s + ' .tl') || w.querySelector(s);
+// Look tabs of Bubble disk and Speed graph (Ratchet ring, FPS and Attitude indicator have only colours).
+const cols = (list) => card('Colours', swatches(list.map(([n, c]) => [n, argb(c)])) + btn('Default colours', '', '↺'));
+const a = ovCol(st, 'Bubble disk', ['Window', 'Look', 'Turning'], 'Look', card('Bubble disk', sl('Dot on the rim at', 25 / 85, '30°', 'rim') + tog('Crosshair', '', 1, 'cross'))
+  + cols([['Disk', 0x66000000], ['Rim', 0xCCFFFFFF], ['Marks', 0xCCFFFFFF], ['12 o\'clock mark', 0xFFFF5A5A], ['Crosshair', 0x80FFFFFF], ['Dot', 0xFFFFC94D]]), 640);
+const b = ovCol(st, 'Speed graph', ['Window', 'Look'], 'Look', card('Speed graph', chips(['±180°/s', '±360°/s', '±720°/s', '±1440°/s'], 1, 'range') + chips(['2 s', '3 s', '5 s', '8 s'], 1, 'secs') + hint('Yaw, pitch and roll speed; shaded while a ratchet is held.'))
+  + cols([['Yaw', 0xFFFF5A5A], ['Pitch', 0xFF5ADB6E], ['Roll', 0xFF5AA8FF], ['Background', 0x59000000], ['Ratchet shading', 0x1FFFFFFF]]), 640);
+const w = a;
+marks(st, [[1, a.querySelector('#rim span'), 'l', { dx: -14 }], [2, a.querySelector('#cross i'), 'l', { dx: -4 }], [3, b.querySelector('#range'), 'r'], [4, b.querySelector('#secs'), 'r']]);
+</script></body></html>

@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const s = phone(st, 'land');
+// PadMenu.kt: "← Pad" and the page's title, then AppSettings.kt's App page (SettingsLayout.kt search and tabs).
+const p = el(s, `<div class="page" style="padding-left:34px">
+ <div class="pbar"><span class="tb">← Pad</span><span class="pt">App</span></div>
+ <div class="search"><span>⌕</span><span>Search settings</span></div>
+ <div class="fchips"><span class="fchip on">Screen</span><span class="fchip">Workspace switching</span><span class="fchip">Touch display</span><span class="fchip">Gyro</span><span class="fchip">Gyro display</span><span class="fchip">Controllers</span><span class="fchip">Vibration</span><span class="fchip">Performance</span></div>
+ <div class="hint" style="margin:0 16px 6px">Long press a tab to move it.</div><div class="card">
+  <div style="padding:3px 0"><div class="set" style="padding:0"><div class="name">Start in fullscreen</div><span class="sw"></span></div><div class="hint">The pad opens in fullscreen when the app starts. Press ← and → together, or Back, to leave it.</div></div>
+  <div style="padding:3px 0"><div class="set" style="padding:0"><div class="name">Double Back to leave fullscreen</div><span class="sw"></span></div><div class="hint">Guards against stray Back swipes in play: in fullscreen, one Back does nothing, and two Backs in a row bring the top row back. A Fullscreen mapping (long press ← or →) still leaves it at once.</div></div>
+  <div style="padding:3px 0"><div class="set" style="padding:0"><div class="name">Keep the screen on while the pad is open</div><span class="sw on"></span></div><div class="hint">The phone doesn't dim or lock while the pad is on screen. Its pages and other apps lock as usual.</div></div>
+ </div></div>`);
+const ch = p.querySelectorAll('.fchip'), c2 = boxOf(s, ch[2]);
+// Long press a tab, then drag it sideways (the arrow under it).
+arrow(s, c2.x + 10, c2.y + c2.h + 6, c2.x + c2.w + 90, c2.y + c2.h + 6);
+marks(st, [
+  [1, p.querySelector('.tb'), 't'], [2, p.querySelector('.search'), 't', { dx: 260 }],
+  [3, ch[0], 'l'], [4, ch[2], 't'], [5, p.querySelectorAll('.sw')[2], 'r'],
+]);
+</script></body></html>

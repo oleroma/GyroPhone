@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<style>.ov{display:grid;grid-template-columns:250px 1fr;gap:20px}.lr{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;margin-bottom:2px}.lr.on{background:#283041}.lr .cb{width:16px;height:16px;border-radius:3px;border:1.5px solid #8D96A8;flex:none}.lr .cb.on{background:#83CFFF;border-color:#83CFFF;position:relative}.lr .cb.on::after{content:"✓";position:absolute;left:2px;top:-3px;font-size:12px;color:#0D1520;font-weight:700}.sc{margin-bottom:10px}.sc .wsub{margin:0 0 3px;font-size:12.5px}.sc .bx{display:flex;gap:4px;align-items:center}.sc .winp{flex:1}.tabs{display:flex;gap:22px;border-bottom:1px solid #2F3748;margin-bottom:14px;font-size:14.5px;color:#9AA3B2}.tabs span{padding:6px 0 9px}.tabs span.on{color:#E6E9F0;box-shadow:inset 0 -2.5px 0 #83CFFF}.top{display:flex;align-items:center;gap:24px}.top .wtog{margin:0}.sl{flex:1;height:4px;border-radius:2px;background:#3A4357;position:relative}.sl b{position:absolute;left:0;top:0;height:4px;width:100%;background:#83CFFF;border-radius:2px}.sl b::after{content:"";position:absolute;right:-8px;top:-6px;width:16px;height:16px;border-radius:50%;background:#83CFFF}</style>
+<script>
+const st = document.getElementById('st');
+// OverlaysPage.cs: title + Edit / Hide all / All behind / Level all; left: the overlay list (Show box each), Add overlay, Shortcuts;
+// right: the picked overlay's label, tabs (Window, Look, Turning for the phone overlay) and the Window tab.
+const tog = (t, h, on) => `<div class="wtog"><i${on ? ' class="on"' : ''}></i><div class="tx"><span class="tl">${t}</span>${h ? `<div class="wsub">${h}</div>` : ''}</div></div>`;
+const row = (n, s, on, sel) => `<div class="lr${sel ? ' on' : ''}"><div style="flex:1"><div style="font-size:14px">${n}</div><div class="wsub" style="margin-top:1px;font-size:11.5px">${s}</div></div><span class="cb${on ? ' on' : ''}"></span></div>`;
+const sc = (n, k) => `<div class="sc"><div class="wsub">${n}</div><div class="bx"><span class="winp">${k}</span><span style="color:#8D96A8;font-size:11px;padding:0 6px">✕</span></div></div>`;
+const w = pcWin(st, 'Overlays', `<div class="wh" style="margin-bottom:16px"><h1>Overlays</h1><div class="top">${tog('Edit')}${tog('Hide all')}${tog('All behind')}<span class="wbtn" id="lvl">Level all</span></div></div>
+ <div class="ov"><div>
+  ${row('Phone', 'Shown · Transparent', 1, 1)}${row('Pointer', 'Not shown · Green', 0)}
+  <div class="wbtn" id="add" style="display:flex;justify-content:center;margin-top:6px">＋&nbsp; Add overlay</div>
+  <div class="wcard" style="margin-top:16px"><div class="ct">Shortcuts</div><div class="whint" style="margin:0 0 10px">Work everywhere, also in games. Click a field and press the keys: Ctrl, Alt, Shift or Win with a key, or F1 to F24 alone.</div>
+   ${sc('Level all', 'Ctrl+Alt+R')}${sc('Hide or show all overlays', 'Ctrl+Alt+O')}${sc('Edit on or off', 'Ctrl+Alt+E')}${sc('All behind on or off', 'Ctrl+Alt+B')}</div>
+  <div class="wcard" style="margin-top:12px"><div class="ct">Fade when phone rests</div>${tog('Fade overlays','While the phone lies still at its Level with nothing pressed. Any touch or movement brings them back at once.', 1)}</div>
+ </div><div>
+  <span class="winp" style="font-size:18px;min-width:220px">Phone</span>
+  <div class="tabs" style="margin-top:12px"><span class="on">Window</span><span>Look</span><span id="turn" style="padding-right:8px">Turning</span></div>
+  <div class="wcard" style="margin-bottom:12px">${tog('Show this overlay', '', 1)}${tog('Behind other windows', 'For recording: the game covers it, so you don\'t see it while playing, but OBS Window Capture still records it (capture method "Windows 10 (1903 and up)"). Edit brings it to the front to place it.')}</div>
+  <div class="wcard"><div class="ct">Background</div><div class="wseg"><span class="on">Transparent</span><span>Green</span><span>Dark</span></div><div class="whint">Green is for an OBS chroma key.</div>
+   <div style="display:grid;grid-template-columns:150px minmax(0,260px) 70px;align-items:center;font-size:14px;margin-top:10px"><span>Opacity</span><div class="sl"><b></b></div><span style="padding-left:12px">100%</span></div></div>
+ </div></div>`, { width: 1180 });
+const q = s => w.querySelector(s), qa = s => [...w.querySelectorAll(s)];
+const tl = qa('.tl'), ti = qa('.top .wtog i'), mainX = boxOf(st, q('.main')).x + 12, H = st.offsetHeight;
+const cb = boxOf(st, q('.lr .cb')), ad = boxOf(st, q('#add')), sb = boxOf(st, qa('.sc .winp')[0]);
+marks(st, [
+  [1, ti[0], 't'], [2, ti[1], 't'], [3, ti[2], 't'], [4, q('#lvl'), 't'],
+  [5, q('.lr .cb'), 't', { dy: -6 }],
+  [6, q('#add'), 'b', { dx: -ad.w / 2, dy: -ad.h / 2, via: [[mainX + 6, ad.y + ad.h / 2], [mainX + 6, H - 70]] }],
+  [7, qa('.sc .winp')[0], 'b', { dx: -sb.w / 2, dy: -sb.h / 2, via: [[mainX + 22, sb.y + sb.h / 2], [mainX + 22, H - 70]] }],
+  [8, q('#turn'), 'r'], [9, tl[5], 'r'], [10, q('.wseg'), 'r'],
+]);
+</script></body></html>

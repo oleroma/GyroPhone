@@ -1,0 +1,28 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script><script src="ovlib.js"></script></head><body>
+<div class="stage pad-callouts" id="st" style="align-items:flex-start"></div>
+<script>
+const st = document.getElementById('st');
+const { tog, seg, chips, sl, sls, t, sub, hint, div, btn, pick, card, swatches } = ov, ind = ov.in;
+const T = s => w.querySelector(s + ' .tl') || w.querySelector(s);
+// Turning tab: left a Phone overlay turning with the phone (Pose and Amount); right a Pointer as a trackball
+// (its axes as the camera's, roll locked), where Pose is hidden and Turn amount too.
+const a = ovCol(st, 'Phone', ['Window', 'Look', 'Turning'], 'Turning',
+  card('Turns with', seg(['Phone', 'Camera', 'Trackball'], 0, 'tw') + hint('How you hold the phone.'))
+  + card('Pose', tog('Gravity', 'Tilt held to the world, so it never drifts.', 1, 'grav') + ind(tog('Compass', 'Heading held to where the phone faced.', 0, 'comp')) + div()
+    + tog('Ease back to straight', '', 1, 'ease') + ind(seg(['On ratchet', 'When the phone stops'], 0) + sl('Delay', .1, '300 ms') + seg(['By time', 'By speed'], 0) + sl('Back in', 1.9 / 4.9, '2.0 s')))
+  + card('Amount', sl('Turn amount', .2, '× 1.0', 'amt') + div() + hint('Hold the phone the way you play and press Level: held that way, it shows face-on, its screen flat toward you.') + btn('Level', 'lvl', '⊙')), 620);
+const axis = (n, from, extra) => t(n + ' axis turns with') + seg(['Yaw', 'Pitch', 'Roll', 'None'], from) + extra;
+const b = ovCol(st, 'Pointer', ['Window', 'Look', 'Paint', 'Snake', 'Colours', 'Turning'], 'Turning',
+  card('Turns with', seg(['Phone', 'Camera', 'Trackball'], 2, 'tw') + hint('Like a ball rolled by your moves: each of its axes turns by the gyro turn picked below (as Camera, by default), and every other camera move rolls it too.')
+    + ind(tog('As far as the game\'s camera', '', 1, 'rws'))
+    + ind(t('Turns about') + seg(['The sphere\'s axes', 'Its own axes'], 0, 'about')
+      + axis('Yaw', 0, tog('Invert Yaw axis', '', 0) + tog('Stop Yaw at ±90°', '', 0) + tog('Ease Yaw axis back', '', 0, 'ey'))
+      + axis('Pitch', 1, tog('Invert Pitch axis', '', 0) + tog('Stop Pitch at ±90°', 'Off: it goes over the top, left and right staying as seen.', 1) + tog('Ease Pitch axis back', '', 0))
+      + axis('Roll', 3, '')
+      + hint('The sphere\'s axes: it turns as a game camera, left and right about the sphere\'s vertical, up and down about its own right, then about where it faces. Its own axes: yaw about its own up, pitch about its own right, so the crosshair moves at right angles as it sees it. None never turns, whatever the others do, as Camera never rolls; it shows grey and dashed with a padlock. Stop at ±90° keeps an axis from turning past sideways (Pitch: straight up or down).'))
+    + ind(t('Pointer faces (as a trackball)') + seg(['−Z (into the screen)', '+Z', '+X', '−X', '+Y', '−Y'], 0, 'faces')))
+  + card('Amount', hint('Hold the phone the way you play and press Level: held that way, it shows face-on, its screen flat toward you.') + btn('Level', '', '⊙')), 680);
+const w = a, A = s => a.querySelector(s + ' .tl') || a.querySelector(s), B = s => b.querySelector(s + ' .tl') || b.querySelector(s);
+marks(st, [[1, a.querySelector('#tw'), 'l'], [2, a.querySelector('#grav i'), 'l'], [3, a.querySelector('#ease i'), 'l'], [4, a.querySelector('#amt span'), 'l', { dx: -12 }], [5, a.querySelector('#lvl'), 'l'],
+  [6, b.querySelector('#tw'), 'r'], [7, B('#rws'), 'r'], [8, b.querySelector('#about'), 'r'], [9, B('#ey'), 'r'], [10, b.querySelector('#faces'), 'r']]);
+</script></body></html>

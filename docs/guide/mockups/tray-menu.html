@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script>
+<style>.tm{min-width:300px;background:#2B2B2B;border:1px solid #444;border-radius:8px;padding:4px 0;font:13px "Segoe UI",Inter,Arial,sans-serif;color:#eee;box-shadow:0 8px 24px rgba(0,0,0,.5)}.tm div{padding:6px 16px;display:flex;justify-content:space-between}.tm .dis{color:#888}.tm hr{border:0;border-top:1px solid #444;margin:4px 0}.sub{position:absolute}.chk::before{content:"✓";position:absolute;margin-left:-12px}</style></head><body>
+<div class="stage pad-callouts" id="st" style="min-height:460px;min-width:900px"></div>
+<script>
+const st = document.getElementById('st');
+// TrayApp.cs: the right-click menu, with Overlays opened.
+const m = el(st, `<div class="tm" style="position:absolute;left:70px;top:64px">
+ <div class="dis">GyroPhone Companion 0.1.859-3fa291c</div><div class="dis">OnePlus 15 · 1000/s · 0.0% · p99 3.1 ms</div><hr>
+ <div style="font-weight:600">Open GyroPhone</div><div>Pause input</div><div>Gamepad output<span>▸</span></div><div style="background:#3d3d3d">Overlays<span>▸</span></div>
+ <div>Pair new phone…</div><hr><div>Exit</div></div>`);
+const sub = el(st, `<div class="tm sub" style="left:372px;top:182px">
+ <div class="chk">Show Pointer</div><div>Show Phone</div><hr>
+ <div>Hide all overlays (Ctrl+Alt+O)</div><div>Edit: drag the windows to move and resize, scroll to scale (Ctrl+Alt+E)</div>
+ <div>All behind: the game covers them, OBS still records them (Ctrl+Alt+B)</div><div>Level all: as held now shows face-on (Ctrl+Alt+R)</div>
+ <div>Clear pointers</div><div>Overlay settings…</div></div>`);
+sub.querySelectorAll('div').forEach(d => { d.style.gap = '12px'; });
+const r = m.querySelectorAll('div'), s2 = sub.querySelectorAll('div');
+marks(st, [[1, r[2], 'l'], [2, r[3], 'l'], [3, r[4], 'l'], [4, r[5], 'l'], [5, r[6], 'l'], [6, s2[0], 'r'], [7, s2[3], 'r']]);
+</script></body></html>

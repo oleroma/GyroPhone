@@ -61,8 +61,8 @@ All engine state is under one lock, which gp-rx takes for every packet and Flush
 
 - the version, a status line, and a problems line that opens Home;
 - **Open GyroPhone**, **Pause input**;
-- **Gamepad output** ▸ Xbox 360 (default) / DualShock 4 / Off (keyboard and mouse only);
-- **Overlays** ▸ one switch per window, Hide all overlays (Ctrl+Alt+O), Edit: drag the windows to move and resize (Ctrl+Alt+E), All behind: the game covers them, OBS still records them (Ctrl+Alt+B), Level all: as held now shows face-on (Ctrl+Alt+R), Overlay settings…;
+- **Gamepad output** ▸ Xbox 360 (default) / DualShock 4 / DualSense (only while the GyroPhone pad driver works, or while it is picked) / Off (keyboard and mouse only);
+- **Overlays** ▸ one switch per window, Hide all overlays (Ctrl+Alt+O), Edit: drag the windows to move and resize, scroll to scale (Ctrl+Alt+E), All behind: the game covers them, OBS still records them (Ctrl+Alt+B), Level all: as held now shows face-on (Ctrl+Alt+R), Clear pointers (while a pointer overlay is set up), Overlay settings…;
 - **Pair new phone…**;
 - **Exit**.
 
@@ -72,7 +72,7 @@ All engine state is under one lock, which gp-rx takes for every packet and Flush
 
 - **Home**: a warning bar per problem with its fix (no ViGEmBus, firewall, Public network while no phone is seen, input blocked by an elevated window…), then cards: phone, link (only the way its packets go, such as "Phone hotspot · PC Wi-Fi"), gamepad (output, pause); full status under Details. Link numbers and latency are on Performance.
 - **Phones**: Pair new phone, paired phones (each with Forget), this PC's key.
-- **Gamepad**: output Xbox 360 / DualShock 4 / Off, Pause, the ViGEmBus driver state and Retry.
+- **Gamepad**: **Output** Xbox 360 / DualShock 4 / DualSense (shown while the GyroPhone pad driver works) / Off, **Input** (Pause input), **Driver** (whether ViGEmBus works; when it doesn't, **Install driver (ViGEmBus)…** and **Try again**).
 - **Overlays**: see [Overlays](pc-overlays.md).
 - **Connection**: network category, firewall and USB checks with their fixes, the USB cable (direct cable on/off, default off), the server's port and addresses.
 - **Performance**: everything measured and every speed setting: the phone link live with latency, Diagnostics (see [Performance](#performance)), Mouse (**Catch-up time**: Off / 8 / 16 / 32 ms, default 16, `HostSettings.CatchUpMs`; the longest a lost or late stretch of mouse motion is spread over, Off = the old one-step jump), **Keyboard and mouse** (which way keys and mouse go: SendInput, or the optional input driver's virtual USB mouse and keyboard, [Virtual devices](pc-virtual-devices.md#keyboard-and-mouse-input-driver-optional); **Use input driver**, default off, `HostSettings.UseInputDriver`, shown only while the driver is installed, sends through the driver instead of SendInput (off by default because Windows can hold the driver's moves up to ~20 ms, [Virtual devices](pc-virtual-devices.md#keyboard-and-mouse-input-driver-optional)) and lets go of every held key and button when switched; **Delivery test**, see [Performance](#performance)), **Input program** (**Use the Rust input program**, default off: which of the two input programs runs, see [Two processes](#two-processes); the card names the one running now), and Log (where `companion.log` is, Open log folder).
@@ -184,4 +184,4 @@ Finds out why phone packets get lost or held up, without anyone playing: `tools/
 
 ## Key files
 
-`GyroPhone.Host/HostEngine.cs`, `SessionManager.cs`, `UdpHostServer.cs`, `Watchdog.cs`, `PairingManager.cs`, `KeyFiles.cs`, `HeldKeysMarker.cs`, `LinkStats.cs`, `PhoneWatch.cs`, `Settings/HostSettings.cs`, `Split/PipeChannel.cs`, `Split/InputControl.cs`, `SharedRegion.cs`, `OverlayHost.cs`, `GyroPhone.Tray/Program.cs`, `InputHost.cs`, `InputClient.cs`, `TrayApp.cs`, `Watcher.cs`, `DebugForm.cs`, `GyroPhone.Ui/MainWindow.cs`, `WheelScroll.cs`, `HomePage.cs`, `SettingsPages.cs`, `PairWindow.cs`.
+`GyroPhone.Host/HostEngine.cs`, `SessionManager.cs`, `UdpHostServer.cs`, `Watchdog.cs`, `PairingManager.cs`, `KeyFiles.cs`, `HeldKeysMarker.cs`, `LinkStats.cs`, `PhoneWatch.cs`, `Settings/HostSettings.cs`, `Split/PipeChannel.cs`, `Split/InputControl.cs`, `SharedRegion.cs`, `OverlayHost.cs`, `GyroPhone.Tray/Program.cs`, `InputHost.cs`, `InputClient.cs`, `TrayApp.cs`, `Watcher.cs`, `GyroPhone.Ui/MainWindow.cs`, `WheelScroll.cs`, `HomePage.cs`, `SettingsPages.cs`, `PairWindow.cs`.

@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script><script src="ovlib.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const { tog, seg, chips, sl, sls, t, sub, hint, div, btn, pick, card, swatches } = ov, ind = ov.in;
+const T = s => w.querySelector(s + ' .tl') || w.querySelector(s);
+// Look tab of a Pointer overlay with the Crosshair look; Fire display Mouse Left and Aim display Mouse Right (the defaults).
+const w = ovCol(st, 'Pointer', ['Window', 'Look', 'Paint', 'Snake', 'Colours', 'Turning'], 'Look',
+  card('Pointer', hint('A see-through sphere seen from above and to the side. The laser at its centre aims along the phone\'s roll axis (out of its top edge, into the screen at rest) onto the inside; the tick at the dot shows which way the phone\'s screen faces. The beam dims while a ratchet is held.')
+    + seg(['Sphere', 'Gun', 'Crosshair'], 2, 'look')
+    + ind(hint('A crosshair instead: no sphere or beam, just a crosshair lying on the sphere where the laser lands, facing its centre, so it squashes toward the edge. It turns about the beam as the Trackball\'s Roll row maps it (Lock keeps it upright, Invert turns it the other way). Draw mode still paints where it points.')
+      + chips(['Cross', 'Cross with gap', 'Circle', 'Circle and cross', 'Dot', 'T'], 1, 'ch') + sl('Size', 4 / 28, '6°') + sl('Gap', .2, '2°') + sl('Thickness', 1.5 / 5.5, '2.0')
+      + tog('Centre dot', '', 1) + tog('Outline', 'A dark edge so it shows on any background.', 1))
+    + tog('Axonometric view', 'Seen from 30° round and 30° above, so a beam into the far side shows as a line. Off, face-on: a beam straight in is a dot.', 1, 'axon')
+    + tog('Perspective', 'Nearer parts show bigger, as a camera sees them. Off: flat, every part the same size wherever it is.', 1)
+    + tog('Fixed pointer mode', 'Off: the beam turns inside a still sphere. On: the beam stays pointing ahead and the sphere, with its grid, axes and drawing, turns under it.', 0, 'fixed')
+    + tog('Grid every 15°', '', 1) + tog('Axes (pitch X red, yaw Y green, roll Z blue)', 'They turn with the pointer, R along its beam.', 1)
+    + pick('Fire display', 'Mouse Left', 'While this button is sent from the phone (or pressed on the PC\'s controller with "Use PC controller for gyro ratchet" on) the gun and crosshair kick and flash with each shot, and Draw mode paints in the Fire colours. Click to pick another, or None.', 'fire')
+    + ind(t('Kick') + hint('Each shot the crosshair jumps bigger and bounces back with the recoil of the gun picked here. Once: one kick per press. Auto rifle: keeps kicking while the button is held. Each gun keeps its own kick size and fire rate.')
+      + sub('Recoil like') + chips(['Pistol', 'SMG', 'Assault rifle', 'Battle rifle', 'LMG', 'Shotgun', 'Sniper'], 2, 'gun') + seg(['Off', 'Once', 'Auto rifle'], 1, 'kick')
+      + sl('Kick size (this gun)', .45 / 1.95, '50%') + seg(['Lines only', 'Evenly, thickness too'], 0)
+      + tog('Muzzle flash', 'Each shot a flash in time with the kick: white, cooling to the Flash colour (yellow), then Flash end (orange). The crosshair glows and takes those colours, then its own again; the gun\'s muzzle blasts flame as wide as its muzzle and as long as its calibre (pistol shortest, shotgun and sniper longest).', 1, 'flash')
+      + tog('Simulate spread', 'Each shot lands a little off the aim point, a random way, by up to the gun\'s spread; the crosshair or gun kicks toward it and springs back. Each gun keeps its own spread.', 0, 'spread'))
+    + pick('Aim display', 'Mouse Right', 'While this button is held the crosshair shrinks and turns laser red (its Crosshair aiming colour), the gun is shouldered with a scope and a laser sight, and Draw mode paints in the Aim colours. Firing wins over aiming. Click to pick another, or None.', 'aim')
+    + ind(sl('Crosshair while aiming', .55 / .8, '75%', 'aimsize'))), 760);
+marks(st, [[1, w.querySelector('#look'), 'r'], [2, w.querySelector('#ch'), 'r'], [3, T('#axon'), 'r'], [4, T('#fixed'), 'r'], [5, w.querySelector('#fire .wbtn'), 'r'], [6, w.querySelector('#gun'), 'r'], [7, w.querySelector('#kick'), 'r'], [8, T('#flash'), 'r'], [9, T('#spread'), 'r'], [10, w.querySelector('#aim .wbtn'), 'r'], [11, textBox(st, w.querySelector('#aimsize .v')), 'r']]);
+</script></body></html>
