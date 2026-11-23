@@ -56,7 +56,7 @@ The companion's protocol and engine tests run on Linux and macOS too; the tray a
 |---|---|
 | `core/` | Plain Kotlin, unit-tested on the JVM: the model (workspaces, mappings, inheritance, device presets), the mapping engine, touch surfaces, gyro math, the HID descriptor, and the wire protocol and crypto. |
 | `app/` | The Android app: Bluetooth HID, the Wi-Fi/USB link, gyro and other sensors, controller input, the foreground service, and the Compose UI. |
-| `companion/` | The Windows companion in C# (.NET 10), with its input program also in Rust: protocol, host engine, virtual controller and SendInput, overlays, tray and main window. Shared test vectors in `core/src/test/resources/protocol/v1/` keep the sides in step. |
+| `companion/` | The Windows companion in C# (.NET 10; .NET 8 is no longer used), with its input program in Rust (the C# one is kept only as the fallback): protocol, host engine, virtual controller and SendInput, overlays, tray and main window. Shared test vectors in `core/src/test/resources/protocol/v1/` keep the sides in step. |
 | `docs/guide/` | The [quick start](docs/guide/quick-start.md) and [settings guide](docs/guide/settings.md), with their pictures. |
 | `docs/spec/` | The [full spec](docs/spec/README.md). |
 

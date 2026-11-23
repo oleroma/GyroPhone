@@ -551,7 +551,7 @@ Measured only while this page is open or Diagnostics is on.
 - **Results**: one row per saved record (loss, late packets, latency, frame rate, CPU), with **Open results** and **Open folder**.
 - **Mouse**: **Catch-up time** (16 ms): a late stretch of mouse motion is spread over at most this long instead of jumping.
 - **Keyboard and mouse**: **Use input driver** (off, only shown with the optional driver installed) and **Delivery test** (times each mouse move from GP to a window in front, like a game).
-- **Input program**: **Use the Rust input program** (off): which of GP's two input programs runs. Both work the same way; it falls back to the other by itself if Rust fails.
+- **Input program**: **Use the Rust input program** (on): which of GP's two input programs runs. Rust is the main one; the original C# one is only a fallback, and GP switches to it by itself if Rust fails.
 - **Log**: **Open log folder**.
 - **Set up FPS helper**: shown when an FPS overlay needs it. It asks once for administrator rights, then the frame counter works without asking again.
 
