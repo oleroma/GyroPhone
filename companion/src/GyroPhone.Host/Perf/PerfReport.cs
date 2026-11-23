@@ -55,7 +55,7 @@ public static class PerfReport
             summary { cursor: pointer; color: var(--dim); font-size: 13px; margin-top: 8px; }
             </style></head><body><main>
             <h1>GyroPhone link tests</h1>
-            <p class="sub">Each record of the Performance page, newest first. The best value in each column is in colour. Lost: phone packets lost. Late: held up more than 15 ms, with the worst delay. Pauses: the phone sent nothing for a while during input. Let go: held keys let go because the phone went silent. Bursts: stretches of link trouble. Floor: half the best round trip, the fastest the link went. Over the floor: how much slower than the fastest packets every packet of the run came, middle · slowest 1% (needs no clock guess, the number to compare). Latency: phone to PC one way, typical · slowest 1% (depends on a clock guess). Hand-offs: per 10,000 packets that took over 2 ms from arrival to Windows, and the slowest. Held up: late packets that waited on the way · inside the PC · on the phone (needs Diagnostics' stall watch), and "PC busy": ones that looked held up on the way in a second the whole PC's CPU was at 95% or more, so most likely waited in the PC. ⚠: the floor moved on the same setup. Frames only with the FPS overlay on. Busy: seconds other programs used 20% of the PC or more.</p>
+            <p class="sub">Each record of the Performance page, newest first. The best value in each column is in colour. Lost: phone packets lost. Late: held up more than 15 ms, with the worst delay. Pauses: the phone sent nothing for a while during input. Let go: held keys let go because the phone went silent. Bursts: stretches of link trouble. Floor: half the best round trip, the fastest the link went. Over the floor: how much slower than the fastest packets every packet of the run came, middle · slowest 1% (needs no clock guess, the number to compare). Latency: phone to PC one way, typical · slowest 1% (depends on a clock guess). Hand-offs: per 10,000 packets that took over 2 ms from arrival to Windows, and the slowest. Held up: late packets that waited on the way · inside the PC · on the phone (needs Diagnostics' stall watch), and "PC busy": ones that looked held up on the way in a second the whole PC's CPU was at 95% or more, so most likely waited in the PC. ⚠: the floor moved on the same setup. Frames only with the FPS overlay on. Busy: seconds other programs used 20% of the PC or more. Playing: the same numbers over only the seconds the game was in front and the input moved (late · over the floor slowest 1% · how long), the number to compare between game sessions; the game is a guess unless the FPS overlay named it.</p>
             """);
         if (runs.Count == 0)
         {
@@ -77,7 +77,7 @@ public static class PerfReport
         string Td(string text, bool best = false, string? cls = null) =>
             $"<td{(best && many ? " class=\"best\"" : cls != null ? $" class=\"{cls}\"" : "")}>{E(text)}</td>";
 
-        sb.Append("<div class=\"wrap\"><table><thead><tr><th>Name</th><th>When</th><th>Path</th><th>Lost</th><th>Late</th><th>Pauses</th><th>Let go</th><th>Bursts</th><th>Floor</th><th>Over the floor</th><th>Hand-offs</th><th>Held up</th><th>Latency</th><th>Jitter</th><th>Avg fps</th><th>1% low</th><th>Jumps/min</th><th>Worst frame</th><th>CPU</th><th>Driver</th></tr></thead><tbody>\n");
+        sb.Append("<div class=\"wrap\"><table><thead><tr><th>Name</th><th>When</th><th>Path</th><th>Playing</th><th>Lost</th><th>Late</th><th>Pauses</th><th>Let go</th><th>Bursts</th><th>Floor</th><th>Over the floor</th><th>Hand-offs</th><th>Held up</th><th>Latency</th><th>Jitter</th><th>Avg fps</th><th>1% low</th><th>Jumps/min</th><th>Worst frame</th><th>CPU</th><th>Driver</th></tr></thead><tbody>\n");
         for (int i = 0; i < runs.Count; i++)
         {
             var r = runs[i];
@@ -85,6 +85,7 @@ public static class PerfReport
             sb.Append(ci, $"<tr><td><a href=\"#run{i}\">{E(r.Name)}</a></td>")
               .Append(Td(r.Start.ToString("d MMM HH:mm", ci)))
               .Append(Td(PathOf(r)))
+              .Append(Td(r.Playing is { } pl ? string.Format(ci, "late {0} · {1} · {2:0} s", pl.Late, pl.OverP99Ms >= 0 ? pl.OverP99Ms.ToString("0.00", ci) + " ms" : "–", pl.Seconds) : "–"))
               .Append(Td(r.Lost.ToString(ci), r.Lost <= bestLost))
               .Append(Td(r.Late > 0 ? string.Format(ci, "{0} (≤{1:0} ms)", r.Late, r.MaxLateMs) : "0", r.Late <= bestLate))
               .Append(Td(r.Gaps.ToString(ci), r.Gaps <= bestGaps))
@@ -116,6 +117,9 @@ public static class PerfReport
               .Append(ci, $"<div class=\"meta\">{E(r.Start.ToString("yyyy-MM-dd HH:mm:ss", ci))} · {r.Seconds:0} s · {E(PathOf(r))}</div>\n");
             if (r.FloorWarning.Length > 0) sb.Append("<div class=\"meta warn\">⚠ ").Append(E(r.FloorWarning)).Append("</div>\n");
             if (r.Setup.Length > 0) sb.Append("<div class=\"meta\">Setup: ").Append(E(r.Setup)).Append("</div>\n");
+            if (r.PlayGame.Length > 0)
+                sb.Append("<div class=\"meta\">Game: ").Append(E(r.PlayGame)).Append(r.PlayGameGuessed ? " (a guess)" : "")
+                  .Append(ci, $" · playing {r.Playing?.Seconds ?? 0} s · in front, still {r.GameStill?.Seconds ?? 0} s · else {r.Other?.Seconds ?? 0} s</div>\n");
             string? text = TextOf(r);
             if (text != null)
                 sb.Append("<details><summary>Second by second</summary><pre>").Append(E(text.TrimEnd())).Append("</pre></details>\n");
