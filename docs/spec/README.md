@@ -32,7 +32,7 @@ The reference phone is a OnePlus 15 (Android 16, no root). The reference PC is O
 |---|---|
 | `core/` | Plain Kotlin, no Android: the data model (profile, workspaces, mappings), the mapping engine, gyro math, HID descriptor and report scheduling, the wire protocol and crypto. Unit tested on the JVM. |
 | `app/` | The Android app: sensors, controller input, Bluetooth HID, the Wi-Fi/USB link, storage, the foreground service and the Compose UI. |
-| `companion/` | The Windows companion in C# (.NET 8): `GyroPhone.Protocol` (wire format, PC gyro math), `GyroPhone.Host` (engine, pairing, sessions, settings), `GyroPhone.Windows` (ViGEm, SendInput, USB, firewall), `GyroPhone.Ui` (WPF windows), `GyroPhone.Tray` (the tray app, overlays, updater, watcher), `GyroPhone.Headless` (console host). |
+| `companion/` | The Windows companion in C# (.NET 10): `GyroPhone.Protocol` (wire format, PC gyro math), `GyroPhone.Host` (engine, pairing, sessions, settings), `GyroPhone.Windows` (ViGEm, SendInput, USB, firewall), `GyroPhone.Ui` (WPF windows), `GyroPhone.Tray` (the tray app, overlays, updater, watcher), `GyroPhone.Headless` (console host). |
 | `core/src/test/resources/protocol/v1/` | Golden vectors both sides test against: `wire-v1.json`, `key-v1.json`, `qr-v1.json`, `gyro-math-v1.json`. |
 | `.agents/` | The build, install and merge scripts and the repo's hooks. |
 | `.github/workflows/` | `fallback.yml` (hand-started cloud build) and `cache.yml` (compiles `main` after each push). |

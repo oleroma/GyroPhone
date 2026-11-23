@@ -11,7 +11,7 @@ The Windows companion (`GyroPhoneCompanion.exe`) receives the phone's Wi-Fi/USB 
 | `GyroPhone.Ui` | The WPF main window and pairing window, reached through `ICompanion`. |
 | `GyroPhone.Headless` | A console host for Linux/testing (`--pair`, `--no-vigem`, `--latency-csv`). Not shipped. |
 
-.NET 8, published self-contained, single file, win-x64.
+.NET 10, published self-contained, single file, win-x64.
 
 ## Two processes
 

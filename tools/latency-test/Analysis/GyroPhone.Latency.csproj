@@ -3,7 +3,7 @@
        how far one trails the other. Cross-platform; the native OpenCV library comes with the tool (runtime.win)
        or the tests (linux-x64). -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>GyroPhone.Latency</RootNamespace>
     <AssemblyName>GyroPhone.Latency</AssemblyName>
   </PropertyGroup>
