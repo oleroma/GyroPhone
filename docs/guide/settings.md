@@ -100,6 +100,11 @@ The **App** capsule (gear) on the pad. Settings for the whole app, the same in e
 
 ## Defaults page
 
+![The Defaults page](images/defaults-page.png)
+
+1. **Mappings**: the touchpad and gyro mappings every workspace starts from.
+2. **↺ Reset all to built-in**: puts every default back to GP's own (greyed while nothing differs).
+
 The **Defaults** capsule (sliders icon) on the pad. The same categories as a [workspace's settings](#workspace-settings), plus **Mappings**: the touchpad and gyro mappings every workspace starts from. Every workspace follows these values unless it sets its own. Each value that differs from GP's built-in one is highlighted with **↺**, and the pink line under a setting lists the workspaces, layers and buttons that set their own.
 
 ## Workspace settings
@@ -155,6 +160,12 @@ Haptics play only while a PC is connected.
 
 ## Edit mode
 
+![Edit mode with the Add list open](images/add-list.png)
+
+1. **Add ▴**: the open Add list. Tap it again to close it.
+2. **Button** (and **Empty button**, **Stick**): tap to put one on the pad.
+3. **Display…**: the [gyro displays](#gyro-displays).
+
 Tap the capsule of the workspace you're on (**Easy to miss:** there is no Edit button). The [quick start](quick-start.md#5-change-the-layout) shows the menu. Besides what's there:
 
 - **Easy to miss:** tap a selected control again to open its mapping editor. Where controls overlap, a tap picks the next one underneath and a **double tap** opens it.
@@ -171,6 +182,12 @@ Tap the capsule of the workspace you're on (**Easy to miss:** there is no Edit b
 
 ## A control's settings
 
+![A button's settings, Look tab](images/control-settings.png)
+
+1. **Save as preset** (next to **Duplicate** and **Delete**, red).
+2. **Mappings**: back to the button's mapping editor.
+3. The tabs, here **Look**.
+
 **⚙ Settings** in a control's mapping editor, or **Configure** in edit mode. The tabs:
 
 - **Look**: label, shape, size, layer order (front or back), **Own opacity** and **Fade when idle** (fades after 3 s without a touch, comes back at once).
@@ -184,6 +201,14 @@ Tap the capsule of the workspace you're on (**Easy to miss:** there is no Edit b
 On top, fixed: **Duplicate**, **Save as preset** and **Delete**.
 
 ## Mapping options
+
+![A chip's options](images/chip-options.png)
+
+1. **Where**: Touch, Inside or Outside.
+2. **When**: here Long press.
+3. **How**: here Held.
+4. **Advanced ▾**: delays, Hold time and Cycle.
+5. **Remove this mapping**.
 
 The [quick start](quick-start.md#6-choose-what-a-button-does) shows the mapping editor. **Tap a chip** to open its options:
 
@@ -222,6 +247,17 @@ The devices capsule on the pad (gamepad, keyboard and mouse icons with the prese
 
 More:
 
+![The Keyboard view](images/devices-keyboard.png)
+
+1. A purple key does something else (here W, A, S and D, each ↪ 1). Tap it to change it.
+2. Grey keys, like Space, just send themselves.
+
+![The Mouse view](images/devices-mouse.png)
+
+1. The wheel. Tap it to choose what turning it does.
+2. The side buttons **4** and **5**.
+3. **Move**: what the mouse's movement does.
+
 - **Stick tuning** (a stick's ⚙): inner deadzone, outer deadzone, curve (Linear, Soft, Aggressive), sensitivity, how wide each direction's slice is, the **Outer ring**, and **Flick stick**. A picture shows the slices and a dot follows the real stick.
 - **Trigger tuning**: where **Press** (half way) and **Full pull** start.
 - **Gyro tab** on a controller button: what the gyro does while it's held, with its own sensitivity (its ⚙).
@@ -233,6 +269,11 @@ More:
 Add them in edit mode (**Add + → Display…**): 3D phone, Ratchet ring, Speed graph, Attitude indicator, Bubble disk, 3D shape and Pointer. **Easy to miss:** tap a selected display again for its settings (it has no mapping editor). Their settings match the PC overlays' (see [Overlays](#overlays)): **Look**, colours, and **Turning** (**Turns with** the phone, the game's camera, or as a trackball; **Level** sets the way you hold the phone as face-on). The Pointer has more tabs (Paint, Snake, Colours). Displays are drawn on their own thread, so they never slow a press.
 
 ## Connection page
+
+![The Connection page, Link quality tab](images/connection-link.png)
+
+1. Packets a second, loss, latency and jitter, live.
+2. Whether the low-latency Wi-Fi mode is held.
 
 The **Connection** capsule on the pad. A dot after its name means the **Setup tips** card on top has advice, such as "PC on Wi-Fi too", "Phone on 2.4 GHz", "Battery saver on" or "GP not Unrestricted", each with a button to the Android setting that fixes it where there is one.
 
@@ -283,17 +324,40 @@ The companion's main window has a sidebar of pages:
 
 ## Phones
 
-- **Pair new phone**: opens the pairing window (QR code, or a six-digit code to **Allow** or **Deny**).
-- **Paired phones**, each with **Forget**.
-- **This PC**: its key, with **Open keys folder**.
+![The Phones page](images/pc-phones.png)
+
+1. **Pair new phone**: opens the pairing window (QR code, or a six-digit code to **Allow** or **Deny**).
+2. **Forget**: removes that phone; it has to pair again.
+3. **Open keys folder**: where phones paired by key have their files.
+
+**Paired phones** lists each phone with how it paired and when it was last seen. **This PC** shows this PC's key.
 
 ## Gamepad
+
+![The Gamepad page](images/pc-gamepad.png)
+
+1. **Output**: the controller games see.
+2. **Pause input**: nothing from the phone reaches the PC.
+3. **Driver**: whether ViGEmBus works.
 
 - **Output**: Xbox 360, DualShock 4, DualSense (only while the GyroPhone pad driver works) or Off. DualShock 4 and DualSense also carry the phone's gyro for games with their own controller gyro. **Easy to miss:** then turn GP's gyro mouse off in that workspace, or both move the camera, and start the game after the phone connects.
 - **Input**: **Pause input**.
 - **Driver**: whether ViGEmBus works; if not, **Install driver (ViGEmBus)…** and **Try again**.
 
 ## Overlays
+
+![The Overlays page with the Phone overlay picked](images/pc-overlays.png)
+
+1. **Edit**: drag and resize the overlay windows.
+2. **Hide all**.
+3. **All behind**: the game covers them, OBS still records them.
+4. **Level all**: the way you hold the phone now shows face-on.
+5. A window's **Show** box (the row itself picks it).
+6. **Add overlay**.
+7. **Shortcuts**: click a field and press the new keys; **✕** removes it.
+8. The picked window's tabs.
+9. **Behind other windows**, for this window only.
+10. **Background**: Transparent, Green (for an OBS chroma key) or Dark.
 
 Windows that draw the phone's motion over your game or for OBS.
 
@@ -312,11 +376,25 @@ Windows that draw the phone's motion over your game or for OBS.
 
 ## Connection on the PC
 
+![The Connection page on the PC](images/pc-connection.png)
+
+1. A fix button shows on a check that needs one, here **Allow…** for the firewall.
+2. **Use the phone over the USB cable**.
+3. **Restart as administrator**, for games that run as administrator.
+
 - **Wi‑Fi**: **Network** (with **Make it Private…** when your network is Public, which keeps GP closed) and **Firewall** (**Allow…** if Windows blocks GP).
 - **USB cable**: **Use the phone over the USB cable** (off; set the phone's USB mode to *No data transfer*), **Stop adb and use the cable** when adb holds it, **How to install the USB driver…**, and **USB tethering** (**Allow…**).
 - **This app**: the server's port and addresses, and **Restart as administrator**.
 
 ## Performance
+
+![The Performance page](images/pc-performance.png)
+
+1. The way the packets go, with packets a second, loss, signal and round trip under it.
+2. Latency: the middle and slowest 1%, and jitter.
+3. The last 10 seconds; orange marks a second with lost or held-up packets.
+4. **Diagnostics**, the same switch as the phone's.
+5. **Save** and **Open debug folder**.
 
 Measured only while this page is open or Diagnostics is on.
 
@@ -330,6 +408,12 @@ Measured only while this page is open or Diagnostics is on.
 - **Set up FPS helper**: shown when an FPS overlay needs it. It asks once for administrator rights, then the frame counter works without asking again.
 
 ## App on the PC
+
+![The App page on the PC](images/pc-app.png)
+
+1. **Start when my phone appears**.
+2. What a left click on the tray icon does.
+3. **Use this PC's keys for Press a key**.
 
 - **Startup**: **Start with Windows** (off) and **Start when my phone appears** (a tiny watcher starts GP when your phone looks for this PC).
 - **Tray icon**: what a left click does: **Opens this window** or **Pairs a new phone**.

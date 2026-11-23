@@ -1,0 +1,26 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script>
+<style>.dialog h3{font-size:22px;margin-bottom:12px}.dialog .h{font-size:14px;font-weight:500;margin:10px 0 6px;color:var(--m3-on-surface)}.dialog .fr{display:flex;flex-wrap:wrap;gap:6px}.dialog .fchip{height:32px}.dialog .hn{font-size:12px;line-height:16px;color:var(--m3-on-variant);margin-top:4px}.dialog .tbn{color:var(--m3-primary);font-size:14px;font-weight:500;padding:10px 0 4px}</style></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const s = phone(st, 'port');
+// MappingChipDialog.kt for the Key R chip on LMB's Touch card (Long press): Where, When, How (following the
+// button's), Cycle, Advanced, Save as chip preset, Remove; Cancel and Done.
+el(s, '<div class="page"></div>'); el(s, '<div class="scrim"></div>');
+const d = el(s, `<div class="dialog" style="left:24px;top:60px;width:316px">
+ <h3>Key R · Touch</h3>
+ <div class="h">Where</div><div class="fr"><span class="fchip on">Touch</span><span class="fchip">Inside</span><span class="fchip">Outside</span></div>
+ <div class="hn">A touch that starts on the button.</div>
+ <div class="h">When</div><div class="fr" id="when"><span class="fchip">On touch</span><span class="fchip">Tap</span><span class="fchip on">Long press</span><span class="fchip">Double tap</span><span class="fchip">Release</span></div>
+ <div class="hn">Starts at the long-press time (then it is no tap), ends when you let go.</div>
+ <div class="h">How</div><div class="fr" id="how"><span class="fchip on">Held</span><span class="fchip">Once</span><span class="fchip">Toggle</span><span class="fchip">Repeat</span></div>
+ <div class="hn">Follows the button's How (Held). Pick one to set its own.</div>
+ <div class="hn">Pressed for as long as it lasts.</div>
+ <div class="set" style="padding:8px 0 0"><div class="name">Cycle</div><span class="sw"></span></div>
+ <div class="hn">The mappings of this action with Cycle on take turns: each time it fires, the next one.</div>
+ <div class="tbn" id="adv">Advanced ▾</div>
+ <div class="tbn">★ Save as chip preset</div>
+ <div class="tbn" id="rm" style="color:#F2B8B5">Remove this mapping</div>
+ <div class="acts"><span class="btn text">Cancel</span><span class="btn text">Done</span></div></div>`);
+marks(st, [[1, d.querySelector('.fchip'), 'l'], [2, d.querySelector('#when .on'), 'l'], [3, d.querySelector('#how .on'), 'l'], [4, d.querySelector('#adv'), 'l', { dx: -6 }], [5, d.querySelector('#rm'), 'l', { dx: -6 }]]);
+</script></body></html>

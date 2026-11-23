@@ -1,0 +1,25 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const tog = (t, h, on) => `<div class="wtog"><i${on ? ' class="on"' : ''}></i><div class="tx"><span class="tl">${t}</span>${h ? `<div class="wsub">${h}</div>` : ''}</div></div>`;
+const q = s => w.querySelector(s), qa = s => [...w.querySelectorAll(s)];
+// PerformancePage.cs: Link card (path, stats, latency, graphs, Measure buttons) and Diagnostics card.
+const bars = Array.from({ length: 60 }, (_, i) => `<span style="height:${8 + Math.round(6 * Math.abs(Math.sin(i * 1.7)))}px${i === 41 ? ';background:#F2B84B;height:26px' : ''}"></span>`).join('');
+const w = pcWin(st, 'Performance', `<h1 style="margin-bottom:6px">Performance</h1>
+ <div class="wsub" style="margin:0 0 14px">The phone link live and Diagnostics. Measured only while this page is open (and while Diagnostics is on).</div>
+ <div class="wcard"><div class="ct">Link</div><div class="wbig"><span id="path">Router Wi‑Fi 5 GHz ch 100</span></div>
+  <div class="wsub" id="stats">1,000/s received · loss 0.0% · -48 dBm · 1,201 Mbps · phone sends 1,000 Hz · round trip 3.1 ms · low-latency Wi‑Fi on</div>
+  <div style="display:flex;align-items:flex-end;gap:10px;margin-top:12px" id="lat"><span class="wbig">1.9 ms</span><span class="wsub" id="latsub" style="margin-bottom:2px">latency p50 · p99 4.8 ms · jitter 0.42 ms</span></div>
+  <div class="gr">${bars}</div>
+  <div class="wsub" style="font-size:11.5px">Last 10 seconds. Orange marks: the link lost or held up packets, the phone paused, or held keys were let go, in that second.</div>
+  <div style="margin-top:10px">${tog('Measure buttons', 'Times each press from the phone seeing your touch or controller button to the game getting it.')}</div></div>
+ <div class="wcard"><div class="ct">Diagnostics</div>${tog('Diagnostics', 'Logs everything at once, here and on the phone (they switch together). Kept in memory for the last Keep minutes; nothing is written until you Save.', 1)}
+  <div style="display:flex;align-items:center;gap:14px;font-size:14px;margin-top:6px"><span style="width:60px">Keep</span><div class="sl"><b></b></div><span>10 min</span></div>
+  <div class="wrow"><span class="wbtn acc" id="save"><svg class="g" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4h13l3 3v13H4zM8 4v5h8V4M8 20v-6h8v6"/></svg>Save</span><span class="wbtn" id="dbg"><svg class="g" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h6l2 2h10v11H3z"/></svg>Open debug folder</span></div>
+  <div class="wsub">On for 42:10, keeping the last 10 min.</div></div>`, { width: 1040 });
+document.head.insertAdjacentHTML('beforeend', '<style>.gr{display:flex;align-items:flex-end;gap:3px;height:32px;margin:10px 0 6px}.gr span{flex:1;background:#4C8FB8;border-radius:1px}.sl{flex:1;height:4px;border-radius:2px;background:#3A4357;position:relative}.sl b{position:absolute;left:0;top:0;height:4px;width:31%;background:#83CFFF;border-radius:2px}.sl b::after{content:"";position:absolute;right:-8px;top:-6px;width:16px;height:16px;border-radius:50%;background:#83CFFF}</style>');
+const t = qa('.wtog i');
+const tl = qa('.tl');
+marks(st, [[1, q('#path'), 'r'], [2, q('#latsub'), 'r'], [3, q('.gr'), 'r'], [4, tl[1], 'r'], [5, q('#dbg'), 'r']]);
+</script></body></html>

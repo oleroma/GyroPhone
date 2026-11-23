@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const s = phone(st, 'land');
+// ConnectScreen.kt on Wi-Fi with the Link quality tab picked: WifiPanel.kt WifiLinkSection (connected over the router).
+const p = el(s, `<div class="page" style="padding-left:34px">
+ <div class="pbar"><span class="tb">← Pad</span><span class="pt">Connection</span></div>
+ <div class="search"><span>⌕</span><span>Search settings</span></div>
+ <div class="fchips"><span class="fchip">PC</span><span class="fchip">Key pairing</span><span class="fchip on">Link quality</span><span class="fchip">Report rate</span><span class="fchip">Gyro rate</span><span class="fchip">PC controller</span><span class="fchip">Stop when idle</span></div>
+ <div class="hint" style="margin:0 16px 6px">Long press a tab to move it.</div>
+ <div class="card" style="padding:10px 14px;display:flex;flex-direction:column;gap:8px">
+  <div id="rate">Sent 412/s · PC got 412/s · loss 0.0 %</div>
+  <div id="lat">Latency p50 1.6 ms · p99 4.8 ms · RTT 3.1 ms</div>
+  <div class="hint" id="ll" style="margin:0;color:var(--m3-on-surface)">Low-latency Wi-Fi: on (keep GyroPhone on screen)</div>
+  <div class="hint" style="margin:0">Faster by cable: plug the phone into the PC. With USB debugging on, the PC app switches it to a direct link by itself (allow GyroPhone when the phone asks). USB tethering works too.</div>
+ </div></div>`);
+// Tabs past the edge are scrolled off (none cut in half).
+{ const r = p.querySelector('.fchips'), lim = r.getBoundingClientRect().right - 8;
+  r.querySelectorAll('.fchip').forEach(c => { if (c.getBoundingClientRect().right > lim) c.style.visibility = 'hidden'; }); }
+const tx = e => { const r = document.createRange(); r.selectNodeContents(e); const b = r.getBoundingClientRect(), o = st.getBoundingClientRect(); return { x: b.left - o.left, y: b.top - o.top, w: b.width, h: b.height }; };
+marks(st, [[1, tx(p.querySelector('#rate')), 'r', { dx: 8, dy: 12 }], [2, tx(p.querySelector('#ll')), 'r', { dx: 8 }]]);
+</script></body></html>

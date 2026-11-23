@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script>
+<style>
+/* DevicePresetsScreen.kt: preset tabs, the board (DeviceControls.kt ControlFace), DeviceSwitch at the bottom. */
+.ptab{height:36px;padding:0 12px;border-radius:8px;border:1px solid var(--m3-outline-variant);display:flex;align-items:center;font-size:14px;font-weight:500;flex:none}
+.ptab.on{background:var(--m3-secondary-container);border-color:var(--m3-secondary);color:var(--m3-on-secondary-container)}
+.board{position:absolute;left:0;right:0;top:53px;bottom:53px}
+.hand{position:absolute;top:58px;width:200px;height:230px;border-radius:40px 40px 70px 70px;background:#26232B;border:1px solid #49454F}
+.ph{position:absolute;left:290px;top:58px;width:320px;height:180px;border-radius:18px;background:#0e0f12;border:1px solid #49454F}
+.c{position:absolute;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#36343B;border:1px solid #938F99;color:#CAC4D0;font-size:13px;font-weight:600;line-height:14px;border-radius:6px}
+.c.r{border-radius:50%}
+.c.w{flex-direction:row;gap:6px}
+.c.m{background:#4F378B;border-color:#D0BCFF;color:#EADDFF}
+.c .n{font-size:11px;font-weight:700;white-space:nowrap}
+.c.sel{border:2.5px solid #E6E0E9;transform:scale(1.1);box-shadow:0 0 0 3px rgba(255,255,255,.85)}
+.c.tgt{border:3px solid #EFB8C8;transform:scale(1.1)}
+.bbar{position:absolute;left:0;right:0;bottom:0;height:52px;border-top:1px solid var(--m3-outline-variant);display:flex;align-items:center;padding:0 8px;gap:4px}
+.dsw{display:flex;border:1px solid var(--m3-outline);border-radius:20px;overflow:hidden}
+.dsw span{padding:7px 14px;font-size:14px;font-weight:500;color:var(--m3-on-variant)}
+.dsw span.on{background:var(--m3-secondary-container);color:var(--m3-on-secondary-container)}
+.pop{position:absolute;background:#2B2930;border-radius:10px;padding:8px 12px;font-size:12px;line-height:17px;color:#E6E0E9;box-shadow:0 4px 12px rgba(0,0,0,.5);white-space:nowrap}
+.pop{background:#2B2930;border-radius:12px;padding:8px 12px;font-size:14px;line-height:20px}.pop .w{display:inline-block;width:78px;font-size:12px;color:#CAC4D0}
+</style></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const s = phone(st, 'land');
+const p = el(s, `<div class="page" style="padding-left:34px">
+ <div class="pbar"><span class="tb">← Pad</span><span class="ptab">None</span><span class="ptab on">Controller</span><span class="ptab">Shooter</span><span class="tb">+ Preset</span></div>
+ <div class="board"></div>
+ <div class="bbar"><div class="dsw"><span>🎮 Controller</span><span class="on">⌨ Keyboard</span><span>🖱 Mouse</span><span>📱 Phone</span></div>
+  <span class="tb" style="color:var(--m3-primary);font-weight:500;padding:0 12px">⌨ Press a button</span>
+  <span style="flex:1"></span><span style="font-size:11px;color:var(--m3-on-variant)">Tap: what it does · Hold: edit · Hold and drag: swap</span></div>
+</div>`);
+const b = p.querySelector('.board');
+// KeyboardView: PhysicalLayouts.keyboardRows, 23 key units across (at least 34 dp each), keys 1.15 units tall at most.
+const BW = 866, BH = 306;
+const G = w => ({ gap: w }), Kc = (l, w = 1) => ({ l, w });
+const L = s => [...s].map(c => Kc(c.toUpperCase()));
+const rows = [
+ [Kc('Esc'), G(1), ...[1,2,3,4].map(n => Kc('F' + n)), G(.5), ...[5,6,7,8].map(n => Kc('F' + n)), G(.5), ...[9,10,11,12].map(n => Kc('F' + n)), G(.5), Kc('PrtSc'), Kc('ScrLk'), Kc('Pause')],
+ [Kc('`'), ...'123456789'.split('').map(c => Kc(c)), Kc('0'), Kc('-'), Kc('='), Kc('Bksp', 2), G(.5), Kc('Ins'), Kc('Home'), Kc('PgUp'), G(.5), Kc('Num'), Kc('/'), Kc('*'), Kc('−')],
+ [Kc('Tab', 1.5), ...L('qwertyuiop'), Kc('['), Kc(']'), Kc('\\', 1.5), G(.5), Kc('Del'), Kc('End'), Kc('PgDn'), G(.5), Kc('7'), Kc('8'), Kc('9'), Kc('+')],
+ [Kc('Caps', 1.75), ...L('asdfghjkl'), Kc(';'), Kc("'"), Kc('Enter', 2.25), G(4), Kc('4'), Kc('5'), Kc('6')],
+ [Kc('Shift', 2.25), ...L('zxcvbnm'), Kc(','), Kc('.'), Kc('/'), Kc('Shift', 2.75), G(1.5), Kc('↑'), G(1.5), Kc('1'), Kc('2'), Kc('3'), Kc('Enter')],
+ [Kc('Ctrl', 1.25), Kc('Win', 1.25), Kc('Alt', 1.25), Kc('Space', 6.25), Kc('Alt', 1.25), Kc('Win', 1.25), Kc('Menu', 1.25), Kc('Ctrl', 1.25), G(.5), Kc('←'), Kc('↓'), Kc('→'), G(.5), Kc('0', 2), Kc('.')],
+];
+const unit = Math.max(BW / 23, 34), keyH = Math.min(unit * 1.15, BH / rows.length);
+const kbx = el(b, `<div style="position:absolute;left:${(BW - unit * 23) / 2}px;top:${(BH - keyH * rows.length) / 2}px"></div>`);
+const mapped = { W: 1, A: 1, S: 1, D: 1 };
+rows.forEach((r, i) => { let x = 0; r.forEach(k => { if (k.l !== undefined) {
+  const kk = el(kbx, `<div class="c${mapped[k.l] ? ' m' : ''}" data-id="${k.l}" style="left:${x * unit + 1.5}px;top:${i * keyH + 1.5}px;width:${k.w * unit - 3}px;height:${keyH - 3}px"><span class="in" style="display:flex;flex-direction:column;align-items:center">${k.l}${mapped[k.l] ? '<span class="n">↪ 1</span>' : ''}</span></div>`);
+  const inn = kk.querySelector('.in'); const sc = Math.min(1, kk.clientWidth * .86 / inn.offsetWidth, kk.clientHeight * .86 / inn.offsetHeight); inn.style.transform = `scale(${sc})`; }
+  x += k.w ?? k.gap; }); });
+const sp = kbx.querySelector('[data-id="Space"]'), sb = boxOf(st, sp);
+const pb = [...st.querySelectorAll('*')].filter(e => e.children.length <= 1 && /Press a button/.test(e.textContent)).pop();
+const gx = boxOf(st, pb).x + 4;
+marks(st, [[1, kbx.querySelector('[data-id="W"]'), 't', { dx: 0 }], [2, sp, 'b', { dx: sb.w / 2 - 20, via: [[sb.x + sb.w - 20, sb.y + sb.h + 14], [gx, sb.y + sb.h + 14], [gx, st.offsetHeight - 60]] }]]);
+</script></body></html>

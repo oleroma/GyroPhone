@@ -1,0 +1,22 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script>
+<style>.rs{color:var(--m3-primary);font-size:13px;font-weight:500;white-space:nowrap}.rs.off{color:rgba(230,224,233,.38)}</style></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const s = phone(st, 'land');
+// PadMenu.kt "Defaults" page: AppSettings.kt DefaultsTab (hint, Mappings), then WorkspaceSettings at the Defaults level
+// (Reset all to built-in, the category tabs, Gyro first). No own value yet, so Reset all is greyed.
+const p = el(s, `<div class="page" style="padding-left:34px">
+ <div class="pbar"><span class="tb">← Pad</span><span class="pt">Defaults</span></div>
+ <div class="search"><span>⌕</span><span>Search settings</span></div>
+ <div class="fchips"><span class="fchip on">Gyro</span><span class="fchip">Touchpad</span><span class="fchip">Tilt &amp; shake</span><span class="fchip">Buttons</span><span class="fchip">Haptics</span><span class="fchip">Taps</span></div>
+ <div class="hint" style="margin:0 16px 2px">Every workspace uses these, except where it sets its own (its settings): those show highlighted there, with ↺ to follow these again. Long press a tab to move it.</div>
+ <div style="display:flex;align-items:center;gap:10px;margin:0 12px 0 16px"><div class="hint" style="flex:1;margin:0">The touchpad and motion mappings every workspace starts from (none until you map them; Presets has Windows touchpad and Gyro mouse). A workspace maps an action itself to override one.</div><span class="btn outl" id="map">Mappings</span></div>
+ <div class="rs off" id="ra" style="margin:0 12px;padding:6px 12px;display:inline-block">↺ Reset all to built-in</div>
+ <div class="card" style="padding:8px 12px">
+  <div style="padding:2px 0"><div class="name" style="font-size:14px;padding:4px 0">Gyro to mouse</div>
+   <div style="display:flex;gap:8px;margin:2px 0"><span class="fchip">Ratchet disables</span><span class="fchip on">Ratchet enables</span><span class="fchip">Gyro off</span></div>
+   <div class="hint" style="margin-top:2px">Gyro is off; a ratchet turns it on while held. Map Ratchet to a touch button, the workspace's one-finger Hold or a controller button; Toggle gyro swaps the two modes.</div></div>
+ </div></div>`);
+marks(st, [[1, p.querySelector('#map'), 'r'], [2, p.querySelector('#ra'), 'l']]);
+</script></body></html>

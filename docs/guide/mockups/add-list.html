@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script>
+<style>.menu .b.tab{background:var(--tab);border-color:var(--tab-line);border-radius:16px 16px 6px 6px}.menu .b.add{background:rgba(255,255,255,.18);border-color:transparent}</style></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const s = phone(st, 'land');
+// Edit mode with Add + opened (PadScreen.kt): Add ▴ becomes a tab, and the list strip under the main row holds
+// what can be added (AddChip: Button, Empty button, Stick, Display…). Tap one to add it in the middle, or drag it onto the pad.
+drawControls(s, LAYOUTS.wasd, 900, 412);
+drawControls(s, LAYOUTS.nav, 900, 412);
+const m = el(s, `<div class="menu" style="left:50%;transform:translateX(-50%);top:8px;max-width:884px">
+  <div class="row"><div class="dots">⠿</div><div class="fix"><span class="ic">${ICON.undo}</span><span class="ic">${ICON.redo}</span></div>
+  <div class="strip" style="flex:1;min-width:0"><span class="ic">${ICON.tune}</span><span class="ic">${ICON.lockOpen}</span>
+  <span class="b fill">Done</span><span class="b">Cancel</span><span class="b">Select</span><span class="b tab" id="tab">Add ▴</span>
+  <span class="b">Add preset ★</span><span class="b fill">Snap: on</span><span class="b">Devices: WASD</span></div></div>
+  <div class="row"><div style="width:88px"></div><div class="strip list" style="flex:1"><span class="b add" id="btn">Button</span><span class="b add">Empty button</span><span class="b add">Stick</span><span class="b add" id="disp">Display…</span></div></div>
+  <div class="grip"></div></div>`);
+m.querySelector('.ic svg').style.color = '#fff';
+// Nothing cut in half on the main strip.
+{ const r = m.querySelector('.strip'), lim = r.getBoundingClientRect().right - 6;
+  r.querySelectorAll('.b').forEach(c => { if (c.getBoundingClientRect().right > lim) c.style.visibility = 'hidden'; }); }
+const bb = boxOf(st, m.querySelector('#btn')), eb = boxOf(st, ctl(s, 'e')), lane = eb.x + eb.w + 10, jog = bb.y + bb.h + 14;
+marks(st, [[1, m.querySelector('#tab'), 't'], [2, m.querySelector('#btn'), 'b', { via: [[bb.x + bb.w / 2, jog], [lane, jog]] }], [3, m.querySelector('#disp'), 'b']]);
+</script></body></html>
