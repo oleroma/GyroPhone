@@ -106,6 +106,15 @@ public sealed record PerfRun(
     public int HeldAir { get; init; }
     public int HeldPc { get; init; }
     public int HeldPhone { get; init; }
+    /// <summary>
+    /// Of the ones that waited "on the way", those in a second the whole PC's CPU was at <see cref="PcBusyCpuPct"/>% or more:
+    /// with the CPU pinned they most likely waited inside the PC (Windows' network work, the input program's
+    /// receive), which the stall watch, at above-normal priority, doesn't see. Not counted in <see cref="HeldAir"/>.
+    /// </summary>
+    public int HeldPcBusy { get; init; }
+
+    /// <summary>A late packet in a second the whole PC is this busy is put under <see cref="HeldPcBusy"/>, not on the way.</summary>
+    public const double PcBusyCpuPct = 95;
     /// <summary>Latencies that came out below zero (a wrong clock offset).</summary>
     public int NegLat { get; init; }
     /// <summary>The setup at Save (<see cref="SetupSnapshot"/>), and its changes during the run ("20:31:05 pc wifi ch 48 → ch 100").</summary>
@@ -127,7 +136,11 @@ public sealed record PerfRun(
 
 /// <summary>The link numbers over some of a record's seconds (<see cref="PlayTags"/>): the same as the record's own, counted only there.</summary>
 public sealed record PlaySlice(int Seconds, long Packets, int Lost, int Late, double MaxLateMs, int Gaps, int Releases, int Late3,
-    double OverP50Ms, double OverP99Ms, double OverP999Ms, int HeldAir, int HeldPc, int HeldPhone, double RttTypMs, double CpuPct);
+    double OverP50Ms, double OverP99Ms, double OverP999Ms, int HeldAir, int HeldPc, int HeldPhone, double RttTypMs, double CpuPct)
+{
+    /// <summary>Of the "on the way" ones, those in a second the PC's CPU was pinned (<see cref="PerfRun.HeldPcBusy"/>); not in <see cref="HeldAir"/>.</summary>
+    public int HeldPcBusy { get; init; }
+}
 
 /// <summary>
 /// Tags each second of a record so a game session can be told from the rest: <c>play</c> when the game is in front
@@ -384,8 +397,11 @@ public sealed class PerfRecording
         sb.Append(c, $"  {what} {p.Seconds} s: lost {p.Lost}, late {p.Late} (worst {p.MaxLateMs:0} ms), phone pauses {p.Gaps}, let go {p.Releases}");
         if (p.OverP50Ms >= 0)
             sb.Append(c, $"; over the floor {Ms2(p.OverP50Ms)} / {Ms2(p.OverP99Ms)} / {Ms2(p.OverP999Ms)} ms, 3-15 ms over {p.Late3} of {p.Packets} packets");
-        if (p.Late > 0 && p.HeldAir + p.HeldPc + p.HeldPhone > 0)
+        if (p.Late > 0 && p.HeldAir + p.HeldPc + p.HeldPhone + p.HeldPcBusy > 0)
+        {
             sb.Append(c, $"; held up on the way {p.HeldAir}, inside the PC {p.HeldPc}, phone paused {p.HeldPhone}");
+            if (p.HeldPcBusy > 0) sb.Append(c, $", PC busy {p.HeldPcBusy}");
+        }
         if (p.RttTypMs > 0) sb.Append(c, $"; round trip typical {Ms2(p.RttTypMs)} ms");
         if (p.CpuPct >= 0) sb.Append(c, $"; PC CPU {p.CpuPct:0}%");
         return sb.ToString();
@@ -442,6 +458,10 @@ public sealed class PerfRecording
                 hasPhone ? phone.Max(p => p.SendMaxMs) : -1, hasPhone ? phone.Max(p => p.WakeLateMs) : -1,
                 hasPhone ? phone.Max(p => p.GapMaxMs) : -1, phone.Sum(p => p.Failed));
             run = WithLinkNumbers(run, link, phone);
+            // "On the way" in a second the PC's CPU was pinned: most likely the PC, not the network.
+            int busyHeld = linkBySecond.Where(x => x.Value.Air > 0 && _seconds.TryGetValue(x.Key, out var ls) && ls.Load is { } ld && ld.CpuPct >= PerfRun.PcBusyCpuPct)
+                .Sum(x => x.Value.Air);
+            if (busyHeld > 0) run = run with { HeldAir = run.HeldAir - busyHeld, HeldPcBusy = busyHeld };
 
             // Play tags: which seconds were the game session, and the link over each kind.
             bool MovingAt(long k) => linkBySecond.TryGetValue(k, out var ls) && PlayTags.Moving(ls);
@@ -455,7 +475,9 @@ public sealed class PerfRecording
                 var keys = linkBySecond.Keys.Where(k => pick(tags[k])).ToList();
                 if (keys.Count == 0) return null;
                 var loadsIn = keys.Where(k => _seconds.TryGetValue(k, out var fs) && fs.Load != null).Select(k => _seconds[k].Load!.Value).ToList();
-                return Slice(keys.Select(k => linkBySecond[k]).ToList(), loadsIn);
+                int busy = keys.Where(k => _seconds.TryGetValue(k, out var fs) && fs.Load is { } ld && ld.CpuPct >= PerfRun.PcBusyCpuPct).Sum(k => linkBySecond[k].Air);
+                var slice = Slice(keys.Select(k => linkBySecond[k]).ToList(), loadsIn);
+                return busy > 0 ? slice with { HeldAir = slice.HeldAir - busy, HeldPcBusy = busy } : slice;
             }
             run = run with
             {
@@ -490,7 +512,11 @@ public sealed class PerfRecording
             if (run.HandOffMaxMs >= 0)
                 sb.AppendLine(c, $"hand-off to Windows: slowest {run.HandOffMaxMs:0.0} ms, over 2 ms {run.SlowHandOffs} ({Per10k(run.SlowHandOffs, run.Packets)} per 10k packets), longest engine lock wait {run.LockWaitMaxMs:0.0} ms");
             if (run.Late > 0)
-                sb.AppendLine(c, $"late packets held up: on the way {run.HeldAir}, inside the PC {run.HeldPc}, phone paused {run.HeldPhone}");
+            {
+                sb.Append(c, $"late packets held up: on the way {run.HeldAir}, inside the PC {run.HeldPc}, phone paused {run.HeldPhone}");
+                if (run.HeldPcBusy > 0) sb.Append(c, $", PC busy (CPU {PerfRun.PcBusyCpuPct:0}%+, most likely waited in the PC) {run.HeldPcBusy}");
+                sb.AppendLine();
+            }
             if (run.StallMaxMs >= 0)
                 sb.AppendLine(c, $"PC stall watch: latest wake {run.StallMaxMs:0.0} ms, {run.Stalls} wakes 2 ms or more late");
             if (frames)

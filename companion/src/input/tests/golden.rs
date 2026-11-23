@@ -405,3 +405,12 @@ fn base64_round_trips_and_refuses_junk() {
         assert!(crypto::base64_decode(bad).is_none(), "{bad}");
     }
 }
+
+/// logfile-v1.json: the key the phone's Diagnostics file is fetched under (the companion fetches it, LogFileWire).
+#[test]
+fn log_file_key_matches_vector() {
+    let v = vectors("logfile-v1.json");
+    let k_ph: [u8; 16] = arr(&v, "kPH");
+    let key = crypto::log_file_key(&k_ph, num(&v, "sessionId") as u32);
+    assert_eq!(hex(&key), v["logKey"].as_str().unwrap());
+}

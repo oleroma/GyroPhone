@@ -98,6 +98,8 @@ pub struct HostSession {
     pub promoted: bool,
     highest_rx_seq: u32,
     rx: SessionCipher,
+    /// The key the phone's Diagnostics file is fetched under (`crypto::log_file_key`).
+    log_key: [u8; 16],
     /// The receive side's copy of the endpoint, so the unchanged case needs no lock.
     endpoint: SocketAddr,
     tx: SessionSender,
@@ -129,6 +131,7 @@ impl HostSession {
             promoted: false,
             highest_rx_seq: 0,
             rx: SessionCipher::new(k_ph, wire::DIR_PHONE_TO_HOST),
+            log_key: crypto::log_file_key(k_ph, session_id),
             endpoint,
             tx: SessionSender {
                 session_id,
@@ -149,6 +152,10 @@ impl HostSession {
 
     pub fn endpoint(&self) -> SocketAddr {
         self.endpoint
+    }
+
+    pub fn log_key(&self) -> [u8; 16] {
+        self.log_key
     }
 
     /// Whether a datagram came from the session's current endpoint.

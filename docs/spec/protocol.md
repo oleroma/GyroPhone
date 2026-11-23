@@ -118,6 +118,17 @@ The PC's pairing window shows `gyrophone://pair?v=1&n=<name>&k=<host public key>
 
 **While live**: STATE as described in [Connection](phone-connection.md) (on change, ≤ report rate, +2/+6 ms repeats after a discrete change, keepalive every 20 ms, every 150 ms while the phone can send no input); PING and LINK_INFO each second; HOST_STATUS from the PC each second. The phone calls the PC silent after **3 s** without anything and reconnects; the PC releases everything after **250 ms** without a STATE and drops the session after **10 s**. BYE / HOST_BYE end it at once.
 
+## Diagnostics file
+
+The phone's Diagnostics save goes to the PC over a TCP connection of its own, apart from the input packets, so getting it needs no adb (`core/.../net/LogFileWire.kt`, `LogFileServer.kt` on the phone; `GyroPhone.Protocol/LogFileWire.cs`, `GyroPhone.Host/PhoneLogFetch.cs` on the PC; vectors in `logfile-v1.json`). While Diagnostics is on the phone listens on TCP **47800**; the PC connects out to it (so Windows Firewall needs no rule) after every Save, to the address the session's packets come from.
+
+- **Log key**: `HKDF-SHA256(kPH, salt = none, info = "GP-log-file-v1" || u32le(sid), 16)`, never used on the input link.
+- **Request** (PC → phone, 40 bytes): `"GPLF"`, version 1, kind (1 the newest save), u16 max age (s), u32 sid, 8-byte random reqId, 4 zero bytes, then `HMAC-SHA256(logKey, bytes[0..24))[0..16]`.
+- **Head** (phone → PC, 8 bytes): `"GPLF"`, version 1, status (OK 0, NOT_YET 1: no save that new yet, ask again; REFUSED 2: a bad mac; OFF 3: Diagnostics off or not this session), 2 zero bytes.
+- **Frames** after OK: `u32le len || AES-128-GCM(logKey, nonce = reqId || u32le(index), no AAD)`, len counting the 16-byte tag. Frame 0 is the meta (u32 raw size, u32 zipped size, str8 name), then the gzip data in frames of at most 16 KB, then an empty frame, so a cut transfer never passes for a whole one.
+
+The phone sends from a background-priority thread at most 1 MB a second, one PC at a time; the PC asks again every second for up to 20 s while the phone is still writing. Over the direct USB cable there is no TCP: that save stays on the phone.
+
 ## USB framing
 
 USB tethering carries the UDP packets unchanged. The direct cable (Android Open Accessory) is a byte stream, so each datagram is framed as `0x47, u16le length, bytes`, plus one pad byte when a frame's size is a multiple of 64 (so no transfer ends on a full USB packet) (`core/.../net/UsbFrames.kt`, `GyroPhone.Protocol/UsbFraming.cs`). Both ends bridge it to a loopback UDP socket, so the protocol above is unchanged.

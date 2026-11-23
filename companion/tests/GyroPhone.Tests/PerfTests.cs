@@ -329,6 +329,25 @@ public class PcBusyTests
     }
 
     [Fact]
+    public void LatePacketsInASecondThePcIsPinnedAreTheBusyPcs()
+    {
+        var r = new PerfRecording("Router", "Wi-Fi", 0, DateTime.Now, 0);
+        r.AddLoad(new LoadSample(98, 1, 1, 5), 500_000);
+        r.AddLoad(new LoadSample(50, 1, 1, 5), 1_500_000);
+        var link = new List<LinkSecond>
+        {
+            new(1_000_000, 400, 0, 30, 40, 0, 0) { Air = 30 },
+            new(2_000_000, 400, 0, 4, 20, 0, 0) { Air = 3, Phone = 1 },
+        };
+        var (run, text) = r.Finish(2_000_000, link);
+        Assert.Equal(30, run.HeldPcBusy);
+        Assert.Equal(3, run.HeldAir);
+        Assert.Equal(1, run.HeldPhone);
+        Assert.Contains("on the way 3, inside the PC 0, phone paused 1, PC busy (CPU 95%+, most likely waited in the PC) 30", text);
+        Assert.Contains(System.Net.WebUtility.HtmlEncode("3 · 0 · 1 · PC busy 30"), PerfReport.Html([run]));
+    }
+
+    [Fact]
     public void PlayTagsSplitTheGameSessionFromTheRest()
     {
         var r = new PerfRecording("Router", "Wi-Fi", 0, DateTime.Now, 0) { Self = "GyroPhoneCompanion" };

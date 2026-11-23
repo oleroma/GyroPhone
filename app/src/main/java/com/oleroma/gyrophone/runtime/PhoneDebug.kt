@@ -56,6 +56,10 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
     /** The setup line last logged, and the parts of it whose change is logged as an event. */
     @Volatile private var setupLine: String? = null
     private var setupKey: String? = null
+    /** A save is being written: the file server answers "not yet" meanwhile. */
+    @Volatile private var saving = false
+    /** Hands the newest save to the PC over the network while Diagnostics is on ([LogFileServer]): no adb needed. */
+    private val fileServer = LogFileServer(dir, { sid -> runtime.wifi.logFileKey(sid) }, { saving }, { line -> trace?.note(line) })
 
     /** Applies the stored switch; called once the runtime is wired. */
     fun init() {
@@ -96,6 +100,7 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         runtime.wifi.gyroTiming = t.gyroTiming
         runtime.wifi.flight = newFlight(_keepMinutes.value)
         runtime.ratchetTiming.enabled = true
+        fileServer.start()
         job = scope.launch {
             var last: String? = null
             runtime.linkState.collect { s ->
@@ -141,6 +146,7 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
 
     @Synchronized
     private fun turnOff() {
+        fileServer.stop()
         job?.cancel(); job = null
         worker?.interrupt(); worker = null
         runtime.engine.trace = null
@@ -160,6 +166,15 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
      */
     fun save(fromPc: Boolean = false): File? {
         val t = trace ?: return null
+        saving = true
+        try {
+            return saveNow(t, fromPc)
+        } finally {
+            saving = false
+        }
+    }
+
+    private fun saveNow(t: DebugTrace, fromPc: Boolean): File {
         t.note(if (fromPc) "saved (the PC asked)" else "saved")
         val connected = runtime.linkState.value is LinkState.Connected
         if (!fromPc && connected) runtime.wifi.requestDebugSave()
