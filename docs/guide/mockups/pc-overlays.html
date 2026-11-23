@@ -19,7 +19,7 @@ const w = pcWin(st, 'Overlays', `<div class="wh" style="margin-bottom:16px"><h1>
   <div class="tabs" style="margin-top:12px"><span class="on">Window</span><span>Look</span><span id="turn" style="padding-right:8px">Turning</span></div>
   <div class="wcard" style="margin-bottom:12px">${tog('Show this overlay', '', 1)}${tog('Behind other windows', 'For recording: the game covers it, so you don\'t see it while playing, but OBS Window Capture still records it (capture method "Windows 10 (1903 and up)"). Edit brings it to the front to place it.')}</div>
   <div class="wcard"><div class="ct">Background</div><div class="wseg"><span class="on">Transparent</span><span>Green</span><span>Dark</span></div><div class="whint">Green is for an OBS chroma key.</div>
-   <div style="display:flex;align-items:center;gap:14px;font-size:14px;margin-top:10px"><span style="width:60px">Opacity</span><div class="sl"><b></b></div><span>100%</span></div></div>
+   <div style="display:grid;grid-template-columns:150px minmax(0,260px) 70px;align-items:center;font-size:14px;margin-top:10px"><span>Opacity</span><div class="sl"><b></b></div><span style="padding-left:12px">100%</span></div></div>
  </div></div>`, { width: 1180 });
 const q = s => w.querySelector(s), qa = s => [...w.querySelectorAll(s)];
 const tl = qa('.tl'), ti = qa('.top .wtog i'), mainX = boxOf(st, q('.main')).x + 12, H = st.offsetHeight;

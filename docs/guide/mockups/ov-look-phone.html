@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script><script src="ovlib.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const { tog, seg, chips, sl, sls, t, sub, hint, div, btn, pick, card, swatches } = ov, ind = ov.in;
+const T = s => w.querySelector(s + ' .tl') || w.querySelector(s);
+// Look tab of a Phone overlay: the Phone card, then its Colours (OverlaySettings PhoneColors).
+const w = ovCol(st, 'Phone', ['Window', 'Look', 'Turning'], 'Look',
+  card('Phone', tog('Finger dots', '', 0, 'dots') + tog('Finger trails', '', 1, 'trails') + tog('Axonometric view', "Seen from 30° round and 30° above with the world's axes (yaw toward you red, pitch right green, roll up blue, as the gimbal's rings), as the pointer is, instead of face-on.", 0, 'axon') + div()
+    + t('Controller handles') + seg(['While a controller is attached', 'Always', 'Off'], 0, 'hand') + t('Controller') + seg(['Phone', 'PC'], 0, 'src')
+    + hint('PC: the controller plugged into this PC, while "Use PC controller for gyro ratchet" is on in the phone\'s Connection settings.'))
+  + card('Colours', swatches([['Body', argb(0xFF2A2E35)], ['Screen', argb(0xFF101318)], ['Pressed', argb(0xFF7CC4FF)], ['Latched', argb(0xFF8FE39A)], ['Fingers', argb(0xFFFFFFFF)], ['Controller handles', argb(0xFF353A42)], ['Controller pressed', argb(0xFF7CC4FF)]]) + btn('Default colours', 'def', '↺'), 'col'));
+marks(st, [[1, T('#dots'), 'r'], [2, T('#trails'), 'r'], [3, T('#axon'), 'r'], [4, w.querySelector('#hand'), 'r'], [5, w.querySelector('#src'), 'r'], [6, w.querySelector('#col .ovsw span'), 'r', { dx: 0 }], [7, w.querySelector('#def'), 'r']]);
+</script></body></html>

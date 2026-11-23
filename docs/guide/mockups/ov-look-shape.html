@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script><script src="ovlib.js"></script></head><body>
+<div class="stage pad-callouts" id="st"></div>
+<script>
+const st = document.getElementById('st');
+const { tog, seg, chips, sl, sls, t, sub, hint, div, btn, pick, card, swatches } = ov, ind = ov.in;
+const T = s => w.querySelector(s + ' .tl') || w.querySelector(s);
+// Look tab of a 3D shape overlay (Globe): the Shape card and its Colours. Subdivision shows only for the Icosphere.
+const w = ovCol(st, '3D shape', ['Window', 'Look', 'Turning'], 'Look',
+  card('Shape', chips(['Globe', 'Icosphere', 'Cube', 'Tetrahedron', 'Dodecahedron', 'Torus', 'Gimbal rings', 'Paper plane', 'Camera'], 0, 'shape')
+    + tog('Smooth (edges bent onto a ball)', '', 1, 'smooth') + tog('Edges round the back, faint', '', 1) + tog('Filled faces', '', 1) + tog('Equator', '', 1, 'eq')
+    + tog('Mark where the screen faces', '', 1) + tog('Mark at the top', '', 1) + tog('Axonometric view', "Seen from 30° round and 30° above with the world's axes (yaw toward you red, pitch right green, roll up blue, as the gimbal's rings), as the pointer is, instead of face-on.", 0, 'axon'))
+  + card('Colours', swatches([['Fill', argb(0xFF2A3446)], ['Lines', argb(0x99FFFFFF)], ['Equator', argb(0xFF5AA8FF)], ['Screen mark', argb(0xFFFFC94D)], ['Top mark', argb(0xFFFF5A5A)]]) + btn('Default colours', 'def', '↺'), 'col'));
+marks(st, [[1, w.querySelector('#shape'), 'r'], [2, T('#smooth'), 'r'], [3, T('#eq'), 'r'], [4, T('#axon'), 'r'], [5, w.querySelector('#col .ovsw span'), 'r', { dx: 0 }]]);
+</script></body></html>

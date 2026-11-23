@@ -374,6 +374,153 @@ Windows that draw the phone's motion over your game or for OBS.
 
 **Easy to miss** (with Edit on): a click without a drag picks a window for its settings, clicking where windows overlap picks the next one, the mouse wheel over a window scales it (hold Shift for small steps), and a double-click opens its settings. OBS finds each window by its title, "GyroPhone Companion <kind> overlay: <label>".
 
+### Window tab
+
+![An overlay's Window tab](images/ov-window.png)
+
+The right side of the Overlays page, with a Phone overlay picked.
+
+1. **Show this overlay**.
+2. **Behind other windows**: the game covers it, OBS Window Capture still records it.
+3. **Background**: Transparent, Green (for an OBS chroma key) or Dark.
+4. **Opacity** (100%).
+5. **Quality**: High, Balanced or Fast (the quickest for big windows).
+6. **Frame rate**: every screen refresh, about 60 fps (default) or about 30 fps.
+7. **Save as preset**: adds it to **Add overlay** with a ★.
+8. **Remove this overlay** (asks first).
+
+Save as preset and Remove are under every tab.
+
+### Look tab: Phone
+
+![A Phone overlay's Look tab](images/ov-look-phone.png)
+
+1. **Finger dots** (off).
+2. **Finger trails** (on).
+3. **Axonometric view**: seen from 30° round and 30° above instead of face-on.
+4. **Controller handles**: while a controller is attached, always, or off.
+5. **Controller**: the one on the phone, or the one plugged into the PC (needs "Use PC controller for gyro ratchet" on the phone).
+6. Each colour: click it to pick another.
+7. **Default colours** puts them all back.
+
+### Look tab: 3D shape
+
+![A 3D shape overlay's Look tab](images/ov-look-shape.png)
+
+1. The shape: Globe, Icosphere (with a **Subdivision** slider), Cube, Tetrahedron, Dodecahedron, Torus, Gimbal rings, Paper plane or Camera.
+2. **Smooth** (edges bent onto a ball), with **Edges round the back, faint** and **Filled faces** under it.
+3. **Equator** (Globe only), then **Mark where the screen faces** and **Mark at the top**.
+4. **Axonometric view**.
+5. The shape's colours.
+
+### Look tab: the smaller overlays
+
+![The Look tabs of Bubble disk, Speed graph, Ratchet ring, FPS and Attitude indicator](images/ov-look-small.png)
+
+1. Bubble disk: **Dot on the rim at** (30°), how far the phone tilts before the dot reaches the rim.
+2. Bubble disk: **Crosshair**.
+3. Speed graph: its range, ±180 to ±1440 °/s.
+4. Speed graph: how many seconds it shows.
+
+The Ratchet ring, FPS and Attitude indicator have only their colours. The Ratchet ring, Speed graph, FPS and Keys don't turn with the phone, so they have no Turning tab.
+
+### Look tab: Keys
+
+![A Keys overlay's Look tab](images/ov-look-keys.png)
+
+1. **Fade out**: how long a released key's row takes to fade (0.4 s).
+2. **Transparent background**: only the keys show over the game.
+3. **Always shown**: these stay on top, dim until they fire (the sticks by default). Tap a chip to add or remove it.
+
+### Look tab: Pointer
+
+![A Pointer overlay's Look tab with the Crosshair look](images/ov-look-pointer.png)
+
+1. The look: **Sphere** (the see-through sphere and its laser), **Gun** or **Crosshair**.
+2. The crosshair's shape, then **Size**, **Gap**, **Thickness**, **Centre dot** and **Outline**.
+3. **Axonometric view**, then **Perspective**.
+4. **Fixed pointer mode**: the beam stays still and the sphere turns under it. Then **Grid every 15°** and **Axes**.
+5. **Fire display**: the button that counts as firing (Mouse Left). Click it to pick another, or None.
+6. **Recoil like**: which gun's recoil the crosshair copies.
+7. **Kick**: Off, Once a press, or Auto rifle while held. Then **Kick size (this gun)** and **Lines only** or **Evenly, thickness too**.
+8. **Muzzle flash**.
+9. **Simulate spread**: each shot lands a little off the aim, with **Spread (this gun)** and **Bloom**.
+10. **Aim display**: the button that counts as aiming (Mouse Right).
+11. **Crosshair while aiming**: how small it gets (75%).
+
+With **Gun** picked instead: the gun (Pistol, SMG, Assault rifle, Battle rifle, LMG, Shotgun, Sniper), **Lowered when idle**, **Hip fire pull**, **Hip fire recovery** and **Scope while aiming**. With **Sphere**: **Gimbal rings**.
+
+### Paint tab (Pointer)
+
+![A Pointer overlay's Paint tab](images/ov-paint.png)
+
+1. **Draw mode**: the beam paints the inside of the sphere.
+2. **Brush**, then **Clear on ratchet**.
+3. **Fire brush** and **Fire glow**: how shots paint. Below them, **Aim brush** and **Aim glow**.
+4. **Draw each shot**: marks each hit instead of a line, with the fire rate and **Hit look** (Dot, Ring, Cross, Bullet hole).
+5. **Colour by**: where the paint lands, or the way it moved.
+6. **Paint detail**: Low, Normal or High (changing it clears the paint). Then **Softness**, **Glow**, **Outline**, **Facing shade** and **Inside**.
+7. Where the light shines from, with **Light strength** and **Shine**.
+8. **Line smoothing**: steadies the line against hand shake (shared with the Snake).
+9. **Paint only while firing or aiming**.
+10. **Clear**: wipes the paint.
+
+### Snake tab (Pointer)
+
+![A Pointer overlay's Snake tab](images/ov-snake.png)
+
+1. **Snake**: a line that follows the beam's newest stretch.
+2. **Length**, then **Snake brush**, **Taper**, **Tail fade**, **Snake glow** and **Clear on ratchet**.
+3. **Continuous** zip back: the tail always runs toward the head, at **Zip speed**.
+4. **On ratchet** zip back: a ratchet press pulls the whole Snake in, in **Zip back in** time.
+5. **Fire brush** and **Aim brush**: how wide it is while firing and aiming.
+6. **Colour by**, then **Facing shade** and **Inside**.
+7. The Snake's own light, with **Light strength** and **Shine**.
+
+### Colours tab (Pointer)
+
+![A Pointer overlay's Colours tab](images/ov-colours.png)
+
+1. The six **Moving** colours: the colour of each way the beam moves.
+2. The crosshair's colour while aiming. Fire, Aim and Flash colours sit next to it.
+3. **Smooth way colours**: small shakes don't flicker the Moving colours.
+4. **Default colours**.
+
+The other overlays keep their colours in the Look tab.
+
+### Turning tab
+
+![The Turning tab: a Phone overlay and a Pointer as a trackball](images/ov-turning.png)
+
+Left, an overlay that turns with the phone:
+
+1. **Turns with**: the Phone, the game's Camera, or as a Trackball.
+2. **Gravity**: tilt held to the world, so it never drifts. With it, **Compass** holds the heading too.
+3. **Ease back to straight**: on a ratchet or when the phone stops, after a **Delay**, by time or by speed.
+4. **Turn amount**: more or less turn than the phone's own.
+5. **Level**: hold the phone the way you play and press it; that way then shows face-on.
+
+Right, a Pointer as a trackball:
+
+6. **Trackball**: it rolls with your moves.
+7. **As far as the game's camera**: off, a **Spin** slider sets how far.
+8. **Turns about** the sphere's axes or its own.
+9. Each axis: what turns it (Yaw, Pitch, Roll or None), **Invert**, **Stop at ±90°** and **Ease back**, each with its own timing.
+10. **Pointer faces**: which way of the trackball the pointer looks.
+
+### Fade when phone rests
+
+![Fade when phone rests](images/ov-rest.png)
+
+In the Overlays page's left column, for every overlay.
+
+1. **Fade overlays** (on).
+2. **Flat within**: how close to its Level the phone must lie (10°).
+3. **Still below**: how still it must be (0.5 °/s). The line under it shows the phone's speed now.
+4. **Quiet for**: how long it must rest first (3 s).
+5. **Fade to** (30%), over **Fade over** (0.5 s).
+6. **Also when the phone stops sending**: screen off, app closed or link stopped.
+
 ## Connection on the PC
 
 ![The Connection page on the PC](images/pc-connection.png)

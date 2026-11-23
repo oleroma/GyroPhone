@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script><script src="pcwin.js"></script><script src="ovlib.js"></script></head><body>
+<div class="stage pad-callouts" id="st" style="flex-wrap:wrap;width:1560px"></div>
+<script>
+const st = document.getElementById('st');
+const { tog, seg, chips, sl, sls, t, sub, hint, div, btn, pick, card, swatches } = ov, ind = ov.in;
+const T = s => w.querySelector(s + ' .tl') || w.querySelector(s);
+// Look tabs of the smaller overlays: Bubble disk, Speed graph, Ratchet ring, FPS and Attitude indicator (the last two: colours only).
+const cols = (list) => card('Colours', swatches(list.map(([n, c]) => [n, argb(c)])) + btn('Default colours', '', '↺'));
+const a = ovCol(st, 'Bubble disk', ['Window', 'Look', 'Turning'], 'Look', card('Bubble disk', sl('Dot on the rim at', 25 / 85, '30°', 'rim') + tog('Crosshair', '', 1, 'cross'))
+  + cols([['Disk', 0x66000000], ['Rim', 0xCCFFFFFF], ['Marks', 0xCCFFFFFF], ['12 o\'clock mark', 0xFFFF5A5A], ['Crosshair', 0x80FFFFFF], ['Dot', 0xFFFFC94D]]), 640);
+const b = ovCol(st, 'Speed graph', ['Window', 'Look'], 'Look', card('Speed graph', chips(['±180°/s', '±360°/s', '±720°/s', '±1440°/s'], 1, 'range') + chips(['2 s', '3 s', '5 s', '8 s'], 1, 'secs') + hint('Yaw, pitch and roll speed; shaded while a ratchet is held.'))
+  + cols([['Yaw', 0xFFFF5A5A], ['Pitch', 0xFF5ADB6E], ['Roll', 0xFF5AA8FF], ['Background', 0x59000000], ['Ratchet shading', 0x1FFFFFFF]]), 640);
+const c = ovCol(st, 'Ratchet ring', ['Window', 'Look'], 'Look', card('Ratchet ring', hint('Yaw, pitch and roll arcs, lit while that axis moves the mouse and dim while a ratchet (or the gyro mode) pauses it.'))
+  + cols([['Yaw', 0xFFFF5A5A], ['Pitch', 0xFF5ADB6E], ['Roll', 0xFF5AA8FF], ['Letters', 0xE6FFFFFF]]), 640);
+const d = ovCol(st, 'FPS', ['Window', 'Look'], 'Look', cols([['Numbers', 0xFFFFFFFF], ['Frame times', 0xFF7CC4FF], ['Jumps', 0xFFFF5A5A], ['Panel', 0x99000000]]), 640);
+const e = ovCol(st, 'Attitude indicator', ['Window', 'Look', 'Turning'], 'Look', cols([['Sky', 0xFF2F6DB5], ['Ground', 0xFF7A5534], ['Horizon line', 0xFFFFFFFF], ['Pitch ladder', 0xB3FFFFFF], ['Aircraft symbol', 0xFFFFC94D], ['Rim', 0xCCFFFFFF], ['Heading tape', 0x66000000], ['Heading numbers', 0xFFFFFFFF]]), 640);
+const w = a;
+marks(st, [[1, a.querySelector('#rim span'), 'l', { dx: -6 }], [2, a.querySelector('#cross i'), 'l', { dx: -4 }], [3, b.querySelector('#range'), 'r'], [4, b.querySelector('#secs'), 'r']]);
+</script></body></html>
