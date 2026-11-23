@@ -26,17 +26,18 @@ const p = el(s, `<div class="page" style="padding-left:34px;display:flex;flex-di
   </div>
  </div></div>`);
 const q = (sel, i = 0) => p.querySelectorAll(sel)[i];
-const T = (n, e, tx, ty, dx = 0, dy = 0) => { const [x, y] = at(st, e, dx, dy); tag(st, n, x, y, tx ?? x, ty); };
-const edge = e => -boxOf(st, e).h / 2 + 3;
-T(1, q('.lbl'), null, 22, 0, edge(q('.lbl')));
-T(2, q('.setchip'), null, 22, 0, edge(q('.setchip')));
-T(3, q('.mtop .tb', 5), null, 22, 0, edge(q('.mtop .tb', 5)));
-T(4, q('.done'), null, 22, 0, edge(q('.done')));
-badge(st, 5, q('.acard .t'), 'r', -120);
-badge(st, 6, q('.mchip', 1), 'r', 4);
-badge(st, 7, q('.buzz'), 'l', 4);
-badge(st, 8, q('.mchip.inh', 1), 'b', 2);
-const dv = q('.vsplit'); T(9, dv, null, st.offsetHeight - 26, 0, 120);
-badge(st, 10, q('.lrow .setchip', 3), 'tr', 2);
-badge(st, 11, q('.lrow .setchip', 0), 'tl', 2);
+// Library tabs past the edge are scrolled off (none cut in half, so every word reads).
+{ const r = q('.lrow'), lim = r.getBoundingClientRect().right - 8;
+  r.querySelectorAll('.setchip').forEach(c => { if (c.getBoundingClientRect().right > lim) c.style.visibility = 'hidden'; }); }
+const B = e => boxOf(st, e), pk = B(q('.lrow .setchip', 0)), H = st.offsetHeight;
+const chip6 = B(q('.mchip', 1)), t1 = B(q('.setchip', 2)), t2 = B(q('.setchip', 3)), gx = (t1.x + t1.w + t2.x) / 2 + 2;
+marks(st, [
+  [1, q('.lbl'), 't'], [2, q('.setchip'), 't'], [3, q('.mtop .tb', 5), 't'], [4, q('.done'), 't'],
+  [5, q('.acard'), 'l'],
+  [6, q('.mchip', 1), 't', { dx: gx - (chip6.x + chip6.w / 2) }],
+  [7, q('.buzz'), 'b'], [8, q('.mchip.inh', 1), 'b'],
+  [9, q('.vsplit'), 'b', { at: 'c', dy: 60, shift: -10 }],
+  [10, q('.lrow .setchip', 3), 't'],
+  [11, q('.lrow .setchip', 0), 'b', { dx: -pk.w / 2, dy: -pk.h / 2, shift: 40, via: [[pk.x - 7, pk.y + pk.h / 2], [pk.x - 7, H - 62]] }],
+], {});
 </script></body></html>

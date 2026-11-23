@@ -81,7 +81,7 @@ Tap the capsule of the workspace you're on to open **edit mode**. There's no Edi
 9. **Add +** lists what you can add: buttons, sticks and gyro displays. Tap one, or drag it onto the pad where you want it.
 10. The menu's row scrolls sideways for more.
 11. A selected control shows in amber. Drag it to move it, pinch with two fingers to resize. **Tap it again** to open its mapping editor; **hold it** for Duplicate, Make global and Delete.
-12. Drag the menu's corner grip to make it wider or give it more rows.
+12. Drag the menu's corner grip sideways to make it wider; down gives the **Add +** list more rows.
 
 ## 6. Choose what a button does
 

@@ -10,7 +10,7 @@
 .c.r{border-radius:50%}
 .c.w{flex-direction:row;gap:6px}
 .c.m{background:#4F378B;border-color:#D0BCFF;color:#EADDFF}
-.c .n{font-size:11px;font-weight:700}
+.c .n{font-size:11px;font-weight:700;white-space:nowrap}
 .c.sel{border:2.5px solid #E6E0E9;transform:scale(1.1);box-shadow:0 0 0 3px rgba(255,255,255,.85)}
 .c.tgt{border:3px solid #EFB8C8;transform:scale(1.1)}
 .bbar{position:absolute;left:0;right:0;bottom:0;height:52px;border-top:1px solid var(--m3-outline-variant);display:flex;align-items:center;padding:0 8px;gap:4px}
@@ -75,14 +75,11 @@ box.querySelectorAll('.c').forEach(c => { const i = c.querySelector('.in'), room
   const k = Math.min(1, c.clientWidth * room / i.offsetWidth, c.clientHeight * room / i.offsetHeight); i.style.transform = `scale(${k})`; });
 const q = id => b.querySelector(`[data-id="${id}"]`);
 q('a').classList.add('sel');
-{ const r = q('a'); const x = parseFloat(r.style.left) + parseFloat(r.style.width) + 8 + parseFloat(box.style.left), y = parseFloat(r.style.top) + parseFloat(box.style.top);
-  el(b, `<div class="pop" style="left:${x}px;top:${y}px"><div><span class="w">Press</span>Key Space</div><div><span class="w">Aim · Press</span>Mouse right</div></div>`); }
-const T = (n, e, tx, ty, dx = 0, dy = 0) => { const [x, y] = at(st, e, dx, dy); tag(st, n, x, y, tx ?? x, ty); };
-T(1, p.querySelectorAll('.ptab')[1], null, 22, 0, -14);
-T(2, p.querySelectorAll('.ptab')[2], null, 22, 0, -14);
-badge(st, 3, q('rb'), 'r', 4);
-badge(st, 4, q('ls'), 'l', 4);
-badge(st, 5, q('a'), 'bl', 2);
-T(6, p.querySelector('.dsw'), null, st.offsetHeight - 26, 0, 14);
-T(7, p.querySelector('.bbar .tb'), null, st.offsetHeight - 26, 0, 14);
+const popup = (() => { const r = q('a'); const x = parseFloat(r.style.left) + parseFloat(r.style.width) + 8 + parseFloat(box.style.left), y = parseFloat(r.style.top) + parseFloat(box.style.top);
+  return el(b, `<div class="pop" style="left:${x}px;top:${y}px"><div><span class="w">Press</span>Key Space</div><div><span class="w">Aim · Press</span>Mouse right</div></div>`); })();
+marks(st, [
+  [1, p.querySelectorAll('.ptab')[1], 't'], [2, p.querySelectorAll('.ptab')[2], 't'],
+  [3, q('rb'), 'r'], [4, q('ls'), 'l'], [5, popup, 'r'],
+  [6, p.querySelector('.dsw'), 'b'], [7, p.querySelector(".bbar .tb"), "b", { dy: 6 }],
+]);
 </script></body></html>

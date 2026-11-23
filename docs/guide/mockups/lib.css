@@ -196,3 +196,5 @@ body { background: transparent; font-family: Inter, Roboto, "Segoe UI", Arial, s
 .lchip.mapped { background: var(--m3-primary-container); color: var(--m3-capsule-on-text, #EADDFF); }
 .divider { height: 14px; display: flex; align-items: center; justify-content: center; }
 .divider::before { content: ""; width: 40px; height: 4px; border-radius: 2px; background: var(--m3-outline); }
+/* ValueBars.kt valueFrame: what a button sends now, in its middle in place of its label. */
+.vframe { background: rgba(20,20,24,.92); border: 1px solid #666; border-radius: 8px; padding: 5px 6px; font-size: 13px; font-weight: 400; color: #fff; line-height: 16px; }

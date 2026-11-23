@@ -3,23 +3,18 @@
 <script>
 const st = document.getElementById('st');
 const s = phone(st, 'land');
-drawControls(s, LAYOUTS.wasd, 900, 412, { state: { lmb: 'pressed' }, knob: { move: [0.15, -0.6] } });
+// The fresh install's WASD workspace (BuiltinProfiles.kt), with LMB held: it lights and, with Show mappings on
+// buttons (on by default), shows what it sends in its middle in place of its label (ValueBars.kt).
+drawControls(s, LAYOUTS.wasd, 900, 412, { state: { lmb: 'pressed' }, labels: { lmb: '<span class="vframe">Mouse L</span>' } });
 drawControls(s, LAYOUTS.nav, 900, 412);
+// CapsuleRow.kt over the pad's top edge, clear of the camera cutout.
 const row = capsules(s, [['+', 'ws'], ['Controller', 'ws'], ['WASD ✎', 'wsOn'], ['Keyboard', 'ws'], ['WASD', 'devices'], ['App', 'app'], ['Defaults', 'defaults'], ['Connection', 'conn']], { left: 58, top: 8 });
-finger(s, 470, 250); arrow(s, 470, 250, 560, 215);
 const c = row.children;
-const T = (n, e, tx, ty, dx = 0, dy = 0) => { const [x, y] = at(st, e, dx, dy); tag(st, n, x, y, tx ?? x, ty); };
-const edge = e => -boxOf(st, e).h / 2 + 3;
-T(1, c[0], null, 22, 0, edge(c[0]));
-T(2, c[1], null, 22, 0, edge(c[1]));
-T(3, c[2], null, 22, 0, edge(c[2]));
-T(4, c[4], null, 22, 0, edge(c[4]));
-T(5, c[5], null, 22, 0, edge(c[5]));
-T(6, c[6], null, 22, 0, edge(c[6]));
-T(7, c[7], null, 22, 0, edge(c[7]));
-T(8, ctl(s, 'nav_prev'), 30, 22);
-T(9, ctl(s, 'nav_next'), st.offsetWidth - 30, 22);
-const f = s.querySelector('.finger'); T(10, f, null, st.offsetHeight - 26);
-T(11, ctl(s, 'lmb'), null, st.offsetHeight - 26, 0, 30);
-T(12, ctl(s, 'move'), null, st.offsetHeight - 26, 0, 40);
+const pad = boxOf(st, s);
+const touch = { x: pad.x + 440, y: pad.y + 230, w: 0, h: 0 };
+marks(st, [
+  [1, c[0], 't'], [2, c[1], 't'], [3, c[2], 't'], [4, c[4], 't'], [5, c[5], 't'], [6, c[6], 't'], [7, c[7], 't'],
+  [8, ctl(s, 'nav_prev'), 'l'], [9, ctl(s, 'nav_next'), 'r'],
+  [10, touch, 'b', { at: 'c' }], [11, ctl(s, 'lmb'), 'r'], [12, ctl(s, 'move'), 'b'],
+]);
 </script></body></html>

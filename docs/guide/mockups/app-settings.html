@@ -9,17 +9,15 @@ const p = el(s, `<div class="page" style="padding-left:34px">
  <div class="search"><span>⌕</span><span>Search settings</span></div>
  <div class="fchips"><span class="fchip on">Screen</span><span class="fchip">Workspace switching</span><span class="fchip">Touch display</span><span class="fchip">Gyro</span><span class="fchip">Gyro display</span><span class="fchip">Controllers</span><span class="fchip">Vibration</span><span class="fchip">Performance</span></div>
  <div class="hint" style="margin:0 16px 6px">Long press a tab to move it.</div><div class="card">
-  <div class="set"><div><div class="name">Start in fullscreen</div><div class="hint">The pad opens in fullscreen when the app starts. Press ← and → together, or Back, to leave it.</div></div><span class="sw"></span></div>
-  <div class="set"><div><div class="name">Double Back to leave fullscreen</div><div class="hint">Guards against stray Back swipes in play: in fullscreen, one Back does nothing, and two Backs in a row bring the top row back.</div></div><span class="sw"></span></div>
-  <div class="set"><div><div class="name">Keep the screen on while the pad is open</div><div class="hint">The phone doesn't dim or lock while the pad is on screen. Its pages and other apps lock as usual.</div></div><span class="sw on"></span></div>
-  <div class="set"><div><div class="name">Black screen when idle</div><div class="hint">In play, the pad goes black after a while without a screen touch, to save battery when you only use a controller.</div></div><span class="sw"></span></div>
+  <div style="padding:3px 0"><div class="set" style="padding:0"><div class="name">Start in fullscreen</div><span class="sw"></span></div><div class="hint">The pad opens in fullscreen when the app starts. Press ← and → together, or Back, to leave it.</div></div>
+  <div style="padding:3px 0"><div class="set" style="padding:0"><div class="name">Double Back to leave fullscreen</div><span class="sw"></span></div><div class="hint">Guards against stray Back swipes in play: in fullscreen, one Back does nothing, and two Backs in a row bring the top row back. A Fullscreen mapping (long press ← or →) still leaves it at once.</div></div>
+  <div style="padding:3px 0"><div class="set" style="padding:0"><div class="name">Keep the screen on while the pad is open</div><span class="sw on"></span></div><div class="hint">The phone doesn't dim or lock while the pad is on screen. Its pages and other apps lock as usual.</div></div>
  </div></div>`);
-const T = (n, e, tx, ty, dx = 0, dy = 0) => { const [x, y] = at(st, e, dx, dy); tag(st, n, x, y, tx ?? x, ty); };
-T(1, p.querySelector('.tb'), null, 22, 0, -10);
-T(2, p.querySelector('.search'), null, 22, 120, -12);
-const ch = p.querySelectorAll('.fchip');
-badge(st, 3, ch[0], 'tl', 2);
-finger(s, boxOf(s, ch[2]).cx, boxOf(s, ch[2]).cy, true); arrow(s, boxOf(s, ch[2]).cx + 20, boxOf(s, ch[2]).cy + 26, boxOf(s, ch[2]).cx + 120, boxOf(s, ch[2]).cy + 26);
-badge(st, 4, ch[2], 'tr', 2);
-badge(st, 5, p.querySelectorAll('.sw')[2], 'l', 8);
+const ch = p.querySelectorAll('.fchip'), c2 = boxOf(s, ch[2]);
+// Long press a tab, then drag it sideways (the arrow under it).
+arrow(s, c2.x + 10, c2.y + c2.h + 6, c2.x + c2.w + 90, c2.y + c2.h + 6);
+marks(st, [
+  [1, p.querySelector('.tb'), 't'], [2, p.querySelector('.search'), 't', { dx: 260 }],
+  [3, ch[0], 'l'], [4, ch[2], 't'], [5, p.querySelectorAll('.sw')[2], 'r'],
+]);
 </script></body></html>

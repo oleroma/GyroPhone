@@ -33,9 +33,8 @@ Pages that belong to a workspace add a few things:
 1. The workspace's actions, always on top: **Rename**, **Duplicate**, **Delete** (not the last workspace), **Copy mappings from…** (bring in another workspace's mappings, with its buttons or onto yours by name) and **Export** (save this workspace to a file to share or keep).
 2. **Layers**: pick **Base** or one of this workspace's layers. A layer's page shows only what a layer may change, and its values apply while that layer is in use.
 3. Category tabs, as above.
-4. A setting this level sets itself is highlighted, with **↺ Reset** to follow the level above again.
-5. Tap the slider to type a value.
-6. The pink line lists the levels below that set their own value, such as a layer or a button ("1 own: Aim ×0.5"). Tap it to see them all; **Reset children** makes them all follow this value again (it asks first).
+4. A setting this level sets itself is highlighted, with **↺ Reset** to follow the level above again. **↺ Reset all to Defaults** above the card does that for every setting on the page (it asks first).
+5. The pink line lists the levels below that set their own value, such as a layer or a button ("1 own: Aim Ratchet enables"). When it lists more than a few, tap it to see them all; **Reset children** makes them all follow this value again (it asks first).
 
 ## Who follows whom
 

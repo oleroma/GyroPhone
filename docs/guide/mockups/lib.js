@@ -151,7 +151,7 @@ function el(parent, html) {
 
 let _lead = null;
 /** A numbered tag at (tx, ty) in stage px with a leader line to (x, y), both relative to the stage. */
-function tag(stage, n, x, y, tx, ty) {
+function tag(stage, n, x, y, tx, ty, via = []) {
   if (!_lead || _lead.parentNode !== stage) {
     _lead = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     _lead.setAttribute('class', 'lead');
@@ -159,11 +159,13 @@ function tag(stage, n, x, y, tx, ty) {
     _lead.setAttribute('height', stage.offsetHeight);
     stage.appendChild(_lead);
   }
-  const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-  Object.entries({ x1: tx, y1: ty, x2: x, y2: y, stroke: '#FF6B57', 'stroke-width': 2.5 }).forEach(([k, v]) => l.setAttribute(k, v));
+  // A leader from the badge to the dot, bending at the [via] points (listed from the dot's end).
+  const l = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  const pts = [[x, y], ...via, [tx, ty]].map(p => p.join(',')).join(' ');
+  Object.entries({ points: pts, fill: 'none', stroke: '#FF6B57', 'stroke-width': 2.5, 'stroke-linejoin': 'round' }).forEach(([k, v]) => l.setAttribute(k, v));
   _lead.appendChild(l);
   const d = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-  Object.entries({ cx: x, cy: y, r: 4.5, fill: '#FF6B57', stroke: '#fff', 'stroke-width': 1.5 }).forEach(([k, v]) => d.setAttribute(k, v));
+  Object.entries({ cx: x, cy: y, r: 3.5, fill: '#FF6B57', stroke: '#fff', 'stroke-width': 1.5 }).forEach(([k, v]) => d.setAttribute(k, v));
   _lead.appendChild(d);
   callout(stage, n, tx, ty);
 }
@@ -185,4 +187,39 @@ function badge(stage, n, elm, side = 'tr', gap = 4) {
     l: [b.x - 13 - gap, b.cy], r: [b.x + b.w + 13 + gap, b.cy], t: [b.cx, b.y - 13 - gap], b: [b.cx, b.y + b.h + 13 + gap],
   }[side];
   callout(stage, n, pos[0], pos[1]);
+}
+
+/**
+ * Numbered marks kept off the app: each badge sits in the stage's margin outside the device
+ * ('t' above, 'b' below, 'l' left, 'r' right of it), with a leader line to the edge of what it
+ * points at (that side's edge, so the dot never covers a label). Badges on one side keep their
+ * order and are pushed apart so none overlap. items: [n, element, side, {dx, dy, at: 'c'}].
+ */
+function marks(stage, items, opt = {}) {
+  const W = stage.offsetWidth, H = stage.offsetHeight, gapMin = 34;
+  const top = opt.top ?? 22, bottom = opt.bottom ?? H - 26, left = opt.left ?? 30, right = opt.right ?? W - 30;
+  const by = { t: [], b: [], l: [], r: [] };
+  for (const [n, e, side, o = {}] of items) {
+    const b = typeof e === 'object' && 'x' in e && !e.tagName ? e : boxOf(stage, e);
+    const end = o.at === 'c' ? [b.cx ?? b.x + b.w / 2, b.cy ?? b.y + b.h / 2] : {
+      t: [b.x + b.w / 2, b.y], b: [b.x + b.w / 2, b.y + b.h], l: [b.x, b.y + b.h / 2], r: [b.x + b.w, b.y + b.h / 2],
+    }[side];
+    end[0] += o.dx || 0; end[1] += o.dy || 0;
+    const last = o.via?.length ? o.via[o.via.length - 1] : end;
+    by[side].push({ n, end, via: o.via || [], pos: side === 't' || side === 'b' ? last[0] + (o.shift || 0) : last[1] + (o.shift || 0) });
+  }
+  for (const side of 'tblr') {
+    const list = by[side].sort((a, b) => a.pos - b.pos);
+    const lo = side === 't' || side === 'b' ? 24 : 24, hi = side === 't' || side === 'b' ? W - 24 : H - 24;
+    for (let i = 1; i < list.length; i++) list[i].pos = Math.max(list[i].pos, list[i - 1].pos + gapMin);
+    if (list.length && list[list.length - 1].pos > hi) {
+      list[list.length - 1].pos = hi;
+      for (let i = list.length - 2; i >= 0; i--) list[i].pos = Math.min(list[i].pos, list[i + 1].pos - gapMin);
+    }
+    for (const m of list) {
+      m.pos = Math.max(lo, m.pos);
+      const [x, y] = side === 't' ? [m.pos, top] : side === 'b' ? [m.pos, bottom] : side === 'l' ? [left, m.pos] : [right, m.pos];
+      tag(stage, m.n, m.end[0], m.end[1], x, y, m.via);
+    }
+  }
 }

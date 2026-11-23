@@ -1,17 +1,19 @@
 <!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="lib.css"><script src="lib.js"></script>
-<style>.qr{width:180px;height:180px;background:#fff;padding:12px;border-radius:8px;display:grid;grid-template-columns:repeat(21,1fr)}.qr i{display:block}.step{display:flex;gap:10px;font-size:14px;margin:8px 0}.step b{width:24px;height:24px;border-radius:50%;background:#2F384B;display:flex;align-items:center;justify-content:center;font-size:12px;flex:none}</style></head><body>
+<style>.qr{width:180px;height:180px;background:#fff;padding:12px;border-radius:8px;display:grid;grid-template-columns:repeat(21,1fr)}.qr i{display:block}.step{display:flex;gap:10px;font-size:14px;margin:8px 0}.kv{font-size:14px;margin-top:6px}.kv span{display:inline-block;width:110px;color:#9aa3b2}.step b{width:24px;height:24px;border-radius:50%;background:#2F384B;display:flex;align-items:center;justify-content:center;font-size:12px;flex:none}</style></head><body>
 <div class="stage pad-callouts" id="st" style="align-items:center"></div>
 <script>
 const st = document.getElementById('st');
 // PairWindow.cs: "Pair a new phone", a QR code and three steps; code pairing below.
 const w = el(st, `<div class="win" style="width:560px"><div class="tbar">Pair new phone<span class="wc"><span>✕</span></span></div>
  <div style="padding:22px 26px"><h1 style="font-size:24px;margin-bottom:14px">Pair a new phone</h1>
- <div style="display:flex;gap:22px;align-items:center"><div class="qr" id="qr"></div>
+ <div class="wcard" style="display:flex;gap:20px;align-items:center"><div class="qr" id="qr"></div>
  <div><div style="font-size:16px;font-weight:600;margin-bottom:6px">Scan with the phone</div>
   <div class="step"><b>1</b>Open GyroPhone and go to the Connect tab.</div>
   <div class="step"><b>2</b>Choose Wi‑Fi and tap "Scan QR code".</div>
   <div class="step"><b>3</b>Point the camera here. The phone connects by itself.</div></div></div>
- <div class="wcard" style="margin-top:16px"><div class="ct">Or pair with a code</div><div class="wsub" style="margin:0">In the Connect tab tap this PC under "Found on this network". If it isn't listed, use "Enter PC address".</div></div>
+ <div class="wcard" style="margin-top:16px"><div class="ct">Or pair with a code</div><div class="wsub" style="margin:0">In the Connect tab tap this PC under "Found on this network". If it isn't listed, use "Enter PC address".</div>
+  <div class="kv"><span>PC name</span>DESKTOP-PC</div><div class="kv"><span>Address</span>192.168.1.20</div><div class="kv"><span>UDP port</span>47800</div>
+  <div class="wsub" style="margin:6px 0 0">Pairing is open for 4:52.</div></div>
  </div></div>`);
 // A made-up QR-like pattern (not a real code).
 const qr = w.querySelector('#qr'); let seed = 7;
@@ -27,17 +29,17 @@ const p = el(s, `<div class="page" style="padding-top:30px">
  <div class="pbar"><span class="tb">← Pad</span><span class="pt">Connection</span></div>
  <div class="search"><span>⌕</span><span>Search settings</span></div>
  <div class="fchips"><span class="fchip on">PC</span><span class="fchip">Key pairing</span><span class="fchip">Link quality</span><span class="fchip">Report rate</span></div>
+ <div class="hint" style="margin:0 16px 6px">Long press a tab to move it.</div>
  <div class="card"><div class="seg" style="margin:4px 0 12px"><span>Bluetooth</span><span class="on">✓ Wi-Fi</span></div>
-  <div style="font-size:14px;margin-bottom:10px">Looking for PCs…</div>
+  <div style="font-size:14px;margin-bottom:10px">Looking for PCs running GyroPhone Companion…</div>
   <div style="display:flex;align-items:center;gap:10px"><div class="hint" style="flex:1;margin:0">New PC? On the PC choose Pair new phone and scan its QR code.</div><span class="btn filled">Scan QR code</span></div>
   <div class="set" style="display:block"><div class="name" style="margin-top:8px">Paired PCs</div><div style="font-size:14px;margin-top:4px">None yet. Start GyroPhone Companion on the PC; it appears below.</div></div>
-  <div class="set" style="display:block"><div class="name">Found on this network</div><div style="display:flex;align-items:center;margin-top:6px"><span style="flex:1">DESKTOP-PC</span><span class="btn filled" style="height:34px">Connect</span></div></div>
+  <div class="set" style="display:block"><div class="name">Found on this network</div><div style="display:flex;align-items:center;margin-top:6px"><span style="flex:1">DESKTOP-PC<br><span class="hint">192.168.1.20</span></span><span class="btn filled" style="height:34px">Connect</span></div></div>
   <div class="set" style="display:block"><div class="name">Enter PC address</div><div style="display:flex;gap:8px;margin-top:6px"><div style="flex:1;height:44px;border:1px solid var(--m3-outline);border-radius:4px;padding:12px;color:var(--m3-on-variant);font-size:13px">e.g. 192.168.1.20</div><span class="btn outl">Find</span></div></div>
  </div></div>`);
 const q = (sel, i = 0) => p.querySelectorAll(sel)[i];
-badge(st, 1, w.querySelector('#qr'), 'tl', 0);
-badge(st, 2, q('.seg span', 1), 'tr', 0);
-badge(st, 3, q('.btn.filled'), 'tl', 0);
-badge(st, 4, q('.btn.filled', 1), 'l', 4);
-badge(st, 5, q('.btn.outl'), 'b', 2);
+marks(st, [
+  [1, w.querySelector('#qr'), 'l'],
+  [2, q('.seg span', 1), 'r'], [3, q('.btn.filled'), 'r'], [4, q('.btn.filled', 1), 'r'], [5, q('.btn.outl'), 'r'],
+]);
 </script></body></html>

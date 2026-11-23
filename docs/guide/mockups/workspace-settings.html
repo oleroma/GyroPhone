@@ -7,23 +7,21 @@ const s = phone(st, 'land');
 // PadMenu.kt WorkspaceTopBar (fixed actions in the title row in landscape), the Layers band, category tabs, WorkspaceSettingsList.kt's Gyro.
 const p = el(s, `<div class="page" style="padding-left:34px">
  <div class="pbar"><span class="tb">← Pad</span><span class="pt" style="margin-right:12px">Workspace settings</span>
-  <div class="wact"><span class="btn outl">Rename</span><span class="btn outl">Duplicate</span><span class="btn outl">Delete</span><span class="btn outl">Copy mappings from…</span><span class="btn outl">Export</span></div></div>
+  <div class="wact"><span class="btn outl">Rename</span><span class="btn outl">Duplicate</span><span class="btn outl" style="color:#F2B8B5">Delete</span><span class="btn outl">Copy mappings from…</span><span class="btn outl">Export</span></div></div>
  <div class="search"><span>⌕</span><span>Search settings</span></div>
  <div class="lband"><b>Layers</b><span class="on">✓ Base</span><span>Aim</span></div>
  <div class="fchips"><span class="fchip on">Gyro</span><span class="fchip">Touchpad</span><span class="fchip">Tilt &amp; shake</span><span class="fchip">Buttons</span><span class="fchip">Haptics</span><span class="fchip">Taps</span></div>
- <div class="card">
-  <div class="set" style="display:block"><div class="name">Gyro to mouse</div><div style="display:flex;gap:8px;margin:6px 0 2px"><span class="fchip on">Ratchet disables</span><span class="fchip">Ratchet enables</span><span class="fchip">Gyro off</span></div>
-   <div class="hint">Gyro moves the mouse; a ratchet pauses it while held.</div></div>
-  <div class="own"><div style="display:flex;align-items:center;gap:10px"><div class="name" style="flex:1">Sensitivity 2.4 RWS</div><span class="rs">↺ Reset</span></div>
-   <div class="slider"><div class="track"></div><div class="fillt" style="width:24%"></div><div class="thumb" style="left:24%"></div></div>
-   <div class="kid">1 own: Aim ×0.5</div></div>
+ <div class="hint" style="margin:0 16px 2px">Each setting follows the Defaults (the Defaults pill) unless it is set here: those are highlighted, with ↺ to follow the Defaults again. Long press a tab to move it.</div>
+ <div class="rs" style="margin:0 12px;padding:6px 12px;display:inline-block">↺ Reset all to Defaults</div>
+ <div class="card" style="padding:8px 12px">
+  <div class="own"><div style="display:flex;align-items:center;gap:10px"><div class="name" style="flex:1">Gyro to mouse</div><span class="rs">↺ Reset</span></div>
+   <div style="display:flex;gap:8px;margin:4px 0 2px"><span class="fchip on">Ratchet disables</span><span class="fchip">Ratchet enables</span><span class="fchip">Gyro off</span></div>
+   <div style="display:flex;align-items:center"><div class="kid" style="flex:1">1 own: Aim <span style="color:var(--m3-on-variant)">Ratchet enables</span></div><span class="rs" style="color:#EFB8C8;font-size:12px;padding:0 8px">Reset children</span></div>
+   <div class="hint" style="margin-top:2px">Gyro moves the mouse; a ratchet pauses it while held. Map Ratchet to a touch button, the workspace's one-finger Hold or a controller button; Toggle gyro swaps the two modes.</div></div>
  </div></div>`);
 const q = (sel, i = 0) => p.querySelectorAll(sel)[i];
-const T = (n, e, tx, ty, dx = 0, dy = 0) => { const [x, y] = at(st, e, dx, dy); tag(st, n, x, y, tx ?? x, ty); };
-T(1, q('.wact'), null, 22, 0, -18);
-badge(st, 2, q('.lband span', 1), 'r', 4);
-badge(st, 3, q('.fchip', 0), 'tl', 0);
-badge(st, 4, q('.rs'), 'l', 4);
-T(5, q('.thumb'), null, st.offsetHeight - 26, 0, 6);
-badge(st, 6, q('.kid'), 'r', 4);
+marks(st, [
+  [1, q('.wact'), 't'], [2, q('.lband span', 1), 'r', { dx: 0 }],
+  [3, q('.fchip', 0), 'l'], [4, q('.own .rs'), 'r', { dx: 10 }], [5, q('.kid'), 'l', { dx: -2 }],
+]);
 </script></body></html>
