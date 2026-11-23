@@ -15,21 +15,24 @@ const body = `<div class="h">Where</div><div class="fr" id="where"><span class="
  <div id="cyc"><div class="set" style="padding:8px 0 0"><div class="name">Cycle</div><span class="sw"></span></div>
  <div class="hn">The mappings of this action with Cycle on take turns: each time it fires, the next one.</div></div>
  <div class="tbn" id="adv">Advanced ▾</div>
- <div class="tbn">★ Save as chip preset</div>
+ <div class="tbn"><span style="display:inline-block;width:13px;height:6px;border-radius:3px;background:currentColor;margin-right:6px;vertical-align:middle"></span>Save as chip preset</div>
  <div class="tbn" id="rm" style="color:#F2B8B5">Remove this mapping</div>`;
 function shot(scrolled) {
   const s = phone(st, 'land');
-  el(s, `<div class="page" style="padding-left:34px"><div class="pbar"><span class="tb">← Pad</span><span class="pt">LMB</span></div></div>`);
+  el(s, `<div class="page" style="padding-left:34px"><div class="mtop" style="background:#211F26"><span class="lbl">LMB</span><span class="tb" style="font-size:18px">☺</span><span class="setchip on">Base</span><span class="tb">+ Layer</span><span class="tb">Sort ▾</span></div></div>`);
   el(s, '<div class="scrim"></div>');
   const d = el(s, `<div class="dialog" style="left:170px;top:14px;width:512px;padding:20px 24px 14px"><h3>Key R · Touch</h3>
    <div class="sc"><div class="in">${body}</div></div><div class="acts"><span class="btn text">Cancel</span><span class="btn text">Done</span></div></div>`);
   const sc = d.querySelector('.sc'), inn = d.querySelector('.in');
-  if (scrolled) inn.style.top = -Math.min(inn.offsetHeight - sc.offsetHeight, inn.querySelector('#rm').offsetTop + inn.querySelector('#rm').offsetHeight + 2 - sc.offsetHeight) + 'px';
-  // Rows the scroll edge would cut are left out, so nothing shows half.
+  // Scrolled: the content starts at the first whole row that still lets the last row (Remove) show.
+  if (scrolled) { const rm = inn.querySelector('#rm'), need = rm.offsetTop + rm.offsetHeight + 2 - sc.offsetHeight;
+    const first = [...inn.children].find(e => e.offsetTop >= need);
+    inn.style.top = -first.offsetTop + 'px'; }
+  // Rows the bottom edge would cut are left out, so nothing shows half.
   const b = sc.getBoundingClientRect();
   inn.querySelectorAll('.h, .fr, .hn, .tbn, #cyc').forEach(e => { const r = e.getBoundingClientRect();
     if (e.closest('#cyc') && e.id !== 'cyc') return;
-    if (r.top < b.top - 1 || r.bottom > b.bottom + 1) e.style.visibility = 'hidden'; });
+    if (r.bottom > b.bottom + 1) e.style.visibility = 'hidden'; });
   return d;
 }
 const a = shot(false), b = shot(true);

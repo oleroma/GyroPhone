@@ -14,7 +14,7 @@ The pictures are drawings of GP's screens, made from the app's own layout. Numbe
 
 1. Put `GyroPhoneCompanion.exe` in `%LOCALAPPDATA%\Programs\GyroPhone\` and run it. Windows may warn that it is unsigned: choose *More info*, then *Run anyway*.
 2. For a game controller on the PC, install the **ViGEmBus** driver ([ViGEmBus releases](https://github.com/nefarius/ViGEmBus/releases)). Keyboard and mouse work without it.
-3. When Windows asks about the firewall, allow GP on **Private** networks. GP never opens on Public networks, so if your home Wi-Fi is set to Public, the companion's Home page shows a button to fix it.
+3. When Windows asks about the firewall, allow GP on **Private** networks. If your home Wi-Fi is set to Public, Windows may block the phone: when no phone has shown up, the companion's Home page offers **Make it Private…**.
 
 The companion lives in the tray (by the clock). The first time, its **Pair a new phone** window opens by itself with a QR code.
 
@@ -34,12 +34,12 @@ The first time you open GP, a welcome card sits over the pad.
 1. On the PC, the **Pair a new phone** window shows a QR code. Opened later from the tray menu: **Pair new phone…**
 2. On the phone, open **Connection** (the last capsule on the pad's top row) and pick **Wi-Fi** (it is already picked on a new install).
 3. Tap **Scan QR code** and point the camera at the PC's code. That's all: from now on the phone connects by itself whenever GP is open.
-4. No camera handy? Tap **Connect** beside the PC under *Found on this network*, check that both screens show the same six-digit code, then tap **Confirm** on the phone and **Allow** on the PC.
+4. No camera handy? While the PC's **Pair a new phone** window is open (2 minutes; reopen it from the tray menu's **Pair new phone…**), tap **Connect** beside the PC under *Found on this network*, check that both screens show the same six-digit code, then tap **Confirm** on the phone and **Allow** on the PC.
 5. PC not listed? Type its address under **Enter PC address** and tap **Find**.
 
-**Bluetooth instead** (nothing to install on the PC, but much slower: 30 to 90 updates a second instead of up to 1000): pick **Bluetooth** on the Connection page, tap **Make discoverable**, then add "GyroPhone" in Windows Settings › Bluetooth & devices. Use it only where you can't run the companion.
+**Bluetooth instead** (nothing to install on the PC, but much slower: 30 to 90 updates a second instead of up to 1000): pick **Bluetooth** on the Connection page, tap **Make discoverable**, then in Windows Settings › Bluetooth & devices › Add device pick this phone (it shows under the phone's own Bluetooth name). Use it only where you can't run the companion.
 
-**USB cable**: with the companion's *Use the phone over the USB cable* on (Connection page on the PC) and the phone's USB mode set to *No data transfer*, the link moves to the cable by itself. USB tethering works too.
+**USB cable**: turn on USB debugging on the phone, set its USB mode to *No data transfer*, and turn on the companion's *Use the phone over the USB cable* (Connection page on the PC). Plug in and allow GyroPhone when the phone asks: the link moves to the cable by itself. If the companion shows *Stop adb and use the cable* or *How to install the USB driver…*, follow it. USB tethering works too.
 
 ## 4. Play
 
@@ -54,8 +54,8 @@ GP opens on the **pad**: the whole screen is your controller.
 5. **App** (gear): settings for the whole app.
 6. **Defaults** (sliders): settings every workspace follows unless it sets its own.
 7. **Connection**: the link to the PC. A dot after its name means there are tips to make the link faster.
-8. **←** goes to the previous workspace. **Hold it** for fullscreen (the top row hides).
-9. **→** goes to the next workspace. Hold it for fullscreen too.
+8. **←** goes to the previous workspace. **Press ← and → together** for fullscreen (the top row hides); press both again, or Back, to leave it.
+9. **→** goes to the next workspace.
 10. Empty space is a **touchpad**: one finger moves the mouse, a tap clicks, two fingers scroll, as on a laptop.
 11. Buttons light up while they press something.
 12. Sticks work like a controller's stick (this one presses W, A, S and D).
@@ -89,7 +89,7 @@ Tap the capsule of the workspace you're on to open **edit mode**. There's no Edi
 
 Every button, stick, the touchpad and every key of an attached controller have the same **mapping editor**. Each **card** is one way of using the control (touch, tap, swipe up, ...); each **chip** on it is something it presses on the PC.
 
-1. The control's name. Tap it to type a label; empty, the button shows what its first card presses.
+1. The control's name. Tap it to type a label, or **☺** to add symbols; empty, the button shows what its first card presses.
 2. **Base** and your **layers** (a second set of mappings you can switch to, such as "Aim").
 3. **⚙ Settings** for this control (look, size, haptics, stick options).
 4. **Done** goes back.
@@ -99,7 +99,7 @@ Every button, stick, the touchpad and every key of an attached controller have t
 8. Faded chips come from the workspace or the Defaults. Tap one to turn it off here or make your own copy.
 9. Drag the divider to give the cards or the library more room.
 10. The library's tabs: Recent, Presets, Keyboard, Mouse, Gamepad, Gyro, Sensitivity, Touch, Phone, Layers, Other.
-11. **⌨ Press a key** maps whatever you press next, on a keyboard, mouse or controller attached to the phone or to the PC.
+11. **⌨ Press a key** maps whatever you press next, on a keyboard, mouse or controller attached to the phone or to the PC. Hold several together for a combo (Ctrl + C): it's set when you let go.
 
 ## 7. Next steps
 

@@ -5,14 +5,14 @@
 const st = document.getElementById('st');
 // MainWindow.cs: sidebar (Home, Phones, Gamepad, Overlays, Connection, Performance, App); HomePage.cs: Phone, Link, Gamepad cards.
 const w = el(st, `<div class="win">
- <div class="tbar">GyroPhone<span class="wc"><span>—</span><span>☐</span><span>✕</span></span></div>
+ <div class="tbar">GyroPhone Companion<span class="wc"><span>—</span><span>☐</span><span>✕</span></span></div>
  <div class="body"><div class="side"><div class="brand">GyroPhone</div>
   <div class="nav on"><svg class="gl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5M5.5 9.8V20h13V9.8"/></svg>Home</div><div class="nav"><svg class="gl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18.5h2"/></svg>Phones</div><div class="nav"><svg class="gl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10a4.5 4.5 0 0 1 4.4 5.4l-.9 4.2a2.4 2.4 0 0 1-4.2 1L14.5 15h-5l-1.8 2.6a2.4 2.4 0 0 1-4.2-1l-.9-4.2A4.5 4.5 0 0 1 7 7z"/><path d="M8 10v3M6.5 11.5h3"/><circle cx="16" cy="11.5" r=".6"/></svg>Gamepad</div><div class="nav"><svg class="gl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="13" height="11" rx="1.5"/><path d="M7 7V4.5A1.5 1.5 0 0 1 8.5 3h11A1.5 1.5 0 0 1 21 4.5v8a1.5 1.5 0 0 1-1.5 1.5H16"/></svg>Overlays</div><div class="nav"><svg class="gl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 9.5a14 14 0 0 1 19 0M5.5 12.8a9.5 9.5 0 0 1 13 0M8.6 16a5 5 0 0 1 6.8 0"/><circle cx="12" cy="19" r="1"/></svg>Connection</div><div class="nav"><svg class="gl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h4l2.5-6 4 11 2.5-5H21"/></svg>Performance</div><div class="nav">${ICON.gear.replace('<svg', '<svg class="gl"')}App</div>
-  <div class="wsub" style="margin:150px 0 0 12px;font-size:11.5px">Version 0.1.857</div></div>
+  <div class="wsub" style="margin:150px 0 0 12px;font-size:11.5px">GyroPhone Companion 0.1.859‑3fa291c</div></div>
  <div class="main"><h1>Home</h1>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
    <div class="wcard"><div class="ct">Phone</div><div class="wbig"><span class="dot" style="background:#6FD49A"></span>OnePlus 15</div><div class="wsub">Connected. 1 phone paired.</div></div>
-   <div class="wcard"><div class="ct">Link</div><div class="wbig">Router Wi-Fi 5 GHz ch 36</div><div class="wsub">Latency, lost and late packets, and link tests: Performance.</div></div>
+   <div class="wcard"><div class="ct">Link</div><div class="wbig">Router Wi‑Fi 5 GHz ch 36 · PC Wi‑Fi</div><div class="wsub">Latency, lost and late packets, and link tests: Performance.</div></div>
    <div class="wcard"><div class="ct">Gamepad</div><div class="wseg"><span class="on">Xbox 360</span><span>DualShock 4</span><span>DualSense</span><span>Off</span></div><div class="wsub" style="margin:0 0 6px">Virtual pad plugged in · ViGEmBus ok.</div>
     <div class="wtog"><i></i>Pause input</div><div class="wsub" style="margin-top:-4px">Stops everything from the phone.</div></div>
   </div>

@@ -38,7 +38,7 @@ const ov = {
 function ovCol(stage, label, tabs, on, body, width = 700) {
   if (!document.getElementById('pcstyle')) document.head.insertAdjacentHTML('beforeend', PC_STYLE.replace('<style>', '<style id="pcstyle">'));
   if (!document.getElementById('ovstyle')) document.head.insertAdjacentHTML('beforeend', OV_STYLE);
-  return el(stage, `<div class="win ovw" style="--w:${width}px"><div class="tbar">GyroPhone · Overlays<span class="wc"><span>—</span><span>☐</span><span>✕</span></span></div>
+  return el(stage, `<div class="win ovw" style="--w:${width}px"><div class="tbar">GyroPhone Companion<span class="wc"><span>—</span><span>☐</span><span>✕</span></span></div>
   <div class="main"><span class="lbl">${label}</span>
   <div class="tabs">${tabs.map(t => `<span${t === on ? ' class="on"' : ''}>${t}</span>`).join('')}</div>${body}</div></div>`);
 }

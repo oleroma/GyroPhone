@@ -14,6 +14,7 @@ const w = pcWin(st, 'Overlays', `<div class="wh" style="margin-bottom:16px"><h1>
   <div class="wbtn" id="add" style="display:flex;justify-content:center;margin-top:6px">＋&nbsp; Add overlay</div>
   <div class="wcard" style="margin-top:16px"><div class="ct">Shortcuts</div><div class="whint" style="margin:0 0 10px">Work everywhere, also in games. Click a field and press the keys: Ctrl, Alt, Shift or Win with a key, or F1 to F24 alone.</div>
    ${sc('Level all', 'Ctrl+Alt+R')}${sc('Hide or show all overlays', 'Ctrl+Alt+O')}${sc('Edit on or off', 'Ctrl+Alt+E')}${sc('All behind on or off', 'Ctrl+Alt+B')}</div>
+  <div class="wcard" style="margin-top:12px"><div class="ct">Fade when phone rests</div>${tog('Fade overlays','While the phone lies still at its Level with nothing pressed. Any touch or movement brings them back at once.', 1)}</div>
  </div><div>
   <span class="winp" style="font-size:18px;min-width:220px">Phone</span>
   <div class="tabs" style="margin-top:12px"><span class="on">Window</span><span>Look</span><span id="turn" style="padding-right:8px">Turning</span></div>
@@ -26,9 +27,9 @@ const tl = qa('.tl'), ti = qa('.top .wtog i'), mainX = boxOf(st, q('.main')).x +
 const cb = boxOf(st, q('.lr .cb')), ad = boxOf(st, q('#add')), sb = boxOf(st, qa('.sc .winp')[0]);
 marks(st, [
   [1, ti[0], 't'], [2, ti[1], 't'], [3, ti[2], 't'], [4, q('#lvl'), 't'],
-  [5, q('.lr .cb'), 't'],
+  [5, q('.lr .cb'), 't', { dy: -6 }],
   [6, q('#add'), 'b', { dx: -ad.w / 2, dy: -ad.h / 2, via: [[mainX + 6, ad.y + ad.h / 2], [mainX + 6, H - 70]] }],
   [7, qa('.sc .winp')[0], 'b', { dx: -sb.w / 2, dy: -sb.h / 2, via: [[mainX + 22, sb.y + sb.h / 2], [mainX + 22, H - 70]] }],
-  [8, q('#turn'), 'r'], [9, tl[4], 'r'], [10, q('.wseg'), 'r'],
+  [8, q('#turn'), 'r'], [9, tl[5], 'r'], [10, q('.wseg'), 'r'],
 ]);
 </script></body></html>

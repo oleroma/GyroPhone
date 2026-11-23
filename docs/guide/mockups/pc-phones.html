@@ -5,10 +5,10 @@ const st = document.getElementById('st');
 const tog = (t, h, on) => `<div class="wtog"><i${on ? ' class="on"' : ''}></i><div class="tx"><span class="tl">${t}</span>${h ? `<div class="wsub">${h}</div>` : ''}</div></div>`;
 const q = s => w.querySelector(s), qa = s => [...w.querySelectorAll(s)];
 // SettingsPages.cs PhonesPage: Pair new phone, Paired phones (one row each, Forget), This PC (key, keys folder).
-const w = pcWin(st, 'Phones', `<div class="wh"><h1>Phones</h1><span class="wbtn acc" id="pair">＋&nbsp; Pair new phone</span></div>
+const w = pcWin(st, 'Phones', `<h1>Phones</h1><div style="margin-bottom:16px"><span class="wbtn acc" id="pair">＋&nbsp; Pair new phone</span></div>
  <div class="wcard"><div class="ct">Paired phones</div>
   <div style="display:flex;align-items:center;gap:14px"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#83CFFF" stroke-width="1.6"><rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18.5h2"/></svg>
-   <div style="flex:1"><div style="font-size:14px">OnePlus 15</div><div class="wsub" style="margin-top:1px">Paired with a code · SHA256:3fa2…91c0 · last seen 23 Nov 2026, 14:02</div></div>
+   <div style="flex:1"><div style="font-size:14px">OnePlus 15</div><div class="wsub" style="margin-top:1px">Paired with a code · last seen 23 Nov 2026, 14:02</div></div>
    <span class="wbtn" id="forget"><svg class="g" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>Forget</span></div></div>
  <div class="wcard"><div class="ct">This PC</div><div style="font-size:14px">This PC's key: SHA256:b71e…04d8</div>
   <div class="wsub">C:\\Users\\you\\AppData\\Roaming\\GyroPhone\\authorized_phones</div>

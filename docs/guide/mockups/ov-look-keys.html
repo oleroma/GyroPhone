@@ -11,5 +11,5 @@ const w = ovCol(st, 'Keys', ['Window', 'Look'], 'Look',
     + t('Always shown') + hint('These stay on top, dim until they fire; the others show only while they fire.')
     + chips(['LS', 'RS', 'D-pad', 'A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'Select', 'Start', 'Home', 'Capture', 'LS click', 'RS click'], [0, 1], 'shown'))
   + card('Colours', swatches([['Controller keys', argb(0xFFFFFFFF)], ['What they send', argb(0xFF7CC4FF)], ['Toggles on', argb(0xFF8FE39A)], ['Sticks at rest', argb(0x66FFFFFF)], ['Panel', argb(0x99000000)]]) + btn('Default colours', 'def', '↺')));
-marks(st, [[1, w.querySelector('#fade .v'), 'r'], [2, T('#tr'), 'r'], [3, w.querySelector('#shown'), 'r']]);
+marks(st, [[1, textBox(st, w.querySelector('#fade .v')), 'r'], [2, T('#tr'), 'r'], [3, w.querySelectorAll('#shown span')[11], 'r']]);
 </script></body></html>

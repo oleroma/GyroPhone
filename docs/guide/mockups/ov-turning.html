@@ -23,6 +23,6 @@ const b = ovCol(st, 'Pointer', ['Window', 'Look', 'Paint', 'Snake', 'Colours', '
     + ind(t('Pointer faces (as a trackball)') + seg(['−Z (into the screen)', '+Z', '+X', '−X', '+Y', '−Y'], 0, 'faces')))
   + card('Amount', hint('Hold the phone the way you play and press Level: held that way, it shows face-on, its screen flat toward you.') + btn('Level', '', '⊙')), 680);
 const w = a, A = s => a.querySelector(s + ' .tl') || a.querySelector(s), B = s => b.querySelector(s + ' .tl') || b.querySelector(s);
-marks(st, [[1, a.querySelector('#tw'), 'l'], [2, a.querySelector('#grav i'), 'l'], [3, a.querySelector('#ease i'), 'l'], [4, a.querySelector('#amt span'), 'l', { dx: -6 }], [5, a.querySelector('#lvl'), 'l'],
+marks(st, [[1, a.querySelector('#tw'), 'l'], [2, a.querySelector('#grav i'), 'l'], [3, a.querySelector('#ease i'), 'l'], [4, a.querySelector('#amt span'), 'l', { dx: -12 }], [5, a.querySelector('#lvl'), 'l'],
   [6, b.querySelector('#tw'), 'r'], [7, B('#rws'), 'r'], [8, b.querySelector('#about'), 'r'], [9, B('#ey'), 'r'], [10, b.querySelector('#faces'), 'r']]);
 </script></body></html>

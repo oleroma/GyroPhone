@@ -9,6 +9,10 @@ drawControls(s, LAYOUTS.wasd, 900, 412, { state: { lmb: 'pressed' }, labels: { l
 drawControls(s, LAYOUTS.nav, 900, 412);
 // CapsuleRow.kt over the pad's top edge, clear of the camera cutout.
 const row = capsules(s, [['+', 'ws'], ['Controller', 'ws'], ['WASD ✎', 'wsOn'], ['Keyboard', 'ws'], ['WASD', 'devices'], ['App', 'app'], ['Defaults', 'defaults'], ['Connection', 'conn']], { left: 58, top: 8 });
+row.style.gap = '4px'; for (const k of row.children) k.style.padding = '0 13px';
+// Still too wide? Shrink the row as a whole so it ends 8 px before →, every capsule whole.
+{ const n = boxOf(st, ctl(s, 'nav_next')), r = boxOf(st, row), k = Math.min(1, (n.x - 8 - r.x) / r.w);
+  row.style.transformOrigin = 'left top'; row.style.transform = 'scale(' + k + ')'; }
 const c = row.children;
 const pad = boxOf(st, s);
 const touch = { x: pad.x + 440, y: pad.y + 230, w: 0, h: 0 };

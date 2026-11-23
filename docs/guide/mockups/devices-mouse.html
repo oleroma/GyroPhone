@@ -25,7 +25,7 @@
 const st = document.getElementById('st');
 const s = phone(st, 'land');
 const p = el(s, `<div class="page" style="padding-left:34px">
- <div class="pbar"><span class="tb">← Pad</span><span class="ptab">None</span><span class="ptab on">Controller</span><span class="ptab">Shooter</span><span class="tb">+ Preset</span></div>
+ <div class="pbar"><span class="tb">← Pad</span><span class="ptab">None</span><span class="ptab on">Controller</span><span class="ptab">WASD</span><span class="tb">+ Preset</span></div>
  <div class="board"></div>
  <div class="bbar"><div class="dsw"><span>🎮 Controller</span><span>⌨ Keyboard</span><span class="on">🖱 Mouse</span><span>📱 Phone</span></div>
   <span class="tb" style="color:var(--m3-primary);font-weight:500;padding:0 12px">⌨ Press a button</span>
@@ -37,8 +37,13 @@ const BW = 866, BH = 306, mh = Math.min(BH, BW / 0.8), mw = mh * 0.8;
 const mb = el(b, `<div style="position:absolute;left:${(BW - mw) / 2}px;top:${(BH - mh) / 2}px;width:${mw}px;height:${mh}px"></div>`);
 el(mb, `<svg width="${mw}" height="${mh}" style="position:absolute;inset:0"><rect x="${mw * .15}" y="${mh * .02}" width="${mw * .7}" height="${mh * .96}" rx="${mw * .35}" fill="#211F26" stroke="#49454F" stroke-width="1.5"/><line x1="${mw / 2}" y1="${mh * .02}" x2="${mw / 2}" y2="${mh * .35}" stroke="#49454F" stroke-width="1.5"/></svg>`);
 const MC = [['left','Left',.31,.2,.27,.3,1],['right','Right',.69,.2,.27,.3,0],['wheel','Wheel',.5,.2,.09,.22,0],['forward','5',.13,.47,.07,.11,0],['back','4',.13,.6,.07,.11,0],['move','Move',.5,.66,.3,.24,2]];
+// DeviceControls.kt: a tall, narrow control (h > 1.6 w) with a name longer than 2 letters shows it sideways.
 for (const [id, l, x, y, w, h, n] of MC) {
+  const tall = h * mh > 1.6 * w * mw && l.length > 2;
   const kk = el(mb, `<div class="c${n ? ' m' : ''}" data-id="${id}" style="left:${mw * (x - w / 2)}px;top:${mh * (y - h / 2)}px;width:${mw * w}px;height:${mh * h}px"><span class="in" style="display:flex;flex-direction:column;align-items:center">${l}${n ? `<span class="n">↪ ${n}</span>` : ''}</span></div>`);
-  const inn = kk.querySelector('.in'); const sc = Math.min(1, kk.clientWidth * .86 / inn.offsetWidth, kk.clientHeight * .86 / inn.offsetHeight); inn.style.transform = `scale(${sc})`; }
+  const inn = kk.querySelector('.in');
+  const sc = tall ? Math.min(1, kk.clientHeight * .86 / inn.offsetWidth, kk.clientWidth * .86 / inn.offsetHeight)
+    : Math.min(1, kk.clientWidth * .86 / inn.offsetWidth, kk.clientHeight * .86 / inn.offsetHeight);
+  inn.style.transform = `${tall ? 'rotate(-90deg) ' : ''}scale(${sc})`; }
 marks(st, [[1, mb.querySelector('[data-id="wheel"]'), 't'], [2, mb.querySelector('[data-id="back"]'), 'l', { dx: -3 }], [3, mb.querySelector('[data-id="move"]'), 'r', { shift: 0 }]]);
 </script></body></html>

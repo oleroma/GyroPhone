@@ -25,7 +25,7 @@
 const st = document.getElementById('st');
 const s = phone(st, 'land');
 const p = el(s, `<div class="page" style="padding-left:34px">
- <div class="pbar"><span class="tb">← Pad</span><span class="ptab">None</span><span class="ptab on">Controller</span><span class="ptab">Shooter</span><span class="tb">+ Preset</span></div>
+ <div class="pbar"><span class="tb">← Pad</span><span class="ptab">None</span><span class="ptab on">Controller</span><span class="ptab">WASD</span><span class="tb">+ Preset</span></div>
  <div class="board"></div>
  <div class="bbar"><div class="dsw"><span>🎮 Controller</span><span class="on">⌨ Keyboard</span><span>🖱 Mouse</span><span>📱 Phone</span></div>
   <span class="tb" style="color:var(--m3-primary);font-weight:500;padding:0 12px">⌨ Press a button</span>
@@ -54,5 +54,9 @@ rows.forEach((r, i) => { let x = 0; r.forEach(k => { if (k.l !== undefined) {
 const sp = kbx.querySelector('[data-id="Space"]'), sb = boxOf(st, sp);
 const pb = [...st.querySelectorAll('*')].filter(e => e.children.length <= 1 && /Press a button/.test(e.textContent)).pop();
 const gx = boxOf(st, pb).x + 4;
-marks(st, [[1, kbx.querySelector('[data-id="W"]'), 't', { dx: 0 }], [2, sp, 'b', { dx: sb.w / 2 - 20, via: [[sb.x + sb.w - 20, sb.y + sb.h + 14], [gx, sb.y + sb.h + 14], [gx, st.offsetHeight - 60]] }]]);
+// Mark 1 goes up from W through the F1/F2 gap, along the empty band under the tab divider, then up between "← Pad" and "None".
+const wk = kbx.querySelector('[data-id="W"]'), wb = boxOf(st, wk);
+const tabs = p.querySelector('.pbar'), padR = boxOf(st, tabs.querySelector('.tb')), noneB = boxOf(st, tabs.querySelector('.ptab'));
+const f1 = boxOf(st, kbx.querySelector('[data-id="F1"]')), gapX = (padR.x + padR.w + noneB.x) / 2, bandY = (boxOf(st, tabs).y + boxOf(st, tabs).h + f1.y) / 2;
+marks(st, [[1, wk, 't', { via: [[wb.x + wb.w / 2, bandY], [gapX, bandY]] }], [2, sp, 'b', { dx: sb.w / 2 - 20, via: [[sb.x + sb.w - 20, sb.y + sb.h + 14], [gx, sb.y + sb.h + 14], [gx, st.offsetHeight - 60]] }]]);
 </script></body></html>

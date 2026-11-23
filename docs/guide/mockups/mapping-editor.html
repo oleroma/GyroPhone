@@ -3,16 +3,16 @@
 <script>
 const st = document.getElementById('st');
 const s = phone(st, 'land');
-// ControlMappingScreen.kt in landscape: one thin top row on its own background (label, layer chips, Sort, Reset all,
+// ControlMappingScreen.kt in landscape: one thin top row on its own background (label, ☺, layer chips, Sort, Reset all,
 // Clear all, + Preset, Settings, Undo, Redo, Done), then the action cards and the library side by side with a
 // SplitHandle (20 dp, a 4 x 40 dp grip) between them, split half and half by default.
 const p = el(s, `<div class="page" style="padding-left:34px;display:flex;flex-direction:column">
- <div class="mtop" style="background:#211F26"><span class="lbl">LMB</span><span class="setchip on">Base</span><span class="tb">+ Layer</span><span class="tb">Sort ▾</span><span class="tb">↺ Reset all</span><span class="tb">✕ Clear all</span><span class="tb">+ ◯ Preset</span><span class="tb">⚙ Settings</span><span class="tb">↶ Undo</span><span class="tb">↷ Redo</span><span class="done">Done</span></div>
+ <div class="mtop" style="background:#211F26"><span class="lbl">LMB</span><span class="tb" style="font-size:18px">☺</span><span class="setchip on">Base</span><span class="tb">+ Layer</span><span class="tb">Sort ▾</span><span class="tb">↺ Reset all</span><span class="tb">✕ Clear all</span><span class="tb">+ ◯ Preset</span><span class="tb">⚙ Settings</span><span class="tb">↶ Undo</span><span class="tb">↷ Redo</span><span class="done">Done</span></div>
  <div style="flex:1;display:flex;min-height:0">
   <div style="flex:1;padding:8px 12px 0;overflow:hidden">
    <div style="display:flex;gap:6px;margin-bottom:8px;white-space:nowrap"><span class="setchip on">✓ 1 finger</span><span class="setchip">2 fingers</span><span class="setchip">3 fingers</span><span class="setchip">4 fingers</span><span class="setchip">Gyro</span></div>
-   <div class="acard sel"><div class="hd"><span class="t">Touch</span><span class="buzz">Buzz</span><span class="h">⠿</span></div>
-    <div class="crow"><span class="mchip">Mouse L</span><span class="mchip"><small>Long press ·</small> Key R</span></div>
+   <div class="acard sel"><div class="hd"><span class="t">Touch</span><span class="buzz">Buzz</span><span class="h pcard" style="font-size:16px;display:flex;align-items:center;gap:2px">+<svg width="16" height="16" viewBox="0 0 16 16" style="vertical-align:middle"><rect x="1" y="2.2" width="14" height="11.6" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="3.8" y="6.4" width="8.4" height="3.2" rx="1.6" fill="currentColor"/></svg></span><span class="h">⠿</span></div>
+    <div class="crow"><span class="mchip">Mouse L</span><span class="mchip">Long · Key R</span></div>
     <div class="timing">Long press: from 300 ms</div></div>
    <div class="acard"><div class="hd"><span class="g">⚙</span><span class="t">Move</span><span class="h">✕</span><span class="h">⠿</span></div>
     <div class="crow"><span class="mchip inh">Mouse X <small>Workspace</small></span><span class="mchip inh">Mouse Y <small>Workspace</small></span></div></div>
@@ -22,7 +22,7 @@ const p = el(s, `<div class="page" style="padding-left:34px;display:flex;flex-di
    <div class="search" style="margin:0 12px;height:36px;background:#2B2930"><span>⌕</span><span>Search, e.g. W, LT, wheel</span></div>
    <div class="lrow" style="display:flex;gap:6px;padding:6px 12px;white-space:nowrap;overflow:hidden"><span class="setchip">⌨ Press a key</span><span class="setchip">Recent</span><span class="setchip">Presets</span><span class="setchip on">✓ Keyboard</span><span class="setchip">Mouse</span><span class="setchip">Gamepad</span><span class="setchip">Gyro</span></div>
    <div style="font-size:12px;color:var(--m3-on-variant);padding:0 16px">Tap to add to Touch · long-press to drag</div>
-   <div style="padding:10px 12px"><span class="lchip">Esc</span><span class="lchip">Tab</span><span class="lchip">Space</span><span class="lchip">Shift</span><span class="lchip">Ctrl</span><span class="lchip">Alt</span><span class="lchip mapped">R</span><span class="lchip">E</span><span class="lchip">F</span><span class="lchip">Q</span><span class="lchip">W</span><span class="lchip">A</span><span class="lchip">S</span><span class="lchip">D</span><span class="lchip">1</span><span class="lchip">2</span><span class="lchip">3</span><span class="lchip">4</span></div>
+   <div style="padding:10px 12px"><span class="lchip">Key A</span><span class="lchip">Key B</span><span class="lchip">Key C</span><span class="lchip">Key D</span><span class="lchip">Key E</span><span class="lchip">Key F</span><span class="lchip">Key G</span><span class="lchip">Key H</span><span class="lchip">Key I</span><span class="lchip">Key J</span><span class="lchip">Key K</span><span class="lchip">Key L</span><span class="lchip">Key M</span><span class="lchip">Key N</span><span class="lchip">Key O</span><span class="lchip">Key P</span><span class="lchip">Key Q</span><span class="lchip mapped">✓ Key R</span><span class="lchip">Key S</span><span class="lchip">Key T</span><span class="lchip">Key U</span><span class="lchip">Key V</span><span class="lchip">Key W</span><span class="lchip">Key X</span><span class="lchip">Key Y</span><span class="lchip">Key Z</span></div>
   </div>
  </div></div>`);
 const q = (sel, i = 0) => p.querySelectorAll(sel)[i];
@@ -31,12 +31,14 @@ const q = (sel, i = 0) => p.querySelectorAll(sel)[i];
   r.querySelectorAll('.setchip').forEach(c => { if (c.getBoundingClientRect().right > lim) c.style.visibility = 'hidden'; }); }
 const B = e => boxOf(st, e), pk = B(q('.lrow .setchip', 0)), H = st.offsetHeight;
 const chip6 = B(q('.mchip', 1)), t1 = B(q('.setchip', 2)), t2 = B(q('.setchip', 3)), gx = (t1.x + t1.w + t2.x) / 2 + 2;
+const mt = B(q('.mtop')), ly = B(q('.mtop .tb', 1)), so = B(q('.mtop .tb', 2)), gx2 = (ly.x + ly.w + so.x) / 2, yMid = (mt.y + mt.h + t1.y) / 2;
 marks(st, [
-  [1, q('.lbl'), 't'], [2, q('.setchip'), 't'], [3, q('.mtop .tb', 5), 't'], [4, q('.done'), 't'],
+  [1, q('.lbl'), 't', { dy: -6 }], [2, q('.setchip'), 't'], [3, q('.mtop .tb', 6), 't'], [4, q('.done'), 't'],
   [5, q('.acard'), 'l'],
-  [6, q('.mchip', 1), 't', { dx: gx - (chip6.x + chip6.w / 2) }],
+  // Up the gap between the finger tabs, then across under the top row to the gap between + Layer and Sort.
+  [6, q('.mchip', 1), 't', { dx: gx - (chip6.x + chip6.w / 2), via: [[gx, yMid], [gx2, yMid]] }],
   [7, q('.buzz'), 'b'], [8, q('.mchip.inh', 1), 'b'],
-  [9, q('.vsplit'), 'b', { at: 'c', dy: 60, shift: -10 }],
+  [9, q('.vsplit'), 'b', { at: 'c', shift: -10 }],
   [10, q('.lrow .setchip', 3), 't'],
   [11, q('.lrow .setchip', 0), 'b', { dx: -pk.w / 2, dy: -pk.h / 2, shift: 40, via: [[pk.x - 7, pk.y + pk.h / 2], [pk.x - 7, H - 62]] }],
 ], {});

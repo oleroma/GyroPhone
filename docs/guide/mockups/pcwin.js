@@ -7,7 +7,7 @@ function pcWin(stage, page, mainHtml, opts = {}) {
   const tmp = document.createElement('div'); tmp.innerHTML = PC_NAV;
   [...tmp.querySelectorAll('.nav')].forEach((n, i) => { if (names[i] === page) n.classList.add('on'); });
   return el(stage, `<div class="win"${opts.width ? ` style="width:${opts.width}px"` : ''}>
- <div class="tbar">GyroPhone<span class="wc"><span>—</span><span>☐</span><span>✕</span></span></div>
+ <div class="tbar">GyroPhone Companion<span class="wc"><span>—</span><span>☐</span><span>✕</span></span></div>
  <div class="body"><div class="side"><div class="brand">GyroPhone</div>${tmp.innerHTML}</div>
  <div class="main">${mainHtml}</div></div></div>`);
 }

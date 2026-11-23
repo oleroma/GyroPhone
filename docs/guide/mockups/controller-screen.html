@@ -11,7 +11,7 @@
 .c.w{flex-direction:row;gap:6px}
 .c.m{background:#4F378B;border-color:#D0BCFF;color:#EADDFF}
 .c .n{font-size:11px;font-weight:700;white-space:nowrap}
-.c.sel{border:2.5px solid #E6E0E9;transform:scale(1.1);box-shadow:0 0 0 3px rgba(255,255,255,.85)}
+.c.sel{border:2.5px solid #E6E0E9}
 .c.tgt{border:3px solid #EFB8C8;transform:scale(1.1)}
 .bbar{position:absolute;left:0;right:0;bottom:0;height:52px;border-top:1px solid var(--m3-outline-variant);display:flex;align-items:center;padding:0 8px;gap:4px}
 .dsw{display:flex;border:1px solid var(--m3-outline);border-radius:20px;overflow:hidden}
@@ -25,7 +25,7 @@
 const st = document.getElementById('st');
 const s = phone(st, 'land');
 const p = el(s, `<div class="page" style="padding-left:34px">
- <div class="pbar"><span class="tb">← Pad</span><span class="ptab">None</span><span class="ptab on">Controller</span><span class="ptab">Shooter</span><span class="tb">+ Preset</span></div>
+ <div class="pbar"><span class="tb">← Pad</span><span class="ptab">None</span><span class="ptab on">Controller</span><span class="ptab">WASD</span><span class="tb">+ Preset</span></div>
  <div class="board"></div>
  <div class="bbar"><div class="dsw"><span class="on">🎮 Controller</span><span>⌨ Keyboard</span><span>🖱 Mouse</span><span>📱 Phone</span></div>
   <span class="tb" style="color:var(--m3-primary);font-weight:500;padding:0 12px">⌨ Press a button</span>
@@ -63,7 +63,7 @@ K('rb', right, 0.02 + barH * 1.5 + 0.04, bar, barH, 'RB', false, 2);
 K('ls', left, t + 0.38, stick, stick, 'LS', true);
 K('up', left, t + 0.76 - gap, key, key, '', false); K('down', left, t + 0.76 + gap, key, key, '', false);
 K('left', left - gap, t + 0.76, key, key, '', false); K('right', left + gap, t + 0.76, key, key, '', false);
-K('y', right, t + 0.38 - gap, key, key, '', true); K('a', right, t + 0.38 + gap, key, key, '', true, 1);
+K('y', right, t + 0.38 - gap, key, key, '', true); K('a', right, t + 0.38 + gap, key, key, '', true, 2);
 K('x', right - gap, t + 0.38, key, key, '', true); K('b', right + gap, t + 0.38, key, key, '', true, 1);
 K('rs', right, t + 0.76, stick, stick, 'RS', true);
 K('view', 0.5 - 0.09, t + 0.1, small, small, ICONS.view, true); K('menu', W - 0.5 + 0.09, t + 0.1, small, small, ICONS.menu, true);
@@ -76,10 +76,10 @@ box.querySelectorAll('.c').forEach(c => { const i = c.querySelector('.in'), room
 const q = id => b.querySelector(`[data-id="${id}"]`);
 q('a').classList.add('sel');
 const popup = (() => { const r = q('a'); const x = parseFloat(r.style.left) + parseFloat(r.style.width) + 8 + parseFloat(box.style.left), y = parseFloat(r.style.top) + parseFloat(box.style.top);
-  return el(b, `<div class="pop" style="left:${x}px;top:${y}px"><div><span class="w">Press</span>Key Space</div><div><span class="w">Aim · Press</span>Mouse right</div></div>`); })();
+  return el(b, `<div class="pop" style="left:${x}px;top:${y}px"><div><span class="w">Press</span>Key Space</div><div><span class="w">Aim · Press</span>Mouse R</div></div>`); })();
 marks(st, [
   [1, p.querySelectorAll('.ptab')[1], 't'], [2, p.querySelectorAll('.ptab')[2], 't'],
-  [3, q('rb'), 'r'], [4, q('ls'), 'l'], [5, popup, 'r'],
+  [3, q('rb'), 'r'], [4, q('ls'), 'l', { shift: -30 }], [5, popup, 'r'],
   [6, p.querySelector('.dsw'), 'b'], [7, p.querySelector(".bbar .tb"), "b", { dy: 6 }],
 ]);
 </script></body></html>

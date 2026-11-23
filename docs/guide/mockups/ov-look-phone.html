@@ -10,5 +10,5 @@ const w = ovCol(st, 'Phone', ['Window', 'Look', 'Turning'], 'Look',
     + t('Controller handles') + seg(['While a controller is attached', 'Always', 'Off'], 0, 'hand') + t('Controller') + seg(['Phone', 'PC'], 0, 'src')
     + hint('PC: the controller plugged into this PC, while "Use PC controller for gyro ratchet" is on in the phone\'s Connection settings.'))
   + card('Colours', swatches([['Body', argb(0xFF2A2E35)], ['Screen', argb(0xFF101318)], ['Pressed', argb(0xFF7CC4FF)], ['Latched', argb(0xFF8FE39A)], ['Fingers', argb(0xFFFFFFFF)], ['Controller handles', argb(0xFF353A42)], ['Controller pressed', argb(0xFF7CC4FF)]]) + btn('Default colours', 'def', '↺'), 'col'));
-marks(st, [[1, T('#dots'), 'r'], [2, T('#trails'), 'r'], [3, T('#axon'), 'r'], [4, w.querySelector('#hand'), 'r'], [5, w.querySelector('#src'), 'r'], [6, w.querySelector('#col .ovsw span'), 'r', { dx: 0 }], [7, w.querySelector('#def'), 'r']]);
+marks(st, [[1, T('#dots'), 'r'], [2, T('#trails'), 'r'], [3, T('#axon'), 'r'], [4, w.querySelector('#hand'), 'r'], [5, w.querySelector('#src'), 'r'], [6, w.querySelectorAll('#col .ovsw span')[2], 'r'], [7, w.querySelector('#def'), 'r']]);
 </script></body></html>

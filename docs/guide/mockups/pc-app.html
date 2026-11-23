@@ -10,7 +10,7 @@ const w = pcWin(st, 'App', `<h1>App</h1>
  <div class="wcard"><div class="ct">Tray icon</div><div style="font-size:14px">Clicking the icon</div><div class="wseg" style="margin-top:8px"><span class="on">Opens this window</span><span>Pairs a new phone</span></div>
   <div class="whint">Right-click the icon for the quick menu: pause, output, overlays.</div></div>
  <div class="wcard"><div class="ct">Press a key</div>${tog('Use this PC\'s keys for Press a key', 'While "Press a key" is open on the phone, this PC\'s keyboard, mouse and controller count too. Only read: every press still reaches Windows and games. Off: only what is attached to the phone counts.', 1)}<div class="wdiv"></div>${tog('Notify when the phone listens for a key', 'When "Press a key" opens on the phone, a notification says you can press a key, mouse button or controller button on this PC too.', 1)}</div>
- <div class="wcard"><div class="ct">About</div><div style="font-size:14px">GyroPhone 0.1.859</div><div class="whint">When a newer build is installed, the companion restarts into it by itself. Settings and pairings are kept.</div></div>`);
+ <div class="wcard"><div class="ct">About</div><div style="font-size:14px">GyroPhone Companion 0.1.859-3fa291c</div><div class="whint">When a newer build is installed, the companion restarts into it by itself. Settings and pairings are kept.</div></div>`);
 const t = qa('.tl');
 marks(st, [[1, t[1], 'r'], [2, q('.wseg'), 'r'], [3, t[2], 'r']]);
 </script></body></html>
