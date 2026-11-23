@@ -147,6 +147,8 @@ pub trait InputControl: Send + Sync {
     fn set_diagnostics(&self, on: bool);
     fn set_diagnostics_minutes(&self, minutes: i32);
     fn save_diagnostics(&self);
+    /// The live session's id, its Diagnostics file key and the phone's address (LogFileKey in InputControl.cs).
+    fn log_file_access(&self) -> Option<(u32, [u8; 16], std::net::IpAddr)>;
     fn set_press_key_listen(&self, on: bool);
     fn set_press_key_notice(&self, on: bool);
 
@@ -292,6 +294,10 @@ pub fn dispatch(c: &dyn InputControl, method: &str, args: &[Value]) -> Result<Va
         "SetDiagnostics" => Ok(void(c.set_diagnostics(arg_bool(args, 0)?))),
         "SetDiagnosticsMinutes" => Ok(void(c.set_diagnostics_minutes(arg_i32(args, 0)?))),
         "SaveDiagnostics" => Ok(void(c.save_diagnostics())),
+        "LogFileAccess" => Ok(c
+            .log_file_access()
+            .map(|(sid, key, ip)| json!({ "sessionId": sid, "key": base64_encode(&key, false), "address": ip.to_string() }))
+            .unwrap_or(Value::Null)),
         "SetPressKeyListen" => Ok(void(c.set_press_key_listen(arg_bool(args, 0)?))),
         "SetPressKeyNotice" => Ok(void(c.set_press_key_notice(arg_bool(args, 0)?))),
         "SetMeasureButtons" => Ok(void(c.set_measure_buttons(arg_bool(args, 0)?))),

@@ -344,6 +344,17 @@ pub fn session_keys(pair_key: &[u8], n_p: &[u8], n_h: &[u8], session_id: u32) ->
     (k_ph, k_hp)
 }
 
+/// The key the phone's Diagnostics file is fetched under (LogFileWire): HKDF(kPH, salt = none,
+/// info = "GP-log-file-v1" || u32le(sid), 16). Never used on the input link.
+pub fn log_file_key(k_ph: &[u8], session_id: u32) -> [u8; 16] {
+    let mut info = [0u8; 14 + 4];
+    info[..14].copy_from_slice(b"GP-log-file-v1");
+    info[14..].copy_from_slice(&session_id.to_le_bytes());
+    let mut key = [0u8; 16];
+    hkdf_sha256(k_ph, &[], &info, &mut key);
+    key
+}
+
 /// AES-128-GCM for sealed packets: packet = header(12) || ciphertext || tag(16), AAD = header,
 /// nonce = u32le(dir) || u32le(sessionId) || u32le(seq). Makes nothing after construction; the key
 /// schedule is wiped on drop.

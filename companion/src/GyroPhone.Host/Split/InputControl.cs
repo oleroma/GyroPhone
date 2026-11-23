@@ -54,6 +54,8 @@ public interface IInputControl
     void SetDiagnosticsMinutes(int minutes);
     /// <summary>Diagnostics' Save: the phone saves its side; the companion is told to save the PC's (event "debug-save").</summary>
     void SaveDiagnostics();
+    /// <summary>The live session's key for the phone's Diagnostics file and the phone's address, or null without a session.</summary>
+    LogFileKey? LogFileAccess();
     void SetPressKeyListen(bool on);
     void SetPressKeyNotice(bool on);
 
@@ -73,6 +75,12 @@ public interface IInputControl
     /// <summary>What the companion's overlays ask of the phone (<see cref="HostEngine.SetOverlay"/>).</summary>
     void SetOverlay(bool on, bool compass, bool samples, bool keys = false);
 }
+
+/// <summary>
+/// What the companion needs to fetch the phone's Diagnostics save (<see cref="LogFileWire"/>): the session, its log key
+/// and the phone's address (a loopback address when the phone is on the direct USB cable, which has no TCP).
+/// </summary>
+public sealed record LogFileKey(uint SessionId, byte[] Key, string Address);
 
 /// <summary>The names both processes use in the user's Windows session.</summary>
 public static class SplitNames

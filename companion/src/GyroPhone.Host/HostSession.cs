@@ -31,6 +31,7 @@ public sealed class HostSession : IDisposable
         Welcome = welcome;
         _rx = new SessionCipher(kPH, Wire.DirPhoneToHost);
         _tx = new SessionCipher(kHP, Wire.DirHostToPhone);
+        LogKey = LogFileWire.LogKey(kPH, sessionId);
         _endpoint = Copy(endpoint);
         CreatedUs = createdUs;
         LastRxUs = createdUs;
@@ -41,6 +42,8 @@ public sealed class HostSession : IDisposable
     public string PhoneName { get; }
     public byte[] NP { get; }
     public byte[] NH { get; }
+    /// <summary>The key the phone's Diagnostics file is fetched under (<see cref="LogFileWire"/>), never used on the link.</summary>
+    public byte[] LogKey { get; }
     /// <summary>Cached WELCOME, resent for a retransmitted HELLO with the same nP.</summary>
     public byte[] Welcome { get; }
     public long CreatedUs { get; }

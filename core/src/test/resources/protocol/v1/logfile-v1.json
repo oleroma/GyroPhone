@@ -1,0 +1,18 @@
+{
+  "_note": "Diagnostics file fetch (LogFileWire) golden vectors. All hex lowercase. Made with .NET HKDF, HMACSHA256 and AesGcm; Kotlin and C# suites must reproduce every value.",
+  "kPH": "000102030405060708090a0b0c0d0e0f",
+  "sessionId": 16909060,
+  "logKey": "8631202b6e04cc929bbcb4c9bc290eaa",
+  "reqId": "a0a1a2a3a4a5a6a7",
+  "maxAgeS": 30,
+  "request": "47504c4601011e0004030201a0a1a2a3a4a5a6a700000000c427ff4b4ec1d95e7df1c23db01b3fb6",
+  "head": "47504c4601000000",
+  "meta": "05000000190000001970686f6e652d32303236313132312d3231313733362e747874",
+  "metaRaw": 5,
+  "metaZip": 25,
+  "metaName": "phone-20261121-211736.txt",
+  "frame0": "3200000024756a143295fbfd6d172293475d93d0b5442b26eed4f3e4fb732714d4a364c70a45e9a6d48e747815ef9c3f361c4b80023b",
+  "data": "68656c6c6f",
+  "frame1": "1500000071fa53286fe5d7388e4dea57ce0ca5b397132e76b0",
+  "frame2": "10000000da76ba72a6e4b79d550d9800dd6b2d28"
+}

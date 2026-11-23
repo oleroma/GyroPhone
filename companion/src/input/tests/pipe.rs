@@ -693,6 +693,10 @@ impl InputControl for Recording {
     fn save_diagnostics(&self) {
         self.note("save".into());
     }
+    fn log_file_access(&self) -> Option<(u32, [u8; 16], std::net::IpAddr)> {
+        self.note("log-file".into());
+        Some((7, [9; 16], std::net::IpAddr::from([192, 168, 1, 33])))
+    }
     fn set_press_key_listen(&self, on: bool) {
         self.note(format!("listen {on}"));
     }
@@ -748,6 +752,7 @@ fn every_call_of_the_companion_reaches_its_method() {
     ok("SetDiagnostics", json!([true]), Value::Null, "diagnostics true");
     ok("SetDiagnosticsMinutes", json!([30]), Value::Null, "minutes 30");
     ok("SaveDiagnostics", json!([]), Value::Null, "save");
+    ok("LogFileAccess", json!([]), json!({ "sessionId": 7, "key": "CQkJCQkJCQkJCQkJCQkJCQ==", "address": "192.168.1.33" }), "log-file");
     ok("SetPressKeyListen", json!([true]), Value::Null, "listen true");
     ok("SetPressKeyNotice", json!([false]), Value::Null, "notice false");
     ok("SetMeasureButtons", json!([true]), Value::Null, "measure true");

@@ -1396,6 +1396,8 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         int minutes = Set.DiagnosticsMinutes;
         string? path = SaveDebug(minutes);
+        // The phone's side at once, beside the rest (it waits for the phone, which saves at the same moment).
+        ThreadPool.QueueUserWorkItem(_ => FetchPhoneSave());
         try { _perf.Save(minutes, $"Diagnostics {DateTime.Now:HH:mm}"); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -1408,6 +1410,34 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
             CopyFlight(path);
         }
         Post(Refresh);
+    }
+
+    /// <summary>
+    /// The phone's side of the Save, fetched over the network (<see cref="PhoneLogFetch"/>) into the debug folder next to the
+    /// PC's, so no adb is needed. The phone saves at the same moment; this waits for it.
+    /// </summary>
+    private void FetchPhoneSave()
+    {
+        LogFileKey? access = null;
+        // A phone that reconnects just then (a switch between Wi-Fi and the cable) gets a few seconds.
+        for (int i = 0; i < 10 && access == null; i++)
+        {
+            if (i > 0) Thread.Sleep(1000);
+            try { access = In.LogFileAccess(); }
+            catch (Exception e) when (e is IOException or TimeoutException or InvalidOperationException)
+            {
+                _log.Write($"phone recording: not fetched ({e.GetType().Name})");
+                return;
+            }
+        }
+        if (access == null)
+        {
+            _log.Write("phone recording: not fetched (no phone connected)");
+            return;
+        }
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        if (PhoneLogFetch.Fetch(access, DebugDirectory, _log.Write) is { } got)
+            _log.Write($"phone recording received: {Path.GetFileName(got)} ({new FileInfo(got).Length / 1024} KB, {sw.ElapsedMilliseconds} ms)");
     }
 
     /// <summary>Diagnostics' network arrival watch: pc-&lt;time&gt;-net.bin next to <paramref name="saved"/> (the newest 5 stay).</summary>

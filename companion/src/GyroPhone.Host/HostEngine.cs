@@ -539,6 +539,20 @@ public sealed class HostEngine
         }
     }
 
+    /// <summary>
+    /// The live session's Diagnostics file key and the phone's address, for the companion to fetch the phone's save over
+    /// TCP (<see cref="LogFileWire"/>); null without a session.
+    /// </summary>
+    public Split.LogFileKey? LogFileAccess()
+    {
+        using (Lock(ByUi))
+        {
+            if (_sessions.Active is not { } a) return null;
+            var ip = ((System.Net.IPEndPoint)new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0).Create(a.Endpoint)).Address;
+            return new Split.LogFileKey(a.SessionId, a.LogKey, ip.ToString());
+        }
+    }
+
     /// <summary>Diagnostics' Save on the PC: tells the phone to save its side (TEST_MODE counter) and saves this side.</summary>
     public void SaveDiagnostics()
     {
