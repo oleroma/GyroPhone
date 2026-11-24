@@ -126,6 +126,8 @@ import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oleroma.gyrophone.core.engine.MappingEngine
+import com.oleroma.gyrophone.core.model.GyroCurve
+import com.oleroma.gyrophone.core.model.CurveFrame
 import com.oleroma.gyrophone.core.model.SliderOverrides
 import com.oleroma.gyrophone.core.model.Bindings
 import com.oleroma.gyrophone.core.model.ButtonHow
@@ -195,6 +197,9 @@ import kotlinx.serialization.json.Json
 private const val GRID = 0.02f
 private const val NEW_BUTTON_SIZE = 0.14f
 private const val NEW_STICK_SIZE = 0.3f
+
+/** A new curve frame's width (of the pad's short side); its height is 0.6 of it. */
+private const val NEW_CURVE_SIZE = 0.5f
 private const val MIN_EDIT_OPACITY = 0.5f
 
 /** Opacity factor of a corner arrow that leads nowhere (first / last workspace, no wrap-around). */
@@ -752,7 +757,11 @@ fun PadScreen(
         if (!liveWatching) liveWatching = true
     }
 
+    // Curve frames edited in play: their touches and their curves while a finger changes them.
+    val curveTouches = remember(runtime) { CurveFrameTouches(runtime) }
+
     fun releaseAll() {
+        curveTouches.cancelAll()
         for (p in buttonFingers) runtime.engine.buttonCancel(p)
         buttonFingers.clear()
         swipeLines.clear()
@@ -1034,7 +1043,7 @@ fun PadScreen(
             val o = center(c)
             val hw = half(c)
             val hh = halfH(c)
-            val rect = c.kind == TouchKind.BUTTON && c.shape == TouchShape.SQUARE
+            val rect = (c.kind == TouchKind.BUTTON || c.kind == TouchKind.CURVE) && c.shape == TouchShape.SQUARE
             val l = ((o.x - hw) / gx).roundToInt() * gx
             val r = max(((o.x + hw) / gx).roundToInt() * gx, l + gx)
             val t = ((o.y - hh) / gy).roundToInt() * gy
@@ -1369,7 +1378,7 @@ fun PadScreen(
                                             val floor = PINCH_AXIS_FLOOR_DP * pxPerDp
                                             val mid = (a.position + b.position) / 2f
                                             updateControl(id) { c ->
-                                                val rect = c.kind == TouchKind.BUTTON && c.shape == TouchShape.SQUARE
+                                                val rect = (c.kind == TouchKind.BUTTON || c.kind == TouchKind.CURVE) && c.shape == TouchShape.SQUARE
                                                 val nw: Float
                                                 val nh: Float
                                                 if (rect) {
@@ -1426,7 +1435,7 @@ fun PadScreen(
                                                 editWorkspace { wk ->
                                                     wk.copy(touchControls = wk.touchControls.map { p ->
                                                         val (at, sw, sh) = syncStart[p.id] ?: return@map p
-                                                        val rect = p.kind == TouchKind.BUTTON && p.shape == TouchShape.SQUARE
+                                                        val rect = (p.kind == TouchKind.BUTTON || p.kind == TouchKind.CURVE) && p.shape == TouchShape.SQUARE
                                                         val pw = (sw + dW).coerceIn(lo, hi)
                                                         val ph = if (rect) (sh + dH).coerceIn(lo, hi) else pw
                                                         val sized = p.withPlacement(portrait, p.placeX(portrait), p.placeY(portrait), pw / unit)
@@ -1466,7 +1475,7 @@ fun PadScreen(
                             // one) and shows how to open it. (A double tap held: its popup, as any long press.)
                             mode == EditGesture.PRESS && cornerHit == null && under.size >= 2 -> if (secondTap && c != null) {
                                 selected = c.id
-                                menu = if (c.kind == TouchKind.DISPLAY) EditMenu.CONTEXT else EditMenu.MAPPING
+                                menu = if (c.kind == TouchKind.DISPLAY || c.kind == TouchKind.CURVE) EditMenu.CONTEXT else EditMenu.MAPPING
                             } else {
                                 pendingAt = lastAt
                                 pendingPos = downPos
@@ -1483,7 +1492,7 @@ fun PadScreen(
                                 if (selected != null && (selectedUnder >= 0 || cornerHit?.id == selected) && d != null) {
                                     // A tap on the selected control opens it: its mapping editor (a corner: its menu,
                                     // a gyro display: its settings).
-                                    menu = if (isCorner(d, selected!!) || findControl(selected)?.kind == TouchKind.DISPLAY) {
+                                    menu = if (isCorner(d, selected!!) || findControl(selected)?.kind.let { it == TouchKind.DISPLAY || it == TouchKind.CURVE }) {
                                         EditMenu.CONTEXT
                                     } else EditMenu.MAPPING
                                 } else {
@@ -1523,6 +1532,8 @@ fun PadScreen(
                 val stickCenters = HashMap<String, Offset>()
                 val padOwner = HashSet<PointerId>()
                 val cornerOwner = HashMap<PointerId, String>()
+                // Fingers on a curve frame: its own, nothing else sees them.
+                val curveOwner = HashSet<PointerId>()
 
                 // On touch, Outside and Zone mappings (TouchArea sources).
                 // Any trigger of one (Long press, Tap...) needs its on / off: kept by its plain source.
@@ -1749,6 +1760,8 @@ fun PadScreen(
                             swipeLines.clear()
                             moveRulers.clear()
                             cornerOwner.clear()
+                            curveOwner.clear()
+                            curveTouches.cancelAll()
                         }
                         for (ch in event.changes) {
                             val pid = ch.id.value
@@ -1770,6 +1783,17 @@ fun PadScreen(
                                 ) else emptyList()
                                 val c = touched.firstOrNull()
                                 var origin: TouchControl? = null
+                                if (c != null && c.kind == TouchKind.CURVE) {
+                                    // A curve frame keeps its fingers: no control behind it, no zones.
+                                    curveOwner.add(ch.id)
+                                    val o = center(c)
+                                    curveTouches.down(
+                                        pid, c, androidx.compose.ui.geometry.Rect(o.x - half(c), o.y - halfH(c), o.x + half(c), o.y + halfH(c)),
+                                        ch.position, at, pxPerDp,
+                                    )
+                                    ch.consume()
+                                    continue
+                                }
                                 // Sharing controls behind it: each with an engine finger of its own.
                                 if (touched.size > 1) {
                                     val list = ArrayList<Extra>()
@@ -1849,6 +1873,16 @@ fun PadScreen(
                                     }
                                 }
                                 if (!ch.pressed) extras.remove(ch.id)
+                            }
+                            if (ch.id in curveOwner) {
+                                if (!ch.pressed) {
+                                    curveOwner.remove(ch.id)
+                                    curveTouches.up(pid, at, systemCancel || pointerCancel)
+                                } else if (ch.position != ch.previousPosition) {
+                                    curveTouches.move(pid, ch.position, viewConfiguration.touchSlop)
+                                }
+                                ch.consume()
+                                continue
                             }
                             if (ch.id in padOwner) {
                                 if (!ch.pressed) {
@@ -2145,7 +2179,7 @@ fun PadScreen(
                 LiveControl(
                     control = c,
                     editing = editing,
-                    label = labels[c.id] ?: "",
+                    label = if (c.kind == TouchKind.CURVE) "" else labels[c.id] ?: "",
                     selectedTint = if (isSelected) litColor(c.id) else null,
                     pressed = { c.id in activeIds || c.id in heldSticks },
                     latched = { c.id in latchedIds },
@@ -2171,6 +2205,19 @@ fun PadScreen(
                             },
                         ),
                 )
+                if (c.kind == TouchKind.CURVE) {
+                    CurveFrameGraph(
+                        runtime = runtime,
+                        control = c,
+                        curve = curveTouches.drafts[c.id] ?: c.curveFrame?.inRange() ?: GyroCurve.OFF,
+                        dragPoint = curveTouches.dragging[c.id],
+                        counts = ws.gyro.gameCountsPer360,
+                        live = !editing && !covered && !hidden,
+                        widthDp = with(density) { (r * 2).toDp() },
+                        heightDp = with(density) { (rh * 2).toDp() },
+                        modifier = Modifier.offset { IntOffset((ctr.x - r).roundToInt(), (ctr.y - rh).roundToInt()) },
+                    )
+                }
                 // Global (in every workspace): a small globe at its top right while editing.
                 if (editing && c.global) {
                     Text(
@@ -2779,7 +2826,7 @@ fun PadScreen(
                                         colors = selColors,
                                         onClick = { menu = EditMenu.CONTEXT }) { Text("Configure") }
                                     val d = draft
-                                    if (d != null && !isCorner(d, chosen.id) && chosen.kind != TouchKind.DISPLAY) {
+                                    if (d != null && !isCorner(d, chosen.id) && chosen.kind != TouchKind.DISPLAY && chosen.kind != TouchKind.CURVE) {
                                         PanelPill(
                                             colors = selColors,
                                             onClick = { menu = EditMenu.MAPPING }) { Text("Map") }
@@ -2913,6 +2960,21 @@ fun PadScreen(
                                             selected = id
                                             addOpen = false
                                         }
+                                        // A curve frame: a rectangle on the pad holding its own acceleration curve.
+                                        AddChip("Curve frame", false) addCurve@{ at ->
+                                            val d = draft ?: return@addCurve
+                                            val wk = d.workspace(editIndex)
+                                            val id = freshId(wk, "curve", takenIds(d))
+                                            val c = newControl(wk, id, TouchKind.CURVE, NEW_CURVE_SIZE, portrait).copy(
+                                                label = "",
+                                                shape = TouchShape.SQUARE,
+                                                aspect = 0.6f,
+                                                curveFrame = CurveFrame(edited = System.currentTimeMillis()),
+                                            )
+                                            editWorkspace { it.copy(touchControls = it.touchControls + addAt(at, c)) }
+                                            selected = id
+                                            addOpen = false
+                                        }
                                         // Gyro displays: one Display chip; tapping or dropping it asks which kind (each
                                         // display is placed and sized like a button, drawn under everything in play).
                                         // Holds where it was dropped (null: the middle) while the kind is picked.
@@ -2989,6 +3051,7 @@ fun PadScreen(
                                                 fun prefix(c: TouchControl) = when (c.kind) {
                                                     TouchKind.STICK -> "stick"
                                                     TouchKind.DISPLAY -> "disp"
+                                                    TouchKind.CURVE -> "curve"
                                                     else -> "btn"
                                                 }
                                                 if (ButtonLibrary.isGroup(b)) {
@@ -3116,6 +3179,7 @@ fun PadScreen(
                                 "The " + when (c.kind) {
                                     TouchKind.STICK -> "stick"
                                     TouchKind.DISPLAY -> "display"
+                                    TouchKind.CURVE -> "curve frame"
                                     else -> "button"
                                 } + " and its mappings are removed from " +
                                     if (c.global) "every workspace (it is global)." else "this layout.",
@@ -3214,7 +3278,7 @@ fun PadScreen(
                     // A long press: what can be done to the control, right next to it.
                     NearControl(anchor = center(sel), anchorHalfW = half(sel), anchorHalfH = halfH(sel)) {
                         ControlPopup(
-                            mappings = sel.kind != TouchKind.DISPLAY,
+                            mappings = sel.kind != TouchKind.DISPLAY && sel.kind != TouchKind.CURVE,
                             grouped = sel.group != null,
                             onMappings = { menu = EditMenu.MAPPING },
                             onDuplicate = {
@@ -3260,6 +3324,22 @@ fun PadScreen(
                             modifier = Modifier.heightIn(max = maxHeight - 16.dp),
                         )
                     }
+                } else if (sel.kind == TouchKind.CURVE) {
+                    // A curve frame: its range, axis and curve options, and its look.
+                    CurveFrameSettingsScreen(
+                        control = sel,
+                        inPortrait = portrait,
+                        workspaceOpacity = ws.controlOpacity,
+                        onChange = { changed -> updateControl(sel.id) { changed } },
+                        onSize = { resize(sel.id, it) },
+                        onDuplicate = duplicateSel,
+                        onDelete = {
+                            editWorkspace { Bindings.removeTouchControl(it, sel.id) }
+                            selected = null
+                            menu = EditMenu.NONE
+                        },
+                        onClose = { menu = EditMenu.NONE },
+                    )
                 } else if (sel.kind == TouchKind.DISPLAY) {
                     // A gyro display: what it shows, how, and its colours.
                     GyroDisplaySettingsScreen(
@@ -3513,6 +3593,7 @@ private fun duplicate(workspace: Workspace, c: TouchControl, taken: Set<String>)
     val id = freshId(workspace, when (c.kind) {
         TouchKind.STICK -> "stick"
         TouchKind.DISPLAY -> "disp"
+        TouchKind.CURVE -> "curve"
         else -> "btn"
     }, taken)
     val copies = WorkspaceMappings.rekeyAll(workspace.mappings, c.id, id)

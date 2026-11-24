@@ -8,6 +8,8 @@ import com.oleroma.gyrophone.core.hid.HidUsage
 import com.oleroma.gyrophone.core.hid.KeyboardState
 import com.oleroma.gyrophone.core.hid.MouseState
 import com.oleroma.gyrophone.core.model.AndroidAxis
+import com.oleroma.gyrophone.core.model.GyroCurve
+import com.oleroma.gyrophone.core.model.CurveFrames
 import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.AxisRange
@@ -159,6 +161,49 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     /** [gyroNow] without the Gyro sensitivity chips ([sensNow]). */
     private var gyroBase: GyroSettings = ws.gyro
 
+    /** The workspace's gyro settings in effect with its kept slider overrides, under any held button ([updateGyroNow]). */
+    private var gyroUnder: GyroSettings = ws.gyro
+
+    /** The held buttons' own gyro settings, stacked ([updateGyroNow]); null = none held that sets any. */
+    private var gyroHeld: ButtonGyro? = null
+
+    /** The workspace's curve frames ([CurveFrames.of]): their curves lie over its acceleration. */
+    private var curveFrames: List<TouchControl> = emptyList()
+
+    /** A curve frame's curve being dragged now, by frame id, before it is saved ([setFrameCurve]). */
+    private val liveCurves = HashMap<String, GyroCurve>()
+
+    /**
+     * Curve frame [id]'s curve as it is being edited now ([curve]; null: its saved one again): the
+     * gyro takes it from the next sample, nothing saved. Called on every drag step of a point, so
+     * it only works out the gyro settings again (no allocation on the sample path).
+     */
+    /**
+     * Curve frame [id]'s curve (the one being dragged, else its saved one) is the one the gyro uses
+     * now for its axis: not a held button's own, nor a newer frame's. False for no such frame.
+     * Read under the lock, so a drag step and the gyro settings it made are seen together.
+     */
+    fun frameInEffect(id: String): Boolean = synchronized(lock) {
+        val f = curveFrames.firstOrNull { it.id == id }?.curveFrame ?: return@synchronized false
+        val c = liveCurves[id] ?: f.curve
+        val g = gyroNow
+        if (f.axis == MotionAxis.NONE) g.accel == c && g.yawAccel == null && g.pitchAccel == null && g.rollAccel == null
+        else g.accelOf(f.axis) == c
+    }
+
+    fun setFrameCurve(id: String, curve: GyroCurve?) {
+        synchronized(lock) {
+            if (curve == null) {
+                if (liveCurves.remove(id) == null) return
+            } else {
+                if (curveFrames.none { it.id == id } || liveCurves[id] == curve) return
+                liveCurves[id] = curve
+            }
+            updateGyroNow()
+        }
+        onChange?.run()
+    }
+
     /**
      * Gyro sensitivity chips ([OutputTarget.GyroSens]) in effect, counts per degree by
      * [MotionAxis] ordinal (NONE = every axis); NaN = none. Set by [refreshSens].
@@ -233,8 +278,11 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         namedTouchNow.getOrNull(n)?.takeUnless { it.isNaN() } ?: if (ws.sliders.isEmpty()) null else SliderOverrides.named(ws.sliders, true, n)
     }
 
-    /** The gyro settings for [gyroNow]: [gyroBase] with the sensitivity chips over it, every link worked out. */
-    private fun gyroFrom(base: GyroSettings): GyroSettings = withSens(base).resolved(namedGyro)
+    /**
+     * The gyro settings for [gyroNow]: the sensitivity chips over the workspace's settings, then a held
+     * button's own settings over those (a button's own value wins over any slider), every link worked out.
+     */
+    private fun gyroNowOf(): GyroSettings = withSens(gyroUnder).let { u -> gyroHeld?.over(u) ?: u }.resolved(namedGyro)
 
     /** The held buttons' touchpad settings ([updateGyroNow]), kept so a named Touch sens change can work them out again. */
     private var heldTouchNow: ButtonGyro? = null
@@ -392,7 +440,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 namedGyroNow[n] = v; changed = true
             }
         }
-        if (changed) gyroNow = gyroFrom(gyroBase)
+        if (changed) gyroNow = gyroNowOf()
         var namedTouchChanged = false
         for (n in 1 until namedTouchNow.size) {
             val v = if (namedTouchSeq[n] < 0L) Float.NaN else namedTouchVals[n].coerceIn(MIN_TOUCH_SENS_CHIP, MAX_TOUCH_SENS_CHIP)
@@ -791,10 +839,13 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (g.anyGyro) held = held?.under(g) ?: g
             if (g.anyTouch) heldTouch = heldTouch?.under(g) ?: g
         }
-        // Slider overrides set the workspace's values: a held button's own lie over them.
-        val under = if (ws.sliders.isEmpty()) eff.gyro else SliderOverrides.overGyro(eff.gyro, ws.sliders)
+        // Slider overrides and curve frames set the workspace's values: a held button's own lie over them.
+        val slid = if (ws.sliders.isEmpty()) eff.gyro else SliderOverrides.overGyro(eff.gyro, ws.sliders)
+        val under = if (curveFrames.isEmpty()) slid else CurveFrames.over(slid, curveFrames, liveCurves)
         gyroBase = held?.over(under) ?: under
-        gyroNow = gyroFrom(gyroBase)
+        gyroUnder = under
+        gyroHeld = held
+        gyroNow = gyroNowOf()
         pcHeldGyro = if (heldPhys.isEmpty() || ws.pads.isEmpty()) emptyList() else heldPhys.mapNotNull { b ->
             if (!b.id.startsWith(PhysicalDevice.CONTROLLER.name + ":")) return@mapNotNull null
             val g = b.gyroIn(sets).takeIf { it.anyGyro } ?: return@mapNotNull null
@@ -1653,6 +1704,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         // Overrides a chip no longer keeps don't count (a removed or changed slider chip).
         ws = SliderOverrides.pruned(w)
         fitNamed(w)
+        liveCurves.clear()
+        curveFrames = CurveFrames.of(w)
         heldPhys = heldOf(w)
         for (id in physDown) if (PHYS + id !in latched) pressOrder.remove(PHYS + id)
         physDown.clear()
@@ -2270,6 +2323,26 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         inUse.size
     }
 
+    /**
+     * Sensitivity chip [m]'s value isn't in effect now: a held button sets that sensitivity itself
+     * ([ButtonGyro.over] wins over every slider). The pad grays its slider meanwhile.
+     */
+    fun valueOverridden(m: Mapping): Boolean = synchronized(lock) {
+        when (val t = m.target) {
+            is OutputTarget.GyroSens -> {
+                val h = gyroHeld ?: return@synchronized false
+                when {
+                    t.named > 0 -> false
+                    h.sensitivity != null -> true
+                    t.axis == MotionAxis.NONE -> MotionAxis.shown.all { h.own(it) != null }
+                    else -> h.own(t.axis) != null
+                }
+            }
+            is OutputTarget.TouchSens -> t.named == 0 && heldTouchNow?.touchSensitivity != null
+            else -> false
+        }
+    }
+
     /** Where the finger on [id] is now (0..1 from its bottom-left) into [out], or false when none is. */
     fun fingerAt(id: String, out: FloatArray): Boolean = synchronized(lock) {
         val f = fingers[id] ?: return false
@@ -2632,6 +2705,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             current = p
             ws = ws.copy(sliders = SliderOverrides.live(loaded), namedSens = loaded.namedSens)
             fitNamed(ws)
+            curveFrames = CurveFrames.of(loaded)
+            liveCurves.keys.retainAll(curveFrames.mapTo(HashSet()) { it.id })
             kept.values.removeIf { it.committed }
             applyLayerSettings()
             refreshSens()

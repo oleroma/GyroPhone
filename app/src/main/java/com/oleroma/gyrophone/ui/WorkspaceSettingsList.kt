@@ -25,6 +25,7 @@ import com.oleroma.gyrophone.core.model.ChildOverride
 import com.oleroma.gyrophone.core.model.GyroCurve
 import com.oleroma.gyrophone.core.model.GyroMode
 import com.oleroma.gyrophone.core.model.GyroSettings
+import com.oleroma.gyrophone.core.model.SliderOverrides
 import com.oleroma.gyrophone.core.model.GyroSpace
 import com.oleroma.gyrophone.core.model.YawAxis
 import com.oleroma.gyrophone.core.model.OverridingChildren
@@ -181,6 +182,13 @@ internal fun WorkspaceSettings(
     fun own(k: String) = level.isOwn(k)
     fun reset(k: String): () -> Unit = { level.reset(k) }
     fun kids(vararg k: String) = level.kids(*k)
+    // The shared Sensitivity a slider keeps (it lies over the setting), for the acceleration graph's numbers.
+    // As the axis that turns the camera sideways has it (a slider on that axis or on every axis).
+    val sliderSens = if (ws.sliders.isEmpty()) null else {
+        val routes = ws.mappings
+        val side = { g: com.oleroma.gyrophone.core.model.GyroSettings -> com.oleroma.gyrophone.core.engine.GyroDisplayFeed.sideSensOf(routes, g.resolved()) }
+        side(SliderOverrides.overGyro(ws.gyro, ws.sliders)).takeIf { it != side(ws.gyro) }
+    }
 
     val layer = !level.shows(WorkspaceDefaults.CONTROL_OPACITY)
     NotSearching {
@@ -316,8 +324,9 @@ internal fun WorkspaceSettings(
                 children = kids(g("sensitivity")),
             ) { v -> editWs { it.copy(gyro = it.gyro.copy(sensitivity = v)) } }
             AccelCurveSetting(
-                key + "gaccel", "Acceleration", ws.gyro.accel ?: GyroCurve.OFF, ws.gyro.sensitivity, ws.gyro,
+                key + "gaccel", "Acceleration", ws.gyro.accel ?: GyroCurve.OFF, sliderSens ?: ws.gyro.sensitivity, ws.gyro,
                 own(g("accel")), reset(g("accel")),
+                slider = sliderSens != null,
                 hint = "Yaw, pitch and roll each follow it unless their ⚙ in the mapping editor sets their own; a button can set its own while held. $ACCEL_HINT",
                 children = kids(g("accel")),
             ) { c -> editWs { it.copy(gyro = it.gyro.copy(accel = c)) } }

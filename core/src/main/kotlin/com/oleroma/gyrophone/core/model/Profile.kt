@@ -13,7 +13,8 @@ import kotlin.math.roundToInt
  * workspace. DISPLAY: a gyro display ([TouchControl.display]): placed like a button in edit mode,
  * drawn under everything in play, never touched.
  */
-enum class TouchKind { BUTTON, STICK, FULLSCREEN, DISPLAY }
+/** CURVE: a curve frame ([CurveFrame]), an acceleration curve edited on the pad. */
+enum class TouchKind { BUTTON, STICK, FULLSCREEN, DISPLAY, CURVE }
 
 @Serializable
 enum class TouchShape { CIRCLE, SQUARE }
@@ -156,6 +157,8 @@ data class TouchControl(
     val gyro: List<ButtonGyro> = emptyList(),
     /** DISPLAY: what it shows and how. */
     val display: GyroDisplay? = null,
+    /** CURVE: its acceleration curve, range and axis. */
+    val curveFrame: CurveFrame? = null,
     /** Edit mode: controls sharing a group id move and size together ([ControlGroups]); null = none. */
     val group: String? = null,
     /**
@@ -635,7 +638,7 @@ fun TouchControl.surfaceSettings(pad: TouchpadSettings): TouchpadSettings =
 
 /** Height / width as drawn: [TouchControl.aspect] for a square button, else 1. */
 val TouchControl.heightRatio: Float
-    get() = if (shape == TouchShape.SQUARE && (kind == TouchKind.BUTTON || kind == TouchKind.DISPLAY)) aspect else 1f
+    get() = if (shape == TouchShape.SQUARE && (kind == TouchKind.BUTTON || kind == TouchKind.DISPLAY || kind == TouchKind.CURVE)) aspect else 1f
 
 /** Resolved placement (allocates; editor use). */
 fun TouchControl.placement(inPortrait: Boolean): Placement =
@@ -1071,7 +1074,8 @@ data class ButtonGyro(
 
 /**
  * Gyro acceleration: how sensitivity grows with turning speed. Each point is a turning speed
- * (deg/s) and a gain the sensitivity is multiplied by there; between points the gain changes in a
+ * (deg/s) and a gain the sensitivity in effect (a slider's kept value included) is multiplied by
+ * there, never below 1 ([MIN_GAIN]: acceleration only adds); between points the gain changes in a
  * straight line, below the first and past the last it stays at theirs. No points = no
  * acceleration (gain 1), also over a parent's curve. [axisSpeed]: the speed is the axis's own
  * turning speed; off, the whole phone's (all three axes together), so a diagonal flick speeds up
@@ -1112,7 +1116,8 @@ data class GyroCurve(
         const val MAX_POINTS = 6
         const val MIN_GAP = 1f
         const val MAX_SPEED = 2000f
-        const val MIN_GAIN = 0.1f
+        /** Acceleration only adds to the sensitivity; a point saved lower (older builds allowed 0.1) works as 1. */
+        const val MIN_GAIN = 1f
         const val MAX_GAIN = 10f
         const val MIN_RANGE = 100f
 
@@ -2092,7 +2097,8 @@ data class Profile(
     fun playTouchKey(index: Int): List<Any?> {
         val w = workspace(index)
         return listOf(
-            w.touchControls.filter { it.kind != TouchKind.DISPLAY }.map { if (it.display == null) it else it.copy(display = null) },
+            // A curve frame's curve changes as it is edited in play: only its place counts.
+            w.touchControls.filter { it.kind != TouchKind.DISPLAY }.map { if (it.display == null && it.curveFrame == null) it else it.copy(display = null, curveFrame = null) },
             w.mappings,
             shownCorners.map { if (it.display == null) it else it.copy(display = null) },
             wrapWorkspaces,
