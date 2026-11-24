@@ -327,15 +327,15 @@ private fun NowLine(now: () -> Float, curve: GyroCurve, sens: Float, counts: Flo
 }
 
 /** Sensitivity [sens] times [gain] as the setting shows it: in RWS with the game's [counts] per 360, else plain. */
-private fun shownGain(gain: Float, sens: Float, counts: Float): String =
+internal fun shownGain(gain: Float, sens: Float, counts: Float): String =
     if (counts > 0f) "%.2f RWS".format(GameSens.rws(sens * gain, counts)) else "%.1f".format(sens * gain)
 
 /** A grid line's label: the multiplier and what it gives at [sens]. */
-private fun gainLabel(gain: Float, sens: Float, counts: Float): String =
+internal fun gainLabel(gain: Float, sens: Float, counts: Float): String =
     "%.2f".format(gain).trimEnd('0').trimEnd('.', ',') + "× = " + shownGain(gain, sens, counts)
 
 /** Where [gain] sits up the graph topped at [maxGain]: 0 at the top, 1 at the bottom (1×). */
-private fun yOfGain(gain: Float, maxGain: Float): Float = 1f - (gain - 1f) / (maxGain - 1f)
+internal fun yOfGain(gain: Float, maxGain: Float): Float = 1f - (gain - 1f) / (maxGain - 1f)
 
 /** The multiplier at [y] (0 top, 1 bottom) of a graph topped at [maxGain], within what a point may be. */
 private fun gainAtY(y: Float, maxGain: Float): Float =
@@ -349,7 +349,7 @@ private fun topGain(top: Float): Float {
 }
 
 /** The multiplier grid's step for a graph [span] tall: a few lines, on round numbers. */
-private fun gridStep(span: Float): Float = when {
+internal fun gridStep(span: Float): Float = when {
     span <= 1f -> 0.25f
     span <= 2.5f -> 0.5f
     span <= 5f -> 1f

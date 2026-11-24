@@ -14,6 +14,7 @@ import com.oleroma.gyrophone.core.engine.GravityPose
 import com.oleroma.gyrophone.core.engine.RestDetector
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
+import com.oleroma.gyrophone.core.model.GyroCurve
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.engine.GyroPose
 import com.oleroma.gyrophone.core.engine.GyroSway
@@ -1495,6 +1496,33 @@ class GamepadRuntime(context: Context) {
         engine.updateSettings(resolved)
         _activeProfile.value = resolved
         // The gyro follows without a reset: aiming goes on.
+        updateGyro()
+    }
+
+    /**
+     * Curve frame [id] of the workspace in play now got [curve] (a finger lifted after changing it
+     * on the pad): saved with the frame, which wins over any other frame of the same axis from now
+     * on. The settings' curve never changes. The gyro follows without a reset.
+     */
+    fun saveCurveFrame(id: String, curve: GyroCurve) {
+        val before = _activeProfile.value
+        val wi = _workspaceIndex.value
+        val w = before.workspace(wi)
+        val c = w.touchControls.firstOrNull { it.id == id } ?: return
+        val f = c.curveFrame ?: return
+        val now = f.copy(curve = f.inRange(curve), edited = System.currentTimeMillis())
+        val changed = before.updateWorkspace(wi) { ws ->
+            ws.copy(touchControls = ws.touchControls.map { if (it.id == id) it.copy(curveFrame = now) else it })
+        }
+        val set = WorkspaceMappings.store(WorkspaceMappings.settle(before, changed))
+        if (set != stored) {
+            stored = set
+            store.saveLater(set)
+        }
+        val resolved = resolveStored(stored)
+        engine.updateSettings(resolved)
+        engine.setFrameCurve(id, null)
+        _activeProfile.value = resolved
         updateGyro()
     }
 

@@ -166,6 +166,8 @@ Haptics play only while a PC is connected.
 2. **Button** (and **Empty button**, **Stick**): tap to put one on the pad.
 3. **Display…**: the [gyro displays](#gyro-displays).
 
+**Curve frame** (also in the Add list) puts a rectangle on the pad that holds its own gyro acceleration curve. While it's on the pad, its curve replaces the workspace's acceleration (the curve in Settings stays as it is; delete the frame to get it back). A held button with its own acceleration still uses its own. **Easy to miss:** you edit the curve in play, right on the frame: tap an empty spot to add a point, drag a point to move it (the gyro follows as you drag), hold a point and lift to remove it. Tap a selected frame in edit mode for its settings: which axis it sets (all, or yaw, pitch or roll), its range across (°/s) and up (×), Lines or Smooth, and Start again. Each line on it says what that multiplier gives at the sensitivity in effect now, and the yellow line is how fast you're turning.
+
 Tap the capsule of the workspace you're on (**Easy to miss:** there is no Edit button). The [quick start](quick-start.md#5-change-the-layout) shows the menu. Besides what's there:
 
 - **Easy to miss:** tap a selected control again to open its mapping editor. Where controls overlap, a tap picks the next one underneath and a **double tap** opens it.
