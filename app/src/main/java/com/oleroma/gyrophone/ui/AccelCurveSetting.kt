@@ -28,8 +28,12 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.oleroma.gyrophone.core.model.CurvePoint
 import com.oleroma.gyrophone.core.model.GameSens
 import com.oleroma.gyrophone.core.model.GyroCurve
@@ -47,9 +51,11 @@ private val PRESETS = listOf("Light" to GyroCurve.LIGHT, "Strong" to GyroCurve.S
 
 /**
  * A gyro acceleration setting ([GyroCurve]): Off, a preset, or the person's own points, edited on
- * a graph of turning speed (across) against sensitivity (up: RWS once [g]'s game is known, else
- * counts per degree), at base sensitivity [sens]. [perAxis]: the "Speed from" choice names the
- * axis ("This axis") rather than each axis ("Each axis"). [onSet] gets the tidied curve.
+ * a graph of turning speed (across) against the multiplier (up, from 1× at the bottom: acceleration
+ * only adds), each multiplier also shown as the sensitivity it gives (RWS once [g]'s game is known,
+ * else counts per degree) at sensitivity [sens], the one in effect: [slider] when a slider keeps it.
+ * [perAxis]: the "Speed from" choice names the axis ("This axis") rather than each axis ("Each
+ * axis"). [onSet] gets the tidied curve.
  */
 @Composable
 internal fun AccelCurveSetting(
@@ -64,9 +70,11 @@ internal fun AccelCurveSetting(
     perAxis: Boolean = false,
     axis: MotionAxis? = null,
     children: ChildInfo? = null,
+    slider: Boolean = false,
     onSet: (GyroCurve) -> Unit,
 ) {
-    var draft by remember(key, curve) { mutableStateOf(curve) }
+    // Tidied: a point an older build saved below 1× shows at 1×, where it works.
+    var draft by remember(key, curve) { mutableStateOf(curve.tidy()) }
     var dragged by remember(key, curve) { mutableIntStateOf(-1) }
     val counts = g.gameCountsPer360
     fun shown(gain: Float): String = shownGain(gain, sens, counts)
@@ -114,14 +122,23 @@ internal fun AccelCurveSetting(
                 }
             }
             val curvePath = remember { CurvePath() }
+            val colors = MaterialTheme.colorScheme
             // The graph's span stays put while a point is dragged, so it doesn't run away under the finger.
             // The "°/s cap" sets it; unset, it fits the points. It never cuts off a point.
             val lastSpeed = curve.points.maxOfOrNull { it.speed } ?: 0f
             val maxSpeed = remember(key, curve) {
                 if (curve.range > 0f) max(curve.range, niceCeil(lastSpeed)) else niceCeil(max(200f, lastSpeed * 1.3f))
             }
-            val maxGain = remember(key, curve) { max(2f, (curve.points.maxOfOrNull { it.gain } ?: 1f) * 1.3f) }
-            val colors = MaterialTheme.colorScheme
+            // Up runs from 1× to just above the top point, so the curve's shape (and Smooth's bend) fills the graph.
+            val maxGain = remember(key, curve) { topGain(draft.points.maxOfOrNull { it.gain } ?: 1f) }
+            val gainStep = gridStep(maxGain - 1f)
+            val density = LocalDensity.current
+            val labelPaint = remember(density, colors.onSurfaceVariant) {
+                android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    color = colors.onSurfaceVariant.toArgb()
+                    textSize = with(density) { 11.sp.toPx() }
+                }
+            }
             Canvas(
                 Modifier
                     .fillMaxWidth()
@@ -130,13 +147,13 @@ internal fun AccelCurveSetting(
                     .pointerInput(key, curve) {
                         fun toPoint(o: Offset) = CurvePoint(
                             (o.x / size.width * maxSpeed).coerceIn(0f, GyroCurve.MAX_SPEED),
-                            ((1f - o.y / size.height) * maxGain).coerceIn(GyroCurve.MIN_GAIN, GyroCurve.MAX_GAIN),
+                            gainAtY(o.y / size.height, maxGain),
                         )
                         fun nearest(o: Offset, within: Float): Int {
                             var best = -1
                             var bestD = within
                             draft.points.forEachIndexed { i, p ->
-                                val d = hypot(p.speed / maxSpeed * size.width - o.x, (1f - p.gain / maxGain) * size.height - o.y)
+                                val d = hypot(p.speed / maxSpeed * size.width - o.x, yOfGain(p.gain, maxGain) * size.height - o.y)
                                 if (d < bestD) { bestD = d; best = i }
                             }
                             return best
@@ -159,7 +176,7 @@ internal fun AccelCurveSetting(
                             var best = -1
                             var bestD = 40.dp.toPx()
                             draft.points.forEachIndexed { i, p ->
-                                val d = hypot(p.speed / maxSpeed * size.width - o.x, (1f - p.gain / maxGain) * size.height - o.y)
+                                val d = hypot(p.speed / maxSpeed * size.width - o.x, yOfGain(p.gain, maxGain) * size.height - o.y)
                                 if (d < bestD) { bestD = d; best = i }
                             }
                             return best
@@ -179,7 +196,7 @@ internal fun AccelCurveSetting(
                             val o = change.position
                             val p = CurvePoint(
                                 (o.x / size.width * maxSpeed).coerceIn(lo, max(lo, hi)),
-                                ((1f - o.y / size.height) * maxGain).coerceIn(GyroCurve.MIN_GAIN, GyroCurve.MAX_GAIN),
+                                gainAtY(o.y / size.height, maxGain),
                             ).quantized()
                             draft = draft.copy(points = ps.mapIndexed { j, q -> if (j == i) p else q })
                         }
@@ -188,18 +205,32 @@ internal fun AccelCurveSetting(
                 val w = size.width
                 val h = size.height
                 fun x(speed: Float) = speed / maxSpeed * w
-                fun y(gain: Float) = (1f - gain / maxGain) * h
-                // Grid: every 50 or 100 deg/s, and gain 1 (the plain sensitivity) dashed.
+                fun y(gain: Float) = yOfGain(gain, maxGain) * h
+                // Grid: every 50 or 100 deg/s across; up, every multiplier step, each labelled with what it gives.
                 val stepX = if (maxSpeed > 400f) 100f else 50f
                 var sx = stepX
                 while (sx < maxSpeed) {
                     drawLine(colors.outlineVariant, Offset(x(sx), 0f), Offset(x(sx), h), 1f)
                     sx += stepX
                 }
-                drawLine(
-                    colors.outline, Offset(0f, y(1f)), Offset(w, y(1f)), 2f,
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)),
-                )
+                var gy = 1f + gainStep
+                while (gy < maxGain + 0.001f) {
+                    drawLine(
+                        colors.outlineVariant, Offset(0f, y(gy)), Offset(w, y(gy)), 1f,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)),
+                    )
+                    gy += gainStep
+                }
+                val pad = 4.dp.toPx()
+                drawContext.canvas.nativeCanvas.apply {
+                    // 1× sits on the bottom line, the others just under their own line.
+                    drawText(gainLabel(1f, sens, counts), pad * 2, h - pad, labelPaint)
+                    var ly = 1f + gainStep
+                    while (ly < maxGain + 0.001f) {
+                        drawText(gainLabel(ly, sens, counts), pad * 2, y(ly) + labelPaint.textSize + pad / 2, labelPaint)
+                        ly += gainStep
+                    }
+                }
                 drawLine(colors.outline, Offset(0f, h), Offset(w, h), 2f)
                 drawLine(colors.outline, Offset(0f, 0f), Offset(0f, h), 2f)
                 // The curve, made again only when it or the graph's size or span changed.
@@ -245,7 +276,9 @@ internal fun AccelCurveSetting(
                 NowLine({ liveState.value.maxOrNull() ?: 0f }, draft, sens, counts)
             }
             Text(
-                "Across: turning speed, 0 to %.0f°/s; the coloured line is the speed now. Up: sensitivity; dashed = %s.".format(maxSpeed, shown(1f)),
+                "Across: turning speed, 0 to %.0f°/s; the coloured line is the speed now. Up: times the sensitivity, from 1× (%s%s) at the bottom.".format(
+                    maxSpeed, shown(1f), if (slider) ", as the slider keeps it" else "",
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.onSurfaceVariant,
             )
@@ -297,6 +330,32 @@ private fun NowLine(now: () -> Float, curve: GyroCurve, sens: Float, counts: Flo
 private fun shownGain(gain: Float, sens: Float, counts: Float): String =
     if (counts > 0f) "%.2f RWS".format(GameSens.rws(sens * gain, counts)) else "%.1f".format(sens * gain)
 
+/** A grid line's label: the multiplier and what it gives at [sens]. */
+private fun gainLabel(gain: Float, sens: Float, counts: Float): String =
+    "%.2f".format(gain).trimEnd('0').trimEnd('.', ',') + "× = " + shownGain(gain, sens, counts)
+
+/** Where [gain] sits up the graph topped at [maxGain]: 0 at the top, 1 at the bottom (1×). */
+private fun yOfGain(gain: Float, maxGain: Float): Float = 1f - (gain - 1f) / (maxGain - 1f)
+
+/** The multiplier at [y] (0 top, 1 bottom) of a graph topped at [maxGain], within what a point may be. */
+private fun gainAtY(y: Float, maxGain: Float): Float =
+    (1f + (1f - y) * (maxGain - 1f)).coerceIn(GyroCurve.MIN_GAIN, GyroCurve.MAX_GAIN)
+
+/** The graph's top for a curve whose highest point is [top]: a quarter of its rise above it (at least 1.5×), rounded up to a grid step. */
+private fun topGain(top: Float): Float {
+    val span = max(0.5f, (top - 1f) * 1.25f)
+    val step = gridStep(span)
+    return 1f + ceil(span / step) * step
+}
+
+/** The multiplier grid's step for a graph [span] tall: a few lines, on round numbers. */
+private fun gridStep(span: Float): Float = when {
+    span <= 1f -> 0.25f
+    span <= 2.5f -> 0.5f
+    span <= 5f -> 1f
+    else -> 2f
+}
+
 /** The graph's curve, kept from draw to draw with what it was made for. */
 private class CurvePath {
     val path = Path()
@@ -318,6 +377,6 @@ private fun niceCeil(v: Float): Float {
 }
 
 /** The hint every acceleration setting shares. */
-internal const val ACCEL_HINT = "Acceleration: slow turns use the sensitivity at the left of the graph, faster turns the sensitivity further right, " +
-    "so you can aim finely and still turn around quickly. Whole phone: a diagonal flick speeds up both directions alike. " +
+internal const val ACCEL_HINT = "Acceleration: slow turns use the multiplier at the left of the graph, faster turns the one further right, " +
+    "so you can aim finely and still turn around quickly. It only adds: 1× (the bottom line) is the sensitivity in effect, a slider's included. Whole phone: a diagonal flick speeds up both directions alike. " +
     "With the game's turn set, the game's turn per phone turn (RWS) is exact only where the line is flat."

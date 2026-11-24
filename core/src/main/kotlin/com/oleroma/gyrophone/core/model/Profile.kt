@@ -1071,7 +1071,8 @@ data class ButtonGyro(
 
 /**
  * Gyro acceleration: how sensitivity grows with turning speed. Each point is a turning speed
- * (deg/s) and a gain the sensitivity is multiplied by there; between points the gain changes in a
+ * (deg/s) and a gain the sensitivity in effect (a slider's kept value included) is multiplied by
+ * there, never below 1 ([MIN_GAIN]: acceleration only adds); between points the gain changes in a
  * straight line, below the first and past the last it stays at theirs. No points = no
  * acceleration (gain 1), also over a parent's curve. [axisSpeed]: the speed is the axis's own
  * turning speed; off, the whole phone's (all three axes together), so a diagonal flick speeds up
@@ -1112,7 +1113,8 @@ data class GyroCurve(
         const val MAX_POINTS = 6
         const val MIN_GAP = 1f
         const val MAX_SPEED = 2000f
-        const val MIN_GAIN = 0.1f
+        /** Acceleration only adds to the sensitivity; a point saved lower (older builds allowed 0.1) works as 1. */
+        const val MIN_GAIN = 1f
         const val MAX_GAIN = 10f
         const val MIN_RANGE = 100f
 

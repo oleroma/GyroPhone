@@ -149,7 +149,7 @@ class GyroMathVectorsTest {
             }
         }
         val strong = GyroCurve.STRONG
-        val wide = GyroCurve(listOf(CurvePoint(5f, 0.6f), CurvePoint(40.3f, 1f), CurvePoint(90f, 1.75f), CurvePoint(180f, 2.4f), CurvePoint(400f, 4f), CurvePoint(800f, 4.5f)))
+        val wide = GyroCurve(listOf(CurvePoint(5f, 1f), CurvePoint(40.3f, 1.2f), CurvePoint(90f, 1.75f), CurvePoint(180f, 2.4f), CurvePoint(400f, 4f), CurvePoint(800f, 4.5f)))
         add("accel-whole-phone", cfg(accel = List(3) { strong }), 0f, 0f, 17) { rnd ->
             walk(rnd, 12, floatArrayOf(2f, -3f, 4f), 6f, 0.002f) + walk(rnd, 12, floatArrayOf(60f, -80f, 150f), 120f, 0.002f) +
                 walk(rnd, 12, floatArrayOf(-300f, 200f, -500f), 200f, 0.001f)
@@ -179,7 +179,7 @@ class GyroMathVectorsTest {
         }
         add("accel-smooth", cfg(
             sens = floatArrayOf(16f, 12f, 20f),
-            accel = listOf(wide.copy(smooth = true), strong.copy(smooth = true, axisSpeed = true), GyroCurve(listOf(CurvePoint(30f, 2f), CurvePoint(60f, 0.8f), CurvePoint(120f, 1.6f)), smooth = true)),
+            accel = listOf(wide.copy(smooth = true), strong.copy(smooth = true, axisSpeed = true), GyroCurve(listOf(CurvePoint(30f, 2f), CurvePoint(60f, 1.3f), CurvePoint(120f, 1.6f)), smooth = true)),
             routes = MOUSE + listOf(Route(0, Route.WHEEL, 1f), Route(0, Route.PAD + 0, 1f)),
         ), 0f, 0f, 21) { rnd ->
             List(48) {

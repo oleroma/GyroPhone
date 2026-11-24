@@ -90,7 +90,7 @@ object SliderOverrides {
         return if (n == w) p else p.copy(workspaces = p.workspaces.map { if (it.id == w.id) n else it })
     }
 
-    /** [g] with the gyro overrides of [list] over it. */
+    /** [g] with the gyro overrides of [list] over it, or [g] itself when there are none. */
     fun overGyro(g: GyroSettings, list: List<SliderOverride>): GyroSettings {
         var r = g
         for (o in list) {

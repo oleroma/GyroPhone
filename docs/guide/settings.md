@@ -123,7 +123,7 @@ Open them from edit mode's menu (the sliders icon), or **⚙ Settings** in the t
 - **Yaw axis** and **Set orientation** (Base only): which of the phone's axes counts as left-right turning. **Set orientation** takes the way you hold the phone now as straight, and levels every gyro display and PC overlay.
 - **PC pad yaw / pitch / roll** (Base only; DualShock 4 and DualSense output): which phone axis drives the PC controller's own gyro, and Invert.
 - **Sensitivity**: how far the gyro moves the mouse (16 counts per degree, or the RWS above). Each axis's **⚙** can give it its own value, or make it follow the shared one, another axis or a named sensitivity, times a scale.
-- **Acceleration**: a curve that turns fast swings further than slow ones (Off, Light, Strong or your own). **Easy to miss:** in the curve editor, tap to add a point, drag to move it, hold a point to remove it.
+- **Acceleration**: a curve that turns fast swings further than slow ones (Off, Light, Strong or your own). It only ever adds: the graph's bottom line is 1× (your sensitivity as set), and each line up says how many times that and what it gives you, using the sensitivity in effect now (a slider's value too, so the curve follows the slider). **Easy to miss:** in the curve editor, tap to add a point, drag to move it, hold a point to remove it.
 - **Inertia** (off), **Glide curve** (Smooth or Linear) and **Glide** (325 ms): when on, after a ratchet stops the gyro the view glides on for a moment instead of stopping dead.
 - **Drift correction** (Base only, one setting for the phone): **Android** (default) or, on phones whose gyro GP can read uncorrected, **GP**. With GP: **Calibrate** (lay the phone still), **Clear**, and **Re-measure when the phone rests**.
 

@@ -207,6 +207,9 @@ private class ButtonGyroLevel(
     /** The workspace's named Gyro sens as its sliders keep them (null: the shared Sensitivity). */
     val named: (Int) -> Float? = { n -> SliderOverrides.named(sliders, false, n) }
 
+    /** [parent] with the workspace's slider overrides over it: what a gyro sensitivity this button doesn't set is now. */
+    val inEffect: GyroSettings = if (sliders.isEmpty()) parent else SliderOverrides.overGyro(parent, sliders)
+
     companion object {
         fun of(control: TouchControl, ws: Workspace, set: Int, update: ((TouchControl) -> TouchControl) -> Unit) =
             ButtonGyroLevel(ws, set, control.gyro) { change -> update { it.withGyro(set, change) } }
@@ -229,9 +232,10 @@ private fun ButtonGyroSensitivity(g: ButtonGyroLevel, key: String) {
     ) { v -> g.edit { it.copy(sensitivity = v) } }
     AccelCurveSetting(
         key + "gyroAccel" + g.set, "Gyro acceleration", g.inUse.accel ?: g.parent.accel ?: GyroCurve.OFF,
-        g.inUse.sensitivity ?: g.parent.sensitivity, g.parent,
+        g.inUse.sensitivity ?: g.inEffect.sensitivity, g.parent,
         overridden = g.own.accel != null,
         onReset = { g.edit { it.copy(accel = null) } },
+        slider = g.inUse.sensitivity == null && g.inEffect.sensitivity != g.parent.sensitivity,
         hint = "While this is held${g.where}: Off aims without acceleration (for example while aiming down sights). " +
             "Unset, the workspace's. $ACCEL_HINT",
     ) { c -> g.edit { it.copy(accel = c) } }
@@ -304,8 +308,9 @@ private fun buttonGyroGear(g: ButtonGyroLevel, key: String, axis: MotionAxis): @
         }
         AccelCurveSetting(
             key + "gyroAccel" + g.set + axis.name, "${axis.label} acceleration", g.inUse.accelOf(axis, g.parent),
-            g.inUse.sensitivityOf(axis, g.parent), g.parent,
+            g.inUse.sensitivityOf(axis, g.inEffect), g.parent,
             overridden = g.own.ownAccel(axis) != null,
+            slider = g.inUse.sensitivityOf(axis, g.inEffect) != g.inUse.sensitivityOf(axis, g.parent),
             onReset = { g.edit { it.withAccel(axis, null) } },
             hint = "While this is held${g.where}. Unset, it follows this button's Gyro acceleration (in Settings), else the workspace's.",
             perAxis = true,
@@ -521,6 +526,8 @@ internal fun touchpadSettings(runtime: GamepadRuntime, level: WorkspaceLevel): M
  */
 private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Composable () -> Unit = ui {
     val g = level.ws.gyro
+    // The sensitivity in effect, a slider's kept value included: what the acceleration graph shows it at.
+    val sliderG = if (level.ws.sliders.isEmpty()) g else SliderOverrides.overGyro(g, level.ws.sliders)
     // level.ws has the parent's values filled in, so what this level sets comes from its own keys.
     fun k(prop: String) = WorkspaceDefaults.gyroKey(axis.name.lowercase() + prop)
     val ownGlide = g.ownGlide(axis).let { a ->
@@ -564,8 +571,9 @@ private fun gyroGear(level: WorkspaceLevel, key: String, axis: MotionAxis): @Com
             ) { v -> level.edit { it.copy(gyro = it.gyro.withSensitivity(axis, v)) } }
         }
         AccelCurveSetting(
-            key + "accel" + axis.name, "${axis.label} acceleration", g.accelOf(axis), g.sensitivityOf(axis), g,
+            key + "accel" + axis.name, "${axis.label} acceleration", g.accelOf(axis), sliderG.sensitivityOf(axis), g,
             overridden = level.isOwn(k("Accel")),
+            slider = sliderG.sensitivityOf(axis) != g.sensitivityOf(axis),
             onReset = { level.reset(k("Accel")) },
             children = level.kids(k("Accel")),
             hint = "Unset, it follows the shared Acceleration in Settings. $ACCEL_HINT",
