@@ -592,6 +592,21 @@ class GyroDisplayFeed(val id: String, display: GyroDisplay) {
             return code(MouseMotion.MOVE_X, MotionAxis.ROLL) or (code(MouseMotion.MOVE_Y, MotionAxis.PITCH) shl 8)
         }
 
+        /**
+         * The gyro axis that turns the camera sideways ([cameraMapOf]'s mouse X), and its
+         * sensitivity in [gyro] (counts per degree, its size): what RWS speaks of, so what an
+         * all-axes acceleration graph labels with (a slider on that axis or on all of them shows).
+         */
+        fun sideSensOf(routes: List<Mapping>, gyro: GyroSettings): Float {
+            val a = when (cameraMapOf(routes, gyro) and 0x7F) {
+                1 -> MotionAxis.YAW
+                2 -> MotionAxis.PITCH
+                3 -> MotionAxis.ROLL
+                else -> return gyro.sensitivity
+            }
+            return kotlin.math.abs(gyro.sensitivityOf(a))
+        }
+
         /** How fast the world pose's heading eases back to facing the player. */
         const val HEADING_EASE_S = 0.5f
 

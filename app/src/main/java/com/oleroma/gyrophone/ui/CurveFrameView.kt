@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
 import com.oleroma.gyrophone.core.model.CurveFrame
 import com.oleroma.gyrophone.core.model.CurvePoint
 import com.oleroma.gyrophone.core.model.GyroCurve
@@ -229,7 +230,9 @@ internal fun CurveFrameGraph(
 ) {
     val f = control.curveFrame ?: return
     val axis = f.axis
-    fun sensOf(gs: GyroSettings) = if (axis == MotionAxis.NONE) gs.sensitivity else gs.sensitivityOf(axis)
+    // All axes: the axis that turns the camera sideways (a slider on it, or on every axis, shows).
+    fun sensOf(gs: GyroSettings) =
+        if (axis == MotionAxis.NONE) GyroDisplayFeed.sideSensOf(runtime.engine.gyroRoutes(), gs) else abs(gs.sensitivityOf(axis))
     val speed = remember { mutableFloatStateOf(-1f) }
     val sens = remember { mutableFloatStateOf(sensOf(runtime.engine.gyroSettings)) }
     val active = remember { mutableStateOf(true) }

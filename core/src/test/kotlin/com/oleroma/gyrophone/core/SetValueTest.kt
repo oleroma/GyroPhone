@@ -184,6 +184,24 @@ class SetValueTest {
         e.setTouch("ads", false)
         assertEquals(false, e.valueOverridden(chip))
     }
+
+    @Test
+    fun anAllAxesGraphLabelsWithTheSensOfTheAxisTurningTheCameraSideways() {
+        val slider = TouchControl("aim", TouchKind.BUTTON, "Aim", 0.5f, 0.5f, shape = TouchShape.SQUARE)
+        val yaw = Mapping(
+            InputSource.Finger("aim", FingerAxis.Y), OutputTarget.GyroSens(com.oleroma.gyrophone.core.model.MotionAxis.YAW),
+            range = AxisRange(4f, 20f), options = TOGGLE,
+        )
+        val w = Workspace("w", "w", touchControls = listOf(slider), mappings = listOf(yaw), gyro = GyroSettings(sensitivity = 16f))
+        val e = MappingEngine(single(w)) { now }
+        e.setFinger("aim", 0.5f, 0.25f)
+        e.fingerUp("aim")
+        val side = com.oleroma.gyrophone.core.engine.GyroDisplayFeed.sideSensOf(e.gyroRoutes(), e.gyroSettings)
+        val m = com.oleroma.gyrophone.core.engine.GyroDisplayFeed.cameraMapOf(e.gyroRoutes(), e.gyroSettings) and 0x7F
+        val expected = if (m == 1) 8f else 16f
+        assertEquals(expected, side, 0.01f)
+        assertEquals(8f, e.gyroSettings.sensitivityOf(com.oleroma.gyrophone.core.model.MotionAxis.YAW), 0.01f)
+    }
 }
 
 class SliderOverridesTest {

@@ -183,7 +183,12 @@ internal fun WorkspaceSettings(
     fun reset(k: String): () -> Unit = { level.reset(k) }
     fun kids(vararg k: String) = level.kids(*k)
     // The shared Sensitivity a slider keeps (it lies over the setting), for the acceleration graph's numbers.
-    val sliderSens = if (ws.sliders.isEmpty()) null else SliderOverrides.overGyro(ws.gyro, ws.sliders).sensitivity.takeIf { it != ws.gyro.sensitivity }
+    // As the axis that turns the camera sideways has it (a slider on that axis or on every axis).
+    val sliderSens = if (ws.sliders.isEmpty()) null else {
+        val routes = ws.mappings
+        val side = { g: com.oleroma.gyrophone.core.model.GyroSettings -> com.oleroma.gyrophone.core.engine.GyroDisplayFeed.sideSensOf(routes, g.resolved()) }
+        side(SliderOverrides.overGyro(ws.gyro, ws.sliders)).takeIf { it != side(ws.gyro) }
+    }
 
     val layer = !level.shows(WorkspaceDefaults.CONTROL_OPACITY)
     NotSearching {
