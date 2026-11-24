@@ -413,7 +413,9 @@ internal fun CurveFrameGraph(
                         val b = 1.5f * pxPerDp
                         drawRoundRect(
                             Color(0xFF7CC4FF), topLeft = Offset(b, b), size = Size(size.width - 2 * b, size.height - 2 * b),
-                            cornerRadius = CornerRadius(6f * pxPerDp), style = Stroke(width = 2 * b),
+                            // The button's own corners (12 % of its shorter side), so the border lies on its edge.
+                            cornerRadius = CornerRadius((minOf(size.width, size.height) * 0.12f - b).coerceAtLeast(0f)),
+                            style = Stroke(width = 2 * b),
                         )
                     }
                     if (v >= 0f) {
