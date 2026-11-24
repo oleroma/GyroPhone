@@ -63,6 +63,7 @@ class CurveFrameTest {
         val e = MappingEngine(single(ws(frame("f", framed), ads, hip))) { 0L }
         e.setTouch("ads", true)
         assertEquals(GyroCurve.OFF, e.gyroSettings.accel)
+        assertEquals(false, e.frameInEffect("f"))
         e.setTouch("ads", false)
         e.setTouch("hip", true)
         assertEquals(framed, e.gyroSettings.accel)
@@ -75,6 +76,7 @@ class CurveFrameTest {
         val dragging = GyroCurve(listOf(CurvePoint(30f, 1f), CurvePoint(270f, 2.9f)))
         e.setFrameCurve("f", dragging)
         assertEquals(dragging, e.gyroSettings.accel)
+        assertEquals(true, e.frameInEffect("f")) // dragging doesn't gray it
         e.setFrameCurve("f", null)
         assertEquals(framed, e.gyroSettings.accel)
         e.setFrameCurve("nope", dragging) // no such frame: nothing

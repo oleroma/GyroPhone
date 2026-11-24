@@ -196,16 +196,6 @@ internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
     }
 }
 
-/** Whether [curve] is the one [g] uses for [axis] (all axes: the shared one with no axis's own over it). */
-private fun frameInEffect(g: GyroSettings, axis: MotionAxis, curve: GyroCurve): Boolean {
-    fun same(c: GyroCurve?) = c != null && c.points == curve.points && c.smooth == curve.smooth && c.axisSpeed == curve.axisSpeed
-    return if (axis == MotionAxis.NONE) {
-        same(g.accel) && g.yawAccel == null && g.pitchAccel == null && g.rollAccel == null
-    } else {
-        same(g.accelOf(axis))
-    }
-}
-
 /**
  * A curve frame's graph, drawn over its button-like shape: across, turning speed to its range;
  * up, the multiplier from 1× to its top. Each line's label sits just under it: its multiplier and,
@@ -236,7 +226,6 @@ internal fun CurveFrameGraph(
     val speed = remember { mutableFloatStateOf(-1f) }
     val sens = remember { mutableFloatStateOf(sensOf(runtime.engine.gyroSettings)) }
     val active = remember { mutableStateOf(true) }
-    val latestCurve by rememberUpdatedState(curve)
     if (live) {
         DisposableEffect(runtime) {
             runtime.watchAccel()
@@ -250,7 +239,7 @@ internal fun CurveFrameGraph(
                 val gs = runtime.engine.gyroSettings
                 val s = sensOf(gs)
                 if (s != sens.floatValue) sens.floatValue = s
-                val a = frameInEffect(gs, axis, latestCurve)
+                val a = runtime.engine.frameInEffect(control.id)
                 if (a != active.value) active.value = a
                 delay(CURVE_LIVE_MS)
             }

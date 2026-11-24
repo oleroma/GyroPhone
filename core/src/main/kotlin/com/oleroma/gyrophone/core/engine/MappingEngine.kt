@@ -178,6 +178,19 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
      * gyro takes it from the next sample, nothing saved. Called on every drag step of a point, so
      * it only works out the gyro settings again (no allocation on the sample path).
      */
+    /**
+     * Curve frame [id]'s curve (the one being dragged, else its saved one) is the one the gyro uses
+     * now for its axis: not a held button's own, nor a newer frame's. False for no such frame.
+     * Read under the lock, so a drag step and the gyro settings it made are seen together.
+     */
+    fun frameInEffect(id: String): Boolean = synchronized(lock) {
+        val f = curveFrames.firstOrNull { it.id == id }?.curveFrame ?: return@synchronized false
+        val c = liveCurves[id] ?: f.curve
+        val g = gyroNow
+        if (f.axis == MotionAxis.NONE) g.accel == c && g.yawAccel == null && g.pitchAccel == null && g.rollAccel == null
+        else g.accelOf(f.axis) == c
+    }
+
     fun setFrameCurve(id: String, curve: GyroCurve?) {
         synchronized(lock) {
             if (curve == null) {
