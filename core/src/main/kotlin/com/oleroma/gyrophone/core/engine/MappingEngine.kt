@@ -2310,6 +2310,26 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         inUse.size
     }
 
+    /**
+     * Sensitivity chip [m]'s value isn't in effect now: a held button sets that sensitivity itself
+     * ([ButtonGyro.over] wins over every slider). The pad grays its slider meanwhile.
+     */
+    fun valueOverridden(m: Mapping): Boolean = synchronized(lock) {
+        when (val t = m.target) {
+            is OutputTarget.GyroSens -> {
+                val h = gyroHeld ?: return@synchronized false
+                when {
+                    t.named > 0 -> false
+                    h.sensitivity != null -> true
+                    t.axis == MotionAxis.NONE -> MotionAxis.shown.all { h.own(it) != null }
+                    else -> h.own(t.axis) != null
+                }
+            }
+            is OutputTarget.TouchSens -> t.named == 0 && heldTouchNow?.touchSensitivity != null
+            else -> false
+        }
+    }
+
     /** Where the finger on [id] is now (0..1 from its bottom-left) into [out], or false when none is. */
     fun fingerAt(id: String, out: FloatArray): Boolean = synchronized(lock) {
         val f = fingers[id] ?: return false

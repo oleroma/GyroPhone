@@ -2210,6 +2210,7 @@ fun PadScreen(
                         runtime = runtime,
                         control = c,
                         curve = curveTouches.drafts[c.id] ?: c.curveFrame?.inRange() ?: GyroCurve.OFF,
+                        dragPoint = curveTouches.dragging[c.id],
                         counts = ws.gyro.gameCountsPer360,
                         live = !editing && !covered && !hidden,
                         widthDp = with(density) { (r * 2).toDp() },

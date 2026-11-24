@@ -13,7 +13,8 @@ import kotlinx.serialization.Serializable
  * sensitivity slider replaces their own sensitivities), else that axis only. The frame's graph
  * spans 0..[maxSpeed] deg/s across and 1×..[maxGain] up; its points stay inside that range.
  * [edited]: when its curve was last changed (ms since 1970): where two frames set the same axis,
- * the one changed last wins.
+ * the one changed last wins. [showValues]: each line's label also says what it gives at the
+ * sensitivity in effect (off: only the multipliers).
  */
 @Serializable
 data class CurveFrame(
@@ -22,6 +23,7 @@ data class CurveFrame(
     val maxSpeed: Float = DEFAULT_MAX_SPEED,
     val maxGain: Float = DEFAULT_MAX_GAIN,
     val edited: Long = 0L,
+    val showValues: Boolean = true,
 ) {
     /** [curve] kept inside the frame's range (each point's speed and gain clamped), tidied. */
     fun inRange(c: GyroCurve = curve): GyroCurve = c.copy(

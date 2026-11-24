@@ -157,6 +157,33 @@ class SetValueTest {
         r.setTouch("ads", true)
         assertEquals(5f, r.gyroSettings.sensitivity, 0.01f)
     }
+
+    @Test
+    fun aSlidersSensitivityTakesTheFramesCurveAndIsGrayedUnderAHeldButtonsOwn() {
+        val slider = TouchControl("aim", TouchKind.BUTTON, "Aim", 0.5f, 0.5f, shape = TouchShape.SQUARE)
+        val ads = TouchControl("ads", TouchKind.BUTTON, "ADS", 0.2f, 0.2f, gyro = listOf(ButtonGyro(sensitivity = 5f)))
+        val curve = com.oleroma.gyrophone.core.model.GyroCurve(
+            listOf(com.oleroma.gyrophone.core.model.CurvePoint(30f, 1f), com.oleroma.gyrophone.core.model.CurvePoint(270f, 2f)),
+        )
+        val frame = TouchControl(
+            "f", TouchKind.CURVE, "", 0.5f, 0.5f, shape = TouchShape.SQUARE,
+            curveFrame = com.oleroma.gyrophone.core.model.CurveFrame(curve, edited = 1L),
+        )
+        val chip = Mapping(InputSource.Finger("aim", FingerAxis.Y), OutputTarget.GyroSens(), range = AxisRange(8f, 24f), options = TOGGLE)
+        val w = Workspace("w", "w", touchControls = listOf(slider, ads, frame), mappings = listOf(chip), gyro = GyroSettings(sensitivity = 16f))
+        val e = MappingEngine(single(w)) { now }
+        e.setFinger("aim", 0.5f, 0.25f)
+        e.fingerUp("aim")
+        // The slider's 12 is the sensitivity the frame's curve multiplies.
+        assertEquals(12f, e.gyroSettings.sensitivity, 0.01f)
+        assertEquals(curve, e.gyroSettings.accel)
+        assertEquals(false, e.valueOverridden(chip))
+        // A held button with its own sensitivity: the slider isn't in effect.
+        e.setTouch("ads", true)
+        assertEquals(true, e.valueOverridden(chip))
+        e.setTouch("ads", false)
+        assertEquals(false, e.valueOverridden(chip))
+    }
 }
 
 class SliderOverridesTest {

@@ -93,6 +93,9 @@ class ValueBars internal constructor(val marks: List<ValueMark>, val bars: Boole
     internal var frame by mutableLongStateOf(0L)
     internal val chips = ArrayList<Mapping>()
     internal val values = FloatArray(2 * MAX_SHOWN)
+
+    /** Each of [chips]: a held button sets its sensitivity itself now, so it is grayed. */
+    internal val overridden = BooleanArray(MAX_SHOWN)
     internal val labels = arrayOfNulls<AnnotatedString>(marks.size)
     internal val laid = arrayOfNulls<TextLayoutResult>(marks.size)
 
@@ -154,6 +157,7 @@ fun rememberValueBars(engine: MappingEngine, marks: List<ValueMark>, active: () 
     LaunchedEffect(vb) {
         val readChips = ArrayList<Mapping>()
         val readValues = FloatArray(vb.values.size)
+        val readOver = BooleanArray(vb.overridden.size)
         val lines = ArrayList<LinePart>()
         val pad = with(density) { FRAME_PAD_DP.dp.toPx() }
         val inset = with(density) { FRAME_DP.dp.toPx() }
@@ -196,9 +200,14 @@ fun rememberValueBars(engine: MappingEngine, marks: List<ValueMark>, active: () 
                 if (!changed) for (i in 0 until 2 * n) if (readValues[i].toBits() != vb.values[i].toBits()) {
                     changed = true; break
                 }
+                for (i in 0 until n) {
+                    readOver[i] = engine.valueOverridden(readChips[i])
+                    if (!changed && readOver[i] != vb.overridden[i]) changed = true
+                }
                 if (changed) {
                     vb.chips.clear(); vb.chips.addAll(readChips)
                     readValues.copyInto(vb.values)
+                    readOver.copyInto(vb.overridden)
                 }
             }
             var active: Set<Mapping> = emptySet()
@@ -252,11 +261,11 @@ fun rememberValueBars(engine: MappingEngine, marks: List<ValueMark>, active: () 
                             val m = vb.chips[j]
                             if ((MappingProfiles.touchId(m.source) ?: "") != mk.id) continue
                             // Chips at the same place sending the same share one line: "40 · Yaw Pitch 4.50 RWS".
-                            val p = linePart(m, vb.values[2 * j + 1], counts)
-                            val same = lines.firstOrNull { it.pct == p.pct && it.kind == p.kind && it.value == p.value }
+                            val p = linePart(m, vb.values[2 * j + 1], counts).also { it.over = vb.overridden[j] }
+                            val same = lines.firstOrNull { it.pct == p.pct && it.kind == p.kind && it.value == p.value && it.over == p.over }
                             if (same == null) lines.add(p) else if (p.names[0] !in same.names) same.names.add(p.names[0])
                         }
-                        for (p in lines) line(p.text(), null)
+                        for (p in lines) line(p.text(), if (p.over) OVERRIDDEN else null)
                     }
                 }.takeIf { it.isNotEmpty() }
                 if (label != vb.labels[k]) {
@@ -365,7 +374,7 @@ fun ValueBarsOverlay(vb: ValueBars, color: Color, modifier: Modifier = Modifier)
                             if (src.id != mk.id || src.axis != axis) continue
                             val v = vb.values[2 * j]
                             if (v.isNaN()) continue
-                            bar(mk, axis, v, color, snapTicks(mk.steps[axis], axis, mk))
+                            bar(mk, axis, v, if (vb.overridden[j]) OVERRIDDEN else color, snapTicks(mk.steps[axis], axis, mk))
                             break
                         }
                     }
@@ -416,12 +425,18 @@ private const val OFF = " off"
 private val TOGGLE_ON = Color(0xFF8FE39A)
 private val TOGGLE_OFF = Color(0xFF9E9E9E)
 
+/** A slider's line and bar while a held button sets its sensitivity itself (it isn't in effect). */
+private val OVERRIDDEN = Color(0xFF7A7A7A)
+
 /**
  * One chip's part of a corner line: where [out] is in its range (0..100), its kind, its own name
  * ("Yaw", "RT") and what it sends; chips alike but for the name share a line ([text]).
  */
 private class LinePart(val pct: String, val kind: Int, name: String, val value: String) {
     val names = arrayListOf(name)
+
+    /** A held button sets this sensitivity itself now: the line is grayed. */
+    var over = false
 
     /** "40 · Yaw Pitch 4.50 RWS", "40 · Yaw sens 16", "40 · Sens 16", "62 · RT 62 %", "50 · Tap 300 ms". */
     fun text(): String {

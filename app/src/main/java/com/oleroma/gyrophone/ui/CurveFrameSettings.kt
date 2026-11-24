@@ -122,6 +122,11 @@ internal fun CurveFrameSettingsScreen(
                     }
                 }
             }
+            SwitchRow(
+                "Show values",
+                f.showValues,
+                "Each line also shows what it gives at the sensitivity in effect now. Off: only the multipliers (1×, 1.5× …).",
+            ) { onChange(latest.copy(curveFrame = f.copy(showValues = it))) }
             Searchable("Start again", "reset curve points") {
                 TextButton(onClick = {
                     set(f.copy(curve = CurveFrame.ramp(f.speedCap, f.gainCap).copy(smooth = f.curve.smooth, axisSpeed = f.curve.axisSpeed)))
