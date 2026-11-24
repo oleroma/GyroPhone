@@ -4,6 +4,8 @@ import com.oleroma.gyrophone.core.engine.AimStatsAnalyzer
 import com.oleroma.gyrophone.core.engine.AimStatsData
 import com.oleroma.gyrophone.core.engine.AimStatsRecorder
 import com.oleroma.gyrophone.core.engine.LogHist
+import com.oleroma.gyrophone.core.engine.PressCurve
+import com.oleroma.gyrophone.core.engine.ShakeParts
 import com.oleroma.gyrophone.core.engine.StatKey
 import com.oleroma.gyrophone.core.model.AndroidAxis
 import com.oleroma.gyrophone.core.model.AndroidKey
@@ -99,6 +101,88 @@ class AimStatsTest {
     }
 
     @Test
+    fun handAloneSkipsPresses() {
+        val a = AimStatsAnalyzer()
+        // A press at 2 s: moments near it are left out; the rest count, while aiming from 3 s.
+        a.event(2000 * ms, StatKey.of(StatKey.KEY, AndroidKey.BUTTON_A), true)
+        a.event(2050 * ms, StatKey.of(StatKey.KEY, AndroidKey.BUTTON_A), false)
+        a.event(3000 * ms, StatKey.RIGHT_CLICK, true)
+        // Fed and worked out a quarter second at a time, as the Stats thread does.
+        for (c in 0 until 24) { a.run(1 + c * 250, 1 + (c + 1) * 250) { 0f }; a.process() }
+        val moving = a.data.inputs[StatKey.HAND_MOVING]!!.presses
+        val aiming = a.data.inputs[StatKey.HAND_AIMING]!!.presses
+        // Moments every 0.7 s from ~0 to ~5.5 s, minus the first (no history) and those near 2 s and the 3 s aim press.
+        assertTrue("moving $moving", moving in 1..3)
+        assertTrue("aiming $aiming", aiming in 2..4)
+    }
+
+    /**
+     * 60 s of a hand that wobbles (random turn, same everywhere) with a press every ~1.6 s; each press
+     * adds [kick] (signed, per press) as 40 ms out sideways and 40 ms back.
+     */
+    private fun pressesWithKick(kick: (Int) -> Float): AimStatsAnalyzer {
+        val a = AimStatsAnalyzer()
+        val rnd = java.util.Random(7)
+        val key = StatKey.of(StatKey.KEY, AndroidKey.BUTTON_Y)
+        val presses = (0 until 36).map { 2000 + it * 1600 + rnd.nextInt(200) }
+        for (p in presses) { a.event(p * ms, key, true); a.event((p + 60) * ms, key, false) }
+        var wobble = 0f
+        var cursor = 0.0
+        var next = 0
+        for (c in 0 until 250) {
+            for (t in 1 + c * 250 until 1 + (c + 1) * 250) {
+                wobble = 0.9f * wobble + rnd.nextGaussian().toFloat() * 8f
+                while (next < presses.size && presses[next] + 100 < t) next++
+                val p = presses.getOrNull(next)
+                val k = if (p == null) 0f else when (t - p) { in 1..40 -> kick(next); in 41..80 -> -kick(next); else -> 0f }
+                a.sample(t * ms, wobble + k, wobble * 0.5f, true)
+                // The cursor: 25 px per degree sideways, sent as whole pixels.
+                cursor += (wobble + k) * 0.001 * 25
+                val dx = cursor.toInt()
+                if (dx != 0) { a.cursor(t * ms, dx, 0); cursor -= dx }
+            }
+            a.process()
+        }
+        return a
+    }
+
+    @Test
+    fun sameKickEveryPressIsTheSignature() {
+        val a = pressesWithKick { 25f }
+        val c = a.data.inputs[StatKey.of(StatKey.KEY, AndroidKey.BUTTON_Y)]!!.curve
+        val hand = a.data.inputs[StatKey.HAND_MOVING]!!.curve
+        assertTrue("presses ${c.n}", c.n >= 30)
+        assertTrue("hand moments ${hand.n}", hand.n >= 10)
+        val nat = ShakeParts.natural(c, null, hand, PressCurve.SIDE)
+        // The peak is 1° out at +40 ms (step 52), the same each press.
+        val at = ShakeParts.of(c, PressCurve.SIDE, PressCurve.CENTER + 2, nat)
+        assertTrue("kick ${at.kick}", at.kick in 0.5..1.1)
+        assertTrue("jitter ${at.jitter} kick ${at.kick}", at.jitter < at.kick / 2)
+        assertTrue("natural $nat", nat > 0.02)
+        // Far from the press only the hand is left.
+        val far = ShakeParts.of(c, PressCurve.SIDE, 5, nat)
+        assertTrue("far press ${far.press} nat $nat", far.press < nat)
+        val worst = ShakeParts.worst(c, PressCurve.SIDE, nat, PressCurve.UP, ShakeParts.natural(c, null, hand, PressCurve.UP))
+        assertTrue("worst at ${PressCurve.ms(worst)} ms", PressCurve.ms(worst) in 0..80)
+        // The cursor shows the same kick in pixels (25 px per degree).
+        val px = ShakeParts.of(c, PressCurve.X, PressCurve.CENTER + 2, ShakeParts.natural(c, null, hand, PressCurve.X))
+        assertTrue("px kick ${px.kick} vs ${at.kick * 25}", px.kick in at.kick * 20..at.kick * 30)
+    }
+
+    @Test
+    fun kickThatDiffersEachPressIsJitter() {
+        val a = pressesWithKick { i -> if (i % 2 == 0) 25f else -25f }
+        val c = a.data.inputs[StatKey.of(StatKey.KEY, AndroidKey.BUTTON_Y)]!!.curve
+        val hand = a.data.inputs[StatKey.HAND_MOVING]!!.curve
+        val nat = ShakeParts.natural(c, null, hand, PressCurve.SIDE)
+        val at = ShakeParts.of(c, PressCurve.SIDE, PressCurve.CENTER + 2, nat)
+        assertTrue("jitter ${at.jitter} kick ${at.kick}", at.jitter > 0.5 && at.kick < at.jitter / 2)
+        // Up/down untouched: no press part beyond the hand.
+        val up = ShakeParts.of(c, PressCurve.UP, PressCurve.CENTER + 2, ShakeParts.natural(c, null, hand, PressCurve.UP))
+        assertTrue("up ${up.press} total ${up.total}", up.press < up.total)
+    }
+
+    @Test
     fun gyroOffIsNotCounted() {
         val a = AimStatsAnalyzer()
         a.event(1000 * ms, StatKey.LEFT_CLICK, true)
@@ -117,11 +201,11 @@ class AimStatsTest {
         r.axis(AndroidAxis.RTRIGGER, 0.3f)
         r.axis(AndroidAxis.RTRIGGER, 0.6f) // pressed
         r.axis(AndroidAxis.RTRIGGER, 0.45f) // still pressed (hysteresis)
-        r.mouseButtons(1)
+        r.mouse(1, 0, 0)
         r.axis(AndroidAxis.X, 1f) // not a trigger
         now = 1100 * ms
         r.axis(AndroidAxis.RTRIGGER, 0.1f)
-        r.mouseButtons(0)
+        r.mouse(0, 0, 0)
         r.touch("fire_btn", true)
         for (t in 1 until 2000) r.gyro(t * ms, 0f, 0f, true)
         r.drain(a)
@@ -130,7 +214,7 @@ class AimStatsTest {
         assertEquals(1, a.data.inputs[trig]?.presses)
         assertEquals(1, a.data.inputs[StatKey.LEFT_CLICK]?.presses)
         assertEquals(1, a.data.inputs[StatKey.touch("fire_btn")]?.presses)
-        assertEquals(4, a.data.inputs.size) // + Hip fire
+        assertEquals(4, a.data.inputs.keys.count { StatKey.kind(it) != StatKey.BASELINE }) // + Hip fire
         val back = AimStatsData.decode(a.data.encode())!!
         assertEquals(a.data.inputs.keys, back.inputs.keys)
         assertEquals(a.data.seconds, back.seconds, 1e-9)

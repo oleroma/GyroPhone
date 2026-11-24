@@ -2760,7 +2760,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
         }
         lastOutput = s
-        inputTap?.mouseButtons(s.mouse.buttons)
+        inputTap?.mouse(s.mouse.buttons, s.mouse.dx, s.mouse.dy)
         // The gyro's part of the motion is what the camera moves did not make.
         trace?.queueOutput(s, s.mouse.dx - dx, s.mouse.dy - dy)
         if (hapticDue) {
