@@ -2304,6 +2304,9 @@ class GamepadRuntime(context: Context) {
     // The acceleration graphs' live line: turning speed (deg/s, smoothed over ~40 ms) of the whole
     // phone and of yaw, pitch and roll (by MotionAxis ordinal), in the workspace's gyro space.
     private val liveRates = FloatArray(4)
+
+    /** The highest of [liveRates] since [resetGyroPeak] (each axis, then the whole phone): a curve frame's max line. */
+    private val livePeaks = FloatArray(4)
     @Volatile private var liveRatesNs = 0L
 
     /** An acceleration graph is shown: the gyro thread keeps [liveGyroSpeed] up to date until [unwatchAccel]. */
@@ -2319,6 +2322,12 @@ class GamepadRuntime(context: Context) {
         return liveRates[if (axis == null || axis == MotionAxis.NONE) 3 else axis.ordinal]
     }
 
+    /** The highest turning speed (deg/s) since [resetGyroPeak], as [liveGyroSpeed] reads it. */
+    fun liveGyroPeak(axis: MotionAxis?): Float = livePeaks[if (axis == null || axis == MotionAxis.NONE) 3 else axis.ordinal]
+
+    /** Starts the highest speeds again (a curve frame shown in play). */
+    fun resetGyroPeak() = livePeaks.fill(0f)
+
     private fun liveSpeed(yaw: Float, pitch: Float, roll: Float, dt: Float, @Suppress("UNUSED_PARAMETER") ts: Long) {
         val k = if (dt <= 0f) 1f else (dt / 0.04f).coerceAtMost(1f)
         val r = liveRates
@@ -2326,6 +2335,8 @@ class GamepadRuntime(context: Context) {
         r[1] += k * (abs(pitch) - r[1])
         r[2] += k * (abs(roll) - r[2])
         r[3] += k * (sqrt(yaw * yaw + pitch * pitch + roll * roll) - r[3])
+        val p = livePeaks
+        for (i in 0 until 4) if (r[i] > p[i]) p[i] = r[i]
         liveRatesNs = System.nanoTime()
     }
 

@@ -224,6 +224,7 @@ internal fun CurveFrameGraph(
     fun sensOf(gs: GyroSettings) =
         if (axis == MotionAxis.NONE) GyroDisplayFeed.sideSensOf(runtime.engine.gyroRoutes(), gs) else abs(gs.sensitivityOf(axis))
     val speed = remember { mutableFloatStateOf(-1f) }
+    val peak = remember { mutableFloatStateOf(0f) }
     val sens = remember { mutableFloatStateOf(sensOf(runtime.engine.gyroSettings)) }
     val active = remember { mutableStateOf(true) }
     if (live) {
@@ -232,10 +233,15 @@ internal fun CurveFrameGraph(
             onDispose { runtime.unwatchAccel() }
         }
         val onScreen by runtime.onScreen.collectAsState()
+        // The highest speed starts again each time the frame shows in play.
+        LaunchedEffect(runtime) { runtime.resetGyroPeak(); peak.floatValue = 0f }
         LaunchedEffect(runtime, axis, onScreen) {
             while (onScreen) {
-                val v = runtime.liveGyroSpeed(if (f.curve.axisSpeed && axis != MotionAxis.NONE) axis else null) ?: -1f
+                val which = if (f.curve.axisSpeed && axis != MotionAxis.NONE) axis else null
+                val v = runtime.liveGyroSpeed(which) ?: -1f
                 if (abs(v - speed.floatValue) > CURVE_LIVE_STEP || (v < 0f) != (speed.floatValue < 0f)) speed.floatValue = v
+                val pk = runtime.liveGyroPeak(which)
+                if (pk - peak.floatValue > CURVE_LIVE_STEP) peak.floatValue = pk
                 val gs = runtime.engine.gyroSettings
                 val s = sensOf(gs)
                 if (s != sens.floatValue) sens.floatValue = s
@@ -338,6 +344,19 @@ internal fun CurveFrameGraph(
                         val unit = if (counts > 0f) "1× = " + shortValue(1f, s, counts) + " RWS" else "1× = %.1f".format(s)
                         val uw = paint.measureText(unit)
                         if (g.left + nowW + pad < g.right - uw) nc.drawText(unit, g.right - uw, topBase, paint)
+                    }
+                    // The highest speed reached: the live line's yellow, dimmer and dashed, its value at the bottom of the graph.
+                    val pk = peak.floatValue
+                    if (pk > 0f) {
+                        val px = x(pk.coerceAtMost(maxS))
+                        drawLine(Color(0x66FFC857), Offset(px, g.top), Offset(px, g.bottom), 2f, pathEffect = dash)
+                        val t = "max %.0f°/s".format(pk)
+                        val tw = paint.measureText(t)
+                        val tx = (px - tw - 3f * pxPerDp).let { if (it < g.left) px + 3f * pxPerDp else it }.coerceAtMost(g.right - tw)
+                        val dim = paint.color
+                        paint.color = Color.White.copy(alpha = 0.45f).toArgb()
+                        nc.drawText(t, tx, g.bottom - 3f * pxPerDp, paint)
+                        paint.color = dim
                     }
                     drawPath(path, Color(0xFF7CC4FF), style = Stroke(width = 4f))
                     for (q in pts) drawCircle(Color(0xFF7CC4FF), 9f, Offset(x(q.speed), y(q.gain)))
