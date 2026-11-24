@@ -49,6 +49,7 @@ internal fun statName(key: Long, w: Workspace?): String {
     val v = StatKey.value(key)
     return when (StatKey.kind(key)) {
         StatKey.CLICK -> if (v == 1) "Left click" else "Right click"
+        StatKey.FIRE_SPLIT -> if (v == 1) "Fire while aiming" else "Hip fire"
         StatKey.KEY -> AndroidKey.names[v] ?: "Key $v"
         StatKey.TRIGGER -> when (v) {
             AndroidAxis.LTRIGGER, AndroidAxis.BRAKE -> "Left trigger"
@@ -117,7 +118,7 @@ fun StatsScreen(runtime: GamepadRuntime, modifier: Modifier) {
         )
         if (v != null) {
             val choices = listOf(StatKey.LEFT_CLICK, StatKey.RIGHT_CLICK) +
-                data.inputs.keys.filter { StatKey.kind(it) != StatKey.CLICK }.sortedBy { statName(it, ws) }
+                data.inputs.keys.filter { StatKey.kind(it) != StatKey.CLICK && StatKey.kind(it) != StatKey.FIRE_SPLIT }.sortedBy { statName(it, ws) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 RolePicker("Fire", v.fire, choices, ws) { stats.setRoles(fire = it, aim = null) }
                 RolePicker("Aim", v.aim, choices, ws) { stats.setRoles(fire = null, aim = it) }
@@ -137,11 +138,13 @@ fun StatsScreen(runtime: GamepadRuntime, modifier: Modifier) {
                 Note("Aiming: while Aim is held. Firing: while Fire is held. Moving: the rest.")
             }
             PressCard("Fire: " + statName(v.fire, ws), data.inputs[v.fire], "shots")
+            PressCard("Fire while aiming", data.inputs[StatKey.FIRE_AIMED], "shots")
+            PressCard("Hip fire", data.inputs[StatKey.FIRE_HIP], "shots")
             PressCard("Aim: " + statName(v.aim, ws), data.inputs[v.aim], "presses")
 
             StatCard("What shakes your aim most") {
                 val ranked = data.inputs.entries
-                    .filter { StatKey.kind(it.key) != StatKey.CLICK && it.value.presses >= MIN_PRESSES }
+                    .filter { StatKey.kind(it.key) != StatKey.CLICK && StatKey.kind(it.key) != StatKey.FIRE_SPLIT && it.value.presses >= MIN_PRESSES }
                     .sortedByDescending { harm(it.value) }
                 if (ranked.isEmpty()) Note("Nothing yet: each button shows after $MIN_PRESSES presses.")
                 for ((key, s) in ranked) {

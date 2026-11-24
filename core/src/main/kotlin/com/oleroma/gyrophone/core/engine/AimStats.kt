@@ -37,8 +37,13 @@ object StatKey {
     fun value(key: Long): Int = key.toInt()
     fun touch(id: String): Long = of(TOUCH, id.hashCode())
 
+    /** Fire presses split by whether Aim was held at the press (the page's own cards, not inputs). */
+    const val FIRE_SPLIT = 5L
+
     val LEFT_CLICK = of(CLICK, 1)
     val RIGHT_CLICK = of(CLICK, 2)
+    val FIRE_AIMED = of(FIRE_SPLIT, 1)
+    val FIRE_HIP = of(FIRE_SPLIT, 2)
 }
 
 /**
@@ -254,6 +259,7 @@ class AimStatsAnalyzer(var data: AimStatsData = AimStatsData()) {
     private val windows = ArrayList<Edge>()
     private var fireHeld = false
     private var aimHeld = false
+    private var fireAimed = false
 
     /** Changed since [clean] (worth saving). */
     var dirty = false
@@ -307,7 +313,12 @@ class AimStatsAnalyzer(var data: AimStatsData = AimStatsData()) {
     }
 
     private fun edge(e: Edge) {
-        if (e.key == fireKey) fireHeld = e.down
+        if (e.key == fireKey) {
+            // Fire while aiming or from the hip: decided at the press, its release goes with it.
+            if (e.down) fireAimed = aimHeld
+            windows.add(Edge(e.ts, if (fireAimed) StatKey.FIRE_AIMED else StatKey.FIRE_HIP, e.down))
+            fireHeld = e.down
+        }
         if (e.key == aimKey) aimHeld = e.down
         windows.add(e)
     }

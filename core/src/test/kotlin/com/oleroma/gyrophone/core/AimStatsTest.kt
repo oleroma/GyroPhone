@@ -82,6 +82,23 @@ class AimStatsTest {
     }
 
     @Test
+    fun fireSplitsByAim() {
+        val a = AimStatsAnalyzer()
+        a.event(500 * ms, StatKey.RIGHT_CLICK, true)
+        a.event(1000 * ms, StatKey.LEFT_CLICK, true)
+        a.event(1100 * ms, StatKey.LEFT_CLICK, false)
+        a.event(1200 * ms, StatKey.RIGHT_CLICK, false)
+        a.event(2000 * ms, StatKey.LEFT_CLICK, true)
+        a.event(2100 * ms, StatKey.LEFT_CLICK, false)
+        a.run(1, 3000) { 0f }
+        a.process()
+        assertEquals(1, a.data.inputs[StatKey.FIRE_AIMED]?.presses)
+        assertEquals(1, a.data.inputs[StatKey.FIRE_HIP]?.presses)
+        assertEquals(2, a.data.inputs[StatKey.LEFT_CLICK]?.presses)
+        assertEquals(1.0, a.data.inputs[StatKey.FIRE_AIMED]!!.release.total, 0.0)
+    }
+
+    @Test
     fun gyroOffIsNotCounted() {
         val a = AimStatsAnalyzer()
         a.event(1000 * ms, StatKey.LEFT_CLICK, true)
@@ -113,7 +130,7 @@ class AimStatsTest {
         assertEquals(1, a.data.inputs[trig]?.presses)
         assertEquals(1, a.data.inputs[StatKey.LEFT_CLICK]?.presses)
         assertEquals(1, a.data.inputs[StatKey.touch("fire_btn")]?.presses)
-        assertEquals(3, a.data.inputs.size)
+        assertEquals(4, a.data.inputs.size) // + Hip fire
         val back = AimStatsData.decode(a.data.encode())!!
         assertEquals(a.data.inputs.keys, back.inputs.keys)
         assertEquals(a.data.seconds, back.seconds, 1e-9)
