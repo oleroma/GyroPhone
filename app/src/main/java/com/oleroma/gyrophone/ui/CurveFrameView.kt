@@ -85,8 +85,8 @@ private fun at(f: CurveFrame, g: Rect, speed: Float, gain: Float): Offset = Offs
 
 /**
  * The curve frames' editing in play ([com.oleroma.gyrophone.core.model.TouchKind.CURVE]). A frame
- * starts locked, so a stray touch can't change its curve: a tap on an empty spot unlocks it, another
- * locks it again ([unlocked], for this play session only). Unlocked: a drag moves a point (the gyro
+ * starts locked, so a stray touch can't change its curve: a hold on an empty spot unlocks it, another
+ * locks it again, as soon as the hold is long enough ([unlocked], for this play session only); a tap does nothing. Unlocked: a drag moves a point (the gyro
  * takes the curve at once, [com.oleroma.gyrophone.core.engine.MappingEngine.setFrameCurve]), a hold
  * on a point removes it and a hold near the curve adds one there, both as soon as the hold is long
  * enough, not on the lift. A moved curve is saved when the finger lifts. A frame takes its fingers
@@ -150,8 +150,8 @@ internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
         }
         val t = Touch(c.id, f, g, best, p, open, near).also { it.curve = curve }
         touches[pointer] = t
-        if (open && (best >= 0 || near)) {
-            // Held still long enough: a point goes, or one comes on an empty spot, at once.
+        run {
+            // Held still long enough, at once: a point goes, one comes near the curve, or elsewhere the frame locks or unlocks.
             val r = Runnable { held(pointer, t) }
             t.hold = r
             main.postDelayed(r, CURVE_REMOVE_MS)
@@ -160,6 +160,11 @@ internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
 
     private fun held(pointer: Long, t: Touch) {
         if (touches[pointer] !== t || t.moved || t.done) return
+        if (!t.open || (t.point < 0 && !t.nearCurve)) {
+            t.done = true
+            if (t.open) unlocked.remove(t.id) else unlocked[t.id] = true
+            return
+        }
         val c = t.curve ?: return
         val f = t.frame
         val result = when {
@@ -221,8 +226,6 @@ internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
                 drafts.remove(t.id)
                 return
             }
-            // A tap or hold on an empty spot (a hold near the curve adds a point instead): lock or unlock the frame.
-            t.point < 0 && !t.moved -> if (t.open) unlocked.remove(t.id) else unlocked[t.id] = true
         }
         if (t.id in drafts) { drafts.remove(t.id); runtime.engine.setFrameCurve(t.id, null) }
     }
