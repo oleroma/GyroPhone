@@ -147,11 +147,13 @@ fun StatsScreen(runtime: GamepadRuntime, modifier: Modifier) {
                 for ((key, s) in ranked) {
                     Line(
                         statName(key, ws) + " (${s.presses})",
-                        "before ${deg(s.before.quantile(0.5))} · after ${deg(s.after.quantile(0.5))} · " +
-                            "letting go ${deg(s.release.quantile(0.5))}",
+                        "↔ before ${deg(s.beforeSide.quantile(0.5))} · after ${deg(s.afterSide.quantile(0.5))} · " +
+                            "letting go ${deg(s.releaseSide.quantile(0.5))}\n" +
+                            "↕ before ${deg(s.beforeUp.quantile(0.5))} · after ${deg(s.afterUp.quantile(0.5))} · " +
+                            "letting go ${deg(s.releaseUp.quantile(0.5))}",
                     )
                 }
-                Note("Typical shake of each press: in the 80 ms before it counts, the 150 ms after, and after letting go.")
+                Note("Typical shake of each press, ↔ sideways and ↕ up/down: in the 80 ms before it counts, the 150 ms after, and after letting go.")
             }
         }
         OutlinedButton(
@@ -209,8 +211,14 @@ private fun PressCard(title: String, s: PressShake?, what: String) = StatCard(ti
     }
     Line("Counted", "${s.presses} $what")
     Line("Off your line before", spread(s.before, ::deg))
+    Line("   ↔ sideways", spread(s.beforeSide, ::deg))
+    Line("   ↕ up/down", spread(s.beforeUp, ::deg))
     Line("Kick after", spread(s.after, ::deg))
+    Line("   ↔ sideways", spread(s.afterSide, ::deg))
+    Line("   ↕ up/down", spread(s.afterUp, ::deg))
     Line("On letting go", spread(s.release, ::deg))
+    Line("   ↔ sideways", spread(s.releaseSide, ::deg))
+    Line("   ↕ up/down", spread(s.releaseUp, ::deg))
     Line("Sharpest jerk", spread(s.twitch, ::dps))
     Line("Turning when pressed", spread(s.speedAtPress, ::dps))
 }

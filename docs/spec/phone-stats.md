@@ -8,6 +8,7 @@ The pad's **Stats** capsule (top row, right after Defaults) opens a page about h
 - **Fire** and **Aim**: which input fires and which aims, per workspace. Default: **Left click** and **Right click**, meaning whatever input makes GP send that click. Any input pressed while collecting can be picked instead (a controller key, a trigger, a screen button). A new choice applies from then on. Reset leaves these.
 - **Turning speed**: typical (median) and 1-in-10 (90th percentile) speed in °/s, and the share of time, for **Aiming** (Aim held), **Firing** (Fire held, which wins over Aim) and **Moving** (the rest). Speed is the yaw and pitch turn about the screen (the workspace's yaw axis), roll left out.
 - **Fire** and **Aim** cards, for that input's presses: *Off your line before* (80 ms before the press counts), *Kick after* (the most it was thrown off in the 150 ms after), *On letting go* (the same after release), *Sharpest jerk* (°/s off the line, 80 ms before to 150 ms after), *Turning when pressed*.
+- Each of before, after and letting go is also shown split: **↔ sideways** (yaw) and **↕ up/down** (pitch), each the largest offset along that axis alone (a sideways miss matters more than a vertical one). Stats saved before the split have no split numbers.
 - **What shakes your aim most**: every physical input with at least 5 presses, ordered by typical *before* + *after*. Clicks (outputs) are left out of this list.
 - **Reset stats** (at the bottom, red outline) asks "Reset stats for *workspace*?" before clearing anything.
 

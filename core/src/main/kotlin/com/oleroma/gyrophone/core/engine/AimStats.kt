@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.core.engine
 import com.oleroma.gyrophone.core.model.AndroidAxis
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.sqrt
@@ -190,6 +191,13 @@ class PressShake(
     val after: LogHist = LogHist.degrees(),
     /** The same for the 150 ms after letting go. */
     val release: LogHist = LogHist.degrees(),
+    /** [before], [after] and [release] split: sideways (yaw) and up/down (pitch) on their own. */
+    val beforeSide: LogHist = LogHist.degrees(),
+    val beforeUp: LogHist = LogHist.degrees(),
+    val afterSide: LogHist = LogHist.degrees(),
+    val afterUp: LogHist = LogHist.degrees(),
+    val releaseSide: LogHist = LogHist.degrees(),
+    val releaseUp: LogHist = LogHist.degrees(),
     /** The sharpest jerk (°/s off your turn) from 80 ms before to 150 ms after the press. */
     val twitch: LogHist = LogHist.speed(),
     /** How fast you were turning just before pressing (°/s). */
@@ -346,6 +354,7 @@ class AimStatsAnalyzer(var data: AimStatsData = AimStatsData()) {
         // Off the line from 80 ms before to 150 ms after.
         var oy = 0.0; var op = 0.0
         var before = 0.0; var after = 0.0; var twitch = 0.0
+        var beforeSide = 0.0; var beforeUp = 0.0; var afterSide = 0.0; var afterUp = 0.0
         var reachedPress = false
         while (k < hHead) {
             val i = (k and H_MASK).toInt()
@@ -356,12 +365,16 @@ class AimStatsAnalyzer(var data: AimStatsData = AimStatsData()) {
             val dy = hYaw[i] - ty; val dp = hPitch[i] - tp
             if (!reachedPress && ts > t0) {
                 before = sqrt(oy * oy + op * op)
+                beforeSide = abs(oy); beforeUp = abs(op)
                 reachedPress = true
                 // After the press counts from where the press left you.
                 oy = 0.0; op = 0.0
             }
             oy += dy * dt; op += dp * dt
-            if (reachedPress) after = maxOf(after, sqrt(oy * oy + op * op))
+            if (reachedPress) {
+                after = maxOf(after, sqrt(oy * oy + op * op))
+                afterSide = maxOf(afterSide, abs(oy)); afterUp = maxOf(afterUp, abs(op))
+            }
             twitch = maxOf(twitch, sqrt(dy * dy + dp * dp))
             k++
         }
@@ -371,10 +384,13 @@ class AimStatsAnalyzer(var data: AimStatsData = AimStatsData()) {
             s.presses++
             s.before.add(before)
             s.after.add(after)
+            s.beforeSide.add(beforeSide); s.beforeUp.add(beforeUp)
+            s.afterSide.add(afterSide); s.afterUp.add(afterUp)
             s.twitch.add(twitch)
             s.speedAtPress.add(sqrt(ty * ty + tp * tp))
         } else {
             s.release.add(after)
+            s.releaseSide.add(afterSide); s.releaseUp.add(afterUp)
         }
         dirty = true
     }

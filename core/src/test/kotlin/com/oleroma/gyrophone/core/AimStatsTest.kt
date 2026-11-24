@@ -46,8 +46,12 @@ class AimStatsTest {
         // 40 ms at 25°/s off the line just before the press: 1° off.
         a.run(1, 2000) { t -> if (t in 960 until 1000) 25f else 0f }
         a.process()
-        val before = a.data.inputs[fire]!!.before.quantile(0.5)!!
+        val s = a.data.inputs[fire]!!
+        val before = s.before.quantile(0.5)!!
         assertTrue("before $before", before in 0.85..1.2)
+        // All sideways (yaw), none up/down.
+        assertTrue(s.beforeSide.quantile(0.5)!! in 0.85..1.2)
+        assertTrue(s.beforeUp.quantile(0.5)!! < 0.01)
     }
 
     @Test
