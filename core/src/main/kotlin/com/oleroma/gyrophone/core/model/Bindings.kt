@@ -284,7 +284,7 @@ object Bindings {
             }) + TouchAreaKind.entries.map { area(control, it) }
         }
 
-        TouchKind.FULLSCREEN, TouchKind.DISPLAY -> emptyList()
+        TouchKind.FULLSCREEN, TouchKind.DISPLAY, TouchKind.CURVE -> emptyList()
     }
 
     /**

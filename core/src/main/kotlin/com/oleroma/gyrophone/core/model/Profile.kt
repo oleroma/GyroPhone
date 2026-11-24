@@ -13,7 +13,8 @@ import kotlin.math.roundToInt
  * workspace. DISPLAY: a gyro display ([TouchControl.display]): placed like a button in edit mode,
  * drawn under everything in play, never touched.
  */
-enum class TouchKind { BUTTON, STICK, FULLSCREEN, DISPLAY }
+/** CURVE: a curve frame ([CurveFrame]), an acceleration curve edited on the pad. */
+enum class TouchKind { BUTTON, STICK, FULLSCREEN, DISPLAY, CURVE }
 
 @Serializable
 enum class TouchShape { CIRCLE, SQUARE }
@@ -156,6 +157,8 @@ data class TouchControl(
     val gyro: List<ButtonGyro> = emptyList(),
     /** DISPLAY: what it shows and how. */
     val display: GyroDisplay? = null,
+    /** CURVE: its acceleration curve, range and axis. */
+    val curveFrame: CurveFrame? = null,
     /** Edit mode: controls sharing a group id move and size together ([ControlGroups]); null = none. */
     val group: String? = null,
     /**
@@ -635,7 +638,7 @@ fun TouchControl.surfaceSettings(pad: TouchpadSettings): TouchpadSettings =
 
 /** Height / width as drawn: [TouchControl.aspect] for a square button, else 1. */
 val TouchControl.heightRatio: Float
-    get() = if (shape == TouchShape.SQUARE && (kind == TouchKind.BUTTON || kind == TouchKind.DISPLAY)) aspect else 1f
+    get() = if (shape == TouchShape.SQUARE && (kind == TouchKind.BUTTON || kind == TouchKind.DISPLAY || kind == TouchKind.CURVE)) aspect else 1f
 
 /** Resolved placement (allocates; editor use). */
 fun TouchControl.placement(inPortrait: Boolean): Placement =
@@ -2094,7 +2097,8 @@ data class Profile(
     fun playTouchKey(index: Int): List<Any?> {
         val w = workspace(index)
         return listOf(
-            w.touchControls.filter { it.kind != TouchKind.DISPLAY }.map { if (it.display == null) it else it.copy(display = null) },
+            // A curve frame's curve changes as it is edited in play: only its place counts.
+            w.touchControls.filter { it.kind != TouchKind.DISPLAY }.map { if (it.display == null && it.curveFrame == null) it else it.copy(display = null, curveFrame = null) },
             w.mappings,
             shownCorners.map { if (it.display == null) it else it.copy(display = null) },
             wrapWorkspaces,

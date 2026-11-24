@@ -8,6 +8,8 @@ import com.oleroma.gyrophone.core.hid.HidUsage
 import com.oleroma.gyrophone.core.hid.KeyboardState
 import com.oleroma.gyrophone.core.hid.MouseState
 import com.oleroma.gyrophone.core.model.AndroidAxis
+import com.oleroma.gyrophone.core.model.GyroCurve
+import com.oleroma.gyrophone.core.model.CurveFrames
 import com.oleroma.gyrophone.core.model.AndroidKey
 import com.oleroma.gyrophone.core.model.AxisHalf
 import com.oleroma.gyrophone.core.model.AxisRange
@@ -164,6 +166,30 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
 
     /** The held buttons' own gyro settings, stacked ([updateGyroNow]); null = none held that sets any. */
     private var gyroHeld: ButtonGyro? = null
+
+    /** The workspace's curve frames ([CurveFrames.of]): their curves lie over its acceleration. */
+    private var curveFrames: List<TouchControl> = emptyList()
+
+    /** A curve frame's curve being dragged now, by frame id, before it is saved ([setFrameCurve]). */
+    private val liveCurves = HashMap<String, GyroCurve>()
+
+    /**
+     * Curve frame [id]'s curve as it is being edited now ([curve]; null: its saved one again): the
+     * gyro takes it from the next sample, nothing saved. Called on every drag step of a point, so
+     * it only works out the gyro settings again (no allocation on the sample path).
+     */
+    fun setFrameCurve(id: String, curve: GyroCurve?) {
+        synchronized(lock) {
+            if (curve == null) {
+                if (liveCurves.remove(id) == null) return
+            } else {
+                if (curveFrames.none { it.id == id } || liveCurves[id] == curve) return
+                liveCurves[id] = curve
+            }
+            updateGyroNow()
+        }
+        onChange?.run()
+    }
 
     /**
      * Gyro sensitivity chips ([OutputTarget.GyroSens]) in effect, counts per degree by
@@ -800,8 +826,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (g.anyGyro) held = held?.under(g) ?: g
             if (g.anyTouch) heldTouch = heldTouch?.under(g) ?: g
         }
-        // Slider overrides set the workspace's values: a held button's own lie over them.
-        val under = if (ws.sliders.isEmpty()) eff.gyro else SliderOverrides.overGyro(eff.gyro, ws.sliders)
+        // Slider overrides and curve frames set the workspace's values: a held button's own lie over them.
+        val slid = if (ws.sliders.isEmpty()) eff.gyro else SliderOverrides.overGyro(eff.gyro, ws.sliders)
+        val under = if (curveFrames.isEmpty()) slid else CurveFrames.over(slid, curveFrames, liveCurves)
         gyroBase = held?.over(under) ?: under
         gyroUnder = under
         gyroHeld = held
@@ -1664,6 +1691,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         // Overrides a chip no longer keeps don't count (a removed or changed slider chip).
         ws = SliderOverrides.pruned(w)
         fitNamed(w)
+        liveCurves.clear()
+        curveFrames = CurveFrames.of(w)
         heldPhys = heldOf(w)
         for (id in physDown) if (PHYS + id !in latched) pressOrder.remove(PHYS + id)
         physDown.clear()
@@ -2643,6 +2672,8 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             current = p
             ws = ws.copy(sliders = SliderOverrides.live(loaded), namedSens = loaded.namedSens)
             fitNamed(ws)
+            curveFrames = CurveFrames.of(loaded)
+            liveCurves.keys.retainAll(curveFrames.mapTo(HashSet()) { it.id })
             kept.values.removeIf { it.committed }
             applyLayerSettings()
             refreshSens()
