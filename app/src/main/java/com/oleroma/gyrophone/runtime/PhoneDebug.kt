@@ -219,6 +219,11 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
             append(id?.let { runtime.exportWorkspace(it) } ?: "no workspace \"$name\"")
             return@buildString
         }
+        if (args.firstOrNull() == "stats") {
+            // The Stats page's numbers for every workspace, as JSON plus names (asked for over adb only).
+            append(runtime.stats.dump(runtime.activeProfile.value))
+            return@buildString
+        }
         if (args.firstOrNull() == "everything") {
             append(runtime.exportEverything())
             return@buildString

@@ -132,6 +132,29 @@ class AimStats(context: Context, private val engine: MappingEngine, private val 
         show()
     }
 
+    /**
+     * Every workspace's stats as text for `dumpsys ... stats`: per workspace its Fire and Aim, the names of
+     * its inputs and the stats JSON. The workspace in use is read as it is now (saved first).
+     */
+    fun dump(profile: com.oleroma.gyrophone.core.model.Profile): String {
+        val done = java.util.concurrent.CountDownLatch(1)
+        handler.post { follow(); save(); done.countDown() }
+        done.await(2, java.util.concurrent.TimeUnit.SECONDS)
+        return buildString {
+            appendLine("collecting: ${_collecting.value}, workspace in use: ${wsId}")
+            for (w in profile.workspaces) {
+                val data = load(w.id) ?: continue
+                val fire = prefs.getLong(KEY_FIRE + w.id, StatKey.LEFT_CLICK)
+                val aim = prefs.getLong(KEY_AIM + w.id, StatKey.RIGHT_CLICK)
+                appendLine("--- workspace ${w.name} (${w.id})")
+                appendLine("fire: $fire ${com.oleroma.gyrophone.ui.statName(fire, w)}")
+                appendLine("aim: $aim ${com.oleroma.gyrophone.ui.statName(aim, w)}")
+                for (k in data.inputs.keys) appendLine("name: $k ${com.oleroma.gyrophone.ui.statName(k, w)}")
+                appendLine("json: " + data.encode())
+            }
+        }
+    }
+
     /** Switches to the workspace in use: the last one's stats are saved, this one's loaded. */
     private fun follow() {
         val ws = workspace() ?: return

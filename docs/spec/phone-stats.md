@@ -33,3 +33,7 @@ All the maths runs on its own background-priority thread ("GP stats") four times
 ## Storage
 
 Each workspace's stats: `files/stats/<workspace id>.json` (histograms, not raw samples), saved every 15 s while changing, when switching workspace and when Collect goes off. The Collect switch and each workspace's Fire and Aim inputs are shared preferences (`gp_stats_collect`, `gp_stats_fire_<id>`, `gp_stats_aim_<id>`). Stats are not part of exports.
+
+## Reading them off the phone
+
+`tools/gp-log.sh phone stats` (adb `dumpsys ... GamepadService stats`) prints every workspace's stats: its Fire and Aim, the names of its inputs and the stats JSON (histograms). The workspace in use is saved first.
