@@ -159,8 +159,8 @@ internal fun LookSettings(
     workspaceOpacity: Float = 0.5f,
 ) {
     val current by rememberUpdatedState(control)
-    // The label is edited in the mapping editor's title (LabelField).
-    Searchable("Shape", "Circle Square") { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    // The label is edited in the mapping editor's title (LabelField). A curve frame is always a rectangle.
+    if (control.kind != TouchKind.CURVE) Searchable("Shape", "Circle Square") { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Shape", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(52.dp))
         SelectChip(
             "Circle",
@@ -213,7 +213,7 @@ internal fun LookSettings(
         }
     }
     val size = control.placeSize(inPortrait)
-    if (control.kind == TouchKind.BUTTON && control.shape == TouchShape.SQUARE) {
+    if ((control.kind == TouchKind.BUTTON || control.kind == TouchKind.CURVE) && control.shape == TouchShape.SQUARE) {
         // Width and height apart: each slider keeps the other side as it is.
         val height = size * control.aspect
         fun sized(w: Float, h: Float) = current.withPlacement(

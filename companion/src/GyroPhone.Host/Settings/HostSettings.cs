@@ -54,11 +54,12 @@ public sealed class HostSettings
     /// </summary>
     public bool UseInputDriver { get; set; }
     /// <summary>
-    /// "Use the Rust input program" (Performance › Input program, off by default), the companion's own setting
+    /// "Use the Rust input program" (Performance › Input program, on by default), the companion's own setting
     /// (companion.json): the companion starts its input process as the Rust program (companion/src/input) instead of
-    /// the original C# one. Both do the same job; the C# one stays as the fallback.
+    /// the original C# one. Both do the same job; the C# one is kept only as the fallback. A companion.json saved
+    /// before Rust was the default keeps the choice written in it.
     /// </summary>
-    public bool RustInput { get; set; }
+    public bool RustInput { get; set; } = true;
     /// <summary>"Use this PC's keys for Press a key" on the App page: off, the PC's keyboard, mouse and controller are never read for it.</summary>
     public bool PressKeyListen { get; set; } = true;
     /// <summary>"Notify when the phone listens for a key" on the App page: a tray notification each time the phone's "Press a key" opens.</summary>

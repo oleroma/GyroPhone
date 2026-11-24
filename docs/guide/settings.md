@@ -123,7 +123,7 @@ Open them from edit mode's menu (the sliders icon), or **⚙ Settings** in the t
 - **Yaw axis** and **Set orientation** (Base only): which of the phone's axes counts as left-right turning. **Set orientation** takes the way you hold the phone now as straight, and levels every gyro display and PC overlay.
 - **PC pad yaw / pitch / roll** (Base only; DualShock 4 and DualSense output): which phone axis drives the PC controller's own gyro, and Invert.
 - **Sensitivity**: how far the gyro moves the mouse (16 counts per degree, or the RWS above). Each axis's **⚙** can give it its own value, or make it follow the shared one, another axis or a named sensitivity, times a scale.
-- **Acceleration**: a curve that turns fast swings further than slow ones (Off, Light, Strong or your own). **Easy to miss:** in the curve editor, tap to add a point, drag to move it, hold a point to remove it.
+- **Acceleration**: a curve that turns fast swings further than slow ones (Off, Light, Strong or your own). It only ever adds: the graph's bottom line is 1× (your sensitivity as set), and each line up says how many times that and what it gives you, using the sensitivity in effect now (a slider's value too, so the curve follows the slider). **Easy to miss:** in the curve editor, tap to add a point, drag to move it, hold a point to remove it.
 - **Inertia** (off), **Glide curve** (Smooth or Linear) and **Glide** (325 ms): when on, after a ratchet stops the gyro the view glides on for a moment instead of stopping dead.
 - **Drift correction** (Base only, one setting for the phone): **Android** (default) or, on phones whose gyro GP can read uncorrected, **GP**. With GP: **Calibrate** (lay the phone still), **Clear**, and **Re-measure when the phone rests**.
 
@@ -165,6 +165,8 @@ Haptics play only while a PC is connected.
 1. **Add ▴**: the open Add list. Tap it again to close it.
 2. **Button** (and **Empty button**, **Stick**): tap to put one on the pad.
 3. **Display…**: the [gyro displays](#gyro-displays).
+
+**Curve frame** (also in the Add list) puts a rectangle on the pad that holds its own gyro acceleration curve. While it's on the pad, its curve replaces the workspace's acceleration (the curve in Settings stays as it is; delete the frame to get it back). A held button with its own acceleration still uses its own. **Easy to miss:** you edit the curve in play, right on the frame. It starts locked (hollow points) so a stray touch can't change it: hold an empty spot to unlock it (a border shows) and hold one again to lock it. Unlocked, drag a point to move it (the gyro follows as you drag), hold a point to remove it, or hold near the curve to add one there. Tap a selected frame in edit mode for its settings: which axis it sets (all, or yaw, pitch or roll), its range across (°/s) and up (×), Lines or Smooth, and Start again. Each line on it says what that multiplier gives at the sensitivity in effect now, the yellow line is how fast you're turning, and the dimmer dashed one is the fastest you've turned since the frame showed. The frame grays out while something else drives the curve, such as a held button with its own.
 
 Tap the capsule of the workspace you're on (**Easy to miss:** there is no Edit button). The [quick start](quick-start.md#5-change-the-layout) shows the menu. Besides what's there:
 
@@ -551,7 +553,7 @@ Measured only while this page is open or Diagnostics is on.
 - **Results**: one row per saved record (loss, late packets, latency, frame rate, CPU), with **Open results** and **Open folder**.
 - **Mouse**: **Catch-up time** (16 ms): a late stretch of mouse motion is spread over at most this long instead of jumping.
 - **Keyboard and mouse**: **Use input driver** (off, only shown with the optional driver installed) and **Delivery test** (times each mouse move from GP to a window in front, like a game).
-- **Input program**: **Use the Rust input program** (off): which of GP's two input programs runs. Both work the same way; it falls back to the other by itself if Rust fails.
+- **Input program**: **Use the Rust input program** (on): which of GP's two input programs runs. Rust is the main one; the original C# one is only a fallback, and GP switches to it by itself if Rust fails.
 - **Log**: **Open log folder**.
 - **Set up FPS helper**: shown when an FPS overlay needs it. It asks once for administrator rights, then the frame counter works without asking again.
 

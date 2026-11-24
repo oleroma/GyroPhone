@@ -166,7 +166,9 @@ public sealed class SettingsStore
                 if (!File.Exists(Path)) return;
                 Directory.CreateDirectory(BackupDir);
                 var now = File.ReadAllBytes(Path);
-                var old = Directory.GetFiles(BackupDir, "settings-*.json").OrderByDescending(f => f, StringComparer.Ordinal).ToList();
+                // Newest first by name without ".json", so a same-millisecond "-2" copy sorts after its first one.
+                var old = Directory.GetFiles(BackupDir, "settings-*.json")
+                    .OrderByDescending(f => System.IO.Path.GetFileNameWithoutExtension(f), StringComparer.Ordinal).ToList();
                 _lastBackupUtc = DateTime.UtcNow;
                 if (onlyIfChanged && old.Count > 0 && File.ReadAllBytes(old[0]).AsSpan().SequenceEqual(now)) return;
                 var stamp = $"settings-{DateTime.Now:yyyyMMdd-HHmmss-fff}";

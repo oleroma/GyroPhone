@@ -14,6 +14,7 @@ import com.oleroma.gyrophone.core.engine.GravityPose
 import com.oleroma.gyrophone.core.engine.RestDetector
 import com.oleroma.gyrophone.core.engine.GyroMouse
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
+import com.oleroma.gyrophone.core.model.GyroCurve
 import com.oleroma.gyrophone.core.model.MotionAxis
 import com.oleroma.gyrophone.core.engine.GyroPose
 import com.oleroma.gyrophone.core.engine.GyroSway
@@ -1498,6 +1499,33 @@ class GamepadRuntime(context: Context) {
         updateGyro()
     }
 
+    /**
+     * Curve frame [id] of the workspace in play now got [curve] (a finger lifted after changing it
+     * on the pad): saved with the frame, which wins over any other frame of the same axis from now
+     * on. The settings' curve never changes. The gyro follows without a reset.
+     */
+    fun saveCurveFrame(id: String, curve: GyroCurve) {
+        val before = _activeProfile.value
+        val wi = _workspaceIndex.value
+        val w = before.workspace(wi)
+        val c = w.touchControls.firstOrNull { it.id == id } ?: return
+        val f = c.curveFrame ?: return
+        val now = f.copy(curve = f.inRange(curve), edited = System.currentTimeMillis())
+        val changed = before.updateWorkspace(wi) { ws ->
+            ws.copy(touchControls = ws.touchControls.map { if (it.id == id) it.copy(curveFrame = now) else it })
+        }
+        val set = WorkspaceMappings.store(WorkspaceMappings.settle(before, changed))
+        if (set != stored) {
+            stored = set
+            store.saveLater(set)
+        }
+        val resolved = resolveStored(stored)
+        engine.updateSettings(resolved)
+        engine.setFrameCurve(id, null)
+        _activeProfile.value = resolved
+        updateGyro()
+    }
+
     /** Adds [button] to the button library. */
     fun addToLibrary(button: LibraryButton) {
         _buttonLibrary.value = _buttonLibrary.value + button
@@ -2276,6 +2304,9 @@ class GamepadRuntime(context: Context) {
     // The acceleration graphs' live line: turning speed (deg/s, smoothed over ~40 ms) of the whole
     // phone and of yaw, pitch and roll (by MotionAxis ordinal), in the workspace's gyro space.
     private val liveRates = FloatArray(4)
+
+    /** The highest of [liveRates] since [resetGyroPeak] (each axis, then the whole phone): a curve frame's max line. */
+    private val livePeaks = FloatArray(4)
     @Volatile private var liveRatesNs = 0L
 
     /** An acceleration graph is shown: the gyro thread keeps [liveGyroSpeed] up to date until [unwatchAccel]. */
@@ -2291,6 +2322,12 @@ class GamepadRuntime(context: Context) {
         return liveRates[if (axis == null || axis == MotionAxis.NONE) 3 else axis.ordinal]
     }
 
+    /** The highest turning speed (deg/s) since [resetGyroPeak], as [liveGyroSpeed] reads it. */
+    fun liveGyroPeak(axis: MotionAxis?): Float = livePeaks[if (axis == null || axis == MotionAxis.NONE) 3 else axis.ordinal]
+
+    /** Starts the highest speeds again (a curve frame shown in play). */
+    fun resetGyroPeak() = livePeaks.fill(0f)
+
     private fun liveSpeed(yaw: Float, pitch: Float, roll: Float, dt: Float, @Suppress("UNUSED_PARAMETER") ts: Long) {
         val k = if (dt <= 0f) 1f else (dt / 0.04f).coerceAtMost(1f)
         val r = liveRates
@@ -2298,6 +2335,8 @@ class GamepadRuntime(context: Context) {
         r[1] += k * (abs(pitch) - r[1])
         r[2] += k * (abs(roll) - r[2])
         r[3] += k * (sqrt(yaw * yaw + pitch * pitch + roll * roll) - r[3])
+        val p = livePeaks
+        for (i in 0 until 4) if (r[i] > p[i]) p[i] = r[i]
         liveRatesNs = System.nanoTime()
     }
 

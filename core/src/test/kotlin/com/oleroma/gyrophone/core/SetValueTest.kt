@@ -3,6 +3,7 @@ package com.oleroma.gyrophone.core
 import com.oleroma.gyrophone.core.engine.MappingEngine
 import com.oleroma.gyrophone.core.hid.GamepadState
 import com.oleroma.gyrophone.core.model.AxisRange
+import com.oleroma.gyrophone.core.model.ButtonGyro
 import com.oleroma.gyrophone.core.model.FingerAxis
 import com.oleroma.gyrophone.core.model.GamepadAxis
 import com.oleroma.gyrophone.core.model.GyroSettings
@@ -128,6 +129,78 @@ class SetValueTest {
         assertEquals(16f, p.workspace(0).gyro.sensitivity, 0f) // the setting stays
         val e = MappingEngine(p) { now }
         assertEquals(12f, e.gyroSettings.sensitivity, 0.01f)
+    }
+
+    @Test
+    fun aHeldButtonsOwnSensitivityWinsOverASliderKeptOrSaved() {
+        val slider = TouchControl("aim", TouchKind.BUTTON, "Aim", 0.5f, 0.5f, shape = TouchShape.SQUARE)
+        val ads = TouchControl("ads", TouchKind.BUTTON, "ADS", 0.2f, 0.2f, gyro = listOf(ButtonGyro(sensitivity = 5f)))
+        val plain = TouchControl("hip", TouchKind.BUTTON, "Hip", 0.8f, 0.8f)
+        val chip = Mapping(InputSource.Finger("aim", FingerAxis.Y), OutputTarget.GyroSens(), range = AxisRange(8f, 24f), options = TOGGLE)
+        val w = Workspace("w", "w", touchControls = listOf(slider, ads, plain), mappings = listOf(chip), gyro = GyroSettings(sensitivity = 16f))
+        // Kept in memory (the chip dragged and let go): the button's own 5 wins while held.
+        val e = MappingEngine(single(w)) { now }
+        e.setFinger("aim", 0.5f, 0.25f)
+        e.fingerUp("aim")
+        assertEquals(12f, e.gyroSettings.sensitivity, 0.01f)
+        e.setTouch("ads", true)
+        assertEquals(5f, e.gyroSettings.sensitivity, 0.01f)
+        e.setTouch("ads", false)
+        assertEquals(12f, e.gyroSettings.sensitivity, 0.01f)
+        // A button that sets nothing of its own follows the slider.
+        e.setTouch("hip", true)
+        assertEquals(12f, e.gyroSettings.sensitivity, 0.01f)
+        e.setTouch("hip", false)
+        // Saved (after a restart): the same.
+        val r = MappingEngine(SliderOverrides.put(single(w), 0, chip, 12f)) { now }
+        assertEquals(12f, r.gyroSettings.sensitivity, 0.01f)
+        r.setTouch("ads", true)
+        assertEquals(5f, r.gyroSettings.sensitivity, 0.01f)
+    }
+
+    @Test
+    fun aSlidersSensitivityTakesTheFramesCurveAndIsGrayedUnderAHeldButtonsOwn() {
+        val slider = TouchControl("aim", TouchKind.BUTTON, "Aim", 0.5f, 0.5f, shape = TouchShape.SQUARE)
+        val ads = TouchControl("ads", TouchKind.BUTTON, "ADS", 0.2f, 0.2f, gyro = listOf(ButtonGyro(sensitivity = 5f)))
+        val curve = com.oleroma.gyrophone.core.model.GyroCurve(
+            listOf(com.oleroma.gyrophone.core.model.CurvePoint(30f, 1f), com.oleroma.gyrophone.core.model.CurvePoint(270f, 2f)),
+        )
+        val frame = TouchControl(
+            "f", TouchKind.CURVE, "", 0.5f, 0.5f, shape = TouchShape.SQUARE,
+            curveFrame = com.oleroma.gyrophone.core.model.CurveFrame(curve, edited = 1L),
+        )
+        val chip = Mapping(InputSource.Finger("aim", FingerAxis.Y), OutputTarget.GyroSens(), range = AxisRange(8f, 24f), options = TOGGLE)
+        val w = Workspace("w", "w", touchControls = listOf(slider, ads, frame), mappings = listOf(chip), gyro = GyroSettings(sensitivity = 16f))
+        val e = MappingEngine(single(w)) { now }
+        e.setFinger("aim", 0.5f, 0.25f)
+        e.fingerUp("aim")
+        // The slider's 12 is the sensitivity the frame's curve multiplies.
+        assertEquals(12f, e.gyroSettings.sensitivity, 0.01f)
+        assertEquals(curve, e.gyroSettings.accel)
+        assertEquals(false, e.valueOverridden(chip))
+        // A held button with its own sensitivity: the slider isn't in effect.
+        e.setTouch("ads", true)
+        assertEquals(true, e.valueOverridden(chip))
+        e.setTouch("ads", false)
+        assertEquals(false, e.valueOverridden(chip))
+    }
+
+    @Test
+    fun anAllAxesGraphLabelsWithTheSensOfTheAxisTurningTheCameraSideways() {
+        val slider = TouchControl("aim", TouchKind.BUTTON, "Aim", 0.5f, 0.5f, shape = TouchShape.SQUARE)
+        val yaw = Mapping(
+            InputSource.Finger("aim", FingerAxis.Y), OutputTarget.GyroSens(com.oleroma.gyrophone.core.model.MotionAxis.YAW),
+            range = AxisRange(4f, 20f), options = TOGGLE,
+        )
+        val w = Workspace("w", "w", touchControls = listOf(slider), mappings = listOf(yaw), gyro = GyroSettings(sensitivity = 16f))
+        val e = MappingEngine(single(w)) { now }
+        e.setFinger("aim", 0.5f, 0.25f)
+        e.fingerUp("aim")
+        val side = com.oleroma.gyrophone.core.engine.GyroDisplayFeed.sideSensOf(e.gyroRoutes(), e.gyroSettings)
+        val m = com.oleroma.gyrophone.core.engine.GyroDisplayFeed.cameraMapOf(e.gyroRoutes(), e.gyroSettings) and 0x7F
+        val expected = if (m == 1) 8f else 16f
+        assertEquals(expected, side, 0.01f)
+        assertEquals(8f, e.gyroSettings.sensitivityOf(com.oleroma.gyrophone.core.model.MotionAxis.YAW), 0.01f)
     }
 }
 

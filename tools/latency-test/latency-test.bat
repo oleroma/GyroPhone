@@ -5,7 +5,7 @@ setlocal
 set "OUT=%~dp0..\..\build\latency-test\app"
 dotnet build "%~dp0App\LatencyTest.csproj" -c Release -nologo -v q -o "%OUT%"
 if errorlevel 1 (
-  echo The latency test couldn't be built: it needs the .NET 8 SDK.
+  echo The latency test couldn't be built: it needs the .NET 10 SDK.
   pause
   exit /b 1
 )
