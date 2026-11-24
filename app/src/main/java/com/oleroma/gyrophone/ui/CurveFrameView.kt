@@ -56,7 +56,7 @@ private const val CURVE_TEXT_DP = 10f
 /** How near (dp) a finger must land to a point to take it. */
 private val CURVE_GRAB = 28.dp
 
-/** Held this long (ms) on a point without moving, then lifted: the point goes. */
+/** Held this long (ms) without moving on an unlocked frame: a point there goes, or one comes on an empty spot. */
 private const val CURVE_REMOVE_MS = 500L
 
 /** The live speed's poll interval in play (ms) and the change (°/s) it must make to redraw. */
@@ -84,11 +84,13 @@ private fun at(f: CurveFrame, g: Rect, speed: Float, gain: Float): Offset = Offs
 )
 
 /**
- * The curve frames' editing in play ([com.oleroma.gyrophone.core.model.TouchKind.CURVE]): a tap
- * adds a point, a drag moves one (the gyro takes the curve at once, [com.oleroma.gyrophone.core.engine.MappingEngine.setFrameCurve]),
- * a hold on a point then a lift removes it. The curve is saved when the finger lifts. A frame
- * takes its fingers for itself: nothing else sees them. [drafts] holds a frame's curve while a
- * finger changes it, for drawing.
+ * The curve frames' editing in play ([com.oleroma.gyrophone.core.model.TouchKind.CURVE]). A frame
+ * starts locked, so a stray touch can't change its curve: a hold on an empty spot unlocks it, another
+ * locks it again, as soon as the hold is long enough ([unlocked], for this play session only); a tap does nothing. Unlocked: a drag moves a point (the gyro
+ * takes the curve at once, [com.oleroma.gyrophone.core.engine.MappingEngine.setFrameCurve]), a hold
+ * on a point removes it and a hold near the curve adds one there, both as soon as the hold is long
+ * enough, not on the lift. A moved curve is saved when the finger lifts. A frame takes its fingers
+ * for itself: nothing else sees them. [drafts] holds a frame's curve while a finger changes it, for drawing.
  */
 internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
     val drafts = mutableStateMapOf<String, GyroCurve>()
@@ -96,21 +98,32 @@ internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
     /** The point a finger is dragging now, by frame id: its frame shows where it will land. */
     val dragging = mutableStateMapOf<String, Int>()
 
+    /** The frames unlocked for editing now, by id (every frame starts locked). */
+    val unlocked = mutableStateMapOf<String, Boolean>()
+
     private class Touch(
         val id: String,
         val frame: CurveFrame,
         val graph: Rect,
         val point: Int,
-        val downNs: Long,
         val down: Offset,
+        val open: Boolean,
+        /** Landed near the curve (not on a point): a hold adds a point there. */
+        val nearCurve: Boolean,
     ) {
         var moved = false
+
+        /** The hold already did its work (a point removed or added): the lift does nothing more. */
+        var done = false
         var curve: GyroCurve? = null
+        var hold: Runnable? = null
     }
 
     private val touches = HashMap<Long, Touch>()
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     /** A finger [pointer] lands at [p] (px) on frame [c] drawn over [rect], at [atNs]. */
+    @Suppress("UNUSED_PARAMETER")
     fun down(pointer: Long, c: TouchControl, rect: Rect, p: Offset, atNs: Long, pxPerDp: Float) {
         // The touch handler keeps its controls until their places change: the frame's range and curve
         // come from the profile in play now (a saved edit or a new range doesn't restart the handler).
@@ -120,25 +133,67 @@ internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
         if (touches.values.any { it.id == c.id }) return
         val g = graphArea(rect, pxPerDp)
         val curve = drafts[c.id] ?: f.inRange()
+        val open = unlocked[c.id] == true
         var best = -1
-        var bestD = CURVE_GRAB.value * pxPerDp
-        curve.points.forEachIndexed { i, q ->
-            val o = at(f, g, q.speed, q.gain)
-            val d = hypot(o.x - p.x, o.y - p.y)
-            if (d < bestD) { bestD = d; best = i }
+        if (open) {
+            var bestD = CURVE_GRAB.value * pxPerDp
+            curve.points.forEachIndexed { i, q ->
+                val o = at(f, g, q.speed, q.gain)
+                val d = hypot(o.x - p.x, o.y - p.y)
+                if (d < bestD) { bestD = d; best = i }
+            }
         }
-        touches[pointer] = Touch(c.id, f, g, best, atNs, p).also { it.curve = curve }
+        // Near the curve: within the grab distance of it, straight up or down from the finger.
+        val near = open && best < 0 && curve.points.isNotEmpty() && run {
+            val speed = ((p.x - g.left) / g.width * f.speedCap).coerceIn(0f, f.speedCap)
+            abs(at(f, g, speed, curve.gainAt(speed)).y - p.y) < CURVE_GRAB.value * pxPerDp
+        }
+        val t = Touch(c.id, f, g, best, p, open, near).also { it.curve = curve }
+        touches[pointer] = t
+        run {
+            // Held still long enough, at once: a point goes, one comes near the curve, or elsewhere the frame locks or unlocks.
+            val r = Runnable { held(pointer, t) }
+            t.hold = r
+            main.postDelayed(r, CURVE_REMOVE_MS)
+        }
+    }
+
+    private fun held(pointer: Long, t: Touch) {
+        if (touches[pointer] !== t || t.moved || t.done) return
+        if (!t.open || (t.point < 0 && !t.nearCurve)) {
+            t.done = true
+            if (t.open) unlocked.remove(t.id) else unlocked[t.id] = true
+            return
+        }
+        val c = t.curve ?: return
+        val f = t.frame
+        val result = when {
+            t.point >= 0 -> if (c.points.size > 1) c.copy(points = c.points.filterIndexed { j, _ -> j != t.point }) else null
+            t.nearCurve && c.points.size < GyroCurve.MAX_POINTS -> {
+                val g = t.graph
+                c.copy(points = c.points + CurvePoint(
+                    ((t.down.x - g.left) / g.width * f.speedCap).coerceIn(0f, f.speedCap),
+                    (1f + (1f - (t.down.y - g.top) / g.height) * (f.gainCap - 1f)).coerceIn(GyroCurve.MIN_GAIN, f.gainCap),
+                ))
+            }
+            else -> null
+        } ?: return
+        t.done = true
+        runtime.saveCurveFrame(t.id, f.inRange(result))
+        drafts.remove(t.id)
     }
 
     /** Finger [pointer] moved to [p]: a taken point follows it, within its neighbours and the frame's range. */
     fun move(pointer: Long, p: Offset, slopPx: Float) {
         val t = touches[pointer] ?: return
+        if (t.done) return
         if (!t.moved && (p - t.down).getDistance() <= slopPx) return
         if (!t.moved && t.point >= 0) dragging[t.id] = t.point
         t.moved = true
+        t.hold?.let { main.removeCallbacks(it) }
         val i = t.point
         val c = t.curve ?: return
-        if (i < 0 || i >= c.points.size) return
+        if (!t.open || i < 0 || i >= c.points.size) return
         val f = t.frame
         val ps = c.points
         val lo = if (i > 0) ps[i - 1].speed + GyroCurve.MIN_GAP else 0f
@@ -155,41 +210,32 @@ internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
         runtime.engine.setFrameCurve(t.id, next)
     }
 
-    /** Finger [pointer] lifted at [atNs] at [p] ([cancelled]: the system took it, nothing changes). */
+    /** Finger [pointer] lifted at [atNs] ([cancelled]: the system took it, nothing changes). */
+    @Suppress("UNUSED_PARAMETER")
     fun up(pointer: Long, atNs: Long, cancelled: Boolean) {
         val t = touches.remove(pointer) ?: return
+        t.hold?.let { main.removeCallbacks(it) }
         dragging.remove(t.id)
+        if (t.done) return
         val c = t.curve ?: return
-        val f = t.frame
-        val result: GyroCurve? = when {
-            cancelled -> null
-            t.point >= 0 && t.moved -> c
-            // A hold on a point, then a lift: it goes (the last one stays).
-            t.point >= 0 && atNs - t.downNs >= CURVE_REMOVE_MS * 1_000_000L ->
-                if (c.points.size > 1) c.copy(points = c.points.filterIndexed { j, _ -> j != t.point }) else null
-            // A tap on an empty spot: a new point there.
-            t.point < 0 && !t.moved && c.points.size < GyroCurve.MAX_POINTS -> {
-                val g = t.graph
-                val q = CurvePoint(
-                    ((t.down.x - g.left) / g.width * f.speedCap).coerceIn(0f, f.speedCap),
-                    (1f + (1f - (t.down.y - g.top) / g.height) * (f.gainCap - 1f)).coerceIn(GyroCurve.MIN_GAIN, f.gainCap),
-                )
-                c.copy(points = c.points + q)
+        when {
+            cancelled -> {}
+            // A moved point: saved where it was let go.
+            t.open && t.point >= 0 && t.moved -> {
+                runtime.saveCurveFrame(t.id, t.frame.inRange(c))
+                drafts.remove(t.id)
+                return
             }
-            else -> null
         }
-        if (result == null) {
-            if (t.id in drafts) { drafts.remove(t.id); runtime.engine.setFrameCurve(t.id, null) }
-            return
-        }
-        val saved = f.inRange(result)
-        runtime.saveCurveFrame(t.id, saved)
-        drafts.remove(t.id)
+        if (t.id in drafts) { drafts.remove(t.id); runtime.engine.setFrameCurve(t.id, null) }
     }
 
     /** Every finger lets go without saving (the handler restarts, the pad hides). */
     fun cancelAll() {
-        for (t in touches.values) runtime.engine.setFrameCurve(t.id, null)
+        for (t in touches.values) {
+            t.hold?.let { main.removeCallbacks(it) }
+            runtime.engine.setFrameCurve(t.id, null)
+        }
         touches.clear()
         drafts.clear()
         dragging.clear()
@@ -201,7 +247,8 @@ internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
  * up, the multiplier from 1× to its top. Each line's label sits just under it: its multiplier and,
  * with [CurveFrame.showValues], what it gives at the sensitivity in effect now (a held button's or a
  * slider's included), the unit named once in the top right corner ("1× = 10.00 RWS"). The curve as
- * the gyro uses it (Smooth included), its points, a tooltip on a point being dragged ([dragPoint])
+ * the gyro uses it (Smooth included), its points (hollow while locked; filled, with a border round the
+ * frame, while [unlocked]), a tooltip on a point being dragged ([dragPoint])
  * with where it will land, and in play the live speed line and what it gives now (top left). Grayed
  * while the frame's curve isn't in effect (a held button with its own curve, or a newer frame on its
  * axis). Redrawn on its own: the live parts only redraw (no recomposition), at most every [CURVE_LIVE_MS].
@@ -212,6 +259,7 @@ internal fun CurveFrameGraph(
     control: TouchControl,
     curve: GyroCurve,
     dragPoint: Int?,
+    unlocked: Boolean,
     counts: Float,
     live: Boolean,
     widthDp: Dp,
@@ -359,7 +407,20 @@ internal fun CurveFrameGraph(
                         paint.color = dim
                     }
                     drawPath(path, Color(0xFF7CC4FF), style = Stroke(width = 4f))
-                    for (q in pts) drawCircle(Color(0xFF7CC4FF), 9f, Offset(x(q.speed), y(q.gain)))
+                    // Locked: hollow points. Unlocked: filled points and a border round the frame.
+                    for (q in pts) {
+                        if (unlocked) drawCircle(Color(0xFF7CC4FF), 9f, Offset(x(q.speed), y(q.gain)))
+                        else drawCircle(Color(0xFF7CC4FF), 7f, Offset(x(q.speed), y(q.gain)), style = Stroke(width = 2.5f))
+                    }
+                    if (unlocked) {
+                        val b = 1.5f * pxPerDp
+                        drawRoundRect(
+                            Color(0xFF7CC4FF), topLeft = Offset(b, b), size = Size(size.width - 2 * b, size.height - 2 * b),
+                            // The button's own corners (12 % of its shorter side), so the border lies on its edge.
+                            cornerRadius = CornerRadius((minOf(size.width, size.height) * 0.12f - b).coerceAtLeast(0f)),
+                            style = Stroke(width = 2 * b),
+                        )
+                    }
                     if (v >= 0f) {
                         val lx = x(v.coerceAtMost(maxS))
                         drawLine(Color(0xFFFFC857), Offset(lx, g.top), Offset(lx, g.bottom), 2f)
