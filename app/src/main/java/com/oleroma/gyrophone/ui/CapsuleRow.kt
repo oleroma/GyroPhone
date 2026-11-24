@@ -67,22 +67,26 @@ internal sealed interface Capsule {
     data object App : Capsule
     /** The Defaults every workspace follows (sliders). */
     data object Defaults : Capsule
+    /** How you move the phone in play. */
+    data object Stats : Capsule
     data object Connection : Capsule
 }
 
 /**
- * The capsules in row order from the saved [order] ('W' = a workspace slot, 'D', 'S' = App, 'F' = Defaults, 'C'), filled with
+ * The capsules in row order from the saved [order] ('W' = a workspace slot, 'D', 'S' = App, 'F' = Defaults, 'T' = Stats, 'C'), filled with
  * [count] workspaces in profile order. Workspaces beyond the saved slots are new ones: they were
  * added at the front, so their slots go first; missing ones drop the last slots.
  */
 internal fun capsules(order: String, count: Int): List<Capsule> {
     val seen = HashSet<Char>()
-    val t = order.filter { it == 'W' || (it in "DSFC" && seen.add(it)) }.toMutableList()
+    val t = order.filter { it == 'W' || (it in "DSFTC" && seen.add(it)) }.toMutableList()
     // New since the order was saved: right before Settings.
     if ('D' !in t) t.add(t.indexOf('S').takeIf { it >= 0 } ?: t.size, 'D')
     if ('S' !in t) t.add('S')
     // Defaults, split off the old Settings capsule: right after App.
     if ('F' !in t) t.add(t.indexOf('S') + 1, 'F')
+    // Stats: right after Defaults.
+    if ('T' !in t) t.add(t.indexOf('F') + 1, 'T')
     if ('C' !in t) t.add('C')
     var w = t.count { it == 'W' }
     while (w < count) { t.add(0, 'W'); w++ }
@@ -94,6 +98,7 @@ internal fun capsules(order: String, count: Int): List<Capsule> {
             'D' -> Capsule.Devices
             'S' -> Capsule.App
             'F' -> Capsule.Defaults
+            'T' -> Capsule.Stats
             else -> Capsule.Connection
         }
     }
@@ -105,6 +110,7 @@ private fun encode(row: List<Capsule>): String = row.joinToString("") {
         Capsule.Devices -> "D"
         Capsule.App -> "S"
         Capsule.Defaults -> "F"
+        Capsule.Stats -> "T"
         Capsule.Connection -> "C"
     }
 }
@@ -121,6 +127,7 @@ internal fun CapsuleRow(
     onDevices: () -> Unit,
     onApp: () -> Unit,
     onDefaults: () -> Unit,
+    onStats: () -> Unit,
     onConnection: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -164,6 +171,7 @@ internal fun CapsuleRow(
                 Capsule.Devices -> "Controller, keyboard and mouse"
                 Capsule.App -> "App"
                 Capsule.Defaults -> "Defaults"
+                Capsule.Stats -> "Stats"
                 // A dot while the Connection page has Setup tips.
                 Capsule.Connection -> if (tips.isEmpty()) "Connection" else "Connection •"
             }
@@ -229,6 +237,7 @@ internal fun CapsuleRow(
                         Capsule.Devices -> onDevices()
                         Capsule.App -> onApp()
                         Capsule.Defaults -> onDefaults()
+                        Capsule.Stats -> onStats()
                         Capsule.Connection -> onConnection()
                     }
                 },

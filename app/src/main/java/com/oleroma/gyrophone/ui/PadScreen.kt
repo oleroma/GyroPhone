@@ -2349,6 +2349,10 @@ fun PadScreen(
                         releaseAll()
                         onOpenMenu(PadMenuPage.DefaultsSettings)
                     },
+                    onStats = {
+                        releaseAll()
+                        onOpenMenu(PadMenuPage.Stats)
+                    },
                     onConnection = {
                         releaseAll()
                         onOpenMenu(PadMenuPage.Connection)

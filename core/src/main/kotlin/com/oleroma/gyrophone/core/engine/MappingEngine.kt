@@ -1556,6 +1556,9 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             if (value != null) synchronized(lock) { tracedLayers = ""; traceLayers(value) }
         }
 
+    /** Stats while it collects ([AimStatsRecorder]): press edges as plain numbers, nothing else. */
+    @Volatile var inputTap: InputTap? = null
+
     /** The layers last logged, so only a change is. */
     private var tracedLayers = ""
 
@@ -1865,7 +1868,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val d = deviceFor(device)
                 val was = d.key(keyCode)
                 d.setKey(keyCode, pressed)
-                if (was != pressed) keyEdge(d, keyCode, pressed, now)
+                if (was != pressed) { keyEdge(d, keyCode, pressed, now); inputTap?.key(keyCode, pressed) }
                 pad = d.pad
                 if (was != pressed) trace?.let { traceKey(it, device.name + ":", keyCode, pressed, padMappings.getOrNull(d.pad)) }
             }
@@ -1879,6 +1882,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
     fun setAxis(device: PadDevice, axis: Int, value: Float) {
         synchronized(lock) {
             firingEvents(clock()) { deviceFor(device).setAxis(axis, value) }
+            inputTap?.axis(axis, value)
             if (anyPadFlick) flickPad(deviceFor(device))
         }
         onChange?.run()
@@ -1896,6 +1900,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
                 val dev = deviceFor(device)
                 for (i in 0 until n) dev.setAxis(axes[i], values[i])
             }
+            inputTap?.let { t -> for (i in 0 until n) t.axis(axes[i], values[i]) }
             if (anyPadFlick) flickPad(deviceFor(device))
         }
         onChange?.run()
@@ -2144,7 +2149,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             firingEvents(now) {
                 val was = anyDevice.key(keyCode)
                 anyDevice.setKey(keyCode, pressed)
-                if (was != pressed) keyEdge(anyDevice, keyCode, pressed, now)
+                if (was != pressed) { keyEdge(anyDevice, keyCode, pressed, now); inputTap?.key(keyCode, pressed) }
                 if (was != pressed) trace?.let { traceKeyAny(it, keyCode, pressed, padMappings) }
             }
             allPads.any { ms -> ms.any { mapsKey(it.source, keyCode) } }
@@ -2755,6 +2760,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             }
         }
         lastOutput = s
+        inputTap?.mouseButtons(s.mouse.buttons)
         // The gyro's part of the motion is what the camera moves did not make.
         trace?.queueOutput(s, s.mouse.dx - dx, s.mouse.dy - dy)
         if (hapticDue) {
@@ -4044,6 +4050,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
         val n = touches[id] ?: 0
         touches[id] = n + 1
         if (n == 0) {
+            inputTap?.touch(id, true)
             if (!latchDown(id)) pressOrder.add(id)
             updateGyroNow()
         }
@@ -4056,6 +4063,7 @@ class MappingEngine(profile: Profile, private val clock: () -> Long = System::na
             touches[id] = n - 1; return
         }
         touches.remove(id)
+        inputTap?.touch(id, false)
         toggleStates[id]?.shaper?.update(false, clock())
         if (id !in latched && !togglesGyro(id)) pressOrder.remove(id)
         updateGyroNow()
