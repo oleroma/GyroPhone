@@ -88,7 +88,7 @@ private fun at(f: CurveFrame, g: Rect, speed: Float, gain: Float): Offset = Offs
  * starts locked, so a stray touch can't change its curve: a tap on an empty spot unlocks it, another
  * locks it again ([unlocked], for this play session only). Unlocked: a drag moves a point (the gyro
  * takes the curve at once, [com.oleroma.gyrophone.core.engine.MappingEngine.setFrameCurve]), a hold
- * on a point removes it and a hold on an empty spot adds one, both as soon as the hold is long
+ * on a point removes it and a hold near the curve adds one there, both as soon as the hold is long
  * enough, not on the lift. A moved curve is saved when the finger lifts. A frame takes its fingers
  * for itself: nothing else sees them. [drafts] holds a frame's curve while a finger changes it, for drawing.
  */
@@ -108,6 +108,8 @@ internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
         val point: Int,
         val down: Offset,
         val open: Boolean,
+        /** Landed near the curve (not on a point): a hold adds a point there. */
+        val nearCurve: Boolean,
     ) {
         var moved = false
 
@@ -141,9 +143,14 @@ internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
                 if (d < bestD) { bestD = d; best = i }
             }
         }
-        val t = Touch(c.id, f, g, best, p, open).also { it.curve = curve }
+        // Near the curve: within the grab distance of it, straight up or down from the finger.
+        val near = open && best < 0 && curve.points.isNotEmpty() && run {
+            val speed = ((p.x - g.left) / g.width * f.speedCap).coerceIn(0f, f.speedCap)
+            abs(at(f, g, speed, curve.gainAt(speed)).y - p.y) < CURVE_GRAB.value * pxPerDp
+        }
+        val t = Touch(c.id, f, g, best, p, open, near).also { it.curve = curve }
         touches[pointer] = t
-        if (open) {
+        if (open && (best >= 0 || near)) {
             // Held still long enough: a point goes, or one comes on an empty spot, at once.
             val r = Runnable { held(pointer, t) }
             t.hold = r
@@ -157,7 +164,7 @@ internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
         val f = t.frame
         val result = when {
             t.point >= 0 -> if (c.points.size > 1) c.copy(points = c.points.filterIndexed { j, _ -> j != t.point }) else null
-            c.points.size < GyroCurve.MAX_POINTS -> {
+            t.nearCurve && c.points.size < GyroCurve.MAX_POINTS -> {
                 val g = t.graph
                 c.copy(points = c.points + CurvePoint(
                     ((t.down.x - g.left) / g.width * f.speedCap).coerceIn(0f, f.speedCap),
@@ -214,7 +221,7 @@ internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
                 drafts.remove(t.id)
                 return
             }
-            // A tap on an empty spot: lock or unlock the frame.
+            // A tap or hold on an empty spot (a hold near the curve adds a point instead): lock or unlock the frame.
             t.point < 0 && !t.moved -> if (t.open) unlocked.remove(t.id) else unlocked[t.id] = true
         }
         if (t.id in drafts) { drafts.remove(t.id); runtime.engine.setFrameCurve(t.id, null) }
