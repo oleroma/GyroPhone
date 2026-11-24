@@ -1043,7 +1043,7 @@ fun PadScreen(
             val o = center(c)
             val hw = half(c)
             val hh = halfH(c)
-            val rect = c.kind == TouchKind.BUTTON && c.shape == TouchShape.SQUARE
+            val rect = (c.kind == TouchKind.BUTTON || c.kind == TouchKind.CURVE) && c.shape == TouchShape.SQUARE
             val l = ((o.x - hw) / gx).roundToInt() * gx
             val r = max(((o.x + hw) / gx).roundToInt() * gx, l + gx)
             val t = ((o.y - hh) / gy).roundToInt() * gy
@@ -1378,7 +1378,7 @@ fun PadScreen(
                                             val floor = PINCH_AXIS_FLOOR_DP * pxPerDp
                                             val mid = (a.position + b.position) / 2f
                                             updateControl(id) { c ->
-                                                val rect = c.kind == TouchKind.BUTTON && c.shape == TouchShape.SQUARE
+                                                val rect = (c.kind == TouchKind.BUTTON || c.kind == TouchKind.CURVE) && c.shape == TouchShape.SQUARE
                                                 val nw: Float
                                                 val nh: Float
                                                 if (rect) {
@@ -1435,7 +1435,7 @@ fun PadScreen(
                                                 editWorkspace { wk ->
                                                     wk.copy(touchControls = wk.touchControls.map { p ->
                                                         val (at, sw, sh) = syncStart[p.id] ?: return@map p
-                                                        val rect = p.kind == TouchKind.BUTTON && p.shape == TouchShape.SQUARE
+                                                        val rect = (p.kind == TouchKind.BUTTON || p.kind == TouchKind.CURVE) && p.shape == TouchShape.SQUARE
                                                         val pw = (sw + dW).coerceIn(lo, hi)
                                                         val ph = if (rect) (sh + dH).coerceIn(lo, hi) else pw
                                                         val sized = p.withPlacement(portrait, p.placeX(portrait), p.placeY(portrait), pw / unit)
