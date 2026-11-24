@@ -61,8 +61,9 @@ internal fun CurveFrameSettingsScreen(
     ) {
         Column(Modifier.padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Hint(
-                "On the pad, in play: tap an empty spot to add a point, drag a point to move it (the gyro follows as you drag), " +
-                    "hold a point and lift to remove it. The frame's curve replaces this workspace's acceleration while the frame is " +
+                "On the pad, in play, the frame starts locked so a stray touch can't change it: tap an empty spot to unlock it " +
+                    "(a border shows), tap one again to lock it. Unlocked: drag a point to move it (the gyro follows as you drag), " +
+                    "hold a point to remove it, hold an empty spot to add one. The frame's curve replaces this workspace's acceleration while the frame is " +
                     "on the pad; the curve in Settings stays as it is, and deleting the frame brings it back. A held button with its own " +
                     "acceleration still uses its own.",
             )
