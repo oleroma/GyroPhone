@@ -36,4 +36,4 @@ Each workspace's stats: `files/stats/<workspace id>.json` (histograms, not raw s
 
 ## Reading them off the phone
 
-`tools/gp-log.sh phone stats` (adb `dumpsys ... GamepadService stats`) prints every workspace's stats: its Fire and Aim, the names of its inputs and the stats JSON (histograms). The workspace in use is saved first.
+Every Diagnostics save on the phone ends with a `--- stats` section: per workspace its Fire and Aim, the names of its inputs and the stats JSON (histograms); the workspace in use is saved first. The save reaches the PC over GP's own link (Documents\GyroPhone\Debug), so agents read stats with `tools/gp-log.sh pc save`, no adb.

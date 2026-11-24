@@ -133,7 +133,7 @@ class AimStats(context: Context, private val engine: MappingEngine, private val 
     }
 
     /**
-     * Every workspace's stats as text for `dumpsys ... stats`: per workspace its Fire and Aim, the names of
+     * Every workspace's stats as text for the end of a Diagnostics save: per workspace its Fire and Aim, the names of
      * its inputs and the stats JSON. The workspace in use is read as it is now (saved first).
      */
     fun dump(profile: com.oleroma.gyrophone.core.model.Profile): String {
