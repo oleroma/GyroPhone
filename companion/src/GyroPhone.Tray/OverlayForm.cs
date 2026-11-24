@@ -221,6 +221,7 @@ internal sealed class OverlayForm : Form
     }
 
     /// <summary>The picked window in Edit (also picked in the main window's list): drawn with a solid frame.</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public bool Selected
     {
         get => _selected;
@@ -233,6 +234,7 @@ internal sealed class OverlayForm : Form
     }
 
     /// <summary>Its name, shown in Edit.</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public string Title
     {
         get => _title;
@@ -249,6 +251,7 @@ internal sealed class OverlayForm : Form
     /// (its label, or a number when there are several of its kind; "" for a lone unlabelled one,
     /// so the title stays as it was before labels were in it). Set by the tray only when it changes.
     /// </summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public string WindowTitlePart
     {
         set

@@ -9,10 +9,4 @@
     <BaseOutputPath>$(MSBuildThisFileDirectory)../../build/latency-test/bin/$(MSBuildProjectName)/</BaseOutputPath>
     <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)../../build/latency-test/obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
   </PropertyGroup>
-  <!-- OpenCvSharp ships an analyzer that needs a newer compiler than the .NET 8 SDK has; it only adds warnings. -->
-  <Target Name="DropOpenCvSharpAnalyzer" BeforeTargets="CoreCompile">
-    <ItemGroup>
-      <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'OpenCvSharp.Analyzers'" />
-    </ItemGroup>
-  </Target>
 </Project>

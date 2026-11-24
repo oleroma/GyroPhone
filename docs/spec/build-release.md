@@ -9,7 +9,7 @@ The repo has two **parts** (`.agents/hooks/parts`), built only when a branch cha
 | Part | Sources | Build file |
 |---|---|---|
 | `apk` | `app/`, `core/`, the Gradle files | `app/build/outputs/apk/release/gyrophone-<version>.apk` (release build, arm64-v8a) |
-| `companion` | `companion/`, plus the protocol test vectors in `core/` | `companion/out/GyroPhoneCompanion.exe` (self-contained single-file .NET 8, win-x64) |
+| `companion` | `companion/`, plus the protocol test vectors in `core/` | `companion/out/GyroPhoneCompanion.exe` (self-contained single-file .NET 10, win-x64) |
 
 Docs, `media/` and `tools/` belong to no part. Any other change (hooks, workflows) builds both, and so does a branch that changed no part. The companion builds only on Windows; an unchanged companion exe is reused with its older version.
 

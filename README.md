@@ -39,7 +39,7 @@ The guide's pictures are drawn from the app's own layout by `docs/guide/mockups/
 
 ## Building
 
-Builds run through the scripts in `.agents/` (see `AGENTS.md` and [Build and release](docs/spec/build-release.md)). On the PC, `agent-build pc` runs the quick tests, builds only the parts that changed (`gyrophone-0.1.<n>.apk` and/or `GyroPhoneCompanion.exe`), installs the APK over adb and installs the companion. You need JDK 17, the Android SDK (API 36) and the .NET 8 SDK on the `PATH` / `JAVA_HOME` / `ANDROID_HOME`. When the PC is offline, the `fallback.yml` workflow does the same on GitHub.
+Builds run through the scripts in `.agents/` (see `AGENTS.md` and [Build and release](docs/spec/build-release.md)). On the PC, `agent-build pc` runs the quick tests, builds only the parts that changed (`gyrophone-0.1.<n>.apk` and/or `GyroPhoneCompanion.exe`), installs the APK over adb and installs the companion. You need JDK 17, the Android SDK (API 36) and the .NET 10 SDK on the `PATH` / `JAVA_HOME` / `ANDROID_HOME`. When the PC is offline, the `fallback.yml` workflow does the same on GitHub.
 
 Tests:
 
@@ -56,7 +56,7 @@ The companion's protocol and engine tests run on Linux and macOS too; the tray a
 |---|---|
 | `core/` | Plain Kotlin, unit-tested on the JVM: the model (workspaces, mappings, inheritance, device presets), the mapping engine, touch surfaces, gyro math, the HID descriptor, and the wire protocol and crypto. |
 | `app/` | The Android app: Bluetooth HID, the Wi-Fi/USB link, gyro and other sensors, controller input, the foreground service, and the Compose UI. |
-| `companion/` | The Windows companion in C# (.NET 8), with its input program also in Rust: protocol, host engine, virtual controller and SendInput, overlays, tray and main window. Shared test vectors in `core/src/test/resources/protocol/v1/` keep the sides in step. |
+| `companion/` | The Windows companion in C# (.NET 10; .NET 8 is no longer used), with its input program in Rust (the C# one is kept only as the fallback): protocol, host engine, virtual controller and SendInput, overlays, tray and main window. Shared test vectors in `core/src/test/resources/protocol/v1/` keep the sides in step. |
 | `docs/guide/` | The [quick start](docs/guide/quick-start.md) and [settings guide](docs/guide/settings.md), with their pictures. |
 | `docs/spec/` | The [full spec](docs/spec/README.md). |
 

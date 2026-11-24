@@ -2,7 +2,7 @@
   <!-- Tray app (GyroPhoneCompanion.exe). WinForms: builds on Windows only (CI windows-latest). -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <!-- Hosts the WPF windows from GyroPhone.Ui. WPF drops the System.IO implicit using: put it back. -->
     <UseWPF>true</UseWPF>

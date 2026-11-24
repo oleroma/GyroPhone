@@ -2,7 +2,7 @@
   <!-- The companion's windows (main window, pair window) in WPF. The tray app (WinForms) hosts them
        and implements ICompanion. Windows only. -->
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <RootNamespace>GyroPhone.Ui</RootNamespace>
     <AssemblyName>GyroPhone.Ui</AssemblyName>
