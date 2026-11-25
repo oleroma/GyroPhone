@@ -23,8 +23,34 @@ data class OverlayControl(
         const val STICK = 1
         const val CORNER = 2
         const val DISPLAY = 3
+        /** A curve frame: its graph comes with the frames ([OverlayCurve]). */
+        const val CURVE = 4
     }
 }
+
+/**
+ * A curve frame's graph as the pad shows it, for the PC's phone overlay ([id] the control): its curve's [points]
+ * (speed deg/s, gain ×), [smooth], speed from its [axis] ([axisSpeed]; [com.oleroma.gyrophone.core.model.MotionAxis]
+ * ordinal, NONE = the whole phone), its range 0..[maxSpeed] across and 1..[maxGain] up; [showValues] its labels say
+ * what each line gives, [oneX] what 1× gives at the sensitivity in effect now ([rws]: in RWS, else counts per degree);
+ * [inEffect] its curve is the one the gyro uses (else grayed); [unlocked] for editing; [drag] the point being dragged
+ * (-1 none). The PC works out the live speed and the highest from the OVERLAY's turns.
+ */
+data class OverlayCurve(
+    val id: String,
+    val points: List<com.oleroma.gyrophone.core.model.CurvePoint>,
+    val smooth: Boolean,
+    val axisSpeed: Boolean,
+    val axis: Int,
+    val maxSpeed: Float,
+    val maxGain: Float,
+    val showValues: Boolean,
+    val oneX: Float,
+    val rws: Boolean,
+    val inEffect: Boolean,
+    val unlocked: Boolean,
+    val drag: Int,
+)
 
 /**
  * What the phone's screen shows, for the PC's phone overlay: the pad area's size in pixels (its
@@ -125,7 +151,10 @@ data class OverlayBar(val axis: Int, val value: Float, val steps: Int)
  * (left, right) u8 Press, u8 Full pull (0..255 = 0..1); u8 key count, per key u8 [OverlayKey.input], u8
  * [OverlayKey.flags], str8 name, str8 what it sends; u8 touch key count, per touch key u8 control index, u8 flags (as a
  * key's), str8 what it sends ([OverlayTouchKey]). The PC works out what is pressed from the OVERLAY's pad fields and
- * its pressed and latched bitmaps.
+ * its pressed and latched bitmaps. Then, while curve frames are on the pad ([setCurve]; older PCs stop before it):
+ * u8 [CURVES_SECTION]; u8 count; per frame u8 control index, u8 flags (1 smooth, 2 speed from its axis, 4 show
+ * values, 8 in effect, 16 unlocked, 32 RWS), u8 axis ([OverlayCurve.axis]), u16 across (deg/s), u16 up (× 100),
+ * f32 what 1× gives, u8 point dragged (0xFF none), u8 point count, per point u16 speed (× 10), u16 gain (× 1000).
  *
  * Totals ([FLAG_TOTALS], only while HOST_STATUS has [HostStatusFlags.OVERLAY_TOTALS]; older PCs get
  * the per-frame form above): the yaw, pitch, roll and the camera degrees are running totals since
@@ -195,6 +224,7 @@ class OverlayFeed {
     private val sticks = LinkedHashMap<String, FloatArray>()
     private var frames: OverlayFrames? = null
     private var keys: OverlayKeys? = null
+    private val curves = LinkedHashMap<String, OverlayCurve>()
     private var framesVersion = 0
     /** [frames] encoded for the layout now; null: encoded again at the next [framesSnapshot]. */
     private var framesBlob: ByteArray? = null
@@ -394,8 +424,18 @@ class OverlayFeed {
         }
     }
 
+    /** Curve frame [id]'s graph now, or null when it is gone: it goes with the frames ([OverlayCurve]). */
+    fun setCurve(id: String, c: OverlayCurve?) {
+        synchronized(lock) {
+            if (curves[id] == c) return
+            if (c == null) curves.remove(id) else curves[id] = c
+            framesBlob = null
+            framesVersion = (framesVersion + 1) and 0xFFFF
+        }
+    }
+
     /** The frames version now, or -1 with neither frames nor keys set; read without allocating before a [framesSnapshot]. */
-    fun framesVersion(): Int = synchronized(lock) { if (frames == null && keys == null) -1 else framesVersion }
+    fun framesVersion(): Int = synchronized(lock) { if (frames == null && keys == null && curves.isEmpty()) -1 else framesVersion }
 
     /**
      * The frames version and blob now (for the layout now), for one round of OVERLAY_FRAMES pieces. A new blob is
@@ -404,15 +444,16 @@ class OverlayFeed {
     fun framesSnapshot(): Pair<Int, ByteArray>? {
         val f: OverlayFrames?
         val k: OverlayKeys?
+        val cs: List<OverlayCurve>
         val fv: Int
         val lv: Int
         val idx: Map<String, Int>
         synchronized(lock) {
-            if (frames == null && keys == null) return null
+            if (frames == null && keys == null && curves.isEmpty()) return null
             framesBlob?.let { return framesVersion to it }
-            f = frames; k = keys; fv = framesVersion; lv = version; idx = index
+            f = frames; k = keys; cs = curves.values.toList(); fv = framesVersion; lv = version; idx = index
         }
-        val b = encodeFrames(f ?: OverlayFrames.NONE, lv, idx, k)
+        val b = encodeFrames(f ?: OverlayFrames.NONE, lv, idx, k, cs)
         synchronized(lock) {
             // Kept for the next rounds only while nothing changed meanwhile.
             if (framesBlob == null && framesVersion == fv && version == lv && frames === f && keys === k) framesBlob = b
@@ -667,6 +708,10 @@ class OverlayFeed {
         private const val MAX_LINES = 12
         /** Marks the Keys overlay's part of a frames blob, after the marks. */
         const val KEYS_SECTION = 0x4B
+        /** Marks the curve frames' part of a frames blob, after the Keys part. */
+        const val CURVES_SECTION = 0x43
+        /** The most curve frames sent. */
+        const val MAX_CURVES = 8
         /** The most mappings the Keys overlay's table is sent. */
         const val MAX_KEYS = 96
         /** A frames blob fits this many OVERLAY_FRAMES pieces (whole records are left out to fit). */
@@ -714,8 +759,15 @@ class OverlayFeed {
          * after them. It fits [MAX_FRAME_PIECES] pieces: whole records are left out once the next would not fit (the
          * Keys overlay's table first, as it is open only while asked for), and the counts say what is there.
          */
-        fun encodeFrames(f: OverlayFrames, layoutVersion: Int, index: Map<String, Int>, keys: OverlayKeys? = null): ByteArray {
-            val limit = PIECE_DATA * MAX_FRAME_PIECES
+        fun encodeFrames(
+            f: OverlayFrames,
+            layoutVersion: Int,
+            index: Map<String, Int>,
+            keys: OverlayKeys? = null,
+            curves: List<OverlayCurve> = emptyList(),
+        ): ByteArray {
+            val curveBytes = encodeCurvesSection(curves, index)
+            val limit = PIECE_DATA * MAX_FRAME_PIECES - (curveBytes?.size ?: 0)
             val keyBytes = keys?.let { encodeKeysSection(it, index, limit - FRAMES_HEAD) }
             val out = Blob()
             fun u8(v: Int) = out.write(v and 0xFF)
@@ -753,6 +805,38 @@ class OverlayFeed {
             }
             out.patch(countAt, n)
             if (keyBytes != null) out.write(keyBytes)
+            if (curveBytes != null) out.write(curveBytes)
+            return out.toByteArray()
+        }
+
+        /** The curve frames' part of a frames blob (those in the layout), or null for none. */
+        private fun encodeCurvesSection(curves: List<OverlayCurve>, index: Map<String, Int>): ByteArray? {
+            val cs = curves.filter { it.id in index }.take(MAX_CURVES)
+            if (cs.isEmpty()) return null
+            val out = Blob()
+            fun u8(v: Int) = out.write(v and 0xFF)
+            fun u16(v: Int) { u8(v); u8(v shr 8) }
+            u8(CURVES_SECTION)
+            u8(cs.size)
+            for (c in cs) {
+                u8(index.getValue(c.id))
+                u8(
+                    (if (c.smooth) 1 else 0) or (if (c.axisSpeed) 2 else 0) or (if (c.showValues) 4 else 0) or
+                        (if (c.inEffect) 8 else 0) or (if (c.unlocked) 16 else 0) or (if (c.rws) 32 else 0),
+                )
+                u8(c.axis)
+                u16(c.maxSpeed.roundToInt().coerceIn(0, 0xFFFF))
+                u16((c.maxGain * 100f).roundToInt().coerceIn(0, 0xFFFF))
+                val bits = java.lang.Float.floatToRawIntBits(c.oneX)
+                u16(bits); u16(bits ushr 16)
+                u8(if (c.drag in 0 until 0xFF) c.drag else 0xFF)
+                val ps = c.points.take(com.oleroma.gyrophone.core.model.GyroCurve.MAX_POINTS)
+                u8(ps.size)
+                for (q in ps) {
+                    u16((q.speed * 10f).roundToInt().coerceIn(0, 0xFFFF))
+                    u16((q.gain * 1000f).roundToInt().coerceIn(0, 0xFFFF))
+                }
+            }
             return out.toByteArray()
         }
 

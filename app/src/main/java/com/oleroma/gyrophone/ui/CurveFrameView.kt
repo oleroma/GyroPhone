@@ -24,6 +24,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.oleroma.gyrophone.core.engine.GyroDisplayFeed
+import com.oleroma.gyrophone.core.net.OverlayCurve
 import com.oleroma.gyrophone.core.model.CurveFrame
 import com.oleroma.gyrophone.core.model.CurvePoint
 import com.oleroma.gyrophone.core.model.GyroCurve
@@ -35,6 +36,7 @@ import kotlinx.coroutines.delay
 import kotlin.math.abs
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
@@ -246,10 +248,10 @@ internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
  * A curve frame's graph, drawn over its button-like shape: across, turning speed to its range;
  * up, the multiplier from 1× to its top. Each line's label sits just under it: its multiplier and,
  * with [CurveFrame.showValues], what it gives at the sensitivity in effect now (a held button's or a
- * slider's included), the unit named once in the top right corner ("1× = 10.00 RWS"). The curve as
+ * slider's included), the unit only on 1× ("1× 10.00 RWS"). The curve as
  * the gyro uses it (Smooth included), its points (hollow while locked; filled, with a border round the
  * frame, while [unlocked]), a tooltip on a point being dragged ([dragPoint])
- * with where it will land, and in play the live speed line and what it gives now (top left). Grayed
+ * with where it will land, and in play the live speed line and what it gives now (top right). Grayed
  * while the frame's curve isn't in effect (a held button with its own curve, or a newer frame on its
  * axis). Redrawn on its own: the live parts only redraw (no recomposition), at most every [CURVE_LIVE_MS].
  */
@@ -300,6 +302,26 @@ internal fun CurveFrameGraph(
         }
     }
     val isLive by rememberUpdatedState(live)
+    // The PC's phone overlay draws the same graph ([com.oleroma.gyrophone.core.net.OverlayCurve], with the frames):
+    // sent when what it shows changes, not the live speed (the PC works that out from the phone's turns).
+    if (live) {
+        val latest by rememberUpdatedState(Triple(curve, dragPoint, unlocked))
+        LaunchedEffect(runtime, control.id) {
+            snapshotFlow { Triple(latest, sens.floatValue, active.value) }.collect { (cs, s, inEffect) ->
+                val (c, drag, open) = cs
+                runtime.wifi.overlay.setCurve(
+                    control.id,
+                    OverlayCurve(
+                        id = control.id, points = c.points, smooth = c.smooth, axisSpeed = c.axisSpeed, axis = axis.ordinal,
+                        maxSpeed = f.speedCap, maxGain = f.gainCap, showValues = f.showValues,
+                        oneX = if (counts > 0f) GameSens.rws(s, counts) else s, rws = counts > 0f,
+                        inEffect = inEffect, unlocked = open, drag = drag ?: -1,
+                    ),
+                )
+            }
+        }
+        DisposableEffect(runtime, control.id) { onDispose { runtime.wifi.overlay.setCurve(control.id, null) } }
+    }
     val density = LocalDensity.current
     val pxPerDp = density.density
     val textPx = CURVE_TEXT_DP * pxPerDp
@@ -368,7 +390,8 @@ internal fun CurveFrameGraph(
                     drawLine(Color.White.copy(alpha = 0.5f), Offset(g.left, g.bottom), Offset(g.right, g.bottom), 2f)
                     val nc = drawContext.canvas.nativeCanvas
                     // Bottom band: 1× under its line at the left, the range's end at the right (if both fit).
-                    val one = label(1f)
+                    // The unit only here, on 1×: the other lines' values are in it too.
+                    val one = if (showValues && counts > 0f) label(1f) + " RWS" else label(1f)
                     val oneW = paint.measureText(one)
                     nc.drawText(one, g.left, bottomBase, paint)
                     val rw = paint.measureText(rightText)
@@ -380,18 +403,11 @@ internal fun CurveFrameGraph(
                         nc.drawText(label(ly), g.left + 2f * pxPerDp, y(ly) + ascent + 2f * pxPerDp, paint)
                         k += every
                     }
-                    // Top band: the live speed at the left, the unit once at the right (dropped if they'd meet).
+                    // Top band: the live speed at the right.
                     val v = speed.floatValue
-                    val nowW = if (v >= 0f) {
-                        val gain = curve.gainAt(v)
-                        val now = "%.0f°/s ".format(v) + label(gain)
-                        nc.drawText(now, g.left, topBase, paint)
-                        paint.measureText(now)
-                    } else 0f
-                    if (showValues) {
-                        val unit = if (counts > 0f) "1× = " + shortValue(1f, s, counts) + " RWS" else "1× = %.1f".format(s)
-                        val uw = paint.measureText(unit)
-                        if (g.left + nowW + pad < g.right - uw) nc.drawText(unit, g.right - uw, topBase, paint)
+                    if (v >= 0f) {
+                        val now = "%.0f°/s ".format(v) + label(curve.gainAt(v))
+                        nc.drawText(now, g.right - paint.measureText(now), topBase, paint)
                     }
                     // The highest speed reached: the live line's yellow, dimmer and dashed, its value at the bottom of the graph.
                     val pk = peak.floatValue

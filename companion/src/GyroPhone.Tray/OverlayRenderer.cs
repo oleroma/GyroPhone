@@ -17,6 +17,9 @@ internal sealed class OverlayScene
     public OverlayLayout? Layout;
     /// <summary>The pad's button frames and bars (phone only), or null.</summary>
     public OverlayMarks? Marks;
+    /// <summary>The turning speeds now and the highest since a curve frame showed (yaw, pitch, roll, the whole phone; deg/s, -1 none), for curve frames.</summary>
+    public readonly float[] CurveSpeeds = [-1f, -1f, -1f, -1f];
+    public readonly float[] CurvePeaks = new float[4];
     /// <summary>The Keys overlay's rows (Keys only), or null.</summary>
     public KeysBoard? Keys;
     public bool Connected;
@@ -596,7 +599,7 @@ internal static class OverlayRenderer
                 for (int i = 0; i < layout.Controls.Count; i++)
                 {
                     var c = layout.Controls[i];
-                    if (c.Kind == OverlayControlKind.Display || c.Label.Length == 0) continue;
+                    if (c.Kind is OverlayControlKind.Display or OverlayControlKind.Curve || c.Label.Length == 0) continue;
                     // A frame in the button's middle takes its label's place.
                     if (markOf?[i] is { Inside: true, Lines.Count: > 0 }) continue;
                     float op = Math.Clamp(c.Opacity, 0f, 1f);
@@ -605,6 +608,12 @@ internal static class OverlayRenderer
                 if (layout.Layer.Length > 0)
                     DrawLabel(g, layout.Layer, 0.5f, 0.05f, pxW * 0.6f, fontPx, pxW, pxH, project, Color.FromArgb(230, 255, 255, 255), pill: true);
             }
+
+            // Curve frames' graphs, as the pad draws them.
+            if (live && layout != null && scene.Marks is { Curves.Count: > 0 } cm && cm.LayoutVersion == layout.Version)
+                foreach (var cv in cm.Curves)
+                    if (cv.Control < layout.Controls.Count && layout.Controls[cv.Control] is { Kind: OverlayControlKind.Curve } cc && buf.Controls[cv.Control] != null)
+                        CurveDrawing.Draw(g, cv, BoxOf(cc, pxW, pxH), cm.Dp, pxW, pxH, project, scene.CurveSpeeds, scene.CurvePeaks, cc.Opacity);
 
             // Over the buttons, as the pad's sliders: the bars (cut by their button), sliders icons and the frames inside.
             if (marks != null)
@@ -672,6 +681,8 @@ internal static class OverlayRenderer
         if (live)
         {
             h.Add(scene.Marks == null ? 0 : RuntimeHelpers.GetHashCode(scene.Marks));
+            if (scene.Marks is { Curves.Count: > 0 })
+                for (int i = 0; i < 4; i++) { h.Add(MathF.Round(scene.CurveSpeeds[i])); h.Add(MathF.Round(scene.CurvePeaks[i])); }
             h.Add(f.PadShown);
             if (layout != null)
                 for (int i = 0; i < layout.Controls.Count; i++) h.Add((f.IsPressed(i) ? 1 : 0) | (f.IsLatched(i) ? 2 : 0));

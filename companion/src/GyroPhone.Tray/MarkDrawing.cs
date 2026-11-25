@@ -257,7 +257,7 @@ internal static class MarkDrawing
     }
 
     /// <summary>A rounded rectangle at (x, y), <paramref name="w"/> × <paramref name="h"/>, corners <paramref name="r"/>.</summary>
-    private static PointF[] Rounded(float x, float y, float w, float h, float r)
+    internal static PointF[] Rounded(float x, float y, float w, float h, float r)
     {
         var pts = OverlayRenderer.RoundedRect(w, h, Math.Max(0f, r), 4);
         var o = new PointF[pts.Length];

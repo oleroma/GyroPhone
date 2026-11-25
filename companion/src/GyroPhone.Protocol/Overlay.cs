@@ -265,7 +265,7 @@ public sealed class OverlaySamples
     }
 }
 
-public enum OverlayControlKind : byte { Button = 0, Stick = 1, Corner = 2, Display = 3 }
+public enum OverlayControlKind : byte { Button = 0, Stick = 1, Corner = 2, Display = 3, Curve = 4 }
 
 /// <summary>One control of <see cref="OverlayLayout"/>: centre and size as fractions of the pad area.</summary>
 public sealed record OverlayControl(OverlayControlKind Kind, bool Round, float X, float Y, float W, float H, float Opacity, string Label);
@@ -344,6 +344,12 @@ public sealed record OverlayMarks(ushort Version, ushort LayoutVersion, float Te
     /// <summary>The Keys overlay's table of the phone's controller, after the marks; null when the phone sent none (no Keys overlay asked, or an older phone).</summary>
     public OverlayKeys? Keys { get; init; }
 
+    /// <summary>The curve frames' graphs (after the Keys table); empty when the pad has none (or an older phone).</summary>
+    public IReadOnlyList<OverlayCurve> Curves { get; init; } = [];
+
+    /// <summary>Marks the curve frames' part of a frames blob.</summary>
+    public const byte CurvesSection = 0x43;
+
     /// <summary>Decodes a frames blob (the phone's OverlayFeed.encodeFrames), or null when it is malformed.</summary>
     public static OverlayMarks? Decode(ushort version, ReadOnlySpan<byte> b)
     {
@@ -394,10 +400,46 @@ public sealed record OverlayMarks(ushort Version, ushort LayoutVersion, float Te
             keys = OverlayKeys.Decode(b, ref p);
             if (keys == null) return null;
         }
-        return new OverlayMarks(version, layout, textPx, dp, color, marks) { Keys = keys };
+        var curves = new List<OverlayCurve>();
+        if (Has(2) && b[p] == CurvesSection)
+        {
+            int n = b[p + 1];
+            p += 2;
+            for (int i = 0; i < n; i++)
+            {
+                if (!Has(13)) return null;
+                int control = b[p];
+                int flags = b[p + 1];
+                int axis = b[p + 2];
+                float maxSpeed = Le.U16(b, p + 3);
+                float maxGain = Le.U16(b, p + 5) / 100f;
+                float oneX = BitConverter.Int32BitsToSingle(Le.I32(b, p + 7));
+                if (!float.IsFinite(oneX)) oneX = 0f;
+                int drag = b[p + 11] == 0xFF ? -1 : b[p + 11];
+                int pointCount = b[p + 12];
+                p += 13;
+                if (!Has(4 * pointCount)) return null;
+                var pts = new (float Speed, float Gain)[pointCount];
+                for (int k = 0; k < pointCount; k++, p += 4) pts[k] = (Le.U16(b, p) / 10f, Le.U16(b, p + 2) / 1000f);
+                curves.Add(new OverlayCurve(control, pts, (flags & 1) != 0, (flags & 2) != 0, axis, maxSpeed, maxGain,
+                    (flags & 4) != 0, oneX, (flags & 32) != 0, (flags & 8) != 0, (flags & 16) != 0, drag));
+            }
+        }
+        return new OverlayMarks(version, layout, textPx, dp, color, marks) { Keys = keys, Curves = curves };
     }
 }
 
+
+/// <summary>
+/// A curve frame's graph as the pad shows it (the phone's OverlayCurve): <paramref name="Control"/> its index in the
+/// layout; its curve's points (speed deg/s, gain ×), Smooth, speed from its <paramref name="Axis"/> (0 yaw, 1 pitch,
+/// 2 roll, 3 the whole phone) when <paramref name="AxisSpeed"/>; its range 0..<paramref name="MaxSpeed"/> across and
+/// 1..<paramref name="MaxGain"/> up; what 1× gives now (<paramref name="Rws"/>: RWS, else counts per degree); in
+/// effect (else grayed), unlocked for editing, and the point being dragged (-1 none).
+/// </summary>
+public sealed record OverlayCurve(
+    int Control, (float Speed, float Gain)[] Points, bool Smooth, bool AxisSpeed, int Axis, float MaxSpeed, float MaxGain,
+    bool ShowValues, float OneX, bool Rws, bool InEffect, bool Unlocked, int Drag);
 
 /// <summary>
 /// Puts versioned pieces (OVERLAY_LAYOUT, OVERLAY_FRAMES: u16 version, u8 index, u8 count, u8 length, then the

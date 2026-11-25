@@ -161,6 +161,30 @@ public class OverlayTests
     /// <summary>The phone's OverlayKeysTest.KEYS_BLOB: layout 7, no marks, then the Keys overlay's table.</summary>
     private const string KeysBlob = "0107000000640000000000004bfa001af2d987871af2d9878780f24de60b000001410553706163654300074c53206c65667401414100084c5320726967687401444000054c5320757001574200074c5320646f776e0153610009525320782061786973054d6f757365610009525320792061786973054d6f7573650700025254074d6f757365204c01030c42206c6f6e67207072657373014502800158014300000141074d6f757365205200";
 
+    /// <summary>The phone's OverlayCurvesTest.CURVES_BLOB: layout 7, no marks, then one curve frame at control 2.</summary>
+    private const string CurvesBlob = "0107000000640000000000004301022d032c012c0100002041ff022c01e8038c0ad007";
+
+    [Fact]
+    public void CurveFramesFollowTheMarks()
+    {
+        var m = OverlayMarks.Decode(9, Hex.B(CurvesBlob))!;
+        Assert.Null(m.Keys);
+        var c = Assert.Single(m.Curves);
+        Assert.Equal(2, c.Control);
+        Assert.True(c.Smooth && c.ShowValues && c.InEffect && c.Rws);
+        Assert.False(c.AxisSpeed || c.Unlocked);
+        Assert.Equal(3, c.Axis);
+        Assert.Equal(300f, c.MaxSpeed);
+        Assert.Equal(3f, c.MaxGain);
+        Assert.Equal(10f, c.OneX);
+        Assert.Equal(-1, c.Drag);
+        Assert.Equal([(30f, 1f), (270f, 2f)], c.Points);
+        // Cut short: malformed.
+        Assert.Null(OverlayMarks.Decode(9, Hex.B(CurvesBlob).AsSpan(0, 30)));
+        // An older phone's frames: none.
+        Assert.Empty(OverlayMarks.Decode(5, Hex.B(FramesBlob))!.Curves);
+    }
+
     [Fact]
     public void KeysFollowTheMarks()
     {

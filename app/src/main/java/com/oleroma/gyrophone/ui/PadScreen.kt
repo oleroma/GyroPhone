@@ -2121,12 +2121,13 @@ fun PadScreen(
                             kind = when (c.kind) {
                                 TouchKind.STICK -> OverlayControl.STICK
                                 TouchKind.DISPLAY -> OverlayControl.DISPLAY
+                                TouchKind.CURVE -> OverlayControl.CURVE
                                 else -> OverlayControl.BUTTON
                             },
                             round = c.shape != TouchShape.SQUARE,
                             x = o.x / w, y = o.y / h,
                             w = 2f * half(c) / w, h = 2f * halfH(c) / h,
-                            label = if (c.kind == TouchKind.DISPLAY) "" else labels[c.id] ?: "",
+                            label = if (c.kind == TouchKind.DISPLAY || c.kind == TouchKind.CURVE) "" else labels[c.id] ?: "",
                             opacity = controlAlpha(c, ws),
                         )
                     } + shown.shownCorners.map { c ->
