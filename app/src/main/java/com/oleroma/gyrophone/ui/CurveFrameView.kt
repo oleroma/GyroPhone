@@ -251,7 +251,7 @@ internal class CurveFrameTouches(private val runtime: GamepadRuntime) {
  * slider's included), the unit only on 1× ("1× 10.00 RWS"). The curve as
  * the gyro uses it (Smooth included), its points (hollow while locked; filled, with a border round the
  * frame, while [unlocked]), a tooltip on a point being dragged ([dragPoint])
- * with where it will land, and in play the live speed line and what it gives now (top left). Grayed
+ * with where it will land, and in play the live speed line and what it gives now (top right). Grayed
  * while the frame's curve isn't in effect (a held button with its own curve, or a newer frame on its
  * axis). Redrawn on its own: the live parts only redraw (no recomposition), at most every [CURVE_LIVE_MS].
  */
@@ -403,9 +403,12 @@ internal fun CurveFrameGraph(
                         nc.drawText(label(ly), g.left + 2f * pxPerDp, y(ly) + ascent + 2f * pxPerDp, paint)
                         k += every
                     }
-                    // Top band: the live speed at the left.
+                    // Top band: the live speed at the right.
                     val v = speed.floatValue
-                    if (v >= 0f) nc.drawText("%.0f°/s ".format(v) + label(curve.gainAt(v)), g.left, topBase, paint)
+                    if (v >= 0f) {
+                        val now = "%.0f°/s ".format(v) + label(curve.gainAt(v))
+                        nc.drawText(now, g.right - paint.measureText(now), topBase, paint)
+                    }
                     // The highest speed reached: the live line's yellow, dimmer and dashed, its value at the bottom of the graph.
                     val pk = peak.floatValue
                     if (pk > 0f) {

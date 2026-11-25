@@ -8,7 +8,7 @@ namespace GyroPhone.Tray;
 /// a grid with each multiplier line labelled just under it (what it gives at the sensitivity in effect, the unit only
 /// on 1×), the curve as the gyro uses it (Smooth included), its points (hollow while locked; filled, with a border
 /// round the frame, while unlocked), a tooltip on a point being dragged, the live speed as a yellow line with what it
-/// gives at the top left, and the highest speed reached as a dimmer dashed one. Grayed while the frame's curve isn't
+/// gives at the top right, and the highest speed reached as a dimmer dashed one. Grayed while the frame's curve isn't
 /// the one in effect. Sizes in pad pixels (the phone's dp), flat round the frame's middle under the projection there.
 /// </summary>
 internal static class CurveDrawing
@@ -107,7 +107,7 @@ internal static class CurveDrawing
             g.FillEllipse(A(Live), new RectangleF(lx - 7f, Y(Math.Min(gain, maxG)) - 7f, 14f, 14f));
             string now = v.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + "°/s " + Label(gain);
             nowW = g.MeasureText(now, tpx, false).Width;
-            g.DrawText(now, tpx, false, A(text), new RectangleF(l, t - tpx * 1.4f - 1f * dp, nowW + tpx, tpx * 1.4f), TextAlign.Near, TextAlign.Near);
+            g.DrawText(now, tpx, false, A(text), new RectangleF(r - nowW - tpx, t - tpx * 1.4f - 1f * dp, nowW + tpx, tpx * 1.4f), TextAlign.Far, TextAlign.Near);
         }
         // Its points: hollow while locked, filled while unlocked; unlocked, a border round the frame too.
         for (int i = 0; i < n; i++)
