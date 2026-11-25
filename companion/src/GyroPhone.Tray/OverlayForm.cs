@@ -686,6 +686,7 @@ internal sealed class OverlayForm : Form
             if (_keys.Update(view, t, Math.Clamp(ks.KeysFadeMs, 0, 2000))) _keysUndrawn = true;
         }
         bool fresh = age >= 0 && _scene.Frame.PhoneTimeUs != _lastTime;
+        bool curveMoved = Settings is { Kind: OverlayKind.Phone } && StepCurveSpeeds(marks);
         long now = Environment.TickCount64;
         if (now - _screenHzAt >= 2000)
         {
@@ -825,7 +826,7 @@ internal sealed class OverlayForm : Form
         if (fresh && !shows) _lastTime = _scene.Frame.PhoneTimeUs;
         bool changed = _dirty || shows || age >= 0 && _scene.Frame.LayoutVersion != _lastLayout ||
             !ReferenceEquals(layout, _scene.Layout) || !ReferenceEquals(marks, _scene.Marks) || _trails.Fading(now) || laserFading ||
-            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser || GraphMoved() || _keysUndrawn;
+            _scene.Firing != _drawnFiring || LaserStamp() != _drawnLaser || GraphMoved() || _keysUndrawn || curveMoved;
         // The FPS overlay shows nothing of the phone: it draws only on a change of its own settings, and 4 times a second.
         bool isFps = Settings is { Kind: OverlayKind.Fps };
         if (isFps) changed = _dirty || now - _lastDrawTicks >= FpsDrawing.EveryMs;
@@ -860,6 +861,50 @@ internal sealed class OverlayForm : Form
         var s = Settings;
         float scale = s == null || s.FollowsCamera ? 1f : Math.Clamp(s.MotionScale, 0.25f, 4f);
         return OverlayPacing.TurnShows(OverlayFrame.TurnBetween(_drawnFrame, _scene.Frame), _drawnSize, scale);
+    }
+
+    private readonly float[] _speedY = new float[CurveSpeedBuckets], _speedP = new float[CurveSpeedBuckets], _speedR = new float[CurveSpeedBuckets];
+    private readonly bool[] _speedHeld = new bool[CurveSpeedBuckets];
+    private readonly float[] _curveDrawn = new float[8];
+    private bool _hadCurves;
+
+    /// <summary>About 40 ms of the speed trace's buckets: the live speed a curve frame shows, smoothed as the pad's.</summary>
+    private const int CurveSpeedBuckets = SpeedTrace.RateHz / 25;
+
+    /// <summary>
+    /// Curve frames on the pad: the turning speeds now (each axis and the whole phone, from the phone's turns) and the
+    /// highest since they showed, into the scene; true when one moved by 1 deg/s or more since it was drawn.
+    /// </summary>
+    private bool StepCurveSpeeds(OverlayMarks? marks)
+    {
+        if (marks is not { Curves.Count: > 0 })
+        {
+            _hadCurves = false;
+            return false;
+        }
+        var sp = _scene.CurveSpeeds;
+        var pk = _scene.CurvePeaks;
+        if (!_hadCurves) { _hadCurves = true; Array.Clear(pk); }
+        int n = _engine.OverlaySpeeds.Read(CurveSpeedBuckets, _speedY, _speedP, _speedR, _speedHeld);
+        if (n == 0 || !_engine.Connected) { sp[0] = sp[1] = sp[2] = sp[3] = -1f; }
+        else
+        {
+            float y = 0f, p = 0f, r = 0f, w = 0f;
+            for (int i = 0; i < n; i++)
+            {
+                y += MathF.Abs(_speedY[i]); p += MathF.Abs(_speedP[i]); r += MathF.Abs(_speedR[i]);
+                w += MathF.Sqrt(_speedY[i] * _speedY[i] + _speedP[i] * _speedP[i] + _speedR[i] * _speedR[i]);
+            }
+            sp[0] = y / n; sp[1] = p / n; sp[2] = r / n; sp[3] = w / n;
+            for (int i = 0; i < 4; i++) if (sp[i] > pk[i]) pk[i] = sp[i];
+        }
+        bool moved = false;
+        for (int i = 0; i < 4; i++)
+        {
+            if (MathF.Abs(sp[i] - _curveDrawn[i]) >= 1f) { _curveDrawn[i] = sp[i]; moved = true; }
+            if (MathF.Abs(pk[i] - _curveDrawn[4 + i]) >= 1f) { _curveDrawn[4 + i] = pk[i]; moved = true; }
+        }
+        return moved;
     }
 
     private static bool SamePad(OverlayFrame a, OverlayFrame b) =>
