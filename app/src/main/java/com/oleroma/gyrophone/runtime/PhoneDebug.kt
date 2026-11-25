@@ -183,6 +183,8 @@ class PhoneDebug(context: Context, private val runtime: GamepadRuntime, private 
         val f = File(dir, "$stamp.txt")
         val pcSide = if (fromPc) "the PC asked for this save" else "pc asked to save its side: " + if (connected) "yes" else "no"
         f.writeText(t.save("phone", header() + listOf("kept: ${_keepMinutes.value} min", pcSide), _keepMinutes.value * 60_000_000_000L))
+        // The Stats page's numbers of every workspace ride along, so they reach the PC over the link with the save.
+        runCatching { f.appendText("\n--- stats\n" + runtime.stats.dump(runtime.activeProfile.value)) }
         // The per-packet record beside it (tools/diag/gpdiag.py flight), the newest 5 of those.
         runtime.wifi.flight?.let { fl ->
             runCatching {

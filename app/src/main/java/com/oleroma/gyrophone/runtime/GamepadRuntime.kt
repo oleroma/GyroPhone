@@ -172,6 +172,12 @@ class GamepadRuntime(context: Context) {
     private val gyroMouse = GyroMouse(_activeProfile.value.workspace(_workspaceIndex.value).gyro)
     private val prefs = appContext.getSharedPreferences("gyrophone", Context.MODE_PRIVATE)
 
+    /** The Stats page: what it collects for the workspace in use. */
+    val stats = AimStats(appContext, engine) {
+        val p = _activeProfile.value
+        p.workspaces.getOrNull(_workspaceIndex.value)?.id
+    }
+
     private val _reportRateHz = MutableStateFlow(
         prefs.getInt(KEY_RATE, ReportPump.DEFAULT_RATE_HZ).takeIf { it in ReportPump.RATES_HZ }
             ?: ReportPump.DEFAULT_RATE_HZ,
@@ -2391,6 +2397,8 @@ class GamepadRuntime(context: Context) {
         val screen = gyroMouse.screenMotion(bx, by, bz)
         val local = gyroMouse.withYawAxis(screen, wsGyro.yawAxis, wsGyro.gripPitch)
         val shown = if (real) screen else local
+        // Stats, while it collects: four numbers into a ready-made ring.
+        stats.recorder?.gyro(ts, local.yaw, local.pitch, active)
         val visuals = !pcMode && !covered && (v.gyroEdge || feeds.isNotEmpty())
         // What follows the camera turns as the gyro mouse measures the turn (the pose before this sample).
         val cam = if (real && (visuals || (overlayOn && active && dt > 0f))) gyroMouse.inSpace(local, space, upNow) else local

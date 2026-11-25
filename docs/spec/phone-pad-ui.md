@@ -16,9 +16,9 @@ What the person sees and touches: the pad, its top row, the ← / → corners, e
 
 - **+** adds a workspace at the front (Blank, Windows touchpad or a preset, see [Workspaces](phone-workspaces.md)).
 - One capsule per **workspace**: tap to switch; tap the current one to open its edit mode.
-- **Controller** (the device screens, [Controllers](phone-controllers.md)), **App** (gear: the whole app's settings), **Defaults** (sliders: what every workspace follows, [Settings](phone-settings.md)), **Connection** (shows the link state).
+- **Controller** (the device screens, [Controllers](phone-controllers.md)), **App** (gear: the whole app's settings), **Defaults** (sliders: what every workspace follows, [Settings](phone-settings.md)), **Stats** (how you move the phone in play, [Stats](phone-stats.md)), **Connection** (shows the link state).
 
-The row scrolls. Long-press a capsule and drag it to reorder; moving workspaces reorders them. A long press let go without moving is no tap (it neither switches nor opens edit mode). The order is stored as a string of `W`/`D`/`S` (App)/`F` (Defaults)/`C`; an order saved before Defaults existed gets it right after App.
+The row scrolls. Long-press a capsule and drag it to reorder; moving workspaces reorders them. A long press let go without moving is no tap (it neither switches nor opens edit mode). The order is stored as a string of `W`/`D`/`S` (App)/`F` (Defaults)/`T` (Stats)/`C`; an order saved before Defaults existed gets it right after App, and Stats goes right after Defaults.
 
 ## ← / → buttons and fullscreen
 

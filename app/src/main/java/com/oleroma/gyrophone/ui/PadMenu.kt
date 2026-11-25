@@ -56,6 +56,8 @@ sealed interface PadMenuPage {
     data object AppSettings : PadMenuPage
     /** What every workspace uses unless it sets its own (the pad's Defaults capsule). */
     data object DefaultsSettings : PadMenuPage
+    /** How you move the phone in play (the pad's Stats capsule). */
+    data object Stats : PadMenuPage
 
     companion object {
         private const val SEP = "\n"
@@ -67,6 +69,7 @@ sealed interface PadMenuPage {
                 Connection -> "connection"
                 AppSettings -> "settings"
                 DefaultsSettings -> "defaults"
+                Stats -> "stats"
             }
         }
 
@@ -78,6 +81,7 @@ sealed interface PadMenuPage {
                 "connection" -> Connection
                 "settings" -> AppSettings
                 "defaults" -> DefaultsSettings
+                "stats" -> Stats
                 else -> null
             }
         }
@@ -184,6 +188,7 @@ private fun PadMenu(
                     PadMenuPage.Connection -> "Connection"
                     PadMenuPage.AppSettings -> "App"
                     PadMenuPage.DefaultsSettings -> "Defaults"
+                    PadMenuPage.Stats -> "Stats"
                 },
                 style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
@@ -200,6 +205,7 @@ private fun PadMenu(
             PadMenuPage.Connection -> ConnectScreen(runtime, onRetry)
             PadMenuPage.AppSettings -> AppSettingsScreen(runtime, content)
             PadMenuPage.DefaultsSettings -> DefaultsSettingsScreen(runtime, content)
+            PadMenuPage.Stats -> StatsScreen(runtime, content)
             PadMenuPage.Devices -> Unit
         }
     }
