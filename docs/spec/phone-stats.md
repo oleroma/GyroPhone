@@ -42,7 +42,7 @@ Collecting adds no work to the input path beyond copying numbers:
 - The gyro thread writes 4 numbers per sample into a ready-made 8192-sample ring (one writer, no lock, no allocation).
 - Press edges take the time and a short lock to write 3 numbers into a 1024-entry ring.
 - The sender's snapshot compares the mouse buttons with the last ones and, when the cursor moved, takes a short lock to write 3 numbers into an 8192-entry ring.
-All the maths runs on its own background-priority thread ("GP stats") four times a second, 250 ms behind the newest sample; a press's curve is worked out once the 1.2 s after it is in. With Collect off the engine's tap is null and nothing runs.
+All the maths runs on its own background-priority thread ("GP stats") four times a second, 250 ms behind the newest sample; a press's curve is worked out once the 1.2 s after it is in. With Collect off the engine's tap and the gyro thread's recorder are null (one null check each, the arguments are not even worked out) and the Stats thread is not started until the page is opened; opening it without collecting only loads the stats once for the page, with no ticking.
 
 ## Storage
 

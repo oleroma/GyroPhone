@@ -40,8 +40,11 @@ class AimStats(context: Context, private val engine: MappingEngine, private val 
     val view: StateFlow<View?> = _view
     private val watchers = AtomicInteger()
 
-    private val thread = HandlerThread("GP stats", Process.THREAD_PRIORITY_BACKGROUND).also { it.start() }
-    private val handler = Handler(thread.looper)
+    /** Its own thread, started only once something needs it (Collect on, the page open, a reset or a role pick). */
+    private val lazyHandler = lazy {
+        Handler(HandlerThread("GP stats", Process.THREAD_PRIORITY_BACKGROUND).also { it.start() }.looper)
+    }
+    private val handler by lazyHandler
 
     // The Stats thread's own.
     private val analyzer = AimStatsAnalyzer()
@@ -137,9 +140,12 @@ class AimStats(context: Context, private val engine: MappingEngine, private val 
      * its inputs and the stats JSON. The workspace in use is read as it is now (saved first).
      */
     fun dump(profile: com.oleroma.gyrophone.core.model.Profile): String {
-        val done = java.util.concurrent.CountDownLatch(1)
-        handler.post { follow(); save(); done.countDown() }
-        done.await(2, java.util.concurrent.TimeUnit.SECONDS)
+        // Unsaved counts exist only if the thread ever ran; otherwise the files are all there is.
+        if (lazyHandler.isInitialized()) {
+            val done = java.util.concurrent.CountDownLatch(1)
+            handler.post { follow(); save(); done.countDown() }
+            done.await(2, java.util.concurrent.TimeUnit.SECONDS)
+        }
         return buildString {
             appendLine("collecting: ${_collecting.value}, workspace in use: ${wsId}")
             for (w in profile.workspaces) {
