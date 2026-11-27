@@ -71,6 +71,11 @@ internal static class RealGun
         float scopeK = scope && sc != null ? ak : 0f;
         var scopeAt = sc == null ? Vector3.Zero : new Vector3(0f, sc.Y, (sc.Front + sc.Back) / 2f);
         var scopeMove = Matrix4x4.CreateTranslation(-scopeAt) * Matrix4x4.CreateScale(scopeK) * Matrix4x4.CreateTranslation(scopeAt);
+        // The whole gun moved so its barrel's hole sits on the pointer's axis (x 0, y 0), where the beam, the laser sight
+        // and the muzzle flash start (LaserTrace.MuzzleAt): the pistol's and shotgun's bores sit a little above it.
+        int bore = model.PartIndex(g.Key + "_bore");
+        var boreAt = bore >= 0 ? model.Parts[bore].Centre : Vector3.Zero;
+        var onAxis = Matrix4x4.CreateTranslation(-boreAt.X, -boreAt.Y, 0f);
         float reach = 0f;
         for (int i = 0; i < model.Parts.Length; i++)
         {
@@ -80,7 +85,7 @@ internal static class RealGun
                 move = Matrix4x4.CreateTranslation(0f, 0f, slide);
             else if (n.Contains("_scope", StringComparison.Ordinal))
                 move = scopeMove;
-            var full = move * place;
+            var full = move * onAxis * place;
             Matrix4x4.Invert(full, out var inv);
             parts[i] = new Gpu3D.PartPose
             {

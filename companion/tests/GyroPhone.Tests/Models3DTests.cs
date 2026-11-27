@@ -36,6 +36,10 @@ public class Models3DTests
             // Muzzle ahead (−z), stock behind; a slide (or pump) that runs back with the kick.
             Assert.True(m.Min.Z < -0.2f && m.Max.Z > 0f, key);
             Assert.Contains(m.Parts, p => p.Name.EndsWith("_slide") || p.Name.EndsWith("_pump"));
+            // The barrel's hole, which the gun is moved by onto the pointer's axis, at the muzzle.
+            int bore = m.PartIndex(key + "_bore");
+            Assert.True(bore >= 0, key);
+            Assert.InRange(m.Parts[bore].Centre.Z, m.Min.Z - 0.001f, m.Min.Z + 0.01f);
             Assert.DoesNotContain(m.Vertices, v => (int)v.N.W == 0); // no unknown material (plastic is the controllers')
         }
     }
