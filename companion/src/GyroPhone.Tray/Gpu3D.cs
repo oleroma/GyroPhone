@@ -518,6 +518,9 @@ internal static class Gpu3D
     /// <summary>Why the real look can't be drawn on the card (its shaders failed), or empty.</summary>
     public static string LitStatus { get; private set; } = "";
 
+    /// <summary>The companion's log: why 3D or the real look fell back to something plainer (once each time).</summary>
+    public static Action<string>? Log;
+
 
     /// <summary>A 3x3 row-major turn as the key's matrix.</summary>
     public static Matrix4x4 TurnOf(float[] m) => new(m[0], m[1], m[2], 0f, m[3], m[4], m[5], 0f, m[6], m[7], m[8], 0f, 0f, 0f, 0f, 1f);
@@ -613,6 +616,7 @@ internal static class Gpu3D
             // Anything the card refused: this device draws 3D on the CPU from now on.
             lock (KitGate) Failed.AddOrUpdate(gpu, new object());
             Status = "3D on CPU (" + ex.GetType().Name + ": " + ex.Message + ")";
+            Log?.Invoke("overlay: " + Status + " at " + slotName + "\n" + ex.StackTrace);
             surface.Dispose();
             return false;
         }
@@ -1048,6 +1052,7 @@ internal static class Gpu3D
                 kit?.Dispose();
                 Failed.AddOrUpdate(gpu, new object());
                 Status = "3D on CPU (" + ex.Message + ")";
+                Log?.Invoke("overlay: " + Status);
                 return null;
             }
         }
@@ -1098,6 +1103,7 @@ internal static class Gpu3D
                 kit.LitVs?.Dispose(); kit.LitPs?.Dispose(); kit.GlowPs?.Dispose();
                 kit.LitVs = null; kit.LitPs = null; kit.GlowPs = null;
                 LitStatus = "real look off (" + ex.Message + ")";
+                Log?.Invoke("overlay: " + LitStatus);
             }
             int matStride = Marshal.SizeOf<Material>();
             kit.Mats = d3d.CreateBuffer(new BufferDescription((uint)(MaterialRoom * matStride), BindFlags.ShaderResource, ResourceUsage.Dynamic,

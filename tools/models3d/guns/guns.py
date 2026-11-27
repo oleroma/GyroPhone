@@ -26,9 +26,15 @@ BOX = {
         0, -0.04, 0.7, 0.055, 0.1, 0.2, 0, 0, 0.12, 0.06, 0.08, 0.26, 0, 0, -0.36, 0.06, 0.06, 0.24, 0, 0, -0.76, 0.02, 0.02, 0.18,
         0, 0, -0.94, 0.032, 0.032, 0.035, 0, 0.08, -0.56, 0.012, 0.06, 0.015, 0, -0.2, -0.02, 0.04, 0.12, 0.07,
         0, -0.17, 0.32, 0.03, 0.09, 0.045, 0, 0.1, 0.06, 0.03, 0.022, 0.24]),
+    'lmg': dict(muzzle=-0.94, bore_y=0.0, scope=(0.17, -0.2, 0.18, 0.051, 0.072), boxes=[
+        0, -0.03, 0.64, 0.05, 0.09, 0.2, 0, 0, 0.1, 0.07, 0.09, 0.25, 0, 0.01, -0.36, 0.045, 0.045, 0.22, 0, 0, -0.76, 0.022, 0.022, 0.18,
+        0, -0.18, 0.02, 0.07, 0.09, 0.08, 0, -0.17, 0.32, 0.03, 0.09, 0.045, 0, 0.14, -0.02, 0.015, 0.04, 0.09, 0, -0.06, -0.66, 0.012, 0.012, 0.16]),
     'shotgun': dict(muzzle=-0.85, bore_y=0.02, scope=(0.12, -0.1, 0.22, 0.048, 0.067), boxes=[
         0, -0.06, 0.56, 0.045, 0.1, 0.25, 0, 0, 0.1, 0.05, 0.08, 0.18, 0, 0.02, -0.45, 0.03, 0.03, 0.4, 0, -0.05, -0.35, 0.025, 0.025, 0.3,
         0, -0.05, -0.38, 0.042, 0.042, 0.12, 0, 0.06, -0.82, 0.008, 0.01, 0.008]),
+    'sniper': dict(muzzle=-0.975, bore_y=0.0, scope=(0.16, -0.26, 0.32, 0.064, 0.104), boxes=[
+        0, -0.04, 0.6, 0.05, 0.11, 0.24, 0, 0.06, 0.56, 0.03, 0.03, 0.12, 0, 0, 0.1, 0.05, 0.06, 0.22, 0, 0, -0.58, 0.02, 0.02, 0.34,
+        0, 0, -0.94, 0.032, 0.032, 0.035, 0.07, 0.02, 0.2, 0.03, 0.012, 0.012, 0, -0.12, 0.05, 0.03, 0.06, 0.05, 0, -0.16, 0.32, 0.03, 0.09, 0.045]),
 }
 
 def box_extent(key):
@@ -65,6 +71,19 @@ SPEC = {
         0: ('stock', {'Wood': W, 'Metal': R}), 1: ('pump', W), 2: ('receiver', G), 3: ('receiver', G), 4: ('receiver', G), 5: ('barrel', G),
         6: ('tube', G), 7: ('receiver', G), 8: ('barrel', G), 9: ('bead', C), 10: ('trigger', G)},
         extra=[((0.79, 1.09, 0.12, 0.19, 0.085, 0.106), 'slide', C)]),
+    # The LMG: the pack has no machine gun, so this is its long boxy carbine with the stick magazine left out and, made
+    # here, a box magazine, a long heavy barrel (barrel_ext, in source units), a folded bipod and a bolt.
+    'lmg': dict(src='SubmachineGun_5', drop=[3], barrel_ext=1.3, pieces={
+        0: ('sights', G), 1: ('sights', G), 2: ('lower', {'Metal': G, 'DarkMetal': P}), 4: ('upper', G), 5: ('lower', G), 6: ('trunnion', G),
+        7: ('upper', G), 8: ('stock', G), 9: ('stock', G), 10: ('lower', G), 40: ('trigger', G), **{i: ('rail', G) for i in range(11, 40)}},
+        extra=[((0.52, 1.28, -0.46, 0.13, -0.21, 0.21), 'mag', P), ((0.50, 1.30, 0.10, 0.17, -0.22, 0.22), 'mag', G), ((0.72, 1.00, 0.15, 0.30, -0.07, 0.07), 'mag', G),
+               ((1.15, 1.75, 0.60, 0.74, 0.150, 0.170), 'slide', C), ((1.52, 1.62, 0.63, 0.70, 0.165, 0.27), 'slide', G),
+               ((3.22, 3.38, 0.40, 0.60, -0.10, 0.10), 'bipod', G), ((3.30, 4.30, 0.39, 0.445, 0.045, 0.10), 'bipod', G), ((3.30, 4.30, 0.39, 0.445, -0.10, -0.045), 'bipod', G),
+               ((4.24, 4.34, 0.375, 0.46, 0.035, 0.11), 'bipod', R), ((4.24, 4.34, 0.375, 0.46, -0.11, -0.035), 'bipod', R)]),
+    # The sniper: the pack's scope (pieces 3 to 5) is left out for the scope of Guns.cs.
+    'sniper': dict(src='SniperRifle_2', drop=[3, 4, 5], pieces={
+        0: ('mag', G), 1: ('stock', {'LightMetal': P, 'Black': R}), 2: ('receiver', G), 6: ('rail', G), 7: ('barrel', G), 8: ('slide', C), 9: ('trigger', G)},
+        extra=[]),
 }
 
 def box_faces(b, off=0):
@@ -146,6 +165,7 @@ def gun(key):
     xmax, xmin = V[:, 0].max(), V[:, 0].min()
     tip = V[V[:, 0] > xmax - 1e-3]; by, bz = (tip[:, 1].min() + tip[:, 1].max()) / 2, (tip[:, 2].min() + tip[:, 2].max()) / 2
     brad = (tip[:, 1].max() - tip[:, 1].min()) / 2
+    tip_x = xmax; xmax += spec.get('barrel_ext', 0.0)   # a barrel made here, ahead of the source's
     s = (hi[2] - bx['muzzle']) / (xmax - xmin)
     sy = s * spec.get('sy', 1.0)
     T = lambda p: ((p[2] - bz) * s, bx['bore_y'] + (p[1] - by) * sy, bx['muzzle'] + (xmax - p[0]) * s)
@@ -194,6 +214,11 @@ def gun(key):
             verts += [T(p) for p in v]; faces += fq; fm += [slot_i(sl)] * len(fq)
         ob = mesh_obj(f'{key}_{part}', verts, faces, slots, fm, sharp=180, recalc=True)
         objs.append(soften(ob, segments=1 if part in ('rail', 'sights', 'frontsight', 'trigger', 'hammer', 'bead') else 2))
+    if spec.get('barrel_ext'):
+        mz = bx['muzzle']; z1 = mz + (xmax - tip_x) * s + 0.01; rb = max(brad * s * 1.15, 0.019); rf = rb * 1.32
+        prof = [(0, mz), (rf, mz), (rf, mz + 0.062), (rb, mz + 0.068), (rb, z1 - 0.10), (rb * 1.5, z1 - 0.095), (rb * 1.5, z1 - 0.045), (rb, z1 - 0.04), (rb, z1), (0, z1)]
+        objs.append(lathe(f'{key}_barrel', prof, at=(0, bx['bore_y']), n=28, mats=(G,), sharp=40))
+        brad = rb / s
     # the bore, a dark disc just ahead of the muzzle face
     objs.append(disc(f'{key}_bore', bx['bore_y'], bx['muzzle'] - 0.0006, brad * s * 0.55, -1, 'rubber', n=20))
     if bx['scope']:

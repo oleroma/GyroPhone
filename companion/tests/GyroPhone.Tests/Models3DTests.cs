@@ -26,6 +26,21 @@ public class Models3DTests
     }
 
     [Fact]
+    public void EveryGunHasAModelInItsOwnFrame()
+    {
+        foreach (var g in new[] { GyroPhone.Host.Guns.Pistol, GyroPhone.Host.Guns.AR })
+            Assert.True(Model3D.IsShipped(Model3D.Gun(g.Key)));
+        foreach (var key in new[] { "pistol", "smg", "ar", "battle", "lmg", "shotgun", "sniper" })
+        {
+            var m = Model3D.Shipped(Model3D.Gun(key));
+            // Muzzle ahead (−z), stock behind; a slide (or pump) that runs back with the kick.
+            Assert.True(m.Min.Z < -0.2f && m.Max.Z > 0f, key);
+            Assert.Contains(m.Parts, p => p.Name.EndsWith("_slide") || p.Name.EndsWith("_pump"));
+            Assert.DoesNotContain(m.Vertices, v => (int)v.N.W == 0); // no unknown material (plastic is the controllers')
+        }
+    }
+
+    [Fact]
     public void PhoneHasItsScreenFacingTheViewer()
     {
         var m = Model3D.Shipped(Model3D.OnePlus15);

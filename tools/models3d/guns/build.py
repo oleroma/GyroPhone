@@ -1,5 +1,5 @@
 # Builds the pointer's gun models in Blender (bpy) and exports one GLB per gun, plus boxes.json (the box models of
-# Guns.cs, for the viewer's overlay).  Usage: python build.py -- <out dir> [pistol] [smg] [ar] [battle] [shotgun]
+# Guns.cs, for the viewer's overlay).  Usage: python build.py -- <out dir> [pistol] [smg] [ar] [battle] [lmg] [shotgun] [sniper]
 # Frame as Guns.cs: x right, y up, z toward the stock (exported with z kept, export_yup=False).
 import sys, os, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

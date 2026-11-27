@@ -91,6 +91,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     public TrayApp(string inputArgs)
     {
         _log = new FileLog();
+        Gpu3D.Log = m => _log.Write(m);
         _exePath = Environment.ProcessPath ?? Application.ExecutablePath;
         _startUs = _clock.NowUs;
         _ui = new Control();
