@@ -135,8 +135,8 @@ and Windows PC. No per-install approval is needed. This covers:
 
 Limits:
 
-- Install only builds of this repository made the way the shared rules say: on the PC from a `build/`
-  worktree, or by the `fallback.yml` workflow. Never install third-party builds.
+- Install only builds of this repository made the way the shared rules say: on the PC by
+  `agent-build pc`, or by the `fallback.yml` workflow. Never install third-party builds.
 - Only this repository's own app and companion. Nothing else on either device.
 - Installing is not launching. Start or close apps only when Olex asks. The one standing exception
   is the companion's watcher (`GyroPhoneCompanion.exe --watch`), which Olex turns on or off with the
