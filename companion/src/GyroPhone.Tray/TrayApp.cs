@@ -91,6 +91,7 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     public TrayApp(string inputArgs)
     {
         _log = new FileLog();
+        Gpu3D.Log = m => _log.Write(m);
         _exePath = Environment.ProcessPath ?? Application.ExecutablePath;
         _startUs = _clock.NowUs;
         _ui = new Control();
@@ -1310,9 +1311,9 @@ internal sealed class TrayApp : ApplicationContext, ICompanion
     {
         var open = _overlayList;
         if (open.Length == 0) return "overlays: none open";
-        string paint = GpuPaint.Status, shapes = Gpu3D.Status;
+        string paint = GpuPaint.Status, shapes = Gpu3D.Status, lit = Gpu3D.LitStatus;
         return "overlays: " + string.Join(" · ", open.Select(f => f.Stats).Where(t => t.Length > 0)) + (paint.Length > 0 ? " · " + paint : "")
-            + (shapes.Length > 0 ? " · " + shapes : "");
+            + (shapes.Length > 0 ? " · " + shapes : "") + (lit.Length > 0 ? " · " + lit : "");
     }
 
     /// <summary>An overlay window that needs the phone's data is open (its pose, or the Keys overlay's keys; the FPS overlay needs nothing from the phone).</summary>

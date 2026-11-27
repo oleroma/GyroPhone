@@ -130,7 +130,7 @@ public sealed class OverlayHost
                 if (f.Kind == kind)
                 {
                     // The same kind also gets its controller handles and their colours.
-                    o.Handles = f.Handles; o.HandleSource = f.HandleSource;
+                    o.Handles = f.Handles; o.HandleSource = f.HandleSource; o.HandleModel = f.HandleModel; o.RealLook = f.RealLook;
                     foreach (var key in (string[])["handles", "handlesLit"])
                         if (f.Colors.TryGetValue(key, out var c)) o.Colors[key] = c;
                 }
