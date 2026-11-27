@@ -1058,9 +1058,9 @@ internal static class Gpu3D
         }
     }
 
-    private static byte[] CompileShader(string entry, string profile)
+    private static byte[] CompileShader(string entry, string profile, string source = Shaders)
     {
-        var result = Compiler.Compile(Shaders, entry, "Gpu3D", profile, out Blob blob, out Blob error);
+        var result = Compiler.Compile(source, entry, "Gpu3D", profile, out Blob blob, out Blob error);
         if (result.Failure || blob == null)
         {
             string msg = error?.AsString() ?? result.ToString();
@@ -1094,9 +1094,9 @@ internal static class Gpu3D
             // The real look on its own: if the card can't, the rest still draws (and the phone in the plain look).
             try
             {
-                kit.LitVs = d3d.CreateVertexShader(CompileShader("LitVs", "vs_5_0"));
-                kit.LitPs = d3d.CreatePixelShader(CompileShader("LitPs", "ps_5_0"));
-                kit.GlowPs = d3d.CreatePixelShader(CompileShader("GlowPs", "ps_5_0"));
+                kit.LitVs = d3d.CreateVertexShader(CompileShader("LitVs", "vs_5_0", LitShaders));
+                kit.LitPs = d3d.CreatePixelShader(CompileShader("LitPs", "ps_5_0", LitShaders));
+                kit.GlowPs = d3d.CreatePixelShader(CompileShader("GlowPs", "ps_5_0", LitShaders));
             }
             catch (Exception ex)
             {
@@ -1180,6 +1180,236 @@ internal static class Gpu3D
         /// <summary>A pressed part's glow (linear).</summary>
         public Vector4 GlowCol;
     }
+
+    /// <summary>
+    /// The real look's shaders (<see cref="Frame.Lit"/>, <see cref="Frame.Glow"/>), after the others: compiled on their
+    /// own, so a mistake in them can't take the rest of the 3D drawings off the card.
+    /// </summary>
+    private const string LitShaders = Shaders + """
+        // ---- Real materials (Lit): models with parts, lit by a small studio. ----
+        struct LitV { float4 P; float4 N; };
+        StructuredBuffer<LitV> LitVerts : register(t5);
+        struct PartX { float4 R0; float4 R1; float4 R2; float4 N0; float4 N1; float4 N2; float4 X; };
+        StructuredBuffer<PartX> LitParts : register(t6);
+        struct Mat { float4 Base; float4 Surf; float4 Emit; };
+        StructuredBuffer<Mat> Mats : register(t7);
+
+        struct LitOut
+        {
+            float4 Pos : SV_Position;
+            float3 V : TEXCOORD0;
+            float3 N : TEXCOORD1;
+            float3 O : TEXCOORD2;
+            nointerpolation uint MatId : TEXCOORD3;
+            nointerpolation float Glow : TEXCOORD4;
+        };
+
+        static const uint ScreenMat = 10;
+
+        LitOut LitVs(uint v : SV_VertexID)
+        {
+            LitV lv = LitVerts[v];
+            PartX px = LitParts[(uint)lv.P.w];
+            float4 p4 = float4(lv.P.xyz, 1.0);
+            float3 s = float3(dot(px.R0, p4), dot(px.R1, p4), dot(px.R2, p4));
+            float3 n = float3(dot(px.N0.xyz, lv.N.xyz), dot(px.N1.xyz, lv.N.xyz), dot(px.N2.xyz, lv.N.xyz));
+            float3 p = Turn(s);
+            float2 at = OnScreen(p);
+            float w = max(Persp - p.z, 0.5);
+            uint mat = (uint)lv.N.w;
+            LitOut o;
+            o.Pos = float4((at.x / TargetSize.x * 2.0 - 1.0) * w, (1.0 - at.y / TargetSize.y * 2.0) * w, PerspDepth(w) * w, w);
+            // Pass 1: the screen's glass only.
+            if (DepthP.w > 0.5 && mat != ScreenMat) o.Pos = float4(2.0, 2.0, 2.0, 1.0);
+            o.V = p;
+            o.N = Turn(n);
+            o.O = lv.P.xyz;
+            o.MatId = mat;
+            o.Glow = px.X.x;
+            return o;
+        }
+
+        static const float Pi = 3.14159265;
+
+        float Hash3(float3 p)
+        {
+            p = frac(p * 0.3183099 + 0.1);
+            p *= 17.0;
+            return frac(p.x * p.y * p.z * (p.x + p.y + p.z));
+        }
+
+        // GGX: the spread of a highlight, and its visibility term (Schlick-Smith, with the 1 / 4 n.l n.v folded in).
+        float Ggx(float nh, float a)
+        {
+            float a2 = a * a;
+            float d = nh * nh * (a2 - 1.0) + 1.0;
+            return a2 / (Pi * d * d + 1e-7);
+        }
+        float Vis(float nv, float nl, float a)
+        {
+            float k = a * 0.5;
+            return 0.25 / ((nv * (1.0 - k) + k) * (nl * (1.0 - k) + k));
+        }
+
+        // A soft-edged rectangular light seen in direction r: centred on c, half sizes h (as tangents), its edge
+        // blurred by soft; dimmer as it spreads, so a rough surface shows it wide and faint.
+        float Box(float3 r, float3 c, float3 up, float2 h, float soft)
+        {
+            float d = dot(r, c);
+            if (d <= 0.05) return 0.0;
+            float3 u = normalize(cross(up, c));
+            float3 v = cross(c, u);
+            float2 q = abs(float2(dot(r, u), dot(r, v)) / d) - h;
+            float edge = max(q.x, q.y);
+            float spread = (h.x * h.y) / ((h.x + soft) * (h.y + soft));
+            return (1.0 - smoothstep(-soft, soft, edge)) * spread;
+        }
+
+        // The studio, in the viewer's frame (y up, z toward the viewer): a big soft box above and in front, a warm
+        // strip to the left, a cool one to the right, a dark floor.
+        float3 Env(float3 r, float rough)
+        {
+            float soft = 0.02 + rough * rough * 1.6;
+            float3 c = lerp(float3(0.012, 0.012, 0.014), float3(0.07, 0.075, 0.085), smoothstep(-0.35, 0.35, r.y));
+            c += float3(0.12, 0.125, 0.13) * smoothstep(0.6, 1.0, r.y);
+            c += 3.2 * Box(r, normalize(float3(-0.3, 0.8, 0.55)), float3(0.0, 0.0, -1.0), float2(0.55, 0.32), soft);
+            c += 2.2 * float3(1.0, 0.95, 0.88) * Box(r, normalize(float3(-0.92, 0.12, 0.38)), float3(0.0, 1.0, 0.0), float2(0.12, 0.75), soft);
+            c += 1.5 * float3(0.82, 0.9, 1.0) * Box(r, normalize(float3(0.9, 0.08, 0.42)), float3(0.0, 1.0, 0.0), float2(0.1, 0.7), soft);
+            return c;
+        }
+
+        // Light from all round, for the diffuse part (above brighter than below).
+        float3 Ambient(float3 n)
+        {
+            return lerp(float3(0.025, 0.025, 0.03), float3(0.32, 0.33, 0.36), saturate(n.y * 0.5 + 0.5)) + 0.12 * saturate(n.z);
+        }
+
+        float3 Aces(float3 x)
+        {
+            return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
+        }
+
+        // Key light (upper left, in front), fill (right), rim (behind, above): toward each, and its colour.
+        static const float3 LightDir[3] = { float3(-0.45, 0.62, 0.64), float3(0.78, 0.05, 0.62), float3(0.15, 0.55, -0.82) };
+        static const float3 LightCol[3] = { float3(2.6, 2.5, 2.35), float3(0.55, 0.62, 0.75), float3(1.6, 1.65, 1.8) };
+
+        float3 Highlight(float3 n, float3 v, float3 l, float3 f0, float3 diff, float rough)
+        {
+            float nl = saturate(dot(n, l));
+            if (nl <= 0.0) return 0.0;
+            float3 h = normalize(l + v);
+            float nh = saturate(dot(n, h));
+            float vh = saturate(dot(v, h));
+            float nv = saturate(dot(n, v)) + 1e-4;
+            float a = max(rough * rough, 0.002);
+            float3 f = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
+            return nl * (diff / Pi * (1.0 - f) + f * Ggx(nh, a) * Vis(nv, nl, a));
+        }
+
+        float4 LitPs(LitOut i) : SV_Target
+        {
+            Mat mt = Mats[i.MatId];
+            float3 base = mt.Base.rgb;
+            float metal = mt.Base.a;
+            float rough = mt.Surf.x;
+            float coat = mt.Surf.y;
+            uint kind = (uint)(mt.Surf.z + 0.5);
+            float3 v = normalize(float3(0.0, 0.0, Persp > 0.0 ? Persp : 100.0) - i.V);
+            float3 ng = normalize(i.N);
+            // Faces seen from behind (the inside of a hole): lit as seen.
+            if (dot(ng, v) < 0.0) ng = -ng;
+            float3 n = ng;
+            // Pass 1: only the screen's glass, its reflections laid over what is on the screen.
+            if (DepthP.w > 0.5)
+            {
+                float nv1 = saturate(dot(n, v));
+                float f = 0.04 + 0.96 * pow(1.0 - nv1, 5.0);
+                float3 r = reflect(-v, n);
+                float3 g = f * Env(r, 0.04);
+                [unroll] for (int l1 = 0; l1 < 3; l1++)
+                {
+                    float3 h = normalize(LightDir[l1] + v);
+                    float nl = saturate(dot(n, LightDir[l1]));
+                    g += LightCol[l1] * nl * f * Ggx(saturate(dot(n, h)), 0.004) * Vis(nv1 + 1e-4, nl, 0.06) * 0.5;
+                }
+                g = pow(Aces(g), 1.0 / 2.2);
+                return float4(g, 0.0);
+            }
+            if (kind == 5) return float4(0.012, 0.013, 0.016, 1.0);
+            // Surface detail, in the model's own frame (it moves with the part).
+            if (kind == 1)
+            {
+                // Brushed: fine lines along the model's long side.
+                float stripe = Hash3(float3(0.0, floor(i.O.y * 220.0), floor(i.O.z * 220.0))) - 0.5;
+                n = normalize(n + Turn(float3(0.0, stripe * 0.05, 0.0)));
+            }
+            else if (kind == 3)
+            {
+                // Knurled: a fine grid of bumps.
+                float2 q = i.O.xy * 38.0;
+                n = normalize(n + Turn(float3(sin(q.x), sin(q.y), 0.0)) * 0.18);
+            }
+            float nv = saturate(dot(n, v)) + 1e-4;
+            float3 f0 = lerp(float3(0.04, 0.04, 0.04), base, metal);
+            float3 diff = base * (1.0 - metal);
+            float3 col = 0.0;
+            [unroll] for (int l2 = 0; l2 < 3; l2++) col += LightCol[l2] * Highlight(n, v, LightDir[l2], f0, diff, rough);
+            float3 r = reflect(-v, n);
+            float3 fe = f0 + (max(float3(1.0 - rough, 1.0 - rough, 1.0 - rough), f0) - f0) * pow(1.0 - nv, 5.0);
+            col += diff * Ambient(n) + fe * Env(r, rough);
+            if (kind == 4)
+            {
+                // A lens's coating: its reflections tinted green and violet by angle.
+                float3 film = 0.5 + 0.5 * cos(2.0 * Pi * (nv * 1.3 + float3(0.0, 0.33, 0.67)));
+                col += film * fe * Env(r, 0.05) * 1.5;
+            }
+            if (kind == 6)
+            {
+                // Rubber: a soft sheen at grazing angles.
+                col += base * 0.25 * pow(1.0 - nv, 3.0);
+            }
+            if (mt.Surf.w > 0.0)
+            {
+                // Sparkle: tiny facets in the glass, each catching a light only at its own angle, so they twinkle as it turns.
+                float3 cell = floor(i.O * 34.0);
+                float pick = Hash3(cell + 3.1);
+                if (pick < 0.35)
+                {
+                    float3 fn = normalize(ng + Turn(float3(Hash3(cell), Hash3(cell + 7.7), Hash3(cell + 13.3)) - 0.5) * 0.9);
+                    float3 fr = reflect(-v, fn);
+                    float glint = 0.0;
+                    [unroll] for (int l3 = 0; l3 < 3; l3++) glint += pow(saturate(dot(fr, LightDir[l3])), 600.0) * dot(LightCol[l3], float3(0.33, 0.33, 0.33));
+                    glint += pow(saturate(dot(fr, normalize(float3(-0.3, 0.8, 0.55)))), 300.0) * 2.0;
+                    col += mt.Surf.w * glint * lerp(base, 1.0, 0.6) * 4.0;
+                }
+            }
+            if (coat > 0.0)
+            {
+                // Clear coat: a thin glossy layer over it.
+                float fc = (0.04 + 0.96 * pow(1.0 - saturate(dot(ng, v)), 5.0)) * coat;
+                float3 cr = reflect(-v, ng);
+                float3 cc = Env(cr, 0.03);
+                [unroll] for (int l4 = 0; l4 < 3; l4++)
+                {
+                    float nl = saturate(dot(ng, LightDir[l4]));
+                    float3 h = normalize(LightDir[l4] + v);
+                    cc += LightCol[l4] * nl * Ggx(saturate(dot(ng, h)), 0.0025) * Vis(saturate(dot(ng, v)) + 1e-4, nl, 0.05);
+                }
+                col = col * (1.0 - fc) + cc * fc;
+            }
+            col += mt.Emit.rgb + GlowCol.rgb * i.Glow * 1.4;
+            return float4(pow(Aces(col), 1.0 / 2.2), 1.0);
+        }
+
+        // A soft glow: Col's colour at Col.a, fading out to the radius.
+        float4 GlowPs(DiskOut i) : SV_Target
+        {
+            float d = length(i.Pos.xy - Centre) / Radius;
+            clip(1.0 - d);
+            float a = Col.a * exp(-d * d * 4.0) * (1.0 - d);
+            return float4(Col.rgb * a, 0.0);
+        }
+        """;
 
     /// <summary>The shaders (HLSL, shader model 5). Positions are in the picture's pixels (y down); the view has z toward the viewer.</summary>
     private const string Shaders = """
@@ -1399,229 +1629,6 @@ internal static class Gpu3D
         float4 CopyPs(float4 pos : SV_Position, uint si : SV_SampleIndex) : SV_Target
         {
             return Scratch.Load(int2(pos.xy), si) * Col.a;
-        }
-        // ---- Real materials (Lit): models with parts, lit by a small studio. ----
-        struct LitV { float4 P; float4 N; };
-        StructuredBuffer<LitV> LitVerts : register(t5);
-        struct PartX { float4 R0; float4 R1; float4 R2; float4 N0; float4 N1; float4 N2; float4 X; };
-        StructuredBuffer<PartX> LitParts : register(t6);
-        struct Mat { float4 Base; float4 Surf; float4 Emit; };
-        StructuredBuffer<Mat> Mats : register(t7);
-
-        struct LitOut
-        {
-            float4 Pos : SV_Position;
-            float3 V : TEXCOORD0;
-            float3 N : TEXCOORD1;
-            float3 O : TEXCOORD2;
-            nointerpolation uint MatId : TEXCOORD3;
-            nointerpolation float Glow : TEXCOORD4;
-        };
-
-        static const uint ScreenMat = 10;
-
-        LitOut LitVs(uint v : SV_VertexID)
-        {
-            LitV lv = LitVerts[v];
-            PartX px = LitParts[(uint)lv.P.w];
-            float4 p4 = float4(lv.P.xyz, 1.0);
-            float3 s = float3(dot(px.R0, p4), dot(px.R1, p4), dot(px.R2, p4));
-            float3 n = float3(dot(px.N0.xyz, lv.N.xyz), dot(px.N1.xyz, lv.N.xyz), dot(px.N2.xyz, lv.N.xyz));
-            float3 p = Turn(s);
-            float2 at = OnScreen(p);
-            float w = max(Persp - p.z, 0.5);
-            uint mat = (uint)lv.N.w;
-            LitOut o;
-            o.Pos = float4((at.x / TargetSize.x * 2.0 - 1.0) * w, (1.0 - at.y / TargetSize.y * 2.0) * w, PerspDepth(w) * w, w);
-            // Pass 1: the screen's glass only.
-            if (DepthP.w > 0.5 && mat != ScreenMat) o.Pos = float4(2.0, 2.0, 2.0, 1.0);
-            o.V = p;
-            o.N = Turn(n);
-            o.O = lv.P.xyz;
-            o.MatId = mat;
-            o.Glow = px.X.x;
-            return o;
-        }
-
-        static const float Pi = 3.14159265;
-
-        float Hash3(float3 p)
-        {
-            p = frac(p * 0.3183099 + 0.1);
-            p *= 17.0;
-            return frac(p.x * p.y * p.z * (p.x + p.y + p.z));
-        }
-
-        // GGX: the spread of a highlight, and its visibility term (Schlick-Smith, with the 1 / 4 n.l n.v folded in).
-        float Ggx(float nh, float a)
-        {
-            float a2 = a * a;
-            float d = nh * nh * (a2 - 1.0) + 1.0;
-            return a2 / (Pi * d * d + 1e-7);
-        }
-        float Vis(float nv, float nl, float a)
-        {
-            float k = a * 0.5;
-            return 0.25 / ((nv * (1.0 - k) + k) * (nl * (1.0 - k) + k));
-        }
-
-        // A soft-edged rectangular light seen in direction r: centred on c, half sizes h (as tangents), its edge
-        // blurred by soft; dimmer as it spreads, so a rough surface shows it wide and faint.
-        float Box(float3 r, float3 c, float3 up, float2 h, float soft)
-        {
-            float d = dot(r, c);
-            if (d <= 0.05) return 0.0;
-            float3 u = normalize(cross(up, c));
-            float3 v = cross(c, u);
-            float2 q = abs(float2(dot(r, u), dot(r, v)) / d) - h;
-            float edge = max(q.x, q.y);
-            float spread = (h.x * h.y) / ((h.x + soft) * (h.y + soft));
-            return (1.0 - smoothstep(-soft, soft, edge)) * spread;
-        }
-
-        // The studio, in the viewer's frame (y up, z toward the viewer): a big soft box above and in front, a warm
-        // strip to the left, a cool one to the right, a dark floor.
-        float3 Env(float3 r, float rough)
-        {
-            float soft = 0.02 + rough * rough * 1.6;
-            float3 c = lerp(float3(0.012, 0.012, 0.014), float3(0.07, 0.075, 0.085), smoothstep(-0.35, 0.35, r.y));
-            c += float3(0.12, 0.125, 0.13) * smoothstep(0.6, 1.0, r.y);
-            c += 3.2 * Box(r, normalize(float3(-0.3, 0.8, 0.55)), float3(0.0, 0.0, -1.0), float2(0.55, 0.32), soft);
-            c += 2.2 * float3(1.0, 0.95, 0.88) * Box(r, normalize(float3(-0.92, 0.12, 0.38)), float3(0.0, 1.0, 0.0), float2(0.12, 0.75), soft);
-            c += 1.5 * float3(0.82, 0.9, 1.0) * Box(r, normalize(float3(0.9, 0.08, 0.42)), float3(0.0, 1.0, 0.0), float2(0.1, 0.7), soft);
-            return c;
-        }
-
-        // Light from all round, for the diffuse part (above brighter than below).
-        float3 Ambient(float3 n)
-        {
-            return lerp(float3(0.025, 0.025, 0.03), float3(0.32, 0.33, 0.36), saturate(n.y * 0.5 + 0.5)) + 0.12 * saturate(n.z);
-        }
-
-        float3 Aces(float3 x)
-        {
-            return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
-        }
-
-        // Key light (upper left, in front), fill (right), rim (behind, above): toward each, and its colour.
-        static const float3 LightDir[3] = { float3(-0.45, 0.62, 0.64), float3(0.78, 0.05, 0.62), float3(0.15, 0.55, -0.82) };
-        static const float3 LightCol[3] = { float3(2.6, 2.5, 2.35), float3(0.55, 0.62, 0.75), float3(1.6, 1.65, 1.8) };
-
-        float3 Highlight(float3 n, float3 v, float3 l, float3 f0, float3 diff, float rough)
-        {
-            float nl = saturate(dot(n, l));
-            if (nl <= 0.0) return 0.0;
-            float3 h = normalize(l + v);
-            float nh = saturate(dot(n, h));
-            float vh = saturate(dot(v, h));
-            float nv = saturate(dot(n, v)) + 1e-4;
-            float a = max(rough * rough, 0.002);
-            float3 f = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
-            return nl * (diff / Pi * (1.0 - f) + f * Ggx(nh, a) * Vis(nv, nl, a));
-        }
-
-        float4 LitPs(LitOut i) : SV_Target
-        {
-            Mat mt = Mats[i.MatId];
-            float3 base = mt.Base.rgb;
-            float metal = mt.Base.a;
-            float rough = mt.Surf.x;
-            float coat = mt.Surf.y;
-            uint kind = (uint)(mt.Surf.z + 0.5);
-            float3 v = normalize(float3(0.0, 0.0, Persp > 0.0 ? Persp : 100.0) - i.V);
-            float3 ng = normalize(i.N);
-            // Faces seen from behind (the inside of a hole): lit as seen.
-            if (dot(ng, v) < 0.0) ng = -ng;
-            float3 n = ng;
-            // Pass 1: only the screen's glass, its reflections laid over what is on the screen.
-            if (DepthP.w > 0.5)
-            {
-                float nv1 = saturate(dot(n, v));
-                float f = 0.04 + 0.96 * pow(1.0 - nv1, 5.0);
-                float3 r = reflect(-v, n);
-                float3 g = f * Env(r, 0.04);
-                [unroll] for (int l1 = 0; l1 < 3; l1++)
-                {
-                    float3 h = normalize(LightDir[l1] + v);
-                    float nl = saturate(dot(n, LightDir[l1]));
-                    g += LightCol[l1] * nl * f * Ggx(saturate(dot(n, h)), 0.004) * Vis(nv1 + 1e-4, nl, 0.06) * 0.5;
-                }
-                g = pow(Aces(g), 1.0 / 2.2);
-                return float4(g, 0.0);
-            }
-            if (kind == 5) return float4(0.012, 0.013, 0.016, 1.0);
-            // Surface detail, in the model's own frame (it moves with the part).
-            if (kind == 1)
-            {
-                // Brushed: fine lines along the model's long side.
-                float line = Hash3(float3(0.0, floor(i.O.y * 220.0), floor(i.O.z * 220.0))) - 0.5;
-                n = normalize(n + Turn(float3(0.0, line * 0.05, 0.0)));
-            }
-            else if (kind == 3)
-            {
-                // Knurled: a fine grid of bumps.
-                float2 q = i.O.xy * 38.0;
-                n = normalize(n + Turn(float3(sin(q.x), sin(q.y), 0.0)) * 0.18);
-            }
-            float nv = saturate(dot(n, v)) + 1e-4;
-            float3 f0 = lerp(float3(0.04, 0.04, 0.04), base, metal);
-            float3 diff = base * (1.0 - metal);
-            float3 col = 0.0;
-            [unroll] for (int l2 = 0; l2 < 3; l2++) col += LightCol[l2] * Highlight(n, v, LightDir[l2], f0, diff, rough);
-            float3 r = reflect(-v, n);
-            float3 fe = f0 + (max(float3(1.0 - rough, 1.0 - rough, 1.0 - rough), f0) - f0) * pow(1.0 - nv, 5.0);
-            col += diff * Ambient(n) + fe * Env(r, rough);
-            if (kind == 4)
-            {
-                // A lens's coating: its reflections tinted green and violet by angle.
-                float3 film = 0.5 + 0.5 * cos(2.0 * Pi * (nv * 1.3 + float3(0.0, 0.33, 0.67)));
-                col += film * fe * Env(r, 0.05) * 1.5;
-            }
-            if (kind == 6)
-            {
-                // Rubber: a soft sheen at grazing angles.
-                col += base * 0.25 * pow(1.0 - nv, 3.0);
-            }
-            if (mt.Surf.w > 0.0)
-            {
-                // Sparkle: tiny facets in the glass, each catching a light only at its own angle, so they twinkle as it turns.
-                float3 cell = floor(i.O * 34.0);
-                float pick = Hash3(cell + 3.1);
-                if (pick < 0.35)
-                {
-                    float3 fn = normalize(ng + Turn(float3(Hash3(cell), Hash3(cell + 7.7), Hash3(cell + 13.3)) - 0.5) * 0.9);
-                    float3 fr = reflect(-v, fn);
-                    float glint = 0.0;
-                    [unroll] for (int l3 = 0; l3 < 3; l3++) glint += pow(saturate(dot(fr, LightDir[l3])), 600.0) * dot(LightCol[l3], float3(0.33, 0.33, 0.33));
-                    glint += pow(saturate(dot(fr, normalize(float3(-0.3, 0.8, 0.55)))), 300.0) * 2.0;
-                    col += mt.Surf.w * glint * lerp(base, 1.0, 0.6) * 4.0;
-                }
-            }
-            if (coat > 0.0)
-            {
-                // Clear coat: a thin glossy layer over it.
-                float fc = (0.04 + 0.96 * pow(1.0 - saturate(dot(ng, v)), 5.0)) * coat;
-                float3 cr = reflect(-v, ng);
-                float3 cc = Env(cr, 0.03);
-                [unroll] for (int l4 = 0; l4 < 3; l4++)
-                {
-                    float nl = saturate(dot(ng, LightDir[l4]));
-                    float3 h = normalize(LightDir[l4] + v);
-                    cc += LightCol[l4] * nl * Ggx(saturate(dot(ng, h)), 0.0025) * Vis(saturate(dot(ng, v)) + 1e-4, nl, 0.05);
-                }
-                col = col * (1.0 - fc) + cc * fc;
-            }
-            col += mt.Emit.rgb + GlowCol.rgb * i.Glow * 1.4;
-            return float4(pow(Aces(col), 1.0 / 2.2), 1.0);
-        }
-
-        // A soft glow: Col's colour at Col.a, fading out to the radius.
-        float4 GlowPs(DiskOut i) : SV_Target
-        {
-            float d = length(i.Pos.xy - Centre) / Radius;
-            clip(1.0 - d);
-            float a = Col.a * exp(-d * d * 4.0) * (1.0 - d);
-            return float4(Col.rgb * a, 0.0);
         }
         """;
 }
