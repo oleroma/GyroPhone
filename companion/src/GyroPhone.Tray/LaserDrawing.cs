@@ -420,7 +420,12 @@ internal static class LaserDrawing
             int look = HashCode.Combine(HashCode.Combine(body.ToArgb(), gun.Key, s.GunScope, s.LaserAxonometric, s.Perspective, c, r),
                 HashCode.Combine(aim, k, lower, hip), turned == null ? 0 : HashCode.Combine(turned[0], turned[1], turned[2], turned[3], turned[4], turned[5], turned[6], turned[7]));
             var gunState = (m, s, turned, aim, k, gun, lower, hip, c, r, body, edge);
-            if (!Gpu3D.Draw(g, area, "gun", new Gpu3D.Key(look, Gpu3D.TurnOf(m), area, turned == null ? 0 : turned[8].GetHashCode()), gunState, static (f, st) =>
+            // The real gun (its model, lit as the phone's real look), where it has one and the card can.
+            bool real = RealGun.Has(gun.Key) && Gpu3D.Draw(g, area, "gun-real", new Gpu3D.Key(HashCode.Combine(look, 2), Gpu3D.TurnOf(m), area,
+                turned == null ? 0 : turned[8].GetHashCode()), gunState, static (f, st) =>
+                    RealGun.Draw(f, st.gun, st.m, st.s.LaserAxonometric, st.turned, st.s.Perspective, st.aim, st.k, st.lower, st.s.GunScope, st.hip,
+                        st.c, st.r, st.body));
+            if (!real && !Gpu3D.Draw(g, area, "gun", new Gpu3D.Key(look, Gpu3D.TurnOf(m), area, turned == null ? 0 : turned[8].GetHashCode()), gunState, static (f, st) =>
                 {
                     var list = GunList ??= new Gpu3D.FlatList();
                     list.Clear();

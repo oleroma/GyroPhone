@@ -155,7 +155,8 @@ internal static class RealLook
     /// The materials for the colours <paramref name="body"/> (phone), <paramref name="handles"/> (controller):
     /// <see cref="Materials.Slots"/> in order.
     /// </summary>
-    private static void FillMaterials(Gpu3D.Material[] mats, Color body, Color handles)
+    /// Guns: polymer in the <paramref name="rifle"/> colour.
+    internal static void FillMaterials(Gpu3D.Material[] mats, Color body, Color handles, Color? rifle = null)
     {
         static Vector3 Lin(Color c) => new(Gpu3D.Linear(c.R), Gpu3D.Linear(c.G), Gpu3D.Linear(c.B));
         static Gpu3D.Material M(Vector3 baseColour, float metal, float rough, float coat = 0f, float kind = 0f, float sparkle = 0f, Vector3 emit = default) =>
@@ -190,6 +191,13 @@ internal static class RealLook
         Set("letter_yellow", M(new Vector3(0.95f, 0.72f, 0.08f), 0f, 0.3f, emit: new Vector3(0.12f, 0.09f, 0.01f)));
         Set("letter_red", M(new Vector3(0.88f, 0.1f, 0.08f), 0f, 0.3f, emit: new Vector3(0.11f, 0.012f, 0.01f)));
         Set("letter_green", M(new Vector3(0.12f, 0.72f, 0.22f), 0f, 0.3f, emit: new Vector3(0.015f, 0.09f, 0.03f)));
+        // Guns.
+        var poly = Lin(rifle ?? Color.FromArgb(0x5A, 0x61, 0x6C));
+        Set("gunmetal", M(new Vector3(0.045f, 0.046f, 0.05f), 0.85f, 0.38f, kind: 1f));
+        Set("polymer", M(poly * 0.35f + Grey(0.006f), 0f, 0.55f, kind: 6f));
+        Set("wood", M(new Vector3(0.26f, 0.11f, 0.045f), 0f, 0.42f, coat: 0.45f));
+        Set("rubber", M(Grey(0.018f), 0f, 0.9f, kind: 6f));
+        Set("chrome", M(new Vector3(0.9f, 0.9f, 0.92f), 1f, 0.12f));
         Set("letter_blue", M(new Vector3(0.12f, 0.38f, 0.95f), 0f, 0.3f, emit: new Vector3(0.015f, 0.05f, 0.12f)));
     }
 

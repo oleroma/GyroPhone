@@ -40,6 +40,13 @@ public sealed class Model3D
     /// <summary>The models that ship with the companion (embedded in this assembly), by file name.</summary>
     public const string OnePlus15 = "oneplus15.glb", GpHandles = "gp-handles.glb", EightBitDo = "8bitdo-ultimate-mobile.glb";
 
+    /// <summary>The pointer's gun <paramref name="key"/> (<see cref="Guns.Gun.Key"/>) as a shipped model's file name.</summary>
+    public static string Gun(string key) => "gun-" + key + ".glb";
+
+    /// <summary>Whether <paramref name="file"/> ships with the companion.</summary>
+    public static bool IsShipped(string file) =>
+        typeof(Model3D).Assembly.GetManifestResourceInfo("GyroPhone.Host.Models3D." + file) != null;
+
     private static readonly Dictionary<string, Model3D> Loaded = [];
 
     /// <summary>The shipped model <paramref name="file"/> (read once, then kept).</summary>
@@ -160,13 +167,15 @@ public static class Materials
     /// Phone: frame (brushed metal, the body colour), frontglass (black glass round the screen), backglass (frosted glass
     /// with a sparkle, the body colour), plateau (the camera plateau), lensglass, lensring, lens, flash, port, screen.
     /// Controllers: plastic (the handles colour), well (darker), stem (chrome), stickcap and stickknurl (rubber),
-    /// stickmetal, button (gloss), backpad (rubber), and the face buttons' letters.
+    /// stickmetal, button (gloss), backpad (rubber), and the face buttons' letters. Guns: gunmetal, polymer (the Rifle
+    /// colour), wood, rubber, chrome (and lensglass, lensring on scopes).
     /// </summary>
     public static readonly string[] Slots =
     [
         "plastic", "frame", "frontglass", "backglass", "plateau", "lensglass", "lensring", "lens", "flash", "port", "screen",
         "well", "stem", "stickcap", "stickknurl", "stickmetal", "button", "backpad",
         "letter_yellow", "letter_red", "letter_green", "letter_blue",
+        "gunmetal", "polymer", "wood", "rubber", "chrome",
     ];
 
     /// <summary>The slot of material <paramref name="name"/> (Blender's ".001" endings ignored); an unknown one is plastic (0).</summary>
