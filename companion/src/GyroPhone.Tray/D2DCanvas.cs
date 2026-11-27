@@ -529,11 +529,18 @@ internal sealed class D2DCanvas : ICanvas, IDisposable
     /// <summary>What <see cref="Gpu3D"/> spent on this canvas, summed (ms): waiting for the shared lock, and its own drawing.</summary>
     internal double CardWaitMs, CardWorkMs;
 
+    /// <summary>The graphics card's own time for <see cref="Gpu3D"/>'s drawings on this canvas (timestamp queries): summed, the longest one, how many.</summary>
+    internal double CardGpuMs, CardGpuMaxMs;
+    internal int CardGpuCount;
+
     internal string TakeCardTimes(int frames)
     {
-        if (CardWaitMs == 0 && CardWorkMs == 0) return "";
+        if (CardWaitMs == 0 && CardWorkMs == 0 && CardGpuCount == 0) return "";
         var t = $"card wait {CardWaitMs / frames:0.00}, card {CardWorkMs / frames:0.00}";
-        CardWaitMs = CardWorkMs = 0;
+        // Per picture shown (a picture can hold several drawings, or none when nothing changed), and the longest drawing.
+        if (CardGpuCount > 0) t += $", card gpu {CardGpuMs / frames:0.00} ({CardGpuMaxMs:0.00} max, {CardGpuCount} drawings)";
+        CardWaitMs = CardWorkMs = CardGpuMs = CardGpuMaxMs = 0;
+        CardGpuCount = 0;
         return t;
     }
 

@@ -471,9 +471,63 @@ internal static class Gpu3D
         public ID3D11Buffer? Flats;
         public ID3D11ShaderResourceView? FlatView;
         public int FlatRoom;
+        // The graphics card's own time for each drawing (only while Diagnostics times the overlays): timestamp
+        // queries, read back a few pictures later without ever waiting for them.
+        private readonly Queue<(ID3D11Query Span, ID3D11Query A, ID3D11Query B)> _timing = new();
+        private readonly Stack<(ID3D11Query Span, ID3D11Query A, ID3D11Query B)> _timingFree = new();
+
+        /// <summary>Starts timing a drawing on the card (under the device's lock): reads the finished ones into <paramref name="g"/> first.</summary>
+        public (ID3D11Query Span, ID3D11Query A, ID3D11Query B)? StartTiming(ID3D11Device d3d, D2DCanvas g)
+        {
+            var ctx = d3d.ImmediateContext;
+            ReadTimings(ctx, g);
+            // Too many still out (a card far behind): skip this one rather than wait.
+            if (_timing.Count >= 8) return null;
+            (ID3D11Query Span, ID3D11Query A, ID3D11Query B) q = _timingFree.Count > 0 ? _timingFree.Pop() : (d3d.CreateQuery(new QueryDescription(QueryType.TimestampDisjoint)),
+                d3d.CreateQuery(new QueryDescription(QueryType.Timestamp)), d3d.CreateQuery(new QueryDescription(QueryType.Timestamp)));
+            ctx.Begin(q.Span);
+            ctx.End(q.A);
+            return q;
+        }
+
+        public void EndTiming(ID3D11DeviceContext ctx, (ID3D11Query Span, ID3D11Query A, ID3D11Query B) q)
+        {
+            ctx.End(q.B);
+            ctx.End(q.Span);
+            _timing.Enqueue(q);
+        }
+
+        private unsafe void ReadTimings(ID3D11DeviceContext ctx, D2DCanvas g)
+        {
+            while (_timing.Count > 0)
+            {
+                var q = _timing.Peek();
+                QueryDataTimestampDisjoint span;
+                ulong a, b;
+                if (ctx.GetData(q.Span, (IntPtr)(&span), (uint)sizeof(QueryDataTimestampDisjoint), AsyncGetDataFlags.DoNotFlush).Code != 0) return;
+                if (ctx.GetData(q.A, (IntPtr)(&a), sizeof(ulong), AsyncGetDataFlags.DoNotFlush).Code != 0) return;
+                if (ctx.GetData(q.B, (IntPtr)(&b), sizeof(ulong), AsyncGetDataFlags.DoNotFlush).Code != 0) return;
+                _timing.Dequeue();
+                _timingFree.Push(q);
+                // Disjoint: the card's clock changed speed meanwhile (power state), so this one can't be read.
+                if (span.Disjoint || span.Frequency == 0 || b < a) continue;
+                double ms = (b - a) * 1000.0 / span.Frequency;
+                g.CardGpuMs += ms;
+                g.CardGpuMaxMs = Math.Max(g.CardGpuMaxMs, ms);
+                g.CardGpuCount++;
+            }
+        }
+
+        private void DisposeTimings()
+        {
+            foreach (var q in _timing.Concat(_timingFree)) { q.Span.Dispose(); q.A.Dispose(); q.B.Dispose(); }
+            _timing.Clear();
+            _timingFree.Clear();
+        }
 
         public void Dispose()
         {
+            DisposeTimings();
             foreach (var slot in Slots.Values) slot.Dispose();
             Slots.Clear();
             DrawView?.Dispose(); DrawTexture?.Dispose();
@@ -608,9 +662,11 @@ internal static class Gpu3D
                 {
                     slot.Picture ??= new Target(gpu.D3D, g.Dc, w, h);
                     var f = new Frame(kit, gpu, surface, slot.Picture, 0f, 0f);
+                    var timing = OverlayTiming.On ? surface.StartTiming(gpu.D3D, g) : null;
                     f.Start();
                     build(f, state);
                     f.Finish();
+                    if (timing is { } tq) surface.EndTiming(gpu.D3D.ImmediateContext, tq);
                 }
                 finally
                 {
