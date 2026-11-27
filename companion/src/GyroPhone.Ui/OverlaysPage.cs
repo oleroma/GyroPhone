@@ -91,7 +91,9 @@ internal sealed class OverlaysPage : Page
     private readonly CheckBox _laserSmoothColours;
     private readonly TextBlock _laserMovesHint;
     private readonly StackPanel _laserDrawOptions;
-    private readonly CheckBox _dots, _trails, _phoneAxon, _shapeAxon;
+    private readonly CheckBox _dots, _trails, _phoneAxon, _shapeAxon, _realLook;
+    private readonly Seg<OverlayHandleModel> _handleModel;
+    private readonly StackPanel _handleModelPanel;
     private readonly Seg<OverlayHandles> _handles;
     private readonly Seg<OverlayHandleSource> _handleSource;
     private readonly Seg<OverlayShape> _shape;
@@ -326,6 +328,9 @@ internal sealed class OverlaysPage : Page
         pb.Children.Add(_trails);
         _phoneAxon = Parts.Toggle("Axonometric view", () => Change(o => o.Axonometric = !o.Axonometric), AxonHint);
         pb.Children.Add(_phoneAxon);
+        _realLook = Parts.Toggle("Real look", () => Change(o => o.RealLook = !o.RealLook),
+            "The phone as a real OnePlus 15, with real materials and light, and a controller model whose buttons spring. Drawn by the graphics card; without it, the plain look.");
+        pb.Children.Add(_realLook);
         pb.Children.Add(Parts.Divider());
         pb.Children.Add(Parts.Text("Controller handles"));
         _handles = new Seg<OverlayHandles>(h => Change(o => o.Handles = h), false,
@@ -338,6 +343,14 @@ internal sealed class OverlaysPage : Page
         _handleSource.View.Margin = new Thickness(0, 6, 0, 2);
         pb.Children.Add(_handleSource.View);
         pb.Children.Add(Parts.Text("PC: the controller plugged into this PC, while \"Use PC controller for gyro ratchet\" is on in the phone's Connection settings.", "Hint"));
+        // Real look only: which controller's model the handles show.
+        _handleModelPanel = new StackPanel();
+        _handleModelPanel.Children.Add(Parts.Text("Controller model"));
+        _handleModel = new Seg<OverlayHandleModel>(h => Change(o => o.HandleModel = h), false,
+            ("GP handles", OverlayHandleModel.Gp), ("8BitDo Ultimate Mobile", OverlayHandleModel.EightBitDo));
+        _handleModel.View.Margin = new Thickness(0, 6, 0, 2);
+        _handleModelPanel.Children.Add(_handleModel.View);
+        pb.Children.Add(_handleModelPanel);
         _phoneLook = phone;
         _lookTab.Children.Add(phone);
 
@@ -1191,6 +1204,9 @@ internal sealed class OverlaysPage : Page
         Parts.SetChecked(_trails, o.FingerTrails);
         _handles.Set(o.Handles);
         _handleSource.Set(o.HandleSource);
+        _handleModel.Set(o.HandleModel);
+        Parts.Show(_handleModelPanel, o.RealLook);
+        Parts.SetChecked(_realLook, o.RealLook);
         _shape.Set(o.Shape);
         Parts.Show(_subdivision.View, o.Shape == OverlayShape.Icosphere);
         _subdivision.Set(o.Subdivision);

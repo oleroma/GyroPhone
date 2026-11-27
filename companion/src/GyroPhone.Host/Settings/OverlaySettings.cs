@@ -42,6 +42,15 @@ public enum OverlayHandleSource
     Pc,
 }
 
+/// <summary>Which controller model the phone overlay's handles show, in the real look (<see cref="OverlaySettings.RealLook"/>).</summary>
+public enum OverlayHandleModel
+{
+    /// <summary>GP's own handles.</summary>
+    Gp,
+    /// <summary>The 8BitDo Ultimate Mobile.</summary>
+    EightBitDo,
+}
+
 /// <summary>What turns an overlay (as the phone's gyro displays' Turns with).</summary>
 public enum OverlayTurnsWith
 {
@@ -149,6 +158,13 @@ public sealed class OverlaySettings
     public OverlayHandles Handles { get; set; } = OverlayHandles.Auto;
     /// <summary>Which controller the handles show; with <see cref="OverlayHandles.Auto"/>, the one that must be there.</summary>
     public OverlayHandleSource HandleSource { get; set; } = OverlayHandleSource.Phone;
+    /// <summary>Which controller model the handles show in the real look.</summary>
+    public OverlayHandleModel HandleModel { get; set; } = OverlayHandleModel.Gp;
+    /// <summary>
+    /// The phone as a real one (the OnePlus 15 model, its controller's model, real materials and light, buttons that
+    /// spring), drawn on the graphics card; off, or without the card, the plain flat look.
+    /// </summary>
+    public bool RealLook { get; set; } = true;
 
     // 3D shape.
     public OverlayShape Shape { get; set; } = OverlayShape.Globe;

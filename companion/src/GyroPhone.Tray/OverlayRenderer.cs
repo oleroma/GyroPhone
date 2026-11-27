@@ -34,6 +34,8 @@ internal sealed class OverlayScene
     /// <summary>The laser pointer's trail and paint (laser pointer only).</summary>
     public LaserTrace? Laser;
     public long NowTicks;
+    /// <summary>Set by the last picture: something in it still moves on its own (the real look's springs), so draw again.</summary>
+    public bool Animating;
     /// <summary>The laser pointer's fire output is held now (the rifle's muzzle flash).</summary>
     public bool Firing;
     /// <summary>The laser pointer's Aim display now, eased (0 .. 1): the crosshair shrinks and the rifle shoulders by it.</summary>
@@ -83,6 +85,8 @@ internal sealed class DrawBuffers
     /// <summary>The 3D phone's screen picture on the card (<see cref="Gpu3D"/>), and the canvas its body is listed with.</summary>
     public Gpu3D.Panel? ScreenPanel;
     public FlatCanvas? Flat;
+    /// <summary>The real look's models and springs (<see cref="RealLook.State"/>).</summary>
+    public object? Real;
 
     /// <summary>A rounded rectangle (<see cref="OverlayRenderer.RoundedRect"/>) made again only when its size changes.</summary>
     public sealed class Rounded
@@ -199,6 +203,7 @@ internal static class OverlayRenderer
 
     public static void Draw(ICanvas g, Size size, OverlayScene scene, OverlaySettings settings)
     {
+        scene.Animating = false;
         switch (settings.Background)
         {
             case OverlayBackground.Green: g.Clear(Color.FromArgb(0, 255, 0)); break;
@@ -381,6 +386,7 @@ internal static class OverlayRenderer
         var view = handles ? new HandleDrawing.View(Project, Faces, Shade) : default;
         float zs = Thickness / 2f + 0.001f;
         (float X, float Y, float Z) OnScreen(float u, float v) => ((u - 0.5f) * sw, (0.5f - v) * sh, zs);
+        if (DrawRealOnCard()) return;
         if (DrawPhoneOnCard()) return;
         if (handles)
             for (int side = -1; side <= 1; side += 2)
@@ -389,6 +395,46 @@ internal static class OverlayRenderer
         if (handles)
             for (int side = -1; side <= 1; side += 2)
                 if (HandleDrawing.InFront(view, side, bw)) DrawHandle(g, side);
+
+        // The real look, through the graphics card: the phone's and controller's models lit as real ones, the screen's
+        // picture as below. False when the card can't (then the plain look).
+        bool DrawRealOnCard()
+        {
+            if (!settings.RealLook || g is not D2DCanvas d2 || d2.Gpu is not { } gpu || PhoneOnCpu || Gpu3D.LitStatus.Length > 0) return false;
+            var buf = scene.Buffers;
+            var st = RealLook.For(ref buf.Real, handles ? settings.HandleModel : null, sw, sh);
+            scene.Animating = RealLook.Step(st, live && handles ? f : null);
+            // Fixed size, so the models fit the window however they are turned (as the plain look's slab).
+            float reach = RealLook.Radius(st);
+            float kr = Math.Max(1f, half * MathF.Sqrt(CameraZ * CameraZ - reach * reach) / (CameraZ * reach));
+            float tScale = Math.Clamp(kr * 1.25f, 8f, 2048f / Math.Max(sw, sh));
+            int tw = Math.Max(8, (int)MathF.Ceiling(sw * tScale)), th = Math.Max(8, (int)MathF.Ceiling(sh * tScale));
+            try
+            {
+                var screenKey = ScreenKey(scene, settings, live, tw, th);
+                var panel = buf.ScreenPanel ??= new Gpu3D.Panel();
+                d2.OwnScene(panel);
+                if (!Equals(panel.Shown, screenKey))
+                {
+                    panel.Paint(gpu, tw, th, settings.Quality, 0, (cv, _) =>
+                        DrawScreen(cv, p => new PointF((p.X / sw + 0.5f) * tw, (0.5f - p.Y / sh) * th), tScale / Math.Max(kr, 1f)));
+                    panel.Shown = screenKey;
+                }
+                var body = Opaque(settings.Color("body"));
+                var handleColour = Opaque(settings.Color("handles"));
+                var lit = Opaque(settings.Color("handlesLit"));
+                int look = HashCode.Combine(HashCode.Combine(body.ToArgb(), handleColour.ToArgb(), lit.ToArgb(), aspect, handles, settings.HandleModel),
+                    kr, cx, cy, RealLook.Stamp(st), 1);
+                var key = new Gpu3D.Key(look, Gpu3D.TurnOf(m), area, panel.Shown.GetHashCode());
+                return Gpu3D.Draw(g, area, "phone-real", key, 0, (fr, _) =>
+                    RealLook.Draw(fr, st, m, new PointF(cx, cy), kr, CameraZ, panel, body, handleColour, lit));
+            }
+            catch (NotSupportedException)
+            {
+                PhoneOnCpu = true;
+                return false;
+            }
+        }
 
         // Through the graphics card: the body and handles worked out here (a few dozen polygons) and drawn there; the
         // screen drawn flat into a picture only when what is on it changes, then laid on the turned screen there.
