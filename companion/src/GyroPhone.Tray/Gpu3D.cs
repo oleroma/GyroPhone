@@ -397,6 +397,8 @@ internal static class Gpu3D
         public ID3D11Buffer Mats = null!;
         public ID3D11ShaderResourceView MatView = null!;
         public readonly Dictionary<string, Mesh> Meshes = [];
+        /// <summary>Samples per pixel of the pictures drawn on (8 or 4, <see cref="SamplesFor"/>).</summary>
+        public uint Samples = 4;
         public ID3D11DepthStencilState DepthWrite = null!, DepthTest = null!, DepthOff = null!;
         public ID3D11RasterizerState Raster = null!, RasterCut = null!;
         public ID3D11Buffer Cb = null!;
@@ -452,7 +454,7 @@ internal static class Gpu3D
 
     /// <summary>
     /// One window's pictures: one per slot (what is drawn where, such as a shape or a grid's near half), and what they
-    /// share while one is drawn: the picture it is drawn on (<see cref="Samples"/> samples a pixel, so the edges of faces
+    /// share while one is drawn: the picture it is drawn on (<see cref="Kit.Samples"/> samples a pixel, so the edges of faces
     /// and filled shapes come out smooth; then averaged into the slot's picture), the scratch picture for line layers, the
     /// depth buffer and the flat items.
     /// </summary>
@@ -509,8 +511,23 @@ internal static class Gpu3D
     private static readonly ConditionalWeakTable<GpuDevice, object> Failed = new();
     private static readonly ConditionalWeakTable<D2DCanvas, Surface> Surfaces = new();
 
-    /// <summary>Samples per pixel while drawing (4 is supported by every card that runs this, feature level 10.1 and up).</summary>
-    private const uint Samples = 4;
+    /// <summary>
+    /// Samples per pixel while drawing: 8 where the card can (smoother edges on the real look's small parts, still one
+    /// shading per pixel), else 4 (every card that runs this has it).
+    /// </summary>
+    private static uint SamplesFor(ID3D11Device d3d)
+    {
+        try
+        {
+            if (d3d.CheckMultisampleQualityLevels(Format.B8G8R8A8_UNorm, 8) > 0 && d3d.CheckMultisampleQualityLevels(Format.D32_Float, 8) > 0)
+                return 8;
+        }
+        catch (Exception)
+        {
+            // Asking failed: the safe count.
+        }
+        return 4;
+    }
 
     /// <summary>Where the 3D overlays are drawn, for the overlay timing log: "3D on GPU", or on the CPU and why; empty before any.</summary>
     public static string Status { get; private set; } = "";
@@ -553,14 +570,14 @@ internal static class Gpu3D
                     surface.Gpu = gpu;
                     var d3d = gpu.D3D;
                     var colour = new Texture2DDescription(Format.B8G8R8A8_UNorm, (uint)w, (uint)h, 1, 1,
-                        BindFlags.RenderTarget | BindFlags.ShaderResource, ResourceUsage.Default, CpuAccessFlags.None, Samples, 0);
+                        BindFlags.RenderTarget | BindFlags.ShaderResource, ResourceUsage.Default, CpuAccessFlags.None, kit.Samples, 0);
                     surface.DrawTexture = d3d.CreateTexture2D(colour);
                     surface.DrawView = d3d.CreateRenderTargetView(surface.DrawTexture);
                     surface.ScratchTexture = d3d.CreateTexture2D(colour);
                     surface.ScratchView = d3d.CreateRenderTargetView(surface.ScratchTexture);
                     surface.ScratchRead = d3d.CreateShaderResourceView(surface.ScratchTexture);
                     surface.DepthTexture = d3d.CreateTexture2D(new Texture2DDescription(Format.D32_Float, (uint)w, (uint)h, 1, 1,
-                        BindFlags.DepthStencil, ResourceUsage.Default, CpuAccessFlags.None, Samples, 0));
+                        BindFlags.DepthStencil, ResourceUsage.Default, CpuAccessFlags.None, kit.Samples, 0));
                     surface.Depth = d3d.CreateDepthStencilView(surface.DepthTexture);
                     surface.W = w;
                     surface.H = h;
@@ -1077,6 +1094,7 @@ internal static class Gpu3D
     private static Kit MakeKit(ID3D11Device d3d)
     {
         var kit = new Kit();
+        kit.Samples = SamplesFor(d3d);
         try
         {
             kit.LineVs = d3d.CreateVertexShader(CompileShader("LineVs", "vs_5_0"));
@@ -1293,7 +1311,11 @@ internal static class Gpu3D
         static const float3 LightDir[3] = { float3(-0.45, 0.62, 0.64), float3(0.78, 0.05, 0.62), float3(0.15, 0.55, -0.82) };
         static const float3 LightCol[3] = { float3(2.6, 2.5, 2.35), float3(0.55, 0.62, 0.75), float3(1.6, 1.65, 1.8) };
 
-        float3 Highlight(float3 n, float3 v, float3 l, float3 f0, float3 diff, float rough)
+        // A highlight's spread widened by how much the surface turns within one pixel (spread: from the normal's
+        // change across the pixel), so a highlight smaller than a pixel spreads over it instead of flickering.
+        float Wide(float a, float spread) { return sqrt(a * a + spread); }
+
+        float3 Highlight(float3 n, float3 v, float3 l, float3 f0, float3 diff, float rough, float spread)
         {
             float nl = saturate(dot(n, l));
             if (nl <= 0.0) return 0.0;
@@ -1301,7 +1323,7 @@ internal static class Gpu3D
             float nh = saturate(dot(n, h));
             float vh = saturate(dot(v, h));
             float nv = saturate(dot(n, v)) + 1e-4;
-            float a = max(rough * rough, 0.002);
+            float a = Wide(max(rough * rough, 0.002), spread);
             float3 f = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
             return nl * (diff / Pi * (1.0 - f) + f * Ggx(nh, a) * Vis(nv, nl, a));
         }
@@ -1316,6 +1338,11 @@ internal static class Gpu3D
             uint kind = (uint)(mt.Surf.z + 0.5);
             float3 v = normalize(float3(0.0, 0.0, Persp > 0.0 ? Persp : 100.0) - i.V);
             float3 ng = normalize(i.N);
+            // Against aliasing (before any branch, as they need their neighbours): how much the normal turns across a
+            // pixel (widens highlights) and how many model centimetres a pixel covers (fades detail finer than a pixel).
+            float3 dnx = ddx(ng), dny = ddy(ng);
+            float spread = min(2.0 * 0.25 * (dot(dnx, dnx) + dot(dny, dny)), 0.18);
+            float foot = max(length(ddx(i.O)), length(ddy(i.O))) + 1e-5;
             // Faces seen from behind (the inside of a hole): lit as seen.
             if (dot(ng, v) < 0.0) ng = -ng;
             float3 n = ng;
@@ -1325,12 +1352,13 @@ internal static class Gpu3D
                 float nv1 = saturate(dot(n, v));
                 float f = 0.04 + 0.96 * pow(1.0 - nv1, 5.0);
                 float3 r = reflect(-v, n);
-                float3 g = f * Env(r, 0.04);
+                float g1 = Wide(0.004, spread);
+                float3 g = f * Env(r, sqrt(g1));
                 [unroll] for (int l1 = 0; l1 < 3; l1++)
                 {
                     float3 h = normalize(LightDir[l1] + v);
                     float nl = saturate(dot(n, LightDir[l1]));
-                    g += LightCol[l1] * nl * f * Ggx(saturate(dot(n, h)), 0.004) * Vis(nv1 + 1e-4, nl, 0.06) * 0.5;
+                    g += LightCol[l1] * nl * f * Ggx(saturate(dot(n, h)), g1) * Vis(nv1 + 1e-4, nl, max(0.06, g1)) * 0.5;
                 }
                 g = pow(Aces(g), 1.0 / 2.2);
                 return float4(g, 0.0);
@@ -1339,24 +1367,29 @@ internal static class Gpu3D
             // Surface detail, in the model's own frame (it moves with the part).
             if (kind == 1)
             {
-                // Brushed: fine lines along the model's long side.
+                // Brushed: fine lines along the model's long side. Lines finer than a pixel would only shimmer: they fade
+                // out as they shrink, and the metal grows a little rougher instead (their blur, as the eye sees it).
+                float keep = saturate(2.0 - foot * 220.0 * 2.0);
                 float stripe = Hash3(float3(0.0, floor(i.O.y * 220.0), floor(i.O.z * 220.0))) - 0.5;
-                n = normalize(n + Turn(float3(0.0, stripe * 0.05, 0.0)));
+                n = normalize(n + Turn(float3(0.0, stripe * 0.05 * keep, 0.0)));
+                rough = lerp(rough + 0.05, rough, keep);
             }
             else if (kind == 3)
             {
-                // Knurled: a fine grid of bumps.
+                // Knurled: a fine grid of bumps, fading out (to a rougher rubber) once a bump is under about two pixels.
                 float2 q = i.O.xy * 38.0;
-                n = normalize(n + Turn(float3(sin(q.x), sin(q.y), 0.0)) * 0.18);
+                float keep = saturate(2.0 - foot * 38.0 / (2.0 * Pi) * 4.0);
+                n = normalize(n + Turn(float3(sin(q.x), sin(q.y), 0.0)) * 0.18 * keep);
+                rough = lerp(min(rough + 0.1, 1.0), rough, keep);
             }
             float nv = saturate(dot(n, v)) + 1e-4;
             float3 f0 = lerp(float3(0.04, 0.04, 0.04), base, metal);
             float3 diff = base * (1.0 - metal);
             float3 col = 0.0;
-            [unroll] for (int l2 = 0; l2 < 3; l2++) col += LightCol[l2] * Highlight(n, v, LightDir[l2], f0, diff, rough);
+            [unroll] for (int l2 = 0; l2 < 3; l2++) col += LightCol[l2] * Highlight(n, v, LightDir[l2], f0, diff, rough, spread);
             float3 r = reflect(-v, n);
             float3 fe = f0 + (max(float3(1.0 - rough, 1.0 - rough, 1.0 - rough), f0) - f0) * pow(1.0 - nv, 5.0);
-            col += diff * Ambient(n) + fe * Env(r, rough);
+            col += diff * Ambient(n) + fe * Env(r, sqrt(Wide(rough * rough, spread)));
             if (kind == 4)
             {
                 // A lens's coating: its reflections tinted green and violet by angle.
@@ -1371,7 +1404,10 @@ internal static class Gpu3D
             if (mt.Surf.w > 0.0)
             {
                 // Sparkle: tiny facets in the glass, each catching a light only at its own angle, so they twinkle as it turns.
-                float3 cell = floor(i.O * 34.0);
+                // Cells never smaller than about a pixel and a half (sized in steps of two, so they don't swim as the
+                // phone grows or shrinks): a sparkle smaller than a pixel would blink on and off between frames.
+                float lod = max(ceil(log2(foot * 1.5 * 34.0)), 0.0);
+                float3 cell = floor(i.O * (34.0 / exp2(lod)));
                 float pick = Hash3(cell + 3.1);
                 if (pick < 0.35)
                 {
@@ -1388,12 +1424,13 @@ internal static class Gpu3D
                 // Clear coat: a thin glossy layer over it.
                 float fc = (0.04 + 0.96 * pow(1.0 - saturate(dot(ng, v)), 5.0)) * coat;
                 float3 cr = reflect(-v, ng);
-                float3 cc = Env(cr, 0.03);
+                float ca = Wide(0.0025, spread);
+                float3 cc = Env(cr, max(0.03, sqrt(ca)));
                 [unroll] for (int l4 = 0; l4 < 3; l4++)
                 {
                     float nl = saturate(dot(ng, LightDir[l4]));
                     float3 h = normalize(LightDir[l4] + v);
-                    cc += LightCol[l4] * nl * Ggx(saturate(dot(ng, h)), 0.0025) * Vis(saturate(dot(ng, v)) + 1e-4, nl, 0.05);
+                    cc += LightCol[l4] * nl * Ggx(saturate(dot(ng, h)), ca) * Vis(saturate(dot(ng, v)) + 1e-4, nl, max(0.05, ca));
                 }
                 col = col * (1.0 - fc) + cc * fc;
             }
